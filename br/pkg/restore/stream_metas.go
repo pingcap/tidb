@@ -4,6 +4,7 @@ package restore
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"sync"
 
@@ -25,8 +26,7 @@ type StreamMetadataSet struct {
 	BeforeDoWriteBack func(path string, last, current *backuppb.Metadata) (skip bool)
 }
 
-// LoadFrom loads data from an external storage into the stream metadata set.
-func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
+func (ms *StreamMetadataSet) LoadUntil(ctx context.Context, s storage.ExternalStorage, until uint64) error {
 	metadataMap := struct {
 		sync.Mutex
 		metas map[string]*backuppb.Metadata
@@ -35,7 +35,12 @@ func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalSto
 	metadataMap.metas = make(map[string]*backuppb.Metadata)
 	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
 		metadataMap.Lock()
-		metadataMap.metas[path] = m
+		// If the meta file contains only files with ts grater than `until`, when the file is from
+		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater than it, which should not be considered.
+		// `Write`: it should trivially not be considered.
+		if m.MinTs <= until {
+			metadataMap.metas[path] = m
+		}
 		metadataMap.Unlock()
 		return nil
 	})
@@ -44,6 +49,11 @@ func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalSto
 	}
 	ms.metadata = metadataMap.metas
 	return nil
+}
+
+// LoadFrom loads data from an external storage into the stream metadata set.
+func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
+	return ms.LoadUntil(ctx, s, math.MaxUint64)
 }
 
 func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
@@ -58,16 +68,19 @@ func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (
 
 // CalculateShiftTS calculates the shift-ts.
 func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
-	metadatas := make([]*backuppb.Metadata, 0, len(ms.metadata))
-	for _, m := range ms.metadata {
-		metadatas = append(metadatas, m)
-	}
+	minBeginTS, exist := uint64(0), false
 
-	minBeginTS, exist := CalculateShiftTS(metadatas, startTS, mathutil.MaxUint)
+	for _, meta := range ms.metadata {
+		ts, ok := UpdateShiftTS(meta, startTS, mathutil.MaxUint)
+		if ok && (!exist || ts < minBeginTS) {
+			minBeginTS = ts
+			exist = true
+		}
+	}
 	if !exist {
 		minBeginTS = startTS
 	}
-	log.Warn("calculate shift-ts", zap.Uint64("start-ts", startTS), zap.Uint64("shift-ts", minBeginTS))
+	log.Info("calculate shift-ts", zap.Uint64("start-ts", startTS), zap.Uint64("shift-ts", minBeginTS))
 	return minBeginTS
 }
 

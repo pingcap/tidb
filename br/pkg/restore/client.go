@@ -1703,11 +1703,9 @@ func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint
 		defer shiftTS.Unlock()
 
 		ts, ok := UpdateShiftTS(m, startTS, restoreTS)
-		if !ok {
-			return nil
-		}
-		if !shiftTS.exists || shiftTS.value > ts {
+		if ok && (!shiftTS.exists || shiftTS.value > ts) {
 			shiftTS.value = ts
+			shiftTS.exists = true
 		}
 		return nil
 	})
