@@ -245,6 +245,7 @@
     },
     "only_files": {
       "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
+      "infoschema/builder.go": "infoschema/builder.go code",
       "distsql/": "ignore distsql code",
       "dumpling/export": "dumpling/export code",
       "lock/": "lock file",
