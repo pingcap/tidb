@@ -68,6 +68,14 @@ func EncodeBytes(b []byte, data []byte) []byte {
 	return result
 }
 
+// EncodeBytesExt is an extension of `EncodeBytes`, which will not encode for `isRawKv = true` but just append `data` to `b`.
+func EncodeBytesExt(b []byte, data []byte, isRawKv bool) []byte {
+	if isRawKv {
+		return append(b, data...)
+	}
+	return EncodeBytes(b, data)
+}
+
 // EncodedBytesLength returns the length of data after encoded
 func EncodedBytesLength(dataLen int) int {
 	mod := dataLen % encGroupSize

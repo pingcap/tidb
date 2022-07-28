@@ -179,7 +179,7 @@ func FastUnmarshalMetaData(
 			m := &backuppb.Metadata{}
 			err = m.Unmarshal(b)
 			if err != nil {
-				if !strings.HasSuffix(path, ".meta") {
+				if !strings.HasSuffix(readPath, ".meta") {
 					return nil
 				} else {
 					return err

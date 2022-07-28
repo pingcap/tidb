@@ -26,7 +26,7 @@ import (
 
 func TestUpgradeVersion83(t *testing.T) {
 	ctx := context.Background()
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -58,7 +58,7 @@ func TestUpgradeVersion83(t *testing.T) {
 
 func TestUpgradeVersion84(t *testing.T) {
 	ctx := context.Background()
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
