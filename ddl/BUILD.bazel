@@ -235,7 +235,6 @@ go_test(
         "@com_github_tikv_client_go_v2//tikv",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_x_exp//slices",
-        "@org_golang_x_net//context",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
