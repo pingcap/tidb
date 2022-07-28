@@ -244,6 +244,8 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
+      "distsql/": "ignore distsql code",
       "dumpling/export": "dumpling/export code",
       "lock/": "lock file",
       "errno/": "errno code",
@@ -307,6 +309,8 @@
       ".*\\.pb\\.go$": "generated code",
       "parser/parser.go": "generated code",
       "/cgo/": "no need to vet third party code for cgo",
+      "br/pkg/lightning/common/conn.go": "ignore: to fix it",
+      "br/pkg/lightning/common/storage_unix.go": "ignore: to fix it",
       ".*_generated\\.go$": "ignore generated code"
     }
   },

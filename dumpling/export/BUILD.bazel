@@ -95,6 +95,7 @@ go_test(
         "//config",
         "//dumpling/context",
         "//dumpling/log",
+        "//errno",
         "//parser",
         "//util/filter",
         "//util/promutil",
