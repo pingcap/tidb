@@ -1916,7 +1916,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 }
 
 // SetSystemVarWithoutValidation sets the value of a system variable for session scope.
-// Values are NOT normalized or Validated.
+// Deprecated: Values are NOT normalized or Validated.
 func (s *SessionVars) SetSystemVarWithoutValidation(name string, val string) error {
 	sv := GetSysVar(name)
 	if sv == nil {
@@ -1926,7 +1926,7 @@ func (s *SessionVars) SetSystemVarWithoutValidation(name string, val string) err
 }
 
 // SetSystemVarWithRelaxedValidation sets the value of a system variable for session scope.
-// Deprecated: Validation functions are called, but scope validation is skipped.
+// Validation functions are called, but scope validation is skipped.
 // Errors are not expected to be returned because this could cause upgrade issues.
 func (s *SessionVars) SetSystemVarWithRelaxedValidation(name string, val string) error {
 	sv := GetSysVar(name)
