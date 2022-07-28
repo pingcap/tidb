@@ -1679,7 +1679,7 @@
       "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false"
     ],
     "Warning": [
-      "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is using in outer query, you should use this hint in CTE inner query."
+      "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."
     ]
   },
   {

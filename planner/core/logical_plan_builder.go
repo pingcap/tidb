@@ -3798,7 +3798,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	// Determines whether to use the Merge hint in a CTE query.
 	if b.buildingCTE {
-		if hints := b.TableHints(); hints != nil {
+		if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
 			b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
 		}
 	}
@@ -4021,7 +4021,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	// If Merge hint is using in outer query, we will not apply this hint.
 	if hints := b.TableHints(); hints.MergeHints.preferMerge && !b.buildingCTE && len(b.tableHintInfo) == 1 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in outer query, you should use this hint in CTE inner query."))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."))
 	}
 
 	sel.Fields.Fields = originalFields
@@ -4833,6 +4833,14 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
+	saveCte := make([]*cteInfo, len(b.outerCTEs))
+	copy(saveCte, b.outerCTEs)
+	o := b.buildingCTE
+	b.buildingCTE = false
+	defer func() {
+		b.outerCTEs = append(saveCte, b.outerCTEs...)
+		b.buildingCTE = o
+	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
