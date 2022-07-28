@@ -71,18 +71,6 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
-	if slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
-		if i.EndKey.Cmp(j.StartKey) > 0 {
-			return false
-		}
-		if i.StartKey.Cmp(i.EndKey) > 0 {
-			return false
-		}
-		return true
-	}) {
-		logutil.BgLogger().Fatal("distsql request key range not sorted!")
-	}
-
 	eventCb := option.EventCb
 	enabledRateLimitAction := option.EnabledRateLimitAction
 	sessionMemTracker := option.SessionMemTracker
@@ -105,6 +93,19 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		// coprocessor request but type is not DAG
 		req.Paging = false
 	}
+
+	if req.Paging && slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
+		if i.EndKey.Cmp(j.StartKey) > 0 {
+			return false
+		}
+		if i.StartKey.Cmp(i.EndKey) > 0 {
+			return false
+		}
+		return true
+	}) {
+		logutil.BgLogger().Fatal("distsql request key range not sorted!")
+	}
+
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
