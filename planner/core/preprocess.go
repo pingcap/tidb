@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -1279,7 +1278,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			// return nil, to make the check in the ddl.CreateTable.
 			return nil
 		}
-		err := ddl.IsTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
+		err := types.IsVarcharTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
 		if err != nil {
 			return err
 		}
