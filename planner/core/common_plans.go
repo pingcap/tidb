@@ -978,7 +978,7 @@ type Insert struct {
 
 	RowLen int
 
-	FKTriggerPlans []FKTriggerPlan
+	FKTriggers []*ForeignKeyTrigger
 }
 
 // Update represents Update plan.

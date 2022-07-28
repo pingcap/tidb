@@ -305,7 +305,7 @@ func (fkt *ForeignKeyTriggerExec) buildFKTriggerPlan(ctx context.Context) (plann
 	case plannercore.FKTriggerOnUpdate:
 		return planBuilder.BuildOnUpdateFKTriggerPlan(ctx, fkt.fkTrigger.ReferredFK)
 	case plannercore.FKTriggerOnInsert:
-		return nil, nil
+		return planBuilder.BuildOnInsertFKTriggerPlan(fkt.fkTrigger.OnInsert)
 	default:
 		return nil, fmt.Errorf("unknown foreign key trigger type %v", fkt.fkTrigger.Tp)
 	}

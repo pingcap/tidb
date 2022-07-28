@@ -33,6 +33,14 @@ type ForeignKeyTrigger struct {
 	Tp         FKTriggerType
 	FK         *model.FKInfo
 	ReferredFK *model.ReferredFKInfo
+	OnInsert   *OnInsertFKInfo
+}
+
+type OnInsertFKInfo struct {
+	DBName     string
+	TblName    string
+	FK         *model.FKInfo
+	ReferTable table.Table
 }
 
 type FKTriggerType int8
@@ -82,6 +90,29 @@ func buildOnUpdateForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSc
 			fkTrigger := buildForeignKeyTriggerForReferredFK(is, referredFK, FKTriggerOnUpdate)
 			fkTriggers[tid] = append(fkTriggers[tid], fkTrigger)
 		}
+	}
+	return fkTriggers
+}
+
+func buildOnInsertForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) []*ForeignKeyTrigger {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil
+	}
+	fkTriggers := make([]*ForeignKeyTrigger, 0, len(tblInfo.ForeignKeys))
+	for _, fk := range tblInfo.ForeignKeys {
+		referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+		if err != nil {
+			// todo: append warning?
+			continue
+		}
+		fkTriggers = append(fkTriggers, &ForeignKeyTrigger{
+			Tp: FKTriggerOnInsert,
+			FK: fk,
+			OnInsert: &OnInsertFKInfo{
+				DBName:     dbName,
+				TblName:    tblInfo.Name.L,
+				ReferTable: referTable,
+			}})
 	}
 	return fkTriggers
 }
@@ -142,6 +173,12 @@ func (b *PlanBuilder) BuildOnDeleteFKTriggerPlan(ctx context.Context, referredFK
 		return buildFKCheckPlan(b.ctx, childTable, fk, fk.Cols, fk.RefCols, false, failedErr)
 	}
 	return nil, nil
+}
+
+func (b *PlanBuilder) BuildOnInsertFKTriggerPlan(info *OnInsertFKInfo) (FKTriggerPlan, error) {
+	fk := info.FK
+	failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(info.DBName, info.TblName))
+	return buildFKCheckPlan(b.ctx, info.ReferTable, fk, fk.RefCols, fk.Cols, true, failedErr)
 }
 
 func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, referredFK *model.ReferredFKInfo) (FKTriggerPlan, error) {

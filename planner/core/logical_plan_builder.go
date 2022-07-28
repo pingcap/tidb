@@ -5677,30 +5677,6 @@ func (p *FKCheckPlan) buildHandleFromFKValues(sc *stmtctx.StatementContext, vals
 	return kv.NewCommonHandle(handleBytes)
 }
 
-func (b *PlanBuilder) buildForeignKeyOnInsertTriggerPlan(dbName string, tbl table.Table) ([]FKTriggerPlan, error) {
-	if !b.ctx.GetSessionVars().ForeignKeyChecks {
-		return nil, nil
-	}
-	tblInfo := tbl.Meta()
-	triggerPlans := make([]FKTriggerPlan, 0, len(tblInfo.ForeignKeys))
-	for _, fk := range tblInfo.ForeignKeys {
-		referTable, err := b.is.TableByName(fk.RefSchema, fk.RefTable)
-		if err != nil {
-			// todo: append warning?
-			continue
-
-		}
-
-		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
-		triggerPlan, err := buildFKCheckPlan(b.ctx, referTable, fk, fk.RefCols, fk.Cols, true, failedErr)
-		if err != nil {
-			return nil, err
-		}
-		triggerPlans = append(triggerPlans, triggerPlan)
-	}
-	return triggerPlans, nil
-}
-
 func (b *PlanBuilder) buildUpdateForeignKeyCascade(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
 	triggerPlan, err := b.buildUpdateForeignKeySetNull(ctx, dbName, tbl, fk)
 	if err != nil {

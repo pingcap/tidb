@@ -871,7 +871,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 	}
-	//ivs.fkTriggerExecs, b.err = b.buildTblForeignKeyTriggerExecs(v.Table, v.FKTriggerPlans)
+	ivs.fkTriggerExecs, b.err = b.buildTblForeignKeyTriggerExecs(v.Table, v.FKTriggers)
 	if b.err != nil {
 		return nil
 	}

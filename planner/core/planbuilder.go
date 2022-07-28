@@ -3545,7 +3545,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 
-	insertPlan.FKTriggerPlans, err = b.buildForeignKeyOnInsertTriggerPlan(insertPlan.DBName.L, insertPlan.Table)
+	insertPlan.FKTriggers = buildOnInsertForeignKeyTrigger(b.ctx, b.is, insertPlan.DBName.L, insertPlan.Table.Meta())
 	return insertPlan, err
 }
 
