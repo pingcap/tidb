@@ -1692,8 +1692,36 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
+func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error) {
+	shiftTS := struct {
+		sync.Mutex
+		value  uint64
+		exists bool
+	}{}
+	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, m *backuppb.Metadata) error {
+		shiftTS.Lock()
+		defer shiftTS.Unlock()
+
+		ts, ok := UpdateShiftTS(m, startTS, restoreTS)
+		if !ok {
+			return nil
+		}
+		if !shiftTS.exists || shiftTS.value > ts {
+			shiftTS.value = ts
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if !shiftTS.exists {
+		return startTS, nil
+	}
+	return shiftTS.value, nil
+}
+
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
+func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedRestoreTS uint64) ([]*backuppb.Metadata, error) {
 	streamBackupMetaFiles := struct {
 		sync.Mutex
 		metas []*backuppb.Metadata
@@ -1702,7 +1730,9 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 
 	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
 		streamBackupMetaFiles.Lock()
-		streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		if metadata.MaxTs >= shiftedRestoreTS {
+			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		}
 		streamBackupMetaFiles.Unlock()
 		return nil
 	})

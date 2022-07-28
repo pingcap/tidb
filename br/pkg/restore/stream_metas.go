@@ -233,34 +233,26 @@ func SetTSToFile(
 	return truncateAndWrite(ctx, s, filename, []byte(content))
 }
 
-// CalculateShiftTS gets the minimal begin-ts about transaction according to the kv-event in write-cf.
-func CalculateShiftTS(
-	metas []*backuppb.Metadata,
-	startTS uint64,
-	restoreTS uint64,
-) (uint64, bool) {
+func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint64, bool) {
 	var (
 		minBeginTS uint64
 		isExist    bool
 	)
-	for _, m := range metas {
-		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
-			continue
-		}
-
-		for _, d := range m.Files {
-			if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
-				continue
-			}
-			if d.MinTs > restoreTS || d.MaxTs < startTS {
-				continue
-			}
-			if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
-				isExist = true
-				minBeginTS = d.MinBeginTsInDefaultCf
-			}
-		}
+	if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+		return 0, false
 	}
 
+	for _, d := range m.Files {
+		if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+			return 0, false
+		}
+		if d.MinTs > restoreTS || d.MaxTs < startTS {
+			return 0, false
+		}
+		if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
+			isExist = true
+			minBeginTS = d.MinBeginTsInDefaultCf
+		}
+	}
 	return minBeginTS, isExist
 }
