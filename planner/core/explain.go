@@ -869,10 +869,10 @@ func (p *LogicalSort) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalTopN) ExplainInfo() string {
+func (lt *LogicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	buffer = explainByItems(buffer, p.ByItems)
-	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	buffer = explainByItems(buffer, lt.ByItems)
+	fmt.Fprintf(buffer, ", offset:%v, count:%v", lt.Offset, lt.Count)
 	return buffer.String()
 }
 

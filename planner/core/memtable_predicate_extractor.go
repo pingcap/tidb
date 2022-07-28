@@ -519,7 +519,7 @@ func (extractHelper) parseUint64(uint64Set set.StringSet) []uint64 {
 	return uint64s
 }
 
-func (extractHelper) extractCols(
+func (helper extractHelper) extractCols(
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
