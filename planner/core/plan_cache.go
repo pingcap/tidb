@@ -125,7 +125,7 @@ func getPointQueryPlan(prepared *ast.Prepared, sessVars *variable.SessionVars, s
 	err := RebuildPlan4CachedPlan(plan)
 	if err != nil {
 		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
-		return plan, names, false, nil
+		return nil, nil, false, nil
 	}
 	if metrics.ResettablePlanCacheCounterFortTest {
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
