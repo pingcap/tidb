@@ -19,6 +19,7 @@ import (
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/engine"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -68,60 +68,9 @@ type Mgr struct {
 	*utils.StoreManager
 }
 
-// StoreBehavior is the action to do in GetAllTiKVStores when a non-TiKV
-// store (e.g. TiFlash store) is found.
-type StoreBehavior uint8
-
-const (
-	// ErrorOnTiFlash causes GetAllTiKVStores to return error when the store is
-	// found to be a TiFlash node.
-	ErrorOnTiFlash StoreBehavior = 0
-	// SkipTiFlash causes GetAllTiKVStores to skip the store when it is found to
-	// be a TiFlash node.
-	SkipTiFlash StoreBehavior = 1
-	// TiFlashOnly caused GetAllTiKVStores to skip the store which is not a
-	// TiFlash node.
-	TiFlashOnly StoreBehavior = 2
-)
-
-// GetAllTiKVStores returns all TiKV stores registered to the PD client. The
-// stores must not be a tombstone and must never contain a label `engine=tiflash`.
-func GetAllTiKVStores(
-	ctx context.Context,
-	pdClient pd.Client,
-	storeBehavior StoreBehavior,
-) ([]*metapb.Store, error) {
-	// get all live stores.
-	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// filter out all stores which are TiFlash.
-	j := 0
-	for _, store := range stores {
-		isTiFlash := false
-		if engine.IsTiFlash(store) {
-			if storeBehavior == SkipTiFlash {
-				continue
-			} else if storeBehavior == ErrorOnTiFlash {
-				return nil, errors.Annotatef(berrors.ErrPDInvalidResponse,
-					"cannot restore to a cluster with active TiFlash stores (store %d at %s)", store.Id, store.Address)
-			}
-			isTiFlash = true
-		}
-		if !isTiFlash && storeBehavior == TiFlashOnly {
-			continue
-		}
-		stores[j] = store
-		j++
-	}
-	return stores[:j], nil
-}
-
 func GetAllTiKVStoresWithRetry(ctx context.Context,
 	pdClient pd.Client,
-	storeBehavior StoreBehavior,
+	storeBehavior util.StoreBehavior,
 ) ([]*metapb.Store, error) {
 	stores := make([]*metapb.Store, 0)
 	var err error
@@ -129,7 +78,7 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 	errRetry := utils.WithRetry(
 		ctx,
 		func() error {
-			stores, err = GetAllTiKVStores(ctx, pdClient, storeBehavior)
+			stores, err = util.GetAllTiKVStores(ctx, pdClient, storeBehavior)
 			failpoint.Inject("hint-GetAllTiKVStores-error", func(val failpoint.Value) {
 				if val.(bool) {
 					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
@@ -154,9 +103,9 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 
 func checkStoresAlive(ctx context.Context,
 	pdclient pd.Client,
-	storeBehavior StoreBehavior) error {
+	storeBehavior util.StoreBehavior) error {
 	// Check live tikv.
-	stores, err := GetAllTiKVStores(ctx, pdclient, storeBehavior)
+	stores, err := util.GetAllTiKVStores(ctx, pdclient, storeBehavior)
 	if err != nil {
 		log.Error("fail to get store", zap.Error(err))
 		return errors.Trace(err)
@@ -184,7 +133,7 @@ func NewMgr(
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
 	keepalive keepalive.ClientParameters,
-	storeBehavior StoreBehavior,
+	storeBehavior util.StoreBehavior,
 	checkRequirements bool,
 	needDomain bool,
 	versionCheckerType VersionCheckerType,
@@ -368,7 +317,7 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Cli
 
 // GetConfigFromTiKV get configs from all alive tikv stores.
 func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func(*http.Response) error) error {
-	allStores, err := GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), SkipTiFlash)
+	allStores, err := GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
