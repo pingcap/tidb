@@ -65,6 +65,13 @@ func (idx *Index) dropCMS() {
 	idx.evictedStatus = onlyCmsEvicted
 }
 
+func (idx *Index) dropHist() {
+	idx.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
+	idx.Histogram.Buckets = make([]Bucket, 0)
+	idx.Histogram.scalars = make([]scalar, 0)
+	idx.evictedStatus = allEvicted
+}
+
 func (idx *Index) dropTopN() {
 	originTopNNum := int64(idx.TopN.Num())
 	idx.TopN = nil
