@@ -4833,8 +4833,16 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
-	saveCte := make([]*cteInfo, len(b.outerCTEs))
-	copy(saveCte, b.outerCTEs)
+
+	//For the case that views appear in CTE queries,
+	//we need to save the CTEs after the views are established.
+	var saveCte []*cteInfo
+	if b.outerCTEs != nil {
+		saveCte = make([]*cteInfo, len(b.outerCTEs))
+		copy(saveCte, b.outerCTEs)
+	} else {
+		saveCte = nil
+	}
 	o := b.buildingCTE
 	b.buildingCTE = false
 	defer func() {
@@ -4843,6 +4851,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		}
 		b.buildingCTE = o
 	}()
+
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&

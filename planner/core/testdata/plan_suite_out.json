@@ -1619,6 +1619,14 @@
     "Warning": null
   },
   {
+    "SQL": "with cte as (select /*+ MERGE() */ * from v) select * from cte",
+    "Plan": [
+      "TableReader 7.00 root  data:TableFullScan",
+      "└─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
+    ],
+    "Warning": null
+  },
+  {
     "SQL": "WITH cte1 AS (SELECT /*+ MERGE()*/ a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
     "Plan": [
       "HashJoin 7.00 root  inner join, equal:[eq(test.tc.a, test.te.c)]",
