@@ -33,10 +33,10 @@ type ForeignKeyTrigger struct {
 	Tp         FKTriggerType
 	FK         *model.FKInfo
 	ReferredFK *model.ReferredFKInfo
-	OnInsert   *OnInsertFKInfo
+	OnInsert   *OnInsertOrUpdateChildTableFKInfo
 }
 
-type OnInsertFKInfo struct {
+type OnInsertOrUpdateChildTableFKInfo struct {
 	DBName     string
 	TblName    string
 	FK         *model.FKInfo
@@ -46,9 +46,9 @@ type OnInsertFKInfo struct {
 type FKTriggerType int8
 
 const (
-	FKTriggerOnDelete FKTriggerType = 1
-	FKTriggerOnUpdate FKTriggerType = 2
-	FKTriggerOnInsert FKTriggerType = 3
+	FKTriggerOnDelete                   FKTriggerType = 1
+	FKTriggerOnUpdate                   FKTriggerType = 2
+	FKTriggerOnInsertOrUpdateChildTable FKTriggerType = 3
 )
 
 func buildOnDeleteForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) map[int64][]*ForeignKeyTrigger {
@@ -90,11 +90,14 @@ func buildOnUpdateForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSc
 			fkTrigger := buildForeignKeyTriggerForReferredFK(is, referredFK, FKTriggerOnUpdate)
 			fkTriggers[tid] = append(fkTriggers[tid], fkTrigger)
 		}
+		// todo: fix me
+		triggers := buildOnInsertOrUpdateChildForeignKeyTrigger(ctx, is, "", tbl.Meta())
+		fkTriggers[tid] = append(fkTriggers[tid], triggers...)
 	}
 	return fkTriggers
 }
 
-func buildOnInsertForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) []*ForeignKeyTrigger {
+func buildOnInsertOrUpdateChildForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) []*ForeignKeyTrigger {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
@@ -106,9 +109,10 @@ func buildOnInsertForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSc
 			continue
 		}
 		fkTriggers = append(fkTriggers, &ForeignKeyTrigger{
-			Tp: FKTriggerOnInsert,
+			Tp: FKTriggerOnInsertOrUpdateChildTable,
 			FK: fk,
-			OnInsert: &OnInsertFKInfo{
+			OnInsert: &OnInsertOrUpdateChildTableFKInfo{
+				FK:         fk,
 				DBName:     dbName,
 				TblName:    tblInfo.Name.L,
 				ReferTable: referTable,
@@ -175,7 +179,7 @@ func (b *PlanBuilder) BuildOnDeleteFKTriggerPlan(ctx context.Context, referredFK
 	return nil, nil
 }
 
-func (b *PlanBuilder) BuildOnInsertFKTriggerPlan(info *OnInsertFKInfo) (FKTriggerPlan, error) {
+func (b *PlanBuilder) BuildOnInsertFKTriggerPlan(info *OnInsertOrUpdateChildTableFKInfo) (FKTriggerPlan, error) {
 	fk := info.FK
 	failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(info.DBName, info.TblName))
 	return buildFKCheckPlan(b.ctx, info.ReferTable, fk, fk.RefCols, fk.Cols, true, failedErr)

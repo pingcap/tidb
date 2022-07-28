@@ -209,12 +209,18 @@ func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(sc *stmtctx.StatementConte
 
 func (fkt *ForeignKeyTriggerExec) updateRowNeedToTrigger(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
 	oldVals, err := fetchFKValues(oldRow, fkt.colsOffsets)
-	if err != nil || hasNullValue(oldVals) {
+	if err != nil {
 		return err
+	}
+	if fkt.fkTrigger.Tp != plannercore.FKTriggerOnInsertOrUpdateChildTable && hasNullValue(oldVals) {
+		return nil
 	}
 	newVals, err := fetchFKValues(newRow, fkt.colsOffsets)
 	if err != nil {
 		return err
+	}
+	if fkt.fkTrigger.Tp == plannercore.FKTriggerOnInsertOrUpdateChildTable && hasNullValue(newVals) {
+		return nil
 	}
 	keyBuf, err := codec.EncodeKey(sc, nil, newVals...)
 	if err != nil {
@@ -291,8 +297,15 @@ func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange(fkTriggerPlan plannercor
 	}
 	valsList := make([][]types.Datum, 0, len(fkt.fkValues))
 	valsList = append(valsList, fkt.fkValues...)
-	for _, couple := range fkt.fkUpdatedValuesMap {
-		valsList = append(valsList, couple.oldValsList...)
+	switch fkt.fkTrigger.Tp {
+	case plannercore.FKTriggerOnInsertOrUpdateChildTable:
+		for _, couple := range fkt.fkUpdatedValuesMap {
+			valsList = append(valsList, couple.newVals)
+		}
+	default:
+		for _, couple := range fkt.fkUpdatedValuesMap {
+			valsList = append(valsList, couple.oldValsList...)
+		}
 	}
 	return true, fkTriggerPlan.SetRangeForSelectPlan(valsList)
 }
@@ -304,7 +317,7 @@ func (fkt *ForeignKeyTriggerExec) buildFKTriggerPlan(ctx context.Context) (plann
 		return planBuilder.BuildOnDeleteFKTriggerPlan(ctx, fkt.fkTrigger.ReferredFK)
 	case plannercore.FKTriggerOnUpdate:
 		return planBuilder.BuildOnUpdateFKTriggerPlan(ctx, fkt.fkTrigger.ReferredFK)
-	case plannercore.FKTriggerOnInsert:
+	case plannercore.FKTriggerOnInsertOrUpdateChildTable:
 		return planBuilder.BuildOnInsertFKTriggerPlan(fkt.fkTrigger.OnInsert)
 	default:
 		return nil, fmt.Errorf("unknown foreign key trigger type %v", fkt.fkTrigger.Tp)
