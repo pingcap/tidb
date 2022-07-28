@@ -1147,7 +1147,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-
 	// ReverseUTF8
 	function, err = NewFunction(mock.NewContext(), ast.Reverse, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
@@ -1158,12 +1157,10 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-
 	// space
 	function, err = NewFunction(mock.NewContext(), ast.Space, types.NewFieldType(mysql.TypeLonglong), int32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))

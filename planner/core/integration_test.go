@@ -3324,7 +3324,6 @@ func TestReversePushDownToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select reverse(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
 
-
 func TestSpacePushDownToTiFlash(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -3359,7 +3358,6 @@ func TestSpacePushDownToTiFlash(t *testing.T) {
 
 	tk.MustQuery("explain select space(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
-
 
 func TestExplainAnalyzePointGet(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
