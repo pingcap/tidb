@@ -195,7 +195,7 @@ func newAddIndexWorkerLit(sessCtx sessionctx.Context, worker *worker, id int, t 
 	}, err
 }
 
-// BackfillDataInTxn will backfill table index by lightning. 
+// BackfillDataInTxn will backfill table index by lightning.
 func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		if val.(bool) {
@@ -225,6 +225,11 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 		}
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
+
+		err = w.batchCheckUniqueKey(txn, idxRecords)
+		if err != nil {
+			return errors.Trace(err)
+		}
 
 		for _, idxRecord := range idxRecords {
 			taskCtx.scanCount++
