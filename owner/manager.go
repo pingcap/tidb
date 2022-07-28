@@ -50,6 +50,8 @@ type Manager interface {
 	CampaignOwner() error
 	// ResignOwner lets the owner start a new election.
 	ResignOwner(ctx context.Context) error
+	// Ctx returns the context of the manager.
+	Ctx() context.Context
 	// Cancel cancels this etcd ownerManager.
 	Cancel()
 	// RequireOwner requires the ownerManager is owner.
@@ -113,6 +115,11 @@ func (m *ownerManager) IsOwner() bool {
 	return atomic.LoadPointer(&m.elec) != unsafe.Pointer(nil)
 }
 
+// Ctx implements Manager.Ctx interface.
+func (m *ownerManager) Ctx() context.Context {
+	return m.ctx
+}
+
 // Cancel implements Manager.Cancel interface.
 func (m *ownerManager) Cancel() {
 	m.cancel()
@@ -149,12 +156,12 @@ func setManagerSessionTTL() error {
 func (m *ownerManager) CampaignOwner() error {
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
 	logutil.BgLogger().Info("start campaign owner", zap.String("ownerInfo", logPrefix))
-	session, err := util2.NewSession(m.ctx, logPrefix, m.etcdCli, util2.NewSessionDefaultRetryCnt, ManagerSessionTTL)
+	etcdSession, err := util2.NewSession(m.ctx, logPrefix, m.etcdCli, util2.NewSessionDefaultRetryCnt, ManagerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	m.wg.Add(1)
-	go m.campaignLoop(session)
+	go m.campaignLoop(etcdSession)
 	return nil
 }
 

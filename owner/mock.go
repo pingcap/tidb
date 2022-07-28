@@ -29,6 +29,7 @@ var _ Manager = &mockManager{}
 type mockManager struct {
 	owner       int32
 	id          string // id is the ID of manager.
+	ctx         context.Context
 	cancel      context.CancelFunc
 	beOwnerHook func()
 }
@@ -40,6 +41,11 @@ func NewMockManager(ctx context.Context, id string) Manager {
 		id:     id,
 		cancel: cancelFunc,
 	}
+}
+
+// Ctx implements Manager.Ctx interface
+func (m *mockManager) Ctx() context.Context {
+	return m.ctx
 }
 
 // ID implements Manager.ID interface.
