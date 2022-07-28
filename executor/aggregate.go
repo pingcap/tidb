@@ -565,9 +565,22 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 
 	for _, item := range groupByItems {
 		tp := item.GetType()
+
 		buf, err := expression.GetColumn(tp.EvalType(), numRows)
 		if err != nil {
 			return nil, err
+		}
+
+		// In strict sql mode like ‘STRICT_TRANS_TABLES’，can not insert an invalid enum value like 0.
+		// While in sql mode like '', can insert an invalid enum value like 0,
+		// then the enum value 0 will have the enum name '', which maybe conflict with user defined enum ''.
+		// Ref to issue #26885.
+		// This check is used to handle invalid enum name same with user defined enum name.
+		// Use enum value as groupKey instead of enum name.
+		if item.GetType().GetType() == mysql.TypeEnum {
+			newTp := *tp
+			newTp.AddFlag(mysql.EnumSetAsIntFlag)
+			tp = &newTp
 		}
 
 		if err := expression.EvalExpr(ctx, item, tp.EvalType(), input, buf); err != nil {
@@ -580,6 +593,7 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			newTp.SetFlen(0)
 			tp = &newTp
 		}
+
 		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
 		if err != nil {
 			expression.PutColumn(buf)
@@ -1689,7 +1703,7 @@ func (e *vecGroupChecker) getFirstAndLastRowDatum(item expression.Expression, ch
 			lastRowDatum.SetNull()
 		}
 	default:
-		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
+		err = fmt.Errorf("invalid eval type %v", eType)
 		return err
 	}
 
@@ -1839,7 +1853,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousIsNull = isNull
 		}
 	default:
-		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
+		err = fmt.Errorf("invalid eval type %v", eType)
 	}
 	if err != nil {
 		return err

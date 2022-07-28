@@ -17,13 +17,14 @@ package task
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
@@ -286,7 +288,7 @@ type streamMgr struct {
 
 func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true)
+		cfg.CheckRequirements, true, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -305,10 +307,6 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if backend.GetS3() == nil {
-			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
-				"Only support s3 storage currently.")
 		}
 
 		opts := storage.ExternalStorageOptions{
@@ -402,33 +400,6 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 	return rs, nil
 }
 
-// checkRequirements will check some requirements before stream starts.
-func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
-	type backupStream struct {
-		EnableStreaming bool `json:"enable"`
-	}
-	type config struct {
-		BackupStream backupStream `json:"log-backup"`
-	}
-
-	supportBackupStream := true
-	hasTiKV := false
-	err := s.mgr.GetConfigFromTiKV(ctx, s.httpCli, func(resp *http.Response) error {
-		hasTiKV = true
-		c := &config{}
-		e := json.NewDecoder(resp.Body).Decode(c)
-		if e != nil {
-			return e
-		}
-		supportBackupStream = supportBackupStream && c.BackupStream.EnableStreaming
-		return nil
-	})
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return hasTiKV && supportBackupStream, err
-}
-
 func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
@@ -504,7 +475,12 @@ func RunStreamStart(
 	}
 	defer streamMgr.close()
 
-	supportStream, err := streamMgr.checkRequirements(ctx)
+	se, err := g.CreateSession(streamMgr.mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	supportStream, err := utils.IsLogBackupEnabled(execCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -597,10 +573,12 @@ func RunStreamMetadata(
 		return errors.Trace(err)
 	}
 
+	logMinDate := stream.FormatDate(oracle.GetTimeFromTS(logMinTS))
+	logMaxDate := stream.FormatDate(oracle.GetTimeFromTS(logMaxTS))
 	summary.Log(cmdName, zap.Uint64("log-min-ts", logMinTS),
-		zap.String("log-min-date", oracle.GetTimeFromTS(logMinTS).String()),
+		zap.String("log-min-date", logMinDate),
 		zap.Uint64("log-max-ts", logMaxTS),
-		zap.String("log-max-date", oracle.GetTimeFromTS(logMaxTS).String()),
+		zap.String("log-max-date", logMaxDate),
 	)
 	return nil
 }
@@ -787,7 +765,7 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, false)
+		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return err
 	}
@@ -833,7 +811,7 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 		printer = stream.PrintTaskWithJSON(console)
 	}
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, false)
+		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, err
 	}
@@ -900,13 +878,8 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 			return nil
 		}
 	}
-	if cfg.Until > sp && !cfg.DryRun {
-		if err := restore.SetTSToFile(
-			ctx, storage, cfg.Until, restore.TruncateSafePointFileName); err != nil {
-			return err
-		}
-	}
-	readMetaDone := console.StartTask("Reading Metadata... ")
+
+	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
 		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
 			log.Info("Updating metadata.", zap.String("file", path),
@@ -941,36 +914,47 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return nil
 	}
 
-	removed := metas.RemoveDataBefore(shiftUntilTS)
-
-	// remove metadata
-	removeMetaDone := console.StartTask("Removing metadata... ")
-	if !cfg.DryRun {
-		if err := metas.DoWriteBack(ctx, storage); err != nil {
+	if cfg.Until > sp && !cfg.DryRun {
+		if err := restore.SetTSToFile(
+			ctx, storage, cfg.Until, restore.TruncateSafePointFileName); err != nil {
 			return err
 		}
 	}
-	removeMetaDone()
+
+	removed := metas.RemoveDataBefore(shiftUntilTS)
 
 	// remove log
-	clearDataFileDone := console.StartTask(
-		fmt.Sprintf("Clearing data files done. kv-count = %v, total-size = %v", kvCount, totalSize))
+	clearDataFileDone := console.ShowTask(
+		"Clearing data files... ", glue.WithTimeCost(),
+		glue.WithConstExtraField("kv-count", kvCount),
+		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
+	)
 	worker := utils.NewWorkerPool(128, "delete files")
 	wg := new(sync.WaitGroup)
 	for _, f := range removed {
 		if !cfg.DryRun {
 			wg.Add(1)
+			finalFile := f
 			worker.Apply(func() {
 				defer wg.Done()
-				if err := storage.DeleteFile(ctx, f.Path); err != nil {
-					log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-					console.Print("\n"+em(f.Path), "not deleted, you may clear it manually:", warn(err))
+				if err := storage.DeleteFile(ctx, finalFile.Path); err != nil {
+					log.Warn("File not deleted.", zap.String("path", finalFile.Path), logutil.ShortError(err))
+					console.Print("\n"+em(finalFile.Path), "not deleted, you may clear it manually:", warn(err))
 				}
 			})
 		}
 	}
 	wg.Wait()
 	clearDataFileDone()
+
+	// remove metadata
+	removeMetaDone := console.ShowTask("Removing metadata... ", glue.WithTimeCost())
+	if !cfg.DryRun {
+		if err := metas.DoWriteBack(ctx, storage); err != nil {
+			return err
+		}
+	}
+	removeMetaDone()
 	return nil
 }
 
@@ -1075,7 +1059,7 @@ func restoreStream(
 	}
 
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true)
+		cfg.CheckRequirements, true, conn.StreamVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1286,13 +1270,32 @@ func getLogRange(
 	logMinTS := mathutil.Max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
-	logMaxTS, err := getGlobalResolvedTS(ctx, s)
+	logMaxTS, err := getGlobalCheckpointFromStorage(ctx, s)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	logMaxTS = mathutil.Max(logMinTS, logMaxTS)
 
 	return logMinTS, logMaxTS, nil
+}
+
+func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStorage) (uint64, error) {
+	var globalCheckPointTS uint64 = 0
+	opt := storage.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
+	err := s.WalkDir(ctx, &opt, func(path string, size int64) error {
+		if !strings.HasSuffix(path, ".ts") {
+			return nil
+		}
+
+		buff, err := s.ReadFile(ctx, path)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ts := binary.LittleEndian.Uint64(buff)
+		globalCheckPointTS = mathutil.Max(ts, globalCheckPointTS)
+		return nil
+	})
+	return globalCheckPointTS, errors.Trace(err)
 }
 
 // getFullBackupTS gets the snapshot-ts of full bakcup
@@ -1532,7 +1535,7 @@ func buildPauseSafePointName(taskName string) string {
 
 func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig) error {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true)
+		cfg.CheckRequirements, true, conn.StreamVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}

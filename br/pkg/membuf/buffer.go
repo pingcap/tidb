@@ -115,6 +115,7 @@ func (p *Pool) NewBuffer() *Buffer {
 	return &Buffer{pool: p, bufs: make([][]byte, 0, 128), curBufIdx: -1}
 }
 
+// Destroy frees all buffers.
 func (p *Pool) Destroy() {
 	close(p.blockCache)
 	for b := range p.blockCache {

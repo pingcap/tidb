@@ -36,11 +36,17 @@ import (
 const (
 	streamBackupMetaPrefix = "v1/backupmeta"
 
+	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
+
 	metaDataWorkerPoolSize = 128
 )
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
+}
+
+func GetStreamBackupGlobalCheckpointPrefix() string {
+	return streamBackupGlobalCheckpointPrefix
 }
 
 // appendTableObserveRanges builds key ranges corresponding to `tblIDS`.
@@ -173,7 +179,7 @@ func FastUnmarshalMetaData(
 			m := &backuppb.Metadata{}
 			err = m.Unmarshal(b)
 			if err != nil {
-				if !strings.HasSuffix(path, ".meta") {
+				if !strings.HasSuffix(readPath, ".meta") {
 					return nil
 				} else {
 					return err

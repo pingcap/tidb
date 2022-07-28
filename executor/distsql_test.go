@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -37,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/paging"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -476,4 +479,105 @@ func TestCoprocessorPagingSize(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select * from t_paging").Rows()
 	rpcNum = getRPCNumFromExplain(rows)
 	require.Equal(t, rpcNum, uint64(1))
+}
+
+func TestAdaptiveClosestRead(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	// the avg row size is more accurate in check_rpc mode when unistre is used.
+	// See: https://github.com/pingcap/tidb/issues/31744#issuecomment-1016309883
+	tk.MustExec("set @@tidb_enable_chunk_rpc = '1'")
+
+	readCounter := func(counter prometheus.Counter) float64 {
+		var metric dto.Metric
+		require.Nil(t, counter.Write(&metric))
+		return metric.Counter.GetValue()
+	}
+
+	checkMetrics := func(q string, hit, miss int) {
+		beforeHit := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("hit"))
+		beforeMiss := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("miss"))
+		tk.MustQuery(q)
+		afterHit := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("hit"))
+		afterMiss := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("miss"))
+		require.Equal(t, hit, int(afterHit-beforeHit), "exec query '%s' check hit failed", q)
+		require.Equal(t, miss, int(afterMiss-beforeMiss), "exec query '%s' check miss failed", q)
+	}
+
+	tk.MustExec("create table t(id int primary key, s varchar(8), p varchar(16));")
+	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003');")
+	tk.MustExec("analyze table t;")
+
+	tk.MustExec("set @@tidb_partition_prune_mode  ='static';")
+	tk.MustExec("set tidb_replica_read = 'closest-adaptive';")
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 25;")
+
+	// table reader
+	// estimate cost is 19
+	checkMetrics("select s from t where id >= 1 and id < 2;", 0, 1)
+	// estimate cost is 37
+	checkMetrics("select * from t where id >= 1 and id < 2;", 1, 0)
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 50;")
+	checkMetrics("select * from t where id >= 1 and id < 2;", 0, 1)
+	// estimate cost is 74
+	checkMetrics("select * from t where id >= 1 and id <= 2;", 1, 0)
+
+	partitionDef := "PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (3), PARTITION p3 VALUES LESS THAN MAXVALUE);"
+
+	// test TableReader with partition
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, s varchar(8), p varchar(16)) " + partitionDef)
+	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003'), (4, '00000044', '0000000000000004');")
+	tk.MustExec("analyze table t;")
+	// estimate cost is 38
+	checkMetrics("select s from t where id >= 1 and id < 3;", 1, 0)
+	// estimate cost is 39 with 2 cop request
+	checkMetrics("select s from t where id >= 2 and id < 4;", 0, 2)
+
+	// index reader
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int, s varchar(8), p varchar(8), key `idx_s_p`(`s`, `p`));")
+	tk.MustExec("insert into t values (1, 'test1000', '11111111'), (2, 'test2000', '11111111');")
+	tk.MustExec("analyze table t;")
+	// avg row size = 27.91
+	checkMetrics("select p from t where s >= 'test' and s < 'test11'", 0, 1)
+	checkMetrics("select p from t where s >= 'test' and s < 'test22'", 1, 0)
+
+	// index reader with partitions
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (v int, id int, p varchar(8), key `idx_id_p`(`id`, `p`)) " + partitionDef)
+	tk.MustExec("insert into t values (1, 1, '11111111'), (2, 2, '22222222'), (3, 3, '33333333'), (4, 4, '44444444');")
+	tk.MustExec("analyze table t;")
+	// avg row size = 19
+	checkMetrics("select p from t where id >= 1 and id < 3", 1, 0)
+	checkMetrics("select p from t where id >= 2 and id < 4", 0, 2)
+	checkMetrics("select p from t where id >= 1 and id < 4", 1, 1)
+
+	// index lookup reader
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int, s varchar(8), p varchar(50), key `idx_s`(`s`));")
+	str := "this_is_a_string_with_length_of_50________________"
+	tk.MustExec(fmt.Sprintf("insert into t values (1, 'test1000', '%s'), (2, 'test2000', '%s');", str, str))
+	tk.MustExec("analyze table t;")
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 80;")
+	// IndexReader cost is 22, TableReader cost (1 row) is 67
+	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test11'", 0, 2)
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 100;")
+	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test22'", 1, 1)
+
+	// index merge reader
+	tk.MustExec("drop table if exists t;")
+	// use int field to avoid the planer estimation with big random fluctuation.
+	tk.MustExec("create table t (id int, v bigint not null, s1 int not null, s2 int not null, key `idx_v_s1`(`s1`, `v`), key `idx_s2`(`s2`));")
+	tk.MustExec("insert into t values (1, 1,  1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
+	tk.MustExec("analyze table t;")
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
+	// 2 IndexScan with cost 19/56, 2 TableReader with cost 32.5/65.
+	checkMetrics("select/* +USE_INDEX_MERGE(t) */ id from t use index(`idx_v_s1`) use index(idx_s2) where (s1 < 3 and v > 0) or s2 = 3;", 3, 1)
 }

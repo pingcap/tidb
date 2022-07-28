@@ -42,7 +42,7 @@ const (
 	LocalInFileHeader byte = 0xfb
 )
 
-// Protocol Features
+// AuthSwitchRequest is a protocol feature.
 const AuthSwitchRequest byte = 0xfe
 
 // Server information.
@@ -231,6 +231,7 @@ const MaxTypeSetMembers = 64
 
 // PWDHashLen is the length of mysql_native_password's hash.
 const PWDHashLen = 40 // excluding the '*'
+// SHAPWDHashLen is the length of sha256_password's hash.
 const SHAPWDHashLen = 70
 
 // Command2Str is the command information to command name.
@@ -595,4 +596,7 @@ const (
 	PrimaryKeyName = "PRIMARY"
 	// DefaultDecimal defines the default decimal value when the value out of range.
 	DefaultDecimal = "99999999999999999999999999999999999999999999999999999999999999999"
+	// PartitionCountLimit is limit of the number of partitions in a table.
+	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
+	PartitionCountLimit = 8192
 )
