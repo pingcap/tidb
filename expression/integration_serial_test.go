@@ -4398,7 +4398,7 @@ func TestIssue20128(t *testing.T) {
 }
 
 func TestCrossDCQuery(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)

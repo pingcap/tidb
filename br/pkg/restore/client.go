@@ -25,13 +25,14 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
-	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -76,7 +77,7 @@ const (
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client
-	toolClient    SplitClient
+	toolClient    split.SplitClient
 	fileImporter  FileImporter
 	rawKVClient   *RawKVBatchClient
 	workerPool    *utils.WorkerPool
@@ -174,7 +175,7 @@ func NewRestoreClient(
 ) *Client {
 	return &Client{
 		pdClient:           pdClient,
-		toolClient:         NewSplitClient(pdClient, tlsConf, isRawKv),
+		toolClient:         split.NewSplitClient(pdClient, tlsConf, isRawKv),
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
@@ -335,7 +336,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 }
 
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
-	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
+	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode)
 }
@@ -989,7 +990,7 @@ func (rc *Client) ResetSpeedLimit(ctx context.Context) error {
 
 func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 	if !rc.hasSpeedLimited {
-		stores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.SkipTiFlash)
+		stores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.SkipTiFlash)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1203,7 +1204,7 @@ func (rc *Client) SwitchToNormalMode(ctx context.Context) error {
 }
 
 func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMode) error {
-	stores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.SkipTiFlash)
+	stores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1635,7 +1636,7 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	tables []*metautil.Table,
 	skipTiflash bool,
 ) error {
-	tiFlashStores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.TiFlashOnly)
+	tiFlashStores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.TiFlashOnly)
 	if err != nil {
 		return errors.Trace(err)
 	}

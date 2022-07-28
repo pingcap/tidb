@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -424,11 +424,11 @@ func TestLocalWriterWithIngestUnsort(t *testing.T) {
 }
 
 type mockSplitClient struct {
-	restore.SplitClient
+	split.SplitClient
 }
 
-func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*restore.RegionInfo, error) {
-	return &restore.RegionInfo{
+func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
+	return &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
 			Id:       1,
@@ -451,7 +451,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	region := &restore.RegionInfo{
+	region := &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
 			Id:       1,
@@ -512,6 +512,15 @@ func TestIsIngestRetryable(t *testing.T) {
 	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryNone, retryType)
 	require.EqualError(t, err, "non-retryable error: unknown error")
+
+	resp.Error = &errorpb.Error{
+		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
+			Reason: "test",
+		},
+	}
+	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryWrite, retryType)
+	require.Error(t, err)
 }
 
 type testIngester struct{}
