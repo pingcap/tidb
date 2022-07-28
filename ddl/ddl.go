@@ -646,34 +646,32 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
+	d.ownerManager.SetBeOwnerHook(func() {
+		var err error
+		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
+		if err != nil {
+			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
+		}
+	})
+
+	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+
+	d.prepareWorkers4ConcurrencyDDL()
+	d.prepareWorkers4legacyDDL()
+
+	go d.schemaSyncer.StartCleanWork()
+	if config.TableLockEnabled() {
+		d.wg.Add(1)
+		go d.startCleanDeadTableLock()
+	}
+	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 
 	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
-		d.ownerManager.SetBeOwnerHook(func() {
-			var err error
-			d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
-			if err != nil {
-				logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
-			}
-		})
-
-		err := d.ownerManager.CampaignOwner()
-		if err != nil {
-			return errors.Trace(err)
+		if err := d.EnableDDL(); err != nil {
+			return err
 		}
-
-		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
-
-		d.prepareWorkers4ConcurrencyDDL()
-		d.prepareWorkers4legacyDDL()
-
-		go d.schemaSyncer.StartCleanWork()
-		if config.TableLockEnabled() {
-			d.wg.Add(1)
-			go d.startCleanDeadTableLock()
-		}
-		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 
 	variable.RegisterStatistics(d)
