@@ -2393,7 +2393,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			if !versionIsSame {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("use analyze version 1 on table `%s` "+
 					"because this table already has version 1 statistics and query feedback is also enabled. "+
-					"If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file", tbl.Name))
+					"If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file.", tbl.Name))
 			}
 		}
 		if version == statistics.Version2 {
