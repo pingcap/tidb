@@ -657,9 +657,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err := d.waitOwner(d.ctx); err != nil {
-			return errors.Trace(err)
-		}
 
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 

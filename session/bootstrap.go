@@ -791,11 +791,9 @@ func upgrade(s Session) {
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
 	if ver < version92 && !domain.GetDomain(s).DDL().OwnerManager().IsOwner() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		if err := waitOwner(ctx, domain.GetDomain(s)); err != nil {
+		if err := waitOwner(context.Background(), domain.GetDomain(s)); err != nil {
 			logutil.BgLogger().Fatal("[Upgrade] upgrade failed", zap.Error(err))
 		}
-		cancel()
 		// use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
 		// overwrite variable EnableConcurrentDDL.
 		variable.DDLForce2Queue.Store(true)
@@ -840,6 +838,7 @@ func upgrade(s Session) {
 func waitOwner(ctx context.Context, dom *domain.Domain) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	logutil.BgLogger().Info("Waiting for the DDL owner to be elected in the cluster")
 	for {
 		select {
 		case <-ctx.Done():
@@ -847,7 +846,6 @@ func waitOwner(ctx context.Context, dom *domain.Domain) error {
 		case <-ticker.C:
 			_, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
 			if err == concurrency.ErrElectionNoLeader {
-				logutil.BgLogger().Warn("No DDL owner in the cluster, wait and check again")
 				continue
 			}
 			return err
