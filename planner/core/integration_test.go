@@ -6834,7 +6834,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	}
 
 	// tiflash_fine_grained_shuffle_stream_count should be same with tidb_max_tiflash_threads.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
 	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
 	rows := tk.MustQuery(sql).Rows()
 	streamCount := getStreamCountFromExplain(rows)
@@ -6842,7 +6842,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	require.Equal(t, uint64(10), streamCount[0])
 
 	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is -1.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
 	tk.MustExec("set @@tidb_max_tiflash_threads = -1")
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
@@ -6850,15 +6850,15 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
 
 	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is 0.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
 	tk.MustExec("set @@tidb_max_tiflash_threads = 0")
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
 	// require.Equal(t, len(streamCount), 1)
 	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
 
-	// Disabled when tiflash_fine_grained_shuffle_stream_count is 0.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
+	// Disabled when tiflash_fine_grained_shuffle_stream_count is -1.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
 	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
