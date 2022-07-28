@@ -93,7 +93,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 
 // getParamValue get real values for "?" in PREPARE statements
 func getParamValue(sctx sessionctx.Context, isBinProtocol bool, binProtoVars []types.Datum,
-	txtProtoVars []expression.Expression) (int, []byte, []*types.FieldType) {
+	txtProtoVars []expression.Expression) (varsNum int, binVarTypes []byte, txtVarTypes []*types.FieldType) {
 	var varsNum int
 	var binVarTypes []byte
 	var txtVarTypes []*types.FieldType
