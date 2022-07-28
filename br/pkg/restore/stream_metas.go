@@ -254,10 +254,10 @@ func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint
 
 	for _, d := range m.Files {
 		if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
-			return 0, false
+			continue
 		}
 		if d.MinTs > restoreTS || d.MaxTs < startTS {
-			return 0, false
+			continue
 		}
 		if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
 			isExist = true
