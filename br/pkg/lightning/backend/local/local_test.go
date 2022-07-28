@@ -512,6 +512,15 @@ func TestIsIngestRetryable(t *testing.T) {
 	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryNone, retryType)
 	require.EqualError(t, err, "non-retryable error: unknown error")
+
+	resp.Error = &errorpb.Error{
+		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
+			Reason: "test",
+		},
+	}
+	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryWrite, retryType)
+	require.Error(t, err)
 }
 
 type testIngester struct{}

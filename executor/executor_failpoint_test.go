@@ -405,6 +405,8 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
