@@ -173,7 +173,7 @@ func (fkc *ForeignKeyCheckExec) checkIndexKeyExistInReferTable(snap kv.Snapshot,
 type ForeignKeyTriggerExec struct {
 	b *executorBuilder
 
-	tp          plannercore.FKTriggerType
+	fkTrigger   plannercore.ForeignKeyTrigger
 	colsOffsets []int
 	fkValues    [][]types.Datum
 	fkValuesSet set.StringSet
@@ -272,8 +272,8 @@ func (fkt *ForeignKeyTriggerExec) isNeedTrigger() bool {
 	return len(fkt.fkValues) > 0 || len(fkt.fkUpdatedValuesMap) > 0
 }
 
-func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() (bool, error) {
-	switch p := fkt.fkTriggerPlan.(type) {
+func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange(fkTriggerPlan plannercore.FKTriggerPlan) (bool, error) {
+	switch p := fkTriggerPlan.(type) {
 	case *plannercore.FKOnUpdateCascadePlan:
 		for key, couple := range fkt.fkUpdatedValuesMap {
 			if fkt.buildFKValues.Exist(key) {
@@ -293,25 +293,42 @@ func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() (bool, error) {
 	for _, couple := range fkt.fkUpdatedValuesMap {
 		valsList = append(valsList, couple.oldValsList...)
 	}
-	return true, fkt.fkTriggerPlan.SetRangeForSelectPlan(valsList)
+	return true, fkTriggerPlan.SetRangeForSelectPlan(valsList)
 }
 
-func (fkt *ForeignKeyTriggerExec) buildFKTriggerPlan() (Executor, error) {
-	plannercore.NewPlanBuilder().Init(fkt.b.ctx, fkt.b.is, &hint.BlockHintProcessor{})
-	switch fkt.tp {
+func (fkt *ForeignKeyTriggerExec) buildFKTriggerPlan(ctx context.Context) (plannercore.FKTriggerPlan, error) {
+	planBuilder, _ := plannercore.NewPlanBuilder().Init(fkt.b.ctx, fkt.b.is, &hint.BlockHintProcessor{})
+	switch fkt.fkTrigger.Tp {
 	case plannercore.FKTriggerOnDelete:
-
+		return planBuilder.BuildForeignKeyCascadeDelete(ctx, fkt.fkTrigger.ReferredFK)
 	case plannercore.FKTriggerOnUpdate:
-
+		return nil, nil
 	case plannercore.FKTriggerOnInsert:
-
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("unknown foreign key trigger type %v", fkt.tp)
 	}
 }
 
-func (fkt *ForeignKeyTriggerExec) buildExecutor() (Executor, error) {
-	return fkt.b.build(fkt.fkTriggerPlan)
+func (fkt *ForeignKeyTriggerExec) buildExecutor(ctx context.Context) (Executor, bool, error) {
+	p, err := fkt.buildFKTriggerPlan(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	done, err := fkt.buildIndexReaderRange(p)
+	if err != nil {
+		return nil, false, err
+	}
+
+	switch x := p.(type) {
+	case *plannercore.FKOnDeleteCascadePlan:
+		e := fkt.b.build(x.Delete)
+		return e, done, fkt.b.err
+	default:
+		e := fkt.b.build(p)
+		return e, done, fkt.b.err
+	}
 }
 
 func (b *executorBuilder) buildTblID2ForeignKeyTriggerExecs(tblID2Table map[int64]table.Table, tblID2FKTriggers map[int64][]plannercore.ForeignKeyTrigger) (map[int64][]*ForeignKeyTriggerExec, error) {
@@ -352,7 +369,7 @@ func (b *executorBuilder) buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fk
 	}
 	return &ForeignKeyTriggerExec{
 		b:                  b,
-		tp:                 fkTrigger.Tp,
+		fkTrigger:          fkTrigger,
 		colsOffsets:        colsOffsets,
 		fkValuesSet:        set.NewStringSet(),
 		buildFKValues:      set.NewStringSet(),

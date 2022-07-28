@@ -5953,7 +5953,7 @@ func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tb
 		var triggerPlan FKTriggerPlan
 		switch ast.ReferOptionType(fk.OnDelete) {
 		case ast.ReferOptionCascade:
-			triggerPlan, err = b.buildForeignKeyCascadeDelete(ctx, referredFK.ChildSchema, childTable, fk)
+			triggerPlan, err = b.BuildForeignKeyCascadeDelete(ctx, referredFK)
 		case ast.ReferOptionSetNull:
 			triggerPlan, err = b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
 		case ast.ReferOptionRestrict, ast.ReferOptionNoOption, ast.ReferOptionNoAction, ast.ReferOptionSetDefault:
@@ -5970,10 +5970,10 @@ func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tb
 	return triggerPlans, nil
 }
 
-func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
+func (b *PlanBuilder) BuildForeignKeyCascadeDelete(ctx context.Context, referredFK *model.ReferredFKInfo) (FKTriggerPlan, error) {
 	tn := &ast.TableName{
-		Schema: dbName,
-		Name:   tbl.Meta().Name,
+		Schema: referredFK.ChildSchema,
+		Name:   referredFK.ChildTable,
 	}
 	dsPlan, err := b.buildDataSource(ctx, tn, &model.CIStr{})
 	if err != nil {
@@ -5982,6 +5982,11 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName m
 	ds, ok := dsPlan.(*DataSource)
 	if !ok {
 		return nil, errors.Errorf("expected datasource, but got %v", dsPlan)
+	}
+
+	fk := model.FindFKInfoByName(ds.tableInfo.ForeignKeys, referredFK.ChildFKName.L)
+	if fk == nil || fk.Version == 0 {
+		return nil, errors.Errorf("should never happen")
 	}
 
 	tableReader, err := b.buildTableReaderForFK(ds, fk.Cols)
@@ -5997,7 +6002,7 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName m
 	tblID2Table := make(map[int64]table.Table)
 	tid := ds.tableInfo.ID
 	tblID2Handle[tid] = []HandleCols{ds.handleCols}
-	tblID2Table[tid] = tbl
+	tblID2Table[tid] = ds.table
 	tblID2Handle, err = resolveIndicesForTblID2Handle(tblID2Handle, tableReader.Schema())
 	if err != nil {
 		return nil, err

@@ -506,14 +506,13 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 			i = i + 1
 			continue
 		}
-		done, err := fkt.buildIndexReaderRange()
-		if err != nil {
-			return err
-		}
+		e, done, err := fkt.buildExecutor(ctx)
 		if done {
 			i = i + 1
 		}
-		e := fkt.buildExecutor()
+		if err != nil {
+			return err
+		}
 		if err := e.Open(ctx); err != nil {
 			terror.Call(e.Close)
 			return err
