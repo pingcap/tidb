@@ -19,7 +19,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -27,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -113,9 +110,8 @@ type restoreEBSMetaHelper struct {
 	cmdName string
 	cfg     *RestoreEBSConfig
 
-	externStorage storage.ExternalStorage
-	metaInfo      *config.EBSBasedBRMeta
-	mgr           *conn.Mgr
+	metaInfo *config.EBSBasedBRMeta
+	mgr      *conn.Mgr
 }
 
 // we don't call close of fields on failure, outer logic should call helper.close.
@@ -124,7 +120,6 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h.externStorage = externStorage
 
 	mgr, err := NewMgr(ctx, h.g, h.cfg.PD, h.cfg.TLS, GetKeepalive(&h.cfg.Config), h.cfg.CheckRequirements, false)
 	if err != nil {
@@ -133,7 +128,7 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 	h.mgr = mgr
 
 	// read meta from s3
-	metaInfo, err := h.getBackupMetaInfo(ctx)
+	metaInfo, err := config.NewMetaFromStorage(ctx, externStorage)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -255,38 +250,6 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		return nil, 0, errors.Trace(err)
 	}
 	return volumeIDMap, totalSize, nil
-}
-
-func (h *restoreEBSMetaHelper) getBackupMetaInfo(ctx context.Context) (*config.EBSBasedBRMeta, error) {
-	metaBytes, err := h.externStorage.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	metaInfo := &config.EBSBasedBRMeta{}
-	err = json.Unmarshal(metaBytes, metaInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err = h.checkEBSBRMeta(metaInfo); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return metaInfo, nil
-}
-
-func (h *restoreEBSMetaHelper) checkEBSBRMeta(meta *config.EBSBasedBRMeta) error {
-	if meta.ClusterInfo == nil {
-		return errors.New("no cluster info")
-	}
-	if _, err := semver.NewVersion(meta.ClusterInfo.Version); err != nil {
-		return errors.Annotatef(err, "invalid cluster version")
-	}
-	if meta.ClusterInfo.ResolvedTS == 0 {
-		return errors.New("invalid resolved ts")
-	}
-	if meta.GetStoreCount() == 0 {
-		return errors.New("tikv info is empty")
-	}
-	return nil
 }
 
 func (h *restoreEBSMetaHelper) writeOutputFile() error {
