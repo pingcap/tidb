@@ -495,3 +495,16 @@ func TestIssue35911(t *testing.T) {
 	// To be consistent with other operators, we should not aggregate the concurrency in the runtime stats.
 	require.EqualValues(t, 5, concurrency)
 }
+
+func TestIssue35105(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("set @@tidb_constraint_check_in_place=1")
+	require.Error(t, tk.ExecToErr("explain analyze insert into t values (1), (2), (3)"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
+}

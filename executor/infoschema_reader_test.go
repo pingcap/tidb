@@ -243,6 +243,11 @@ func TestDDLJobs(t *testing.T) {
 	DDLJobsTester.MustExec("set role r_priv")
 	DDLJobsTester.MustQuery("select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
 		testkit.Rows("test_ddl_jobs t"))
+
+	tk.MustExec("create table tt (a int);")
+	tk.MustExec("alter table tt add index t(a), add column b int")
+	tk.MustQuery("select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3").Check(
+		testkit.Rows("test_ddl_jobs tt alter table multi-schema change", "test_ddl_jobs tt add index /* subjob */", "test_ddl_jobs tt add column /* subjob */"))
 }
 
 func TestKeyColumnUsage(t *testing.T) {
@@ -711,4 +716,23 @@ SELECT
 ;
 `).Check(testkit.Rows("t a b"))
 	}
+}
+
+// https://github.com/pingcap/tidb/issues/36426.
+func TestShowColumnsWithSubQueryView(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE added (`id` int(11), `name` text, `some_date` timestamp);")
+	tk.MustExec("CREATE TABLE incremental (`id` int(11), `name`text, `some_date` timestamp);")
+	tk.MustExec("create view temp_view as (select * from `added` where id > (select max(id) from `incremental`));")
+	// Show columns should not send coprocessor request to the storage.
+	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")`))
+	tk.MustQuery("show columns from temp_view;").Check(testkit.Rows(
+		"id int(11) YES  <nil> ",
+		"name text YES  <nil> ",
+		"some_date timestamp YES  <nil> "))
+	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
 }

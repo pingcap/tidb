@@ -185,8 +185,12 @@ func TestAddStatement(t *testing.T) {
 				LocalLatchTime:  50,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime int64
-					BackoffTypes      []string
+					CommitBackoffTime   int64
+					BackoffTypes        []string
+					SlowestReqTotalTime time.Duration
+					SlowestRegion       uint64
+					SlowestStoreAddr    string
+					SlowestExecDetails  util.TiKVExecDetails
 				}{
 					CommitBackoffTime: 1000,
 					BackoffTypes:      []string{boTxnLockName},
@@ -317,8 +321,12 @@ func TestAddStatement(t *testing.T) {
 				LocalLatchTime:  5,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime int64
-					BackoffTypes      []string
+					CommitBackoffTime   int64
+					BackoffTypes        []string
+					SlowestReqTotalTime time.Duration
+					SlowestRegion       uint64
+					SlowestStoreAddr    string
+					SlowestExecDetails  util.TiKVExecDetails
 				}{
 					CommitBackoffTime: 100,
 					BackoffTypes:      []string{boTxnLockName},
@@ -435,7 +443,7 @@ func TestAddStatement(t *testing.T) {
 	stmtExecInfo7 := stmtExecInfo1
 	stmtExecInfo7.PlanDigest = "plan_digest7"
 	stmtExecInfo7.PlanGenerator = func() (string, string) {
-		buf := make([]byte, maxEncodedPlanSizeInBytes+1)
+		buf := make([]byte, MaxEncodedPlanSizeInBytes+1)
 		for i := range buf {
 			buf[i] = 'a'
 		}
@@ -603,8 +611,12 @@ func generateAnyExecInfo() *StmtExecInfo {
 				LocalLatchTime:  10,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime int64
-					BackoffTypes      []string
+					CommitBackoffTime   int64
+					BackoffTypes        []string
+					SlowestReqTotalTime time.Duration
+					SlowestRegion       uint64
+					SlowestStoreAddr    string
+					SlowestExecDetails  util.TiKVExecDetails
 				}{
 					CommitBackoffTime: 200,
 					BackoffTypes:      []string{boTxnLockName},

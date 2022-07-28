@@ -42,7 +42,7 @@ func TestBootstrap(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
-
+	mustExec(t, se, "set global tidb_txn_mode=''")
 	mustExec(t, se, "use mysql")
 	r := mustExec(t, se, "select * from user")
 	require.NotNil(t, r)
@@ -146,14 +146,14 @@ func TestBootstrapWithError(t *testing.T) {
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
-
+		err := InitDDLJobTables(store)
+		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		domain.BindDomain(se, dom)
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
-
 		doDDLWorks(se)
 	}
 
@@ -443,8 +443,7 @@ func TestOldPasswordUpgrade(t *testing.T) {
 }
 
 func TestBootstrapInitExpensiveQueryHandle(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
+	store, _ := createStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
