@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -612,6 +613,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			}
 
 			// init kvReq, result and worker for this partition
+			// The key ranges should be ordered.
+			slices.SortFunc(kvRange, func(i, j kv.KeyRange) bool {
+				return bytes.Compare(i.StartKey, j.StartKey) < 0
+			})
 			kvReq, err := builder.SetKeyRanges(kvRange).Build()
 			if err != nil {
 				worker.syncErr(err)
