@@ -149,6 +149,7 @@ type TableCacheItem interface {
 
 	dropCMS()
 	dropTopN()
+	dropHist()
 	isStatsInitialized() bool
 	getEvictedStatus() int
 	statsVer() int64
@@ -171,6 +172,9 @@ func DropEvicted(item TableCacheItem) {
 		return
 	case onlyCmsEvicted:
 		item.dropTopN()
+		return
+	case onlyHistRemained:
+		item.dropHist()
 		return
 	default:
 		return
@@ -206,7 +210,7 @@ func (c *ColumnMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *ColumnMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage + c.TopNMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
 }
 
 // IndexMemUsage records index memory usage
@@ -230,7 +234,7 @@ func (c *IndexMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *IndexMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage + c.TopNMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
 }
 
 // MemoryUsage returns the total memory usage of this Table.
@@ -368,7 +372,7 @@ func (t *Table) GetColRowCount() float64 {
 }
 
 // GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
-// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, ture.
+// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, true.
 func (t *Table) GetStatsHealthy() (int64, bool) {
 	if t == nil || t.Pseudo {
 		return 0, false

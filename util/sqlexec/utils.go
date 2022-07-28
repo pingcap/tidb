@@ -79,6 +79,14 @@ func escapeBytesBackslash(buf []byte, v []byte) []byte {
 	return buf[:pos]
 }
 
+// EscapeString is used by session/bootstrap.go, which has some
+// dynamic query building cases not well handled by this package.
+// For normal usage, please use EscapeSQL instead!
+func EscapeString(s string) string {
+	buf := make([]byte, 0, len(s))
+	return string(escapeStringBackslash(buf, s))
+}
+
 // escapeStringBackslash will escape string into the buffer, with backslash.
 func escapeStringBackslash(buf []byte, v string) []byte {
 	return escapeBytesBackslash(buf, hack.Slice(v))

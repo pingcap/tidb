@@ -260,6 +260,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	case model.StateWriteOnly:
 		// write only -> delete only
 		colInfo.State = model.StateDeleteOnly
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		if len(idxInfos) > 0 {
 			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 			for _, idx := range tblInfo.Indices {
@@ -277,6 +278,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		colInfo.State = model.StateDeleteReorganization
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1702,29 +1704,6 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 		}
 	}
 	return odValue, nil
-}
-
-// FindColumnIndexCols finds column in index
-func FindColumnIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
-	return findColumnInIndexCols(c, cols)
-}
-
-func findColumnInIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
-	for _, c1 := range cols {
-		if c == c1.Name.L {
-			return c1
-		}
-	}
-	return nil
-}
-
-func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
-	for _, colInfo := range tbInfo.Cols() {
-		if colInfo.Name.L == column {
-			return colInfo
-		}
-	}
-	return nil
 }
 
 // isVirtualGeneratedColumn checks the column if it is virtual.

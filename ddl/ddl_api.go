@@ -706,7 +706,6 @@ func buildColumnsAndConstraints(
 	tblCharset string,
 	tblCollate string,
 ) ([]*table.Column, []*ast.Constraint, error) {
-	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
 	for _, v := range constraints {
@@ -716,6 +715,8 @@ func buildColumnsAndConstraints(
 		}
 	}
 	cols := make([]*table.Column, 0, len(colDefs))
+	colMap := make(map[string]*table.Column, len(colDefs))
+
 	for i, colDef := range colDefs {
 		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate)
 		if err != nil {
@@ -1595,25 +1596,11 @@ func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
 
 func checkColumnFieldLength(col *table.Column) error {
 	if col.GetType() == mysql.TypeVarchar {
-		if err := IsTooBigFieldLength(col.GetFlen(), col.Name.O, col.GetCharset()); err != nil {
+		if err := types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, col.GetCharset()); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	return nil
-}
-
-// IsTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
-func IsTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error {
-	desc, err := charset.GetCharsetInfo(setCharset)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	maxFlen := mysql.MaxFieldVarCharLength
-	maxFlen /= desc.Maxlen
-	if colDefTpFlen != types.UnspecifiedLength && colDefTpFlen > maxFlen {
-		return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDefName, maxFlen)
-	}
 	return nil
 }
 
@@ -2709,7 +2696,7 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 
 func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 	for _, col := range tbInfo.Partition.Columns {
-		colInfo := getColumnInfoByName(tbInfo, col.L)
+		colInfo := tbInfo.FindPublicColumnByName(col.L)
 		if colInfo == nil {
 			return errors.Trace(dbterror.ErrFieldNotFoundPart)
 		}
@@ -2761,7 +2748,7 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 	}
 	for i := 0; i < len(pi.Columns); i++ {
 		// Special handling for MAXVALUE.
-		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) {
+		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) && !strings.EqualFold(prev.LessThan[i], partitionMaxValue) {
 			// If current is maxvalue, it certainly >= previous.
 			return true, nil
 		}
@@ -5138,7 +5125,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 
 	for _, col := range tblInfo.Columns {
 		if col.GetType() == mysql.TypeVarchar {
-			if err = IsTooBigFieldLength(col.GetFlen(), col.Name.O, toCharset); err != nil {
+			if err = types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, toCharset); err != nil {
 				return doNothing, err
 			}
 		}
@@ -6511,7 +6498,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
 	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
 	for i, newOne := range newTableInfo.Columns {
-		old := getColumnInfoByName(oldTableInfo, newOne.Name.L)
+		old := oldTableInfo.FindPublicColumnByName(newOne.Name.L)
 		if old == nil {
 			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " has lost")
 		}
@@ -7147,7 +7134,7 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 // in non-strict mode and varchar column. If it is, will try to adjust to blob or text, see issue #30328
 func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string, sessVars *variable.SessionVars) error {
 	if sessVars != nil && !sessVars.SQLMode.HasStrictMode() && tp.GetType() == mysql.TypeVarchar {
-		err := IsTooBigFieldLength(tp.GetFlen(), colName, tp.GetCharset())
+		err := types.IsVarcharTooBigFieldLength(tp.GetFlen(), colName, tp.GetCharset())
 		if err != nil && terror.ErrorEqual(types.ErrTooBigFieldLength, err) {
 			tp.SetType(mysql.TypeBlob)
 			if err = adjustBlobTypesFlen(tp, tp.GetCharset()); err != nil {

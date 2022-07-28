@@ -107,7 +107,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications []*ast.IndexPartSpecification) (*model.ColumnInfo, error) {
 	var lastCol *model.ColumnInfo
 	for _, colName := range indexPartSpecifications {
-		lastCol = getColumnInfoByName(tblInfo, colName.Column.Name.L)
+		lastCol = tblInfo.FindPublicColumnByName(colName.Column.Name.L)
 		if lastCol == nil {
 			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(colName.Column.Name)
 		}
@@ -990,7 +990,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_rate"),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("add_idx_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
 			jobContext:     jc,
 		},
@@ -1442,7 +1442,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("cleanup_idx_rate"),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("cleanup_idx_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
 			jobContext:     jc,
 		},

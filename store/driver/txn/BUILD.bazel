@@ -53,6 +53,7 @@ go_test(
         "union_iter_test.go",
     ],
     embed = [":txn"],
+    flaky = True,
     deps = [
         "//kv",
         "//testkit/testsetup",
