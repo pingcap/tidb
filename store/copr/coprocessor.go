@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -72,7 +71,7 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
-	if config.CheckTableBeforeDrop && !slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
+	if slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
 		if i.EndKey.Cmp(j.StartKey) > 0 {
 			return false
 		}
@@ -81,7 +80,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		}
 		return true
 	}) {
-		// In checking mode
 		logutil.BgLogger().Fatal("distsql request key range not sorted!")
 	}
 
