@@ -4838,7 +4838,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	o := b.buildingCTE
 	b.buildingCTE = false
 	defer func() {
-		b.outerCTEs = append(saveCte, b.outerCTEs...)
+		if saveCte != nil {
+			b.outerCTEs = append(saveCte, b.outerCTEs...)
+		}
 		b.buildingCTE = o
 	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
