@@ -266,11 +266,11 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
 		return err
 	}
-	clusterId, err := FetchClusterID(ctx, db)
+	pdAddr, err := FetchPDAddr(ctx, db)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := tikv.CheckTiDBDestination(ctx, g.tls, g.pdAddr, clusterId); err != nil {
+	if err := tikv.CheckTiDBDestination(ctx, g.tls, g.pdAddr, pdAddr); err != nil {
 		return err
 	}
 
@@ -278,16 +278,16 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	return checkTiFlashVersion(ctx, g.targetDBGlue, checkCtx, *serverInfo.ServerVersion)
 }
 
-// FetchClusterID gets the cluster id from tidb server using query
-func FetchClusterID(ctx context.Context, db utils.QueryExecutor) (string, error) {
-	var clusterId string
-	const queryTiDB = "select substring(type,8) from METRICS_SCHEMA.PD_CLUSTER_METADATA limit 1;"
-	tidbRow := db.QueryRowContext(ctx, queryTiDB)
-	err := tidbRow.Scan(&clusterId)
+// FetchPDAddr gets the pd addr from tidb server using query
+func FetchPDAddr(ctx context.Context, db utils.QueryExecutor) (string, error) {
+	var PDAddr string
+	const queryPDAddr = "select STATUS_ADDRESS from information_schema.cluster_info where type='pd' limit 1;"
+	tidbRow := db.QueryRowContext(ctx, queryPDAddr)
+	err := tidbRow.Scan(&PDAddr)
 	if err != nil {
-		return "", errors.Errorf("failed to get the target cluster id using query")
+		return "", errors.Errorf("failed to get the target pd address using query")
 	}
-	return clusterId, nil
+	return PDAddr, nil
 }
 
 func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
