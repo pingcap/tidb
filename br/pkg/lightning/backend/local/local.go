@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	split "github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/infoschema"
@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/mathutil"
 	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
@@ -501,7 +502,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 
 	hasTiFlash := false
 	for _, s := range stores {
-		if s.State == metapb.StoreState_Up && version.IsTiFlash(s) {
+		if s.State == metapb.StoreState_Up && engine.IsTiFlash(s) {
 			hasTiFlash = true
 			break
 		}
@@ -509,7 +510,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 
 	for _, s := range stores {
 		// skip stores that are not online
-		if s.State != metapb.StoreState_Up || version.IsTiFlash(s) {
+		if s.State != metapb.StoreState_Up || engine.IsTiFlash(s) {
 			continue
 		}
 		var err error
@@ -1925,6 +1926,18 @@ func (local *local) isIngestRetryable(
 		return retryNone, nil, common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
 	case errPb.RegionNotFound != nil:
 		return retryNone, nil, common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
+	case errPb.ReadIndexNotReady != nil:
+		// this error happens when this region is splitting, the error might be:
+		//   read index not ready, reason can not read index due to split, region 64037
+		// we have paused schedule, but it's temporary,
+		// if next request takes a long time, there's chance schedule is enabled again
+		// or on key range border, another engine sharing this region tries to split this
+		// region may cause this error too.
+		newRegion, err = getRegion()
+		if err != nil {
+			return retryNone, nil, errors.Trace(err)
+		}
+		return retryWrite, newRegion, common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
 	}
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
@@ -1994,7 +2007,7 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		return 0, 0, err
 	}
 	for _, store := range stores {
-		if store.StatusAddress == "" || version.IsTiFlash(store) {
+		if store.StatusAddress == "" || engine.IsTiFlash(store) {
 			continue
 		}
 		serverInfo := infoschema.ServerInfo{

@@ -6,6 +6,7 @@ go_test(
         "main_test.go",
         "readonly_test.go",
     ],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_go_sql_driver_mysql//:mysql",

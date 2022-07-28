@@ -295,7 +295,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		if r := recover(); r != nil {
 			task := &lookUpMergeJoinTask{
-				doneErr: errors.New(fmt.Sprintf("%v", r)),
+				doneErr: fmt.Errorf("%v", r),
 				results: make(chan *indexMergeJoinResult, numResChkHold),
 			}
 			close(task.results)

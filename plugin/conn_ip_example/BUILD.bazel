@@ -18,6 +18,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":conn_ip_example_lib"],
+    flaky = True,
     deps = [
         "//plugin",
         "//sessionctx/variable",

@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/terror"
@@ -405,9 +404,8 @@ func TestAggregation(t *testing.T) {
 	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)").Sort()
 	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
 
-	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
-	require.EqualError(t, errors.Cause(err), "[expression:1305]FUNCTION test.std_samp does not exist")
+	tk.MustGetErrMsg("select std_samp(a) from t", "[expression:1305]FUNCTION test.std_samp does not exist")
 
 	// For issue #14072: wrong result when using generated column with aggregate statement
 	tk.MustExec("drop table if exists t1;")
@@ -890,8 +888,8 @@ func TestIssue13652(t *testing.T) {
 	tk.MustQuery("select a from t group by ((a))")
 	tk.MustQuery("select a from t group by +a")
 	tk.MustQuery("select a from t group by ((+a))")
-	_, err := tk.Exec("select a from t group by (-a)")
-	require.EqualError(t, err, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	tk.MustGetErrMsg("select a from t group by (-a)",
+		"[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 }
 
 func TestIssue14947(t *testing.T) {
@@ -1642,4 +1640,37 @@ func TestIssue27751(t *testing.T) {
 	tk.MustExec("set @@group_concat_max_len=0;")
 	tk.MustQuery("select group_concat(nname order by 1 separator '#' ) from t;").Check(testkit.Rows("11#1"))
 	tk.MustQuery("select group_concat(nname order by 1 desc separator '#' ) from t;").Check(testkit.Rows("33#2"))
+}
+
+func TestIssue26885(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`SET sql_mode = 'NO_ENGINE_SUBSTITUTION';`)
+	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
+
+	tk.MustExec("CREATE TABLE t1 (c1 ENUM('a', '', 'b'));")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('a');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "", "a", "", ""))
+	tk.MustQuery("select c1 + 0 from t1").Check(testkit.Rows("3", "2", "1", "2", "0"))
+	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
+
+	tk.MustExec("alter table t1 add index idx(c1); ")
+	tk.MustQuery("select c1 + 0 from t1").Check(testkit.Rows("3", "2", "1", "2", "0"))
+	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
+	tk.MustExec("CREATE TABLE t1 (c1 ENUM('a', 'b', 'c'));")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('a');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('c');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "a", "b", "c", ""))
+	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
 }

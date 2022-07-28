@@ -46,7 +46,7 @@ var WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with re
 func RunTestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
-	session.SetSchemaLease(20 * time.Millisecond)
+	session.SetSchemaLease(5 * time.Second)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -64,6 +64,7 @@ func RunTestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
@@ -141,7 +142,6 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		session.ResetStoreForWithTiKVTest(store)
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
-
 	} else {
 		store, err = mockstore.NewMockStore(opts...)
 		require.NoError(t, err)

@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
 
 default: server buildsucc
 
@@ -42,10 +42,6 @@ goword:tools/bin/goword
 
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
-
-unconvert:tools/bin/unconvert
-	@echo "unconvert check(skip check the generated or copied code in lightning)"
-	@GO111MODULE=on tools/bin/unconvert $(UNCONVERT_PACKAGES)
 
 gogenerate:
 	@echo "go generate ./..."
@@ -87,7 +83,7 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: test_part_parser gotest gogenerate br_unit_test dumpling_unit_test
+test_part_2: test_part_parser ut gogenerate br_unit_test dumpling_unit_test
 
 test_part_parser: parser_yacc test_part_parser_dev
 
@@ -121,12 +117,6 @@ ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
-
-gotest: failpoint-enable
-	@echo "Running in native mode."
-	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-	@$(FAILPOINT_DISABLE)
 
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
@@ -217,21 +207,9 @@ tools/bin/xprog: tools/check/xprog.go
 	cd tools/check; \
 	$(GO) build -o ../bin/xprog xprog.go
 
-tools/bin/megacheck: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
-
 tools/bin/revive: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/revive github.com/mgechev/revive
-
-tools/bin/goword: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
-
-tools/bin/unconvert: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/unconvert github.com/mdempsky/unconvert
 
 tools/bin/failpoint-ctl: tools/check/go.mod
 	cd tools/check; \
@@ -435,7 +413,10 @@ bazel_test: failpoint-enable bazel_ci_prepare
 
 
 bazel_coverage_test: failpoint-enable bazel_ci_prepare
-	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --build_event_json_file=bazel_2.json --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=featuretag \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 

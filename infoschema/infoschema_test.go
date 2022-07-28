@@ -316,7 +316,7 @@ func genGlobalID(store kv.Storage) (int64, error) {
 }
 
 func TestBuildBundle(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
