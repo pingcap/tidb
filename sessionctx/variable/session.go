@@ -1925,8 +1925,8 @@ func (s *SessionVars) SetSystemVarWithoutValidation(name string, val string) err
 	return sv.SetSessionFromHook(s, val)
 }
 
-// Deprecated: SetSystemVarWithRelaxedValidation sets the value of a system variable for session scope.
-// Validation functions are called, but scope validation is skipped.
+// SetSystemVarWithRelaxedValidation sets the value of a system variable for session scope.
+// Deprecated: Validation functions are called, but scope validation is skipped.
 // Errors are not expected to be returned because this could cause upgrade issues.
 func (s *SessionVars) SetSystemVarWithRelaxedValidation(name string, val string) error {
 	sv := GetSysVar(name)
