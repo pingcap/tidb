@@ -267,7 +267,7 @@ type Config struct {
 	MemQuotaQuery  int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	OOMAction      string `toml:"oom-action" json:"oom-action"`
 
-	// OOMUseTmpStorage unused since bootstrap v91
+	// OOMUseTmpStorage unused since bootstrap v93
 	OOMUseTmpStorage bool `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 
 	// CheckMb4ValueInUTF8, EnableCollectExecutionInfo, Plugin are deprecated.
