@@ -893,7 +893,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 			return cfg.DryRun
 		},
 	}
-	if err := metas.LoadFrom(ctx, storage); err != nil {
+	if err := metas.LoadUntil(ctx, storage, cfg.Until); err != nil {
 		return err
 	}
 	readMetaDone()
