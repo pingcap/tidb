@@ -87,7 +87,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 		}
 	}
 
-	return rebuildPhysicalPlan(ctx, sctx, is, preparedStmt, ignorePlanCache, cacheKey,
+	return generateNewPlan(ctx, sctx, is, preparedStmt, ignorePlanCache, cacheKey,
 		latestSchemaVersion, isBinProtocol, varsNum, binVarTypes, txtVarTypes)
 }
 
@@ -195,7 +195,9 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcac
 	return nil, nil, false, nil
 }
 
-func rebuildPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
+// generateNewPlan call the optimizer to generate a new plan for current statement
+// and try to add it to cache
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
 	ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64, isBinProtocol bool, varsNum int, binVarTypes []byte,
 	txtVarTypes []*types.FieldType) (Plan, []*types.FieldName, error) {
 	prepared := preparedStmt.PreparedAst
