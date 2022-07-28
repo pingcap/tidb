@@ -72,10 +72,6 @@ type mockMetaBuilder struct {
 	metas []*backuppb.Metadata
 }
 
-func (b *mockMetaBuilder) ms(metas ...*backuppb.Metadata) {
-	b.metas = append(b.metas, metas...)
-}
-
 func (b *mockMetaBuilder) createTempDir() (string, error) {
 	temp, err := os.MkdirTemp("", "pitr-test-temp-*")
 	if err != nil {
