@@ -1719,7 +1719,7 @@ func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint
 }
 
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedRestoreTS uint64) ([]*backuppb.Metadata, error) {
+func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) ([]*backuppb.Metadata, error) {
 	streamBackupMetaFiles := struct {
 		sync.Mutex
 		metas []*backuppb.Metadata
@@ -1728,7 +1728,7 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedRestoreTS uint6
 
 	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
 		streamBackupMetaFiles.Lock()
-		if metadata.MaxTs >= shiftedRestoreTS {
+		if restoreTS >= metadata.MinTs && metadata.MaxTs >= shiftedStartTS {
 			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
 		}
 		streamBackupMetaFiles.Unlock()

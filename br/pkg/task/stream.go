@@ -1088,7 +1088,7 @@ func restoreStream(
 	}
 
 	// read meta by given ts.
-	metas, err := client.ReadStreamMetaByTS(ctx, shiftStartTS)
+	metas, err := client.ReadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
