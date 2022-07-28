@@ -121,6 +121,22 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 		return errors.Trace(err)
 	}
 
+	// stop scheduler before recover data
+	log.Info("starting to remove some PD schedulers")
+	restoreFunc, e := mgr.RemoveSchedulers(ctx)
+	if e != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if ctx.Err() != nil {
+			log.Warn("context canceled, doing clean work with background context")
+			ctx = context.Background()
+		}
+		if restoreE := restoreFunc(ctx); restoreE != nil {
+			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+		}
+	}()
+
 	var allStores []*metapb.Store
 	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), conn.SkipTiFlash)
 	if err != nil {

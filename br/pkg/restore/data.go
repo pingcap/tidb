@@ -298,6 +298,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, allStores []*metapb.S
 	workers := utils.NewWorkerPool(uint(totalTiKVs), "resolve data from tikv")
 
 	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at leader some retry may neccessary
+	log.Debug("resolved kv data started", zap.Uint64("resolve-ts", resolvedTs))
 	for _, store := range allStores {
 		storeAddr := getStoreAddress(allStores, store.Id)
 		tikvClient, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
