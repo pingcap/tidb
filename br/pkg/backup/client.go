@@ -676,9 +676,7 @@ func (bc *Client) BackupRange(
 func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
-	if !isRawKv {
-		key = codec.EncodeBytes([]byte{}, key)
-	}
+	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
 	for i := 0; i < 5; i++ {
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
