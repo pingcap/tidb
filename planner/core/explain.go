@@ -253,7 +253,7 @@ func (p *PhysicalTableReader) ExplainInfo() string {
 }
 
 // ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
+func (*PhysicalTableReader) ExplainNormalizedInfo() string {
 	return ""
 }
 
@@ -287,7 +287,7 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalIndexMergeReader) ExplainInfo() string {
+func (*PhysicalIndexMergeReader) ExplainInfo() string {
 	return ""
 }
 
@@ -602,7 +602,7 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	return buffer.String()
 }
 
-func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
+func (*PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
 	if bound.Type == ast.CurrentRow {
 		buffer.WriteString("current row")
 		return
