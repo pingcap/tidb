@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
 	"math"
 	"math/bits"
 	"sort"
@@ -5163,7 +5162,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.tblID2Table = tblID2table
 
 	tblID2UpdateColumns := buildTbl2UpdateColumns(updt)
-	updt.FKTriggerPlans, err = b.buildOnUpdateForeignKeyTriggerPlans(ctx, tblID2table, tblID2UpdateColumns)
+	updt.FKTriggers = buildOnUpdateForeignKeyTrigger(b.ctx, b.is, tblID2table, tblID2UpdateColumns)
 	return updt, err
 }
 
@@ -5656,218 +5655,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 	if err != nil {
 		return nil, err
 	}
-	del.FKTriggerPlans, err = b.buildOnDeleteForeignKeyTrigger(tblID2table)
+	del.FKTriggers = buildOnDeleteForeignKeyTrigger(b.ctx, b.is, tblID2table)
 	return del, err
-}
-
-func (b *PlanBuilder) buildOnUpdateForeignKeyTriggerPlans(ctx context.Context, tblID2table map[int64]table.Table, tblID2UpdateColumns map[int64]map[string]*model.ColumnInfo) (map[int64][]FKTriggerPlan, error) {
-	fkTriggerPlans := make(map[int64][]FKTriggerPlan)
-	for tid, tbl := range tblID2table {
-		if len(tbl.Meta().ReferredForeignKeys) == 0 {
-			continue
-		}
-		updateCols := tblID2UpdateColumns[tid]
-		if len(updateCols) == 0 {
-			continue
-		}
-		for _, referredFK := range tbl.Meta().ReferredForeignKeys {
-			exist := false
-			for _, referredCol := range referredFK.Cols {
-				_, exist = updateCols[referredCol.L]
-				if exist {
-					break
-				}
-			}
-			if !exist {
-				continue
-			}
-			triggerPlan, err := b.buildForeignKeyOnUpdateTriggerPlan(ctx, referredFK)
-			if err != nil {
-				return nil, err
-			}
-			if triggerPlan != nil {
-				fkTriggerPlans[tid] = append(fkTriggerPlans[tid], triggerPlan)
-			}
-		}
-	}
-	return fkTriggerPlans, nil
-}
-
-func (b *PlanBuilder) buildOnDeleteForeignKeyTrigger(tblID2table map[int64]table.Table) (map[int64][]ForeignKeyTrigger, error) {
-	fkTriggers := make(map[int64][]ForeignKeyTrigger)
-	for tid, tbl := range tblID2table {
-		tblInfo := tbl.Meta()
-		for _, referredFK := range tblInfo.ReferredForeignKeys {
-			childTable, err := b.is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
-			if err != nil {
-				// todo: append warning?
-				continue
-			}
-			fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
-			if fk == nil || fk.Version == 0 {
-				continue
-			}
-			fkTriggers[tid] = append(fkTriggers[tid], ForeignKeyTrigger{Tp: FKTriggerOnDelete, ReferredFK: referredFK})
-		}
-	}
-	return fkTriggers, nil
-}
-
-func (b *PlanBuilder) buildDeleteForeignKeyTriggerPlan(ctx context.Context, tblID2table map[int64]table.Table) (map[int64][]FKTriggerPlan, error) {
-	fkTriggerPlans := make(map[int64][]FKTriggerPlan)
-	if !b.ctx.GetSessionVars().ForeignKeyChecks {
-		return fkTriggerPlans, nil
-	}
-	for tid, tbl := range tblID2table {
-		if len(tbl.Meta().ReferredForeignKeys) == 0 {
-			continue
-		}
-		triggerPlans, err := b.buildForeignKeyOnDeleteTriggerPlan(ctx, tbl)
-		if err != nil {
-			return nil, err
-		}
-		if len(triggerPlans) > 0 {
-			fkTriggerPlans[tid] = triggerPlans
-		}
-	}
-	return fkTriggerPlans, nil
-}
-
-// FKTriggerPlan is the foreign key trigger plan
-type FKTriggerPlan interface {
-	Plan
-
-	GetCols() []model.CIStr
-
-	SetRangeForSelectPlan([][]types.Datum) error
-}
-
-type baseFKTriggerPlan struct {
-	fk   *model.FKInfo
-	cols []model.CIStr
-}
-
-func (p *baseFKTriggerPlan) GetCols() []model.CIStr {
-	return p.cols
-}
-
-func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkValues [][]types.Datum) error {
-	ranges := make([]*ranger.Range, 0, len(fkValues))
-	for _, vals := range fkValues {
-		ranges = append(ranges, &ranger.Range{
-			LowVal:      vals,
-			HighVal:     vals,
-			LowExclude:  false,
-			HighExclude: false,
-		})
-	}
-
-	switch p := selectPlan.(type) {
-	case *PhysicalIndexLookUpReader:
-		is := p.IndexPlans[0].(*PhysicalIndexScan)
-		is.Ranges = ranges
-	case *PhysicalTableReader:
-		reader := p.tablePlan.(*PhysicalTableScan)
-		reader.Ranges = ranges
-	default:
-		return errors.Errorf("unknown")
-	}
-	return nil
-}
-
-type FKOnDeleteCascadePlan struct {
-	baseFKTriggerPlan
-
-	*Delete
-}
-
-type FKOnDeleteSetNullPlan struct {
-	baseFKTriggerPlan
-
-	*Update
-}
-
-type FKOnUpdateCascadePlan struct {
-	baseFKTriggerPlan
-
-	*Update
-}
-
-type FKCheckPlan struct {
-	baseSchemaProducer
-	baseFKTriggerPlan
-
-	DBName     model.CIStr
-	Tbl        table.Table
-	Idx        table.Index
-	Cols       []model.CIStr
-	HandleCols []*table.Column
-
-	IdxIsPrimaryKey bool
-	IdxIsExclusive  bool
-
-	CheckExist bool
-	FailedErr  error
-
-	ToBeCheckedHandleKeys []kv.Handle
-	ToBeCheckedUniqueKeys []kv.Key
-	ToBeCheckedIndexKeys  []kv.Key
-}
-
-func (p *FKOnDeleteCascadePlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
-	return p.setRangeForSelectPlan(p.SelectPlan, fkValues)
-}
-
-func (p *FKOnDeleteSetNullPlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
-	return p.setRangeForSelectPlan(p.SelectPlan, fkValues)
-}
-
-func (p *FKOnUpdateCascadePlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
-	return p.setRangeForSelectPlan(p.SelectPlan, fkValues)
-}
-
-func (p *FKOnUpdateCascadePlan) SetUpdatedValues(fkValues []types.Datum) error {
-	for i, assgisn := range p.Update.OrderedList {
-		assgisn.Expr = &expression.Constant{Value: fkValues[i], RetType: assgisn.Col.RetType}
-	}
-	return nil
-}
-
-func (p *FKCheckPlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
-	for _, vals := range fkValues {
-		err := p.addRowNeedToCheck(vals)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (p *FKCheckPlan) addRowNeedToCheck(vals []types.Datum) error {
-	sc := p.ctx.GetSessionVars().StmtCtx
-	if p.IdxIsPrimaryKey {
-		handleKey, err := p.buildHandleFromFKValues(sc, vals)
-		if err != nil {
-			return err
-		}
-		if p.IdxIsExclusive {
-			p.ToBeCheckedHandleKeys = append(p.ToBeCheckedHandleKeys, handleKey)
-		} else {
-			key := tablecodec.EncodeRecordKey(p.Tbl.RecordPrefix(), handleKey)
-			p.ToBeCheckedIndexKeys = append(p.ToBeCheckedIndexKeys, key)
-		}
-		return nil
-	}
-	key, distinct, err := p.Idx.GenIndexKey(sc, vals, nil, nil)
-	if err != nil {
-		return err
-	}
-	if distinct && p.IdxIsExclusive {
-		p.ToBeCheckedUniqueKeys = append(p.ToBeCheckedUniqueKeys, key)
-	} else {
-		p.ToBeCheckedIndexKeys = append(p.ToBeCheckedIndexKeys, key)
-	}
-	return nil
 }
 
 func (p *FKCheckPlan) buildHandleFromFKValues(sc *stmtctx.StatementContext, vals []types.Datum) (kv.Handle, error) {
@@ -5912,111 +5701,6 @@ func (b *PlanBuilder) buildForeignKeyOnInsertTriggerPlan(dbName string, tbl tabl
 	return triggerPlans, nil
 }
 
-func (b *PlanBuilder) buildForeignKeyOnUpdateTriggerPlan(ctx context.Context, referredFK *model.ReferredFKInfo) (FKTriggerPlan, error) {
-	if !b.ctx.GetSessionVars().ForeignKeyChecks {
-		return nil, nil
-	}
-	childTable, err := b.is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
-	if err != nil {
-		// todo: append warning?
-		return nil, nil
-	}
-	fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
-	if fk == nil || fk.Version == 0 {
-		return nil, nil
-	}
-	switch ast.ReferOptionType(fk.OnUpdate) {
-	case ast.ReferOptionCascade:
-		return b.buildUpdateForeignKeyCascade(ctx, referredFK.ChildSchema, childTable, fk)
-	case ast.ReferOptionSetNull:
-		return b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
-	case ast.ReferOptionRestrict, ast.ReferOptionNoOption, ast.ReferOptionNoAction, ast.ReferOptionSetDefault:
-		failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
-		return buildFKCheckPlan(b.ctx, childTable, fk, fk.Cols, fk.RefCols, false, failedErr)
-	}
-	return nil, nil
-}
-
-func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tbl table.Table) ([]FKTriggerPlan, error) {
-	tblInfo := tbl.Meta()
-	triggerPlans := make([]FKTriggerPlan, 0, len(tblInfo.ReferredForeignKeys))
-	for _, referredFK := range tblInfo.ReferredForeignKeys {
-		childTable, err := b.is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
-		if err != nil {
-			// todo: append warning?
-			continue
-		}
-		fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
-		if fk == nil || fk.Version == 0 {
-			continue
-		}
-		var triggerPlan FKTriggerPlan
-		switch ast.ReferOptionType(fk.OnDelete) {
-		case ast.ReferOptionCascade:
-			triggerPlan, err = b.BuildForeignKeyCascadeDelete(ctx, referredFK)
-		case ast.ReferOptionSetNull:
-			triggerPlan, err = b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
-		case ast.ReferOptionRestrict, ast.ReferOptionNoOption, ast.ReferOptionNoAction, ast.ReferOptionSetDefault:
-			failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
-			triggerPlan, err = buildFKCheckPlan(b.ctx, childTable, fk, fk.Cols, fk.RefCols, false, failedErr)
-		default:
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		triggerPlans = append(triggerPlans, triggerPlan)
-	}
-	return triggerPlans, nil
-}
-
-func (b *PlanBuilder) BuildForeignKeyCascadeDelete(ctx context.Context, referredFK *model.ReferredFKInfo) (FKTriggerPlan, error) {
-	tn := &ast.TableName{
-		Schema: referredFK.ChildSchema,
-		Name:   referredFK.ChildTable,
-	}
-	dsPlan, err := b.buildDataSource(ctx, tn, &model.CIStr{})
-	if err != nil {
-		return nil, err
-	}
-	ds, ok := dsPlan.(*DataSource)
-	if !ok {
-		return nil, errors.Errorf("expected datasource, but got %v", dsPlan)
-	}
-
-	fk := model.FindFKInfoByName(ds.tableInfo.ForeignKeys, referredFK.ChildFKName.L)
-	if fk == nil || fk.Version == 0 {
-		return nil, errors.Errorf("should never happen")
-	}
-
-	tableReader, err := b.buildTableReaderForFK(ds, fk.Cols)
-	if err != nil {
-		return nil, err
-	}
-	del := Delete{
-		SelectPlan: tableReader,
-	}.Init(b.ctx)
-	del.names = ds.names
-
-	tblID2Handle := make(map[int64][]HandleCols)
-	tblID2Table := make(map[int64]table.Table)
-	tid := ds.tableInfo.ID
-	tblID2Handle[tid] = []HandleCols{ds.handleCols}
-	tblID2Table[tid] = ds.table
-	tblID2Handle, err = resolveIndicesForTblID2Handle(tblID2Handle, tableReader.Schema())
-	if err != nil {
-		return nil, err
-	}
-	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2Table, false)
-	if err != nil {
-		return nil, err
-	}
-	return &FKOnDeleteCascadePlan{
-		Delete:            del,
-		baseFKTriggerPlan: baseFKTriggerPlan{fk, fk.RefCols},
-	}, nil
-}
-
 func (b *PlanBuilder) buildUpdateForeignKeyCascade(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
 	triggerPlan, err := b.buildUpdateForeignKeySetNull(ctx, dbName, tbl, fk)
 	if err != nil {
@@ -6028,7 +5712,17 @@ func (b *PlanBuilder) buildUpdateForeignKeyCascade(ctx context.Context, dbName m
 	}, nil
 }
 
-func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (*FKOnDeleteSetNullPlan, error) {
+func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (*FKUpdateSetNullPlan, error) {
+	b.pushSelectOffset(0)
+	b.pushTableHints(nil, 0)
+	defer func() {
+		b.popSelectOffset()
+		// table hints are only visible in the current UPDATE statement.
+		b.popTableHints()
+	}()
+	b.inUpdateStmt = true
+	b.isForUpdateRead = true
+
 	tn := &ast.TableName{
 		Schema: dbName,
 		Name:   tbl.Meta().Name,
@@ -6091,7 +5785,7 @@ func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName m
 	if err != nil {
 		return nil, err
 	}
-	return &FKOnDeleteSetNullPlan{
+	return &FKUpdateSetNullPlan{
 		Update:            update,
 		baseFKTriggerPlan: baseFKTriggerPlan{fk, fk.RefCols},
 	}, nil

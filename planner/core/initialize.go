@@ -594,8 +594,8 @@ func (p FKOnDeleteCascadePlan) Init(ctx sessionctx.Context) *FKOnDeleteCascadePl
 	return &p
 }
 
-// Init initializes FKOnDeleteSetNullPlan.
-func (p FKOnDeleteSetNullPlan) Init(ctx sessionctx.Context) *FKOnDeleteSetNullPlan {
+// Init initializes FKUpdateSetNullPlan.
+func (p FKUpdateSetNullPlan) Init(ctx sessionctx.Context) *FKUpdateSetNullPlan {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeFKSetNullPlan, 0)
 	return &p
 }

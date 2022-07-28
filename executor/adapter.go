@@ -513,6 +513,9 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 		if err != nil {
 			return err
 		}
+		if e == nil {
+			continue
+		}
 		if err := e.Open(ctx); err != nil {
 			terror.Call(e.Close)
 			return err

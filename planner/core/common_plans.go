@@ -1001,7 +1001,7 @@ type Update struct {
 
 	tblID2Table map[int64]table.Table
 
-	FKTriggerPlans map[int64][]FKTriggerPlan
+	FKTriggers map[int64][]*ForeignKeyTrigger
 }
 
 // Delete represents a delete plan.
@@ -1014,7 +1014,7 @@ type Delete struct {
 
 	TblColPosInfos TblColPosInfoSlice
 
-	FKTriggerPlans map[int64][]ForeignKeyTrigger
+	FKTriggers map[int64][]*ForeignKeyTrigger
 }
 
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.

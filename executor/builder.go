@@ -303,7 +303,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCompactTable(v)
 	case *plannercore.FKOnDeleteCascadePlan:
 		return b.buildDelete(v.Delete)
-	case *plannercore.FKOnDeleteSetNullPlan:
+	case *plannercore.FKUpdateSetNullPlan:
 		return b.buildUpdate(v.Update)
 	case *plannercore.FKOnUpdateCascadePlan:
 		return b.buildUpdate(v.Update)
@@ -871,7 +871,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 	}
-	ivs.fkTriggerExecs, b.err = b.buildTblForeignKeyTriggerExecs(v.Table, v.FKTriggerPlans)
+	//ivs.fkTriggerExecs, b.err = b.buildTblForeignKeyTriggerExecs(v.Table, v.FKTriggerPlans)
 	if b.err != nil {
 		return nil
 	}
@@ -2120,7 +2120,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
 	}
-	updateExec.fkTriggerExecs, b.err = b.buildTblID2ForeignKeyTriggerExecs(tblID2table, v.FKTriggerPlans)
+	updateExec.fkTriggerExecs, b.err = b.buildTblID2ForeignKeyTriggerExecs(tblID2table, v.FKTriggers)
 	if b.err != nil {
 		return nil
 	}
@@ -2169,7 +2169,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		IsMultiTable:   v.IsMultiTable,
 		tblColPosInfos: v.TblColPosInfos,
 	}
-	deleteExec.fkTriggerExecs, b.err = b.buildTblID2ForeignKeyTriggerExecs(tblID2table, v.FKTriggerPlans)
+	deleteExec.fkTriggerExecs, b.err = b.buildTblID2ForeignKeyTriggerExecs(tblID2table, v.FKTriggers)
 	if b.err != nil {
 		return nil
 	}

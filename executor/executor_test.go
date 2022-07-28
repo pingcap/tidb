@@ -6929,3 +6929,140 @@ func TestForeignKeyOnUpdateSetNull(t *testing.T) {
 	//TODO: fix me: following SQL should return error: (1830, "Column 'a' cannot be NOT NULL: needed in a foreign key constraint 't2_ibfk_1' SET NULL")
 	//tk.ExecToErr("create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE SET NULL);")
 }
+
+func TestForeignKeyOnUpdateCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=1")
+
+	cases := []struct {
+		prepareSQLs []string
+	}{
+		// Case-1: test unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int, a int, b int,  unique index(a, b));",
+				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+			},
+		},
+		// Case-2: test unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
+				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+			},
+		},
+		// Case-3: test non-unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int, index(a, b));",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+			},
+		},
+		// Case-4: test non-unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int,  index(a, b, id));",
+				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+			},
+		},
+	}
+
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24), (5, 15, null), (6, null, 26), (7, null, null);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'), (5, 15, null, 'e'), (6, null, 26, 'f'), (7, null, null, 'g');")
+
+		tk.MustExec("update t1 set a=a+100, b = b+200 where id = 2")
+		tk.MustExec("update t1 set a=a+1000, b = b+2000 where a = 13 or b=222")
+		tk.MustExec("update t1 set a=a+10000, b = b+20000 where id = 5 or a is null or b is null")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
+
+		err := tk.ExecToErr("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24")
+		require.NotNil(t, err)
+		require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
+	}
+
+	cases = []struct {
+		prepareSQLs []string
+	}{
+		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+			},
+		},
+		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+			},
+		},
+		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+			},
+		},
+		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+			},
+		},
+	}
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a');")
+
+		tk.MustExec("update t1 set a=a+100, b = b+200 where id = 2")
+		tk.MustExec("update t1 set a=a+1000, b = b+2000 where a = 13 or b=222")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
+
+		err := tk.ExecToErr("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24")
+		require.NotNil(t, err)
+		require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
+	}
+
+	// Case-9: test primary key is handle and contain foreign key column.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
+	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
+	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id) ON UPDATE RESTRICT);")
+	tk.MustExec("insert into t1 (id, a, b) values       (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
+	tk.MustExec("insert into t2 (id, a, b, name) values (11, 1, 21, 'a')")
+	tk.MustExec("update t1 set id = id + 100 where id =2 or a = 13")
+	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
+
+	err := tk.ExecToErr("update t1 set id = id+10 where id = 1 or b = 24")
+	require.NotNil(t, err)
+	require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
+	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
+}
