@@ -911,7 +911,7 @@ func testGetTable(t *testing.T, dom *domain.Domain, tableID int64) table.Table {
 }
 
 func TestGetDefaultValueOfColumn(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
