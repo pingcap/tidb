@@ -266,9 +266,28 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
 		return err
 	}
+	clusterId, err := FetchClusterID(ctx, db)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := tikv.CheckTiDBDestination(ctx, g.tls, g.pdAddr, clusterId); err != nil {
+		return err
+	}
 
 	serverInfo := version.ParseServerInfo(versionStr)
 	return checkTiFlashVersion(ctx, g.targetDBGlue, checkCtx, *serverInfo.ServerVersion)
+}
+
+// FetchClusterID gets the cluster id from tidb server using query
+func FetchClusterID(ctx context.Context, db utils.QueryExecutor) (string, error) {
+	var clusterId string
+	const queryTiDB = "select substring(type,8) from METRICS_SCHEMA.PD_CLUSTER_METADATA limit 1;"
+	tidbRow := db.QueryRowContext(ctx, queryTiDB)
+	err := tidbRow.Scan(&clusterId)
+	if err != nil {
+		return "", errors.Errorf("failed to get the target cluster id using query")
+	}
+	return clusterId, nil
 }
 
 func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
