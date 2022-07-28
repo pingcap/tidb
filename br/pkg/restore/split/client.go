@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
 package split
 
@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,8 +28,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/store/pdtypes"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
@@ -79,101 +76,6 @@ type SplitClient interface {
 	// SetStoresLabel add or update specified label of stores. If labelValue
 	// is empty, it clears the label.
 	SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error
-}
-
-func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
-	// current pd can't guarantee the consistency of returned regions
-	if len(regions) == 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endkey: %s",
-			redact.Key(startKey), redact.Key(endKey))
-	}
-
-	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
-			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
-	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < startKey, startKey: %s, regionStartKey: %s",
-			redact.Key(endKey), redact.Key(regions[len(regions)-1].Region.EndKey))
-	}
-
-	cur := regions[0]
-	for _, r := range regions[1:] {
-		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
-			return errors.Annotatef(berrors.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
-				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
-		}
-		cur = r
-	}
-
-	return nil
-}
-
-// PaginateScanRegion scan regions with a limit pagination and
-// return all regions at once.
-// It reduces max gRPC message size.
-func PaginateScanRegion(
-	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
-) ([]*RegionInfo, error) {
-	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
-		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey >= endKey, startKey: %s, endkey: %s",
-			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
-	}
-
-	var regions []*RegionInfo
-	err := utils.WithRetry(ctx, func() error {
-		regions = []*RegionInfo{}
-		scanStartKey := startKey
-		for {
-			batch, err := client.ScanRegions(ctx, scanStartKey, endKey, limit)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			regions = append(regions, batch...)
-			if len(batch) < limit {
-				// No more region
-				break
-			}
-			scanStartKey = batch[len(batch)-1].Region.GetEndKey()
-			if len(scanStartKey) == 0 ||
-				(len(endKey) > 0 && bytes.Compare(scanStartKey, endKey) >= 0) {
-				// All key space have scanned
-				break
-			}
-		}
-		if err := checkRegionConsistency(startKey, endKey, regions); err != nil {
-			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
-			return err
-		}
-		return nil
-	}, newScanRegionBackoffer())
-
-	return regions, err
-}
-
-type scanRegionBackoffer struct {
-	attempt int
-}
-
-func newScanRegionBackoffer() utils.Backoffer {
-	return &scanRegionBackoffer{
-		attempt: 3,
-	}
-}
-
-// NextBackoff returns a duration to wait before retrying again
-func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
-	if berrors.ErrPDBatchScanRegion.Equal(err) {
-		// 500ms * 3 could be enough for splitting remain regions in the hole.
-		b.attempt--
-		return 500 * time.Millisecond
-	}
-	b.attempt = 0
-	return 0
-}
-
-// Attempt returns the remain attempt times
-func (b *scanRegionBackoffer) Attempt() int {
-	return b.attempt
 }
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.

@@ -229,8 +229,8 @@ func TestPaginateScanRegion(t *testing.T) {
 	regionMap := make(map[uint64]*split.RegionInfo)
 	var regions []*split.RegionInfo
 	var batch []*split.RegionInfo
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/scanRegionBackoffer", "return(true)"))
-	_, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/split/scanRegionBackoffer", "return(true)"))
+	_, err := split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	require.Error(t, err)
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 	require.Regexp(t, ".*scan region return empty result.*", err.Error())
@@ -239,42 +239,42 @@ func TestPaginateScanRegion(t *testing.T) {
 	tc := NewTestClient(stores, regionMap, 0)
 	tc.InjectErr = true
 	tc.InjectTimes = 2
-	batch, err = restore.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
+	batch, err = split.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
 	require.NoError(t, err)
 	require.Equal(t, regions, batch)
 
 	regionMap, regions = makeRegions(2)
-	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	batch, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	require.NoError(t, err)
 	require.Equal(t, regions, batch)
 
 	regionMap, regions = makeRegions(3)
-	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	batch, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	require.NoError(t, err)
 	require.Equal(t, regions, batch)
 
 	regionMap, regions = makeRegions(8)
-	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	batch, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	require.NoError(t, err)
 	require.Equal(t, regions, batch)
 
 	regionMap, regions = makeRegions(8)
-	batch, err = restore.PaginateScanRegion(
+	batch, err = split.PaginateScanRegion(
 		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.StartKey, []byte{}, 3)
 	require.NoError(t, err)
 	require.Equal(t, regions[1:], batch)
 
-	batch, err = restore.PaginateScanRegion(
+	batch, err = split.PaginateScanRegion(
 		ctx, NewTestClient(stores, regionMap, 0), []byte{}, regions[6].Region.EndKey, 3)
 	require.NoError(t, err)
 	require.Equal(t, regions[:7], batch)
 
-	batch, err = restore.PaginateScanRegion(
+	batch, err = split.PaginateScanRegion(
 		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.StartKey, regions[1].Region.EndKey, 3)
 	require.NoError(t, err)
 	require.Equal(t, regions[1:2], batch)
 
-	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
+	_, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
 	require.Error(t, err)
 	require.True(t, berrors.ErrRestoreInvalidRange.Equal(err))
 	require.Regexp(t, ".*startKey > endKey.*", err.Error())
@@ -282,18 +282,18 @@ func TestPaginateScanRegion(t *testing.T) {
 	tc = NewTestClient(stores, regionMap, 0)
 	tc.InjectErr = true
 	tc.InjectTimes = 5
-	_, err = restore.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
+	_, err = split.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
 	require.Error(t, err)
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 
 	// make the regionMap losing some region, this will cause scan region check fails
 	delete(regionMap, uint64(3))
-	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	_, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
 	require.Error(t, err)
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 	require.Regexp(t, ".*region endKey not equal to next region startKey.*", err.Error())
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/scanRegionBackoffer"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/scanRegionBackoffer"))
 }
 
 func TestRewriteFileKeys(t *testing.T) {

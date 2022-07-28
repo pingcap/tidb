@@ -151,7 +151,7 @@ func TestEpochNotMatch(t *testing.T) {
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
-	regions, err := restore.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
+	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
 	require.NoError(t, err)
 	require.Len(t, regions, 2)
 	left, right := regions[0], regions[1]
@@ -210,7 +210,7 @@ func TestRegionSplit(t *testing.T) {
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
-	regions, err := restore.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("aazz"), 1)
+	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("aazz"), 1)
 	require.NoError(t, err)
 	require.Len(t, regions, 1)
 	target := regions[0]
@@ -286,7 +286,7 @@ func TestRetryBackoff(t *testing.T) {
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
-	regions, err := restore.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
+	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
 	require.NoError(t, err)
 	require.Len(t, regions, 2)
 	left := regions[0]

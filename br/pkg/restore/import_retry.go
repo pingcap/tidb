@@ -129,7 +129,7 @@ func (o *OverRegionsInRangeController) runOverRegions(ctx context.Context, f Reg
 	}
 
 	// Scan regions covered by the file range
-	regionInfos, errScanRegion := PaginateScanRegion(
+	regionInfos, errScanRegion := split.PaginateScanRegion(
 		ctx, o.metaClient, o.start, o.end, split.ScanRegionPaginationLimit)
 	if errScanRegion != nil {
 		return errors.Trace(errScanRegion)

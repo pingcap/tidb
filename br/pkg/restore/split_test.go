@@ -596,7 +596,7 @@ func TestRegionConsistency(t *testing.T) {
 		},
 	}
 	for _, ca := range cases {
-		err := restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
+		err := split.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
 		require.Error(t, err)
 		require.Regexp(t, ca.err, err.Error())
 	}
