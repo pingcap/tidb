@@ -773,6 +773,16 @@ func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 	return nil
 }
 
+// FindPublicColumnByName finds the public column by name.
+func (t *TableInfo) FindPublicColumnByName(colNameL string) *ColumnInfo {
+	for _, col := range t.Cols() {
+		if col.Name.L == colNameL {
+			return col
+		}
+	}
+	return nil
+}
+
 // IsLocked checks whether the table was locked.
 func (t *TableInfo) IsLocked() bool {
 	return t.Lock != nil && len(t.Lock.Sessions) > 0
@@ -1343,6 +1353,21 @@ func (index *IndexInfo) HasColumnInIndexColumns(tblInfo *TableInfo, colID int64)
 		}
 	}
 	return false
+}
+
+// FindColumnByName finds the index column with the specified name.
+func (index *IndexInfo) FindColumnByName(nameL string) *IndexColumn {
+	return FindIndexColumnByName(index.Columns, nameL)
+}
+
+// FindIndexColumnByName finds IndexColumn by name.
+func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) *IndexColumn {
+	for _, ic := range indexCols {
+		if ic.Name.L == nameL {
+			return ic
+		}
+	}
+	return nil
 }
 
 // ConstraintInfo provides meta data describing check-expression constraint.
