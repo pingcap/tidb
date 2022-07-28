@@ -1710,31 +1710,6 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 	return odValue, nil
 }
 
-// FindColumnInIndexCols finds column and its slice offset in index. When not found, returned slice offset is -1 and
-// *IndexColumn is nil.
-func FindColumnInIndexCols(c string, cols []*model.IndexColumn) (int, *model.IndexColumn) {
-	return findColumnInIndexCols(c, cols)
-}
-
-func findColumnInIndexCols(c string, cols []*model.IndexColumn) (int, *model.IndexColumn) {
-	for i, c1 := range cols {
-		if c == c1.Name.L {
-			return i, c1
-		}
-	}
-	return -1, nil
-}
-
-// GetColumnInfoByName finds the column by name.
-func GetColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
-	for _, colInfo := range tbInfo.Cols() {
-		if colInfo.Name.L == column {
-			return colInfo
-		}
-	}
-	return nil
-}
-
 // isVirtualGeneratedColumn checks the column if it is virtual.
 func isVirtualGeneratedColumn(col *model.ColumnInfo) bool {
 	if col.IsGenerated() && !col.GeneratedStored {

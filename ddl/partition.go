@@ -1749,7 +1749,7 @@ func getInValues(pi *model.PartitionInfo, index int) []string {
 }
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
-	if piDefs > uint64(PartitionCountLimit) {
+	if piDefs > uint64(mysql.PartitionCountLimit) {
 		return errors.Trace(dbterror.ErrTooManyPartitions)
 	}
 	return nil
@@ -1870,7 +1870,7 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 	} else {
 		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
 		for _, col := range pi.Columns {
-			colInfo := GetColumnInfoByName(tblInfo, col.L)
+			colInfo := tblInfo.FindPublicColumnByName(col.L)
 			if colInfo == nil {
 				return false, infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
 			}
@@ -1948,7 +1948,7 @@ type stringSlice interface {
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
-		_, idxCol := findColumnInIndexCols(partCol, idxCols)
+		_, idxCol := model.FindIndexColumnByName(idxCols, partCol)
 		if idxCol == nil {
 			// Partition column is not found in the index columns.
 			return false

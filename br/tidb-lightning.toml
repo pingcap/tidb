@@ -188,7 +188,7 @@ data-invalid-char-replace = "\uFFFD"
 # different objects. Currently only affects [[routes]].
 case-sensitive = false
 
-# if strict-format is ture, lightning will use '\r' and '\n' to determine the end of each line. Make sure your data
+# if strict-format is true, lightning will use '\r' and '\n' to determine the end of each line. Make sure your data
 # doesn't contain '\r' or '\n' if strict-format is enabled, or csv parser may parse incorrect result.
 strict-format = false
 # if strict-format is true, large CSV files will be split to multiple chunks, which Lightning

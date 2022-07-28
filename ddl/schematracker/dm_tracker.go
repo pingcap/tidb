@@ -498,7 +498,7 @@ func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *a
 	}
 
 	colName := spec.OldColumnName.Name
-	colInfo := ddl.GetColumnInfoByName(tblInfo, colName.L)
+	colInfo := tblInfo.FindPublicColumnByName(colName.L)
 	if colInfo == nil {
 		if spec.IfExists {
 			return nil
@@ -516,7 +516,7 @@ func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *a
 
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
-		i, _ := ddl.FindColumnInIndexCols(colName.L, idx.Columns)
+		i, _ := model.FindIndexColumnByName(idx.Columns, colName.L)
 		if i == -1 {
 			newIndices = append(newIndices, idx)
 			continue
