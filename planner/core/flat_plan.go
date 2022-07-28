@@ -76,7 +76,15 @@ type FlatOperator struct {
 	// A reference to the original operator.
 	Origin Plan
 
+	// With ChildrenIdx and ChildrenEndIdx, we can locate every children subtrees of this operator in the FlatPlanTree.
+	// For example, the first children subtree is flatTree[ChildrenIdx[0] : ChildrenIdx[1]], the last children subtree
+	// is flatTree[ChildrenIdx[n-1] : ChildrenEndIdx].
+
+	// ChildrenIdx is the indexes of the children of this operator in the FlatPlanTree.
+	// It's ordered from small to large.
 	ChildrenIdx []int
+	// ChildrenEndIdx is the index of the last operator of children subtrees of this operator in the FlatPlanTree.
+	ChildrenEndIdx int
 
 	// NeedReverseDriverSide means if we need to reverse the order of children to keep build side before probe side.
 	//
@@ -383,6 +391,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	}
 	if flat != nil {
 		flat.ChildrenIdx = childIdxs
+		flat.ChildrenEndIdx = len(target) - 1
 	}
 	return target, idx
 }
