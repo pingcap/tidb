@@ -2426,6 +2426,47 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
 }
 
+func TestExchangePartitionTableAutoID(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	// why use tkCancel, not tk.
+	tkCancel := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 VALUES LESS THAN (9),
+        PARTITION p3 VALUES LESS THAN (MAXVALUE)
+		);`)
+	tk.MustExec(`create table nt(a int);`)
+
+	tk.MustExec(`insert into pt values (0), (4), (7)`)
+	tk.MustExec("insert into nt values (1)")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	dom.DDL().SetHook(hook)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockAutoIDForExchangePartition", `return(true)`))
+
+	hookFunc := func(job *model.Job) {
+		if job.Type == model.ActionExchangeTablePartition && job.SchemaState != model.StateNone {
+			for i := 0; i < 100000; i++ {
+				tkCancel.MustExec("use test")
+				tkCancel.MustExec("insert into nt values (1)")
+			}
+		}
+	}
+	hook.OnJobUpdatedExported = hookFunc
+
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
+}
+
 func TestExchangePartitionExpressIndex(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()

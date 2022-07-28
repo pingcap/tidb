@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -215,6 +216,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
+	case model.ActionExchangeTablePartition:
+		return b.applyExchangePartitionWithTable(m, diff)
 	default:
 		return b.applyDefaultAction(m, diff)
 	}
@@ -240,6 +243,67 @@ func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int
 		}
 	}
 	return tblIDs, nil
+}
+
+func (b *Builder) applyExchangePartitionWithTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, opt := range diff.AffectedOpts {
+		affectedDiff := &model.SchemaDiff{
+			Version:     diff.Version,
+			Type:        diff.Type,
+			SchemaID:    opt.SchemaID,
+			TableID:     opt.TableID,
+			OldSchemaID: opt.OldSchemaID,
+			OldTableID:  opt.OldTableID,
+		}
+		affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tblIDs = append(tblIDs, affectedIDs...)
+
+		// handle partition table and table AutoID
+		err = updateAutoIDForExchangePartition(m, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.OldTableID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	return tblIDs, nil
+}
+
+func updateAutoIDForExchangePartition(m *meta.Meta, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
+	// partition table auto IDs.
+	ptAutoIDs, err := m.GetAutoIDAccessors(ptSchemaID, ptID).Get()
+	if err != nil {
+		return err
+	}
+	// non-partition table auto IDs.
+	ntAutoIDs, err := m.GetAutoIDAccessors(ntSchemaID, ntID).Get()
+	if err != nil {
+		return err
+	}
+
+	// Set both tables to the maximum auto IDs between normal table and partitioned table.
+	newAutoIDs := meta.AutoIDGroup{
+		RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+		RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+	}
+	err = m.GetAutoIDAccessors(ptSchemaID, ptID).Put(newAutoIDs)
+	if err != nil {
+		return err
+	}
+	err = m.GetAutoIDAccessors(ntSchemaID, ntID).Put(newAutoIDs)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
