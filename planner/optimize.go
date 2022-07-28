@@ -384,6 +384,26 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 		return nil, nil, err
 	}
 	if execPlan, ok := p.(*plannercore.Execute); ok {
+		sessVars := sctx.GetSessionVars()
+
+		if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
+			allowed, err := allowInReadOnlyMode(sctx, execAst)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !allowed {
+				return nil, nil, errors.Trace(core.ErrSQLInReadOnlyMode)
+			}
+		}
+
+		// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
+		// engine in not read only stmt.
+		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(execAst, sessVars) {
+			delete(sessVars.IsolationReadEngines, kv.TiFlash)
+			defer func() {
+				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+			}()
+		}
 		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
 		return execPlan, execPlan.OutputNames(), err
 	}
