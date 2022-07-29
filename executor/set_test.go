@@ -751,6 +751,15 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("1"))
 	tk.MustExec("set session tidb_enable_analyze_snapshot = 0")
 	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+
+	tk.MustQuery("select @@tidb_optimizer_mem_quota").Check(testkit.Rows("67108864"))
+	tk.MustExec("set global tidb_optimizer_mem_quota = -1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_optimizer_mem_quota value: '-1'"))
+	tk.MustQuery("select @@global.tidb_optimizer_mem_quota").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_optimizer_mem_quota = 1048576")
+	tk.MustQuery("select @@global.tidb_optimizer_mem_quota").Check(testkit.Rows("1048576"))
+	tk.MustExec("set session tidb_optimizer_mem_quota = 2097152")
+	tk.MustQuery("select @@session.tidb_optimizer_mem_quota").Check(testkit.Rows("2097152"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {

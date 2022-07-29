@@ -717,6 +717,9 @@ const (
 	// When set to (0, 1], Selectivity() will use the value of this variable as the default selectivity of those
 	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
+
+	// TiDBOptimizerMemQuota indicates the memory quota of sql optimization for a query.
+	TiDBOptimizerMemQuota = "tidb_optimizer_mem_quota"
 )
 
 // TiDB vars that have only global scope
@@ -996,6 +999,7 @@ const (
 	DefTiDBGenerateBinaryPlan                      = true
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
+	DefTiDBOptimizerMemQuota                       = 67108864 // 64 MB
 )
 
 // Process global variables.
