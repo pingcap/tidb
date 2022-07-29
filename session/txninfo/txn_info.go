@@ -131,7 +131,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		return types.NewDatum(info.StartTS)
 	},
 	StartTimeStr: func(info *TxnInfo) types.Datum {
-		humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+		humanReadableStartTime := time.UnixMilli(oracle.ExtractPhysical(info.StartTS))
 		return types.NewDatum(types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp))
 	},
 	CurrentSQLDigestStr: func(info *TxnInfo) types.Datum {

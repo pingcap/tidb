@@ -1024,7 +1024,7 @@ func TestStaleReadPrepare(t *testing.T) {
 	}
 	config.StoreGlobalConfig(&conf)
 	time1 := time.Now()
-	tso := oracle.ComposeTS(time1.Unix()*1000, 0)
+	tso := oracle.ComposeTS(time1.UnixMilli(), 0)
 	time.Sleep(200 * time.Millisecond)
 	failpoint.Enable("github.com/pingcap/tidb/executor/assertExecutePrepareStatementStalenessOption",
 		fmt.Sprintf(`return("%v_%v")`, tso, "sh"))
