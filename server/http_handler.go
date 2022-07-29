@@ -770,6 +770,20 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			config.StoreGlobalConfig(cfg)
 			txninfo.Recorder.ResizeSummaries(uint(capacity))
 		}
+		if TransactionIDDigestsCapacity := req.Form.Get("transaction_id_digests_capacity"); TransactionIDDigestsCapacity != "" {
+			capacity, err := strconv.Atoi(TransactionIDDigestsCapacity)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			} else if capacity < 0 || capacity > 65536 {
+				writeError(w, errors.New("transaction_id_digests_capacity out of range, should be in 0 to 65536"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.TrxSummary.TransactionIDDigestsCapacity = uint(capacity)
+			config.StoreGlobalConfig(cfg)
+			txninfo.Recorder.ResizeIDDigests(uint(capacity))
+		}
 		if transactionIDDigestMinDuration := req.Form.Get("transaction_id_digest_min_duration"); transactionIDDigestMinDuration != "" {
 			duration, err := strconv.Atoi(transactionIDDigestMinDuration)
 			if err != nil {
