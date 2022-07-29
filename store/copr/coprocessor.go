@@ -1374,18 +1374,3 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 		return kvrpcpb.IsolationLevel_SI
 	}
 }
-
-func checkKeyRangeSorted(keyRanges []kv.KeyRange) bool {
-	if len(keyRanges) == 0 {
-		return true
-	}
-	lastKey := keyRanges[0].StartKey
-	for i := 1; i < len(keyRanges); i++ {
-		r := keyRanges[i]
-		if r.StartKey.Cmp(lastKey) <= 0 {
-			return false
-		}
-		lastKey = r.StartKey
-	}
-	return true
-}
