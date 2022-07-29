@@ -94,4 +94,10 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, context.Canceled)))
 	require.True(t, IsRetryableError(multierr.Combine(&net.DNSError{IsTimeout: true}, &net.DNSError{IsTimeout: true})))
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})))
+<<<<<<< HEAD
+=======
+
+	require.True(t, IsRetryableError(errors.Errorf("region %d is not fully replicated", 1234)))
+	require.True(t, IsRetryableError(errors.New("other error: Coprocessor task terminated due to exceeding the deadline")))
+>>>>>>> bf706ac12... lightning: add more retryable err (#36673)
 }
