@@ -52,7 +52,7 @@ func TestMetricTableData(t *testing.T) {
 	tt, err := time.ParseInLocation("2006-01-02 15:04:05.999", "2019-12-23 20:11:35", time.Local)
 	require.NoError(t, err)
 	v1 := pmodel.SamplePair{
-		Timestamp: pmodel.Time(tt.UnixNano() / int64(time.Millisecond)),
+		Timestamp: pmodel.Time(tt.UnixMilli()),
 		Value:     pmodel.SampleValue(0.1),
 	}
 	matrix = append(matrix, &pmodel.SampleStream{Metric: metric, Values: []pmodel.SamplePair{v1}})
