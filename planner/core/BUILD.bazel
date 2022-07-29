@@ -29,6 +29,7 @@ go_library(
         "pb_to_plan.go",
         "physical_plans.go",
         "plan.go",
+        "plan_cache.go",
         "plan_cost.go",
         "plan_stats.go",
         "plan_to_pb.go",
@@ -69,7 +70,6 @@ go_library(
     deps = [
         "//bindinfo",
         "//config",
-        "//ddl",
         "//distsql",
         "//domain",
         "//errno",
@@ -197,7 +197,6 @@ go_test(
     shard_count = 50,
     deps = [
         "//config",
-        "//ddl",
         "//domain",
         "//errno",
         "//executor",
@@ -227,6 +226,7 @@ go_test(
         "//statistics/handle",
         "//table",
         "//testkit",
+        "//testkit/ddlhelper",
         "//testkit/testdata",
         "//testkit/testmain",
         "//testkit/testsetup",

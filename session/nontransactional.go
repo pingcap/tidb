@@ -640,6 +640,6 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 	logutil.Logger(ctx).Error("Non-transactional delete failed",
 		zap.Int("num_failed_jobs", len(failedJobs)), zap.String("failed_jobs", errStr))
 
-	return nil, errors.New(fmt.Sprintf("%d/%d jobs failed in the non-transactional DML: %s, ...(more in logs)",
-		len(failedJobs), len(jobs), errStr[:mathutil.Min(500, len(errStr)-1)]))
+	return nil, fmt.Errorf("%d/%d jobs failed in the non-transactional DML: %s, ...(more in logs)",
+		len(failedJobs), len(jobs), errStr[:mathutil.Min(500, len(errStr)-1)])
 }

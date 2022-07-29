@@ -578,7 +578,7 @@ func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, 
 		case types.ETDecimal:
 			err = expr.VecEvalDecimal(ctx, input, result)
 		default:
-			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+			err = fmt.Errorf("invalid eval type %v", expr.GetType().EvalType())
 		}
 	} else {
 		ind, n := 0, input.NumRows()
@@ -686,7 +686,7 @@ func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, 
 				ind++
 			}
 		default:
-			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+			err = fmt.Errorf("invalid eval type %v", expr.GetType().EvalType())
 		}
 	}
 	return

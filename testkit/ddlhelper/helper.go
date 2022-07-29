@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,19 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv_test
+package ddlhelper
 
 import (
-	"testing"
-
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 )
 
-func TestSession(t *testing.T) {
-	session := kv.NewSession(&kv.SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890}, log.L())
-	_, err := session.Txn(true)
-	require.NoError(t, err)
+// BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
+// Note: TableID and PartitionID are left as uninitialized value.
+func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
+	return ddl.BuildTableInfoFromAST(s)
 }
