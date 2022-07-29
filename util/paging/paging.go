@@ -25,7 +25,7 @@ const (
 	MinPagingSize      uint64 = 128
 	maxPagingSizeShift        = 7
 	pagingSizeGrow            = 2
-	MaxPagingSize             = 8192
+	MaxPagingSize             = 50000
 	pagingGrowingSum          = ((2 << maxPagingSizeShift) - 1) * MinPagingSize
 	Threshold          uint64 = 960
 )
