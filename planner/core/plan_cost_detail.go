@@ -17,9 +17,12 @@ package core
 import "fmt"
 
 const (
-	RowSizeLbl       = "rowSize"
+	// RowSizeLbl indicates for rowSize
+	RowSizeLbl = "rowSize"
+	// NetworkFactorLbl indicates for networkFactor
 	NetworkFactorLbl = "networkFactor"
-	SeekFactorLbl    = "seekFactor"
+	// SeekFactorLbl indicates for seekFactor
+	SeekFactorLbl = "seekFactor"
 )
 
 func setPointGetPlanCostDetail(p *PointGetPlan, opt *physicalOptimizeOp,
