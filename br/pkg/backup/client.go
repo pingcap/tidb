@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -615,7 +616,7 @@ func (bc *Client) BackupRange(
 		zap.Uint32("concurrency", req.Concurrency))
 
 	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), conn.SkipTiFlash)
+	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), connutil.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -676,9 +677,7 @@ func (bc *Client) BackupRange(
 func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
-	if !isRawKv {
-		key = codec.EncodeBytes([]byte{}, key)
-	}
+	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
 	for i := 0; i < 5; i++ {
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)

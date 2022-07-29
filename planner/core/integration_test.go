@@ -6834,7 +6834,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	}
 
 	// tiflash_fine_grained_shuffle_stream_count should be same with tidb_max_tiflash_threads.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
 	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
 	rows := tk.MustQuery(sql).Rows()
 	streamCount := getStreamCountFromExplain(rows)
@@ -6842,7 +6842,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	require.Equal(t, uint64(10), streamCount[0])
 
 	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is -1.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
 	tk.MustExec("set @@tidb_max_tiflash_threads = -1")
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
@@ -6850,15 +6850,15 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
 
 	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is 0.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
 	tk.MustExec("set @@tidb_max_tiflash_threads = 0")
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
 	// require.Equal(t, len(streamCount), 1)
 	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
 
-	// Disabled when tiflash_fine_grained_shuffle_stream_count is 0.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
+	// Disabled when tiflash_fine_grained_shuffle_stream_count is -1.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
 	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
@@ -6874,7 +6874,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 }
 
 func TestIssue33175(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -6963,7 +6963,7 @@ func TestIssue33175(t *testing.T) {
 }
 
 func TestIssue33042(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
@@ -6984,7 +6984,7 @@ func TestIssue33042(t *testing.T) {
 }
 
 func TestIssue29663(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -7008,7 +7008,7 @@ func TestIssue29663(t *testing.T) {
 }
 
 func TestIssue31609(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -7208,4 +7208,19 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_9", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestIssue36609(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
+	tk.MustExec("create table t2(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
+	tk.MustExec("create table t3(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
+	tk.MustExec("create table t4(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
+	tk.MustExec("create table t5(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
+	tk.MustQuery("select * from t3 straight_join t4 on t3.a = t4.b straight_join t2 on t3.d = t2.c straight_join t1 on t1.a = t2.b straight_join t5 on t4.c = t5.d where t2.b < 100 and t4.a = 10;")
+	tk.MustQuery("select * from information_schema.statements_summary;")
 }

@@ -1630,6 +1630,13 @@ func (s *SessionVars) SetUserVar(varName string, svalue string, collation string
 	}
 }
 
+// UnsetUserVar unset an user defined variable by name.
+func (s *SessionVars) UnsetUserVar(varName string) {
+	varName = strings.ToLower(varName)
+	delete(s.Users, varName)
+	delete(s.UserVarTypes, varName)
+}
+
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
@@ -1637,7 +1644,7 @@ func (s *SessionVars) SetLastInsertID(insertID uint64) {
 }
 
 // SetStatusFlag sets the session server status variable.
-// If on is ture sets the flag in session status,
+// If on is true sets the flag in session status,
 // otherwise removes the flag.
 func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	if on {

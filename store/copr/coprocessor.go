@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -51,6 +52,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var coprCacheCounterEvict = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
@@ -92,6 +94,18 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		// coprocessor request but type is not DAG
 		req.Paging = false
 	}
+
+	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
+		if req.Paging {
+			isSorted := slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
+				return bytes.Compare(i.StartKey, j.StartKey) < 0
+			})
+			if !isSorted {
+				logutil.BgLogger().Fatal("distsql request key range not sorted!")
+			}
+		}
+	})
+
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
