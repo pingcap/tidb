@@ -147,7 +147,7 @@ const (
 	ClientSSL                                           // CLIENT_SSL
 	ClientIgnoreSigpipe                                 // CLIENT_IGNORE_SIGPIPE
 	ClientTransactions                                  // CLIENT_TRANSACTIONS
-	ClientReserved                                      // Deprecated: CLIENT_RESERVERD
+	ClientReserved                                      // Deprecated: CLIENT_RESERVED
 	ClientSecureConnection                              // Deprecated: CLIENT_SECURE_CONNECTION
 	ClientMultiStatements                               // CLIENT_MULTI_STATEMENTS
 	ClientMultiResults                                  // CLIENT_MULTI_RESULTS
