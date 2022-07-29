@@ -590,7 +590,10 @@
       "with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select /*+ MERGE() */ * from t4) select * from cte3,cte4) select * from cte1,cte2;",
       "with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select /*+ MERGE() */ * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;",
       "with cte2 as (with cte4 as (select * from tc) select * from te, cte4) select * from cte2;",
-      "with cte2 as (with cte4 as (select /*+ merge() */ * from tc) select * from te, cte4) select * from cte2;"
+      "with cte2 as (with cte4 as (select /*+ merge() */ * from tc) select * from te, cte4) select * from cte2;",
+      "with cte1 as (with cte2 as (with cte3 as (select  /*+ MERGE() */  * from t2) select  /*+ MERGE() */  * from cte3) select * from cte2,(select  /*+ MERGE() */ * from t1) ttt) select * from cte1;",
+      "with cte1 as (with cte2 as (with cte3 as (select  /*+ MERGE() */  * from t2) select  /*+ MERGE() */  * from cte3) select * from cte2,(select * from t1) ttt) select * from cte1,(select  /*+ MERGE() */ * from t3) ttw;",
+      "with cte1 as (with cte2 as (with cte3 as (select  /*+ MERGE() */  * from t2) select  /*+ MERGE() */  * from cte3) select * from cte2,(select * from t1) ttt) select * from cte1,(select * from t3) ttw;"
     ]
   },
   {

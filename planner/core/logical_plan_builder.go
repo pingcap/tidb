@@ -340,10 +340,12 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 			cte.recursiveRef = false
 		}
 	}()
-	return b.buildResultSetNode(ctx, from.TableRefs)
+	return b.buildResultSetNode(ctx, from.TableRefs, false)
 }
 
-func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode) (p LogicalPlan, err error) {
+func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode, IsCTE bool) (p LogicalPlan, err error) {
+	//If it is building the CTE queries, we will mark them.
+	b.isCTE = IsCTE
 	switch x := node.(type) {
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
@@ -684,19 +686,19 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
 	// and we only build the left "ResultSetNode".
 	if joinNode.Right == nil {
-		return b.buildResultSetNode(ctx, joinNode.Left)
+		return b.buildResultSetNode(ctx, joinNode.Left, false)
 	}
 
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	// Add join reorder flag regardless of inner join or outer join.
 	b.optFlag = b.optFlag | flagJoinReOrder
 
-	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left)
+	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left, false)
 	if err != nil {
 		return nil, err
 	}
 
-	rightPlan, err := b.buildResultSetNode(ctx, joinNode.Right)
+	rightPlan, err := b.buildResultSetNode(ctx, joinNode.Right, false)
 	if err != nil {
 		return nil, err
 	}
@@ -3797,9 +3799,16 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	// Determines whether to use the Merge hint in a CTE query.
-	if b.buildingCTE {
-		if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
-			b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
+	if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
+		if b.buildingCTE {
+			if b.isCTE {
+				b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
+			} else if !b.buildingRecursivePartForCTE {
+				//If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."))
+			}
+		} else if !b.buildingCTE && !b.isCTE {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."))
 		}
 	}
 
@@ -4019,11 +4028,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	// If Merge hint is using in outer query, we will not apply this hint.
-	if hints := b.TableHints(); hints.MergeHints.preferMerge && !b.buildingCTE && len(b.tableHintInfo) == 1 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."))
-	}
-
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
@@ -4227,7 +4231,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (LogicalPlan, error) {
-	p, err := b.buildResultSetNode(ctx, cte.Query.Query)
+	p, err := b.buildResultSetNode(ctx, cte.Query.Query, true)
 	if err != nil {
 		return nil, err
 	}
@@ -5160,7 +5164,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 	}
 
-	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs)
+	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs, false)
 	if err != nil {
 		return nil, err
 	}
@@ -5542,7 +5546,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		}
 	}
 
-	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs)
+	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs, false)
 	if err != nil {
 		return nil, err
 	}
@@ -6712,7 +6716,8 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 		}
 		b.buildingRecursivePartForCTE = saveCheck
 	} else {
-		p, err = b.buildResultSetNode(ctx, cte.Query.Query)
+		//When the query is CTE, we will turn the var to true.
+		p, err = b.buildResultSetNode(ctx, cte.Query.Query, true)
 		if err != nil {
 			return nil, err
 		}
@@ -6730,6 +6735,7 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 
 // buildRecursiveCTE handles the with clause `with recursive xxx as xx`.
 func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNode) error {
+	b.isCTE = true
 	cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 	switch x := (cte).(type) {
 	case *ast.SetOprStmt:
@@ -6872,7 +6878,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 		}
 		return nil
 	default:
-		p, err := b.buildResultSetNode(ctx, x)
+		p, err := b.buildResultSetNode(ctx, x, true)
 		if err != nil {
 			// Refine the error message.
 			if errors.ErrorEqual(err, ErrCTERecursiveRequiresNonRecursiveFirst) {
