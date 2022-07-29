@@ -707,14 +707,6 @@ func (d *ddl) DisableDDL() error {
 		}
 
 		// FIXME: if possible, when this node is the only node with DDL, ths setting of DisableDDL should fail.
-
-		// lets the owner start a new election.
-		err = d.ownerManager.ResignOwner(d.ownerManager.Ctx())
-
-		if err != nil {
-			logutil.BgLogger().Error("[ddl] error when ResignOwner", zap.Error(err))
-			return err
-		}
 	}
 
 	// disable campaign by interrupting campaignLoop
