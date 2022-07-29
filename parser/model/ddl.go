@@ -471,7 +471,7 @@ func (job *Job) Clone() *Job {
 // TSConvert2Time converts timestamp to time.
 func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
-	return time.Unix(t/1e3, (t%1e3)*1e6)
+	return time.UnixMilli(t)
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
