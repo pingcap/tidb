@@ -165,7 +165,7 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 	var unixTimeMs = func(v string) int64 {
 		tt, err := time.ParseInLocation("2006-01-02 15:04:05", v, time.Local)
 		require.NoError(t, err)
-		return tt.UnixNano() / int64(time.Millisecond)
+		return tt.UnixMilli()
 	}
 
 	tk := testkit.NewTestKit(t, s.store)
