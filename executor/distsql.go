@@ -305,6 +305,9 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
+		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	})
 	var builder distsql.RequestBuilder
 	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
