@@ -86,6 +86,28 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
+type cteNameExtractor struct {
+	names map[string]struct{}
+}
+
+func (cne *cteNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*ast.SelectStmt); ok {
+		return in, true
+	}
+	return in, false
+}
+
+func (cne *cteNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
+	if s, ok := in.(*ast.SelectStmt); ok {
+		if s.With != nil && len(s.With.CTEs) > 0 {
+			for _, cte := range s.With.CTEs {
+				cne.names[cte.Name.L] = struct{}{}
+			}
+		}
+	}
+	return in, true
+}
+
 // Next implements the Executor Next interface.
 func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
@@ -385,12 +407,24 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 }
 
 func extractTableNames(ExecStmt ast.StmtNode, curDB string) (map[tableNamePair]struct{}, error) {
-	extractor := &tableNameExtractor{
+	tableExtractor := &tableNameExtractor{
 		curDB: curDB,
 		names: make(map[tableNamePair]struct{}),
 	}
-	ExecStmt.Accept(extractor)
-	return extractor.names, nil
+	ExecStmt.Accept(tableExtractor)
+	cteExtractor := &cteNameExtractor{
+		names: make(map[string]struct{}),
+	}
+	ExecStmt.Accept(cteExtractor)
+	r := make(map[tableNamePair]struct{})
+	// remove cte in table names
+	for tablePair := range tableExtractor.names {
+		_, ok := cteExtractor.names[tablePair.TableName]
+		if !ok {
+			r[tablePair] = struct{}{}
+		}
+	}
+	return r, nil
 }
 
 func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable, error) {

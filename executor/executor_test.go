@@ -151,6 +151,10 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("plan replayer dump explain select * from t where a=10")
+
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
 }
 
 func TestShow(t *testing.T) {
