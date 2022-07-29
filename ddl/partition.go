@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -643,13 +644,32 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 		}
 
 		buf := new(bytes.Buffer)
+		colTypes := collectColumnsType(tbInfo)
 		// Range columns partitions support multi-column partitions.
-		for _, expr := range clause.Exprs {
+		for i, expr := range clause.Exprs {
 			expr.Accept(exprChecker)
 			if exprChecker.err != nil {
 				return nil, exprChecker.err
 			}
-			expr.Format(buf)
+			if _, ok := expr.(*ast.MaxValueExpr); ok {
+				piDef.LessThan = append(piDef.LessThan, "MAXVALUE")
+				continue
+			}
+			e, err := expression.RewriteAstExpr(ctx, expr, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			e = expression.BuildCastFunction(ctx, e, &colTypes[i])
+			e = expression.WrapWithCastAsString(ctx, e)
+			val, err := e.Eval(chunk.Row{})
+			if err != nil {
+				return nil, err
+			}
+			if val.Collation() == charset.CollationBin {
+				buf.WriteString(fmt.Sprintf("0x%X", val.GetString()))
+			} else {
+				buf.WriteString(strconv.Quote(val.GetString()))
+			}
 			piDef.LessThan = append(piDef.LessThan, buf.String())
 			buf.Reset()
 		}
