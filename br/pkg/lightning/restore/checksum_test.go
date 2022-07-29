@@ -249,7 +249,7 @@ func (c *testPDClient) currentSafePoint() uint64 {
 }
 
 func (c *testPDClient) GetTS(ctx context.Context) (int64, int64, error) {
-	physicalTS := time.Now().UnixNano() / 1e6
+	physicalTS := time.Now().UnixMilli()
 	logicalTS := oracle.ExtractLogical(c.logicalTSCounter.Inc())
 	return physicalTS, logicalTS, nil
 }
