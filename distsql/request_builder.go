@@ -263,9 +263,10 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = replicaReadType
 	builder.SetResourceGroupTagger(sv.StmtCtx.GetResourceGroupTagger())
-	if sv.EnablePaging {
-		builder.SetPaging(true)
-		builder.Request.MinPagingSize = uint64(sv.MinPagingSize)
+	{
+		builder.SetPaging(sv.EnablePaging)
+		builder.Request.Paging.MinPagingSize = uint64(sv.MinPagingSize)
+		builder.Request.Paging.MaxPagingSize = uint64(sv.MaxPagingSize)
 	}
 	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
@@ -274,7 +275,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 
 // SetPaging sets "Paging" flag for "kv.Request".
 func (builder *RequestBuilder) SetPaging(paging bool) *RequestBuilder {
-	builder.Request.Paging = paging
+	builder.Request.Paging.Enable = paging
 	return builder
 }
 
