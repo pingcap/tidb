@@ -1178,11 +1178,10 @@ func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = c.tp
 	switch c.tp.EvalType() {
 	case types.ETInt:
 		sig = &builtinValuesIntSig{bf, c.offset}

@@ -29,7 +29,6 @@ go_library(
         "//meta",
         "//meta/autoid",
         "//parser/model",
-        "//sessionctx",
         "//statistics/handle",
         "//util",
         "//util/codec",
@@ -67,6 +66,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/conn",
+        "//br/pkg/gluetidb",
         "//br/pkg/metautil",
         "//br/pkg/mock",
         "//br/pkg/pdutil",

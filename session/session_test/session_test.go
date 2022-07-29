@@ -59,6 +59,8 @@ func TestSchemaCheckerSQL(t *testing.T) {
 	store, clean := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -235,6 +237,8 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	store, clean := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -1344,6 +1348,8 @@ func TestRetryForCurrentTxn(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1481,6 +1487,8 @@ func TestParseWithParams(t *testing.T) {
 func TestStatementCountLimit(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table stmt_count_limit (id int)")
@@ -1507,6 +1515,8 @@ func TestStatementCountLimit(t *testing.T) {
 func TestBatchCommit(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_batch_commit = 1")
@@ -1601,6 +1611,8 @@ func TestKVVars(t *testing.T) {
 func TestTxnRetryErrMsg(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -2463,6 +2475,8 @@ func TestCommitRetryCount(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
@@ -3164,6 +3178,8 @@ func TestResetCtx(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -3201,6 +3217,8 @@ func TestUnique(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -3550,6 +3568,8 @@ func TestRowLock(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -4080,6 +4100,8 @@ func TestBinaryReadOnly(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (i int key)")

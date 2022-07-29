@@ -283,7 +283,7 @@ func TestShow(t *testing.T) {
 		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
 		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
 		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|`id` * 2 + 1|NO",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>||BTREE| |YES|`id` * 2 + 1|NO",
 	))
 
 	// For show like with escape
@@ -854,6 +854,8 @@ func TestNoHistoryWhenDisableRetry(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists history")
@@ -1240,6 +1242,8 @@ func TestAutoIncIDInRetry(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -1352,6 +1356,8 @@ func TestAutoRandIDRetry(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create database if not exists auto_random_retry")
@@ -1579,6 +1585,8 @@ func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/distsql/mockNextRawError", `return(true)`))
-	err := tk.ExecToErr("analyze table t1")
-	require.EqualError(t, err, "mockNextRawError")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/distsql/mockNextRawError"))
+	}()
+	tk.MustGetErrMsg("analyze table t1", "mockNextRawError")
 }
