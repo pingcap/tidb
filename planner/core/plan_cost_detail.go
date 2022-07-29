@@ -17,9 +17,9 @@ package core
 import "fmt"
 
 const (
-	rowSizeLbl       = "rowSize"
-	networkFactorLbl = "networkFactor"
-	seekFactorLbl    = "seekFactor"
+	RowSizeLbl       = "rowSize"
+	NetworkFactorLbl = "networkFactor"
+	SeekFactorLbl    = "seekFactor"
 )
 
 func setPointGetPlanCostDetail(p *PointGetPlan, opt *physicalOptimizeOp,
@@ -28,8 +28,8 @@ func setPointGetPlanCostDetail(p *PointGetPlan, opt *physicalOptimizeOp,
 		return
 	}
 	opt.appendPlanCostDetail(p).
-		appendParamCostDetail(rowSizeLbl, rowSize).
-		appendParamCostDetail(networkFactorLbl, networkFactor).
-		appendParamCostDetail(seekFactorLbl, seekFactor).
-		appendCurrCostDesc(fmt.Sprintf("%s * %s + %s", rowSizeLbl, networkFactorLbl, seekFactorLbl))
+		appendParamCostDetail(RowSizeLbl, rowSize).
+		appendParamCostDetail(NetworkFactorLbl, networkFactor).
+		appendParamCostDetail(SeekFactorLbl, seekFactor).
+		appendCurrCostDesc(fmt.Sprintf("%s * %s + %s", RowSizeLbl, NetworkFactorLbl, SeekFactorLbl))
 }

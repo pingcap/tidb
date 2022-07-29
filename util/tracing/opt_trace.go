@@ -262,3 +262,14 @@ func (d *PhysicalPlanCostDetail) SetDesc(desc string) {
 func (d *PhysicalPlanCostDetail) GetPlanID() int {
 	return d.id
 }
+
+// GetPlanType gets plan type
+func (d *PhysicalPlanCostDetail) GetPlanType() string {
+	return d.tp
+}
+
+// Exists checks whether key exists in params
+func (d *PhysicalPlanCostDetail) Exists(k string) bool {
+	_, ok := d.params[k]
+	return ok
+}
