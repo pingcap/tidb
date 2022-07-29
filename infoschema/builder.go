@@ -75,7 +75,7 @@ func (b *bundleInfoBuilder) SetDeltaUpdateBundles() {
 	b.deltaUpdate = true
 }
 
-func (_ *bundleInfoBuilder) deleteBundle(is *infoSchema, tblID int64) {
+func (*bundleInfoBuilder) deleteBundle(is *infoSchema, tblID int64) {
 	delete(is.ruleBundleMap, tblID)
 }
 
