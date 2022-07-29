@@ -12,17 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package perm
+package file_permission
 
 import (
 	"os"
 
-	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
 // Name is the name of the analyzer.
-const Name = "perm"
+const Name = "file_permission"
 
 // Analyzer is the analyzer struct of prealloc.
 var Analyzer = &analysis.Analyzer{
@@ -46,8 +45,4 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	}
 
 	return nil, nil
-}
-
-func init() {
-	util.SkipAnalyzer(Analyzer)
 }

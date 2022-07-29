@@ -31,6 +31,8 @@ find . \( -name "*.png" \
 if [ -z "$(git status --untracked-files=no --porcelain)" ]; then 
 	exit 0
 else 
+	echo "you may have files with wrong permission, for example an executable txt or png file"
+	git status
 	exit 1
 fi
 
