@@ -5161,17 +5161,25 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.PartitionedTable = b.partitionedTable
 	updt.tblID2Table = tblID2table
 
+	tblID2UpdateColumns := buildTbl2UpdateColumns(updt)
+	tblID2Schema, err := buildTblID2Schema(b.is, tblID2table)
+	if err != nil {
+		return nil, err
+	}
+	updt.FKTriggers = buildOnUpdateForeignKeyTrigger(b.ctx, b.is, tblID2table, tblID2UpdateColumns, tblID2Schema)
+	return updt, err
+}
+
+func buildTblID2Schema(is infoschema.InfoSchema, tblID2table map[int64]table.Table) (map[int64]string, error) {
 	tblID2Schema := make(map[int64]string)
 	for tid, tbl := range tblID2table {
-		dbInfo, exist := b.is.SchemaByTable(tbl.Meta())
+		dbInfo, exist := is.SchemaByTable(tbl.Meta())
 		if !exist {
 			return nil, infoschema.ErrDatabaseNotExists
 		}
 		tblID2Schema[tid] = dbInfo.Name.L
 	}
-	tblID2UpdateColumns := buildTbl2UpdateColumns(updt)
-	updt.FKTriggers = buildOnUpdateForeignKeyTrigger(b.ctx, b.is, tblID2table, tblID2UpdateColumns, tblID2Schema)
-	return updt, err
+	return tblID2Schema, nil
 }
 
 func buildTbl2UpdateColumns(updt *Update) map[int64]map[string]*model.ColumnInfo {
@@ -5765,10 +5773,16 @@ func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName m
 		return nil, err
 	}
 	update.TblColPosInfos, err = buildColumns2Handle(update.names, tblID2Handle, tblID2Table, false)
-	update.tblID2Table = tblID2Table
 	if err != nil {
 		return nil, err
 	}
+	update.tblID2Table = tblID2Table
+	tblID2UpdateColumns := buildTbl2UpdateColumns(update)
+	tblID2Schema, err := buildTblID2Schema(b.is, tblID2Table)
+	if err != nil {
+		return nil, err
+	}
+	update.FKTriggers = buildOnUpdateForeignKeyTrigger(b.ctx, b.is, tblID2Table, tblID2UpdateColumns, tblID2Schema)
 	return &FKUpdateSetNullPlan{
 		Update:            update,
 		baseFKTriggerPlan: baseFKTriggerPlan{fk, fk.RefCols},

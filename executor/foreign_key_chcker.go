@@ -128,6 +128,7 @@ func (fkc *ForeignKeyCheckExec) checkIndexKeys(ctx context.Context, txn kv.Trans
 	if len(fkc.toBeCheckedIndexKeys) == 0 {
 		return nil
 	}
+	memBuffer := txn.GetMemBuffer()
 	snap := txn.GetSnapshot()
 	snap.SetOption(kv.ScanBatchSize, 2)
 	defer func() {
@@ -140,7 +141,7 @@ func (fkc *ForeignKeyCheckExec) checkIndexKeys(ctx context.Context, txn kv.Trans
 		default:
 		}
 
-		exist, err := fkc.checkIndexKeyExistInReferTable(snap, key)
+		exist, err := fkc.checkIndexKeyExistInReferTable(memBuffer, snap, key)
 		if err != nil {
 			return err
 		}
@@ -154,8 +155,28 @@ func (fkc *ForeignKeyCheckExec) checkIndexKeys(ctx context.Context, txn kv.Trans
 	return nil
 }
 
-func (fkc *ForeignKeyCheckExec) checkIndexKeyExistInReferTable(snap kv.Snapshot, key kv.Key) (bool, error) {
-	it, err := snap.Iter(key, nil)
+func (fkc *ForeignKeyCheckExec) checkIndexKeyExistInReferTable(memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (bool, error) {
+	memIter, err := memBuffer.Iter(key, key.PrefixNext())
+	if err != nil {
+		return false, err
+	}
+	defer memIter.Close()
+	for ; memIter.Valid(); err = memIter.Next() {
+		if err != nil {
+			return false, err
+		}
+		// check whether the key was been deleted.
+		if len(memIter.Value()) == 0 {
+			continue
+		}
+		k := memIter.Key()
+		// TODO: better decode to column datum and compare the datum value
+		if k.HasPrefix(key) {
+			return true, nil
+		}
+	}
+
+	it, err := snap.Iter(key, key.PrefixNext())
 	if err != nil {
 		return false, err
 	}

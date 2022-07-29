@@ -7218,3 +7218,88 @@ func TestForeignKeyOnUpdateCheck(t *testing.T) {
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
 }
+
+func TestForeignKeySelfReferenceCascadeDelete(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=1")
+
+	tk.MustExec("create table t (id int key, name varchar(10), leader int, index (leader), foreign key fk(leader) references t(id) ON UPDATE CASCADE ON DELETE CASCADE)")
+	tk.MustExec("insert into t (id, name, leader) values (1, 'a', null), (2, 'b', 1), (3, 'c', 1), (4, 'd', 2), (5, 'e', 2), (6, 'f', 3), (7, 'g', 6)")
+	tk.MustExec("delete from t where id=1;")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
+func TestForeignKeyCascadeReferenceCascadeUpdateAndCascadeDelete(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=1")
+
+	cases := []struct {
+		prepareSQLs []string
+	}{
+		// Case-1: test unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (a int, b int, name varchar(10), unique index (a, b))",
+				"create table t2 (a int, b int, name varchar(10), unique index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t3 (a int, b int, name varchar(10), unique index (a, b), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t4 (a int, b int, name varchar(10), unique index (a), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+			},
+		},
+		// Case-2: test unique index contain foreign key columns and other columns.
+		//{
+		//	prepareSQLs: []string{
+		//		"create table t1 (a int, b int, name varchar(10), unique index (a, b, name))",
+		//		"create table t2 (a int, b int, name varchar(10), unique index (a, b, name), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+		//		"create table t3 (a int, b int, name varchar(10), unique index (a, b, name), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+		//		"create table t4 (a int, b int, name varchar(10), unique index (a, b, name), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+		//	},
+		//},
+		// Case-3: test non-unique index only contain foreign key columns.
+		//{
+		//	prepareSQLs: []string{
+		//		"create table t1 (a int, b int, name varchar(10), index (a, b))",
+		//		"create table t2 (a int, b int, name varchar(10), index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+		//		"create table t3 (a int, b int, name varchar(10), index (a, b), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+		//		"create table t4 (a int, b int, name varchar(10), index (a), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+		//	},
+		//},
+		// Case-4: test non-unique index contain foreign key columns and other columns.
+		//{
+		//	prepareSQLs: []string{
+		//		"create table t1 (a int, b int, name varchar(10), index (a, b, name))",
+		//		"create table t2 (a int, b int, name varchar(10), index (a, b, name), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+		//		"create table t3 (a int, b int, name varchar(10), index (a, b, name), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+		//		"create table t4 (a int, b int, name varchar(10), index (a, b, name), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+		//	},
+		//},
+	}
+
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t4;")
+		tk.MustExec("drop table if exists t3;")
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 (a, b, name) values (1,2,'a'), (3, 4, 'b'), (5, 6, 'c')")
+		tk.MustExec("insert into t2 (a, b, name) values (1,2,'d'), (3, 4, 'e')")
+		tk.MustExec("insert into t3 (a, b, name) values (1,2,'f'), (3, 4, 'h')")
+		tk.MustExec("insert into t4 (a, b, name) values (1,2,'j'), (3, 4, 'k')")
+		tk.MustExec("update t1 set a=11, b=12 where a = 1")
+		tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("11 12 d", "3 4 e"))
+		tk.MustQuery("select * from t3 order by name").Check(testkit.Rows("11 12 f", "3 4 h"))
+		tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("11 2 j", "3 4 k"))
+		tk.MustExec("update t2 set a=5, b=6 where a = 3")
+		tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("11 12 d", "5 6 e"))
+		tk.MustQuery("select * from t3 order by name").Check(testkit.Rows("11 12 f", "5 6 h"))
+		//tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("11 2 j", "5 4 k"))
+		tk.MustExec("admin check table t1,t2,t3,t4")
+	}
+}

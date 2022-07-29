@@ -524,6 +524,10 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 		if err != nil {
 			return err
 		}
+		err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

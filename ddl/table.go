@@ -170,7 +170,10 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	fkc := ForeignKeyChecker{}
+	fkc := ForeignKeyChecker{
+		schemaID: job.SchemaID,
+		tbInfo:   tbInfo,
+	}
 	switch job.SchemaState {
 	case model.StateNone:
 		var referTableInfo *model.TableInfo
@@ -252,7 +255,10 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, errors.Trace(err)
 }
 
-type ForeignKeyChecker struct{}
+type ForeignKeyChecker struct {
+	schemaID int64
+	tbInfo   *model.TableInfo
+}
 
 func (c ForeignKeyChecker) checkTableForeignKey(referTableInfo *model.TableInfo, fkInfo *model.FKInfo) error {
 	// check refer columns in paren table.
@@ -280,6 +286,10 @@ func (c ForeignKeyChecker) getParentTableFromStorage(d *ddlCtx, fkInfo *model.FK
 	if err != nil {
 		return db, nil, err
 	}
+	// self reference
+	if db.ID == c.schemaID && fkInfo.RefTable.L == c.tbInfo.Name.L {
+		return db, c.tbInfo, nil
+	}
 	tbInfo, err := getTableInfo(t, tb.ID, db.ID)
 	if err != nil {
 		return db, nil, err
@@ -296,6 +306,10 @@ func (c ForeignKeyChecker) getParentTableFromInfoCache(d *ddlCtx, fkInfo *model.
 	db, ok := is.SchemaByName(fkInfo.RefSchema)
 	if !ok {
 		return nil, nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fkInfo.RefSchema))
+	}
+	// self reference
+	if db.ID == c.schemaID && fkInfo.RefTable.L == c.tbInfo.Name.L {
+		return db, c.tbInfo, nil
 	}
 	tb, err := is.TableByName(fkInfo.RefSchema, fkInfo.RefTable)
 	if err != nil {

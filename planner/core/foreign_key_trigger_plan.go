@@ -196,13 +196,20 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, referred
 		Schema: referredFK.ChildSchema,
 		Name:   referredFK.ChildTable,
 	}
-	dsPlan, err := b.buildDataSource(ctx, tn, &model.CIStr{})
+	datasource, err := b.buildDataSource(ctx, tn, &model.CIStr{})
 	if err != nil {
 		return nil, err
 	}
-	ds, ok := dsPlan.(*DataSource)
-	if !ok {
-		return nil, errors.Errorf("expected datasource, but got %v", dsPlan)
+	var ds *DataSource
+	//isUnionScan := false
+	switch v := datasource.(type) {
+	case *DataSource:
+		ds = v
+	case *LogicalUnionScan:
+		ds = v.children[0].(*DataSource)
+		//isUnionScan = true
+	default:
+		return nil, errors.Errorf("unknown datasource plan: %#v", datasource)
 	}
 
 	fk := model.FindFKInfoByName(ds.tableInfo.ForeignKeys, referredFK.ChildFKName.L)
@@ -232,6 +239,7 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, referred
 	if err != nil {
 		return nil, err
 	}
+	del.FKTriggers = buildOnDeleteForeignKeyTrigger(b.ctx, b.is, tblID2Table)
 	return &FKOnDeleteCascadePlan{
 		Delete:            del,
 		baseFKTriggerPlan: baseFKTriggerPlan{fk, fk.RefCols},
