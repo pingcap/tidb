@@ -61,8 +61,7 @@ func newTiDBSuite(t *testing.T) (*tidbSuite, func()) {
 }
 
 func TestCreateTableIfNotExistsStmt(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 
 	dbName := "testdb"
 	createSQLIfNotExistsStmt := func(createTable, tableName string) []string {
@@ -166,8 +165,7 @@ func TestCreateTableIfNotExistsStmt(t *testing.T) {
 }
 
 func TestInitSchema(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -195,8 +193,7 @@ func TestInitSchema(t *testing.T) {
 }
 
 func TestInitSchemaSyntaxError(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -212,8 +209,7 @@ func TestInitSchemaSyntaxError(t *testing.T) {
 }
 
 func TestInitSchemaErrorLost(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -238,8 +234,7 @@ func TestInitSchemaErrorLost(t *testing.T) {
 }
 
 func TestInitSchemaUnsupportedSchemaError(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -261,8 +256,7 @@ func TestInitSchemaUnsupportedSchemaError(t *testing.T) {
 }
 
 func TestDropTable(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -276,8 +270,7 @@ func TestDropTable(t *testing.T) {
 }
 
 func TestLoadSchemaInfo(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 
 	metrics := metric.NewMetrics(promutil.NewDefaultFactory())
 	ctx := metric.NewContext(context.Background(), metrics)
@@ -369,8 +362,7 @@ func TestLoadSchemaInfoMissing(t *testing.T) {
 }
 
 func TestGetGCLifetime(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -385,8 +377,7 @@ func TestGetGCLifetime(t *testing.T) {
 }
 
 func TestSetGCLifetime(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -401,8 +392,7 @@ func TestSetGCLifetime(t *testing.T) {
 }
 
 func TestAlterAutoInc(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -422,8 +412,7 @@ func TestAlterAutoInc(t *testing.T) {
 }
 
 func TestAlterAutoRandom(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -447,8 +436,7 @@ func TestAlterAutoRandom(t *testing.T) {
 }
 
 func TestObtainRowFormatVersionSucceed(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -483,8 +471,7 @@ func TestObtainRowFormatVersionSucceed(t *testing.T) {
 }
 
 func TestObtainRowFormatVersionFailure(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -511,8 +498,7 @@ func TestObtainRowFormatVersionFailure(t *testing.T) {
 }
 
 func TestObtainNewCollationEnabled(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s :=newTiDBSuite(t)
 	ctx := context.Background()
 
 	// cannot retry on this err

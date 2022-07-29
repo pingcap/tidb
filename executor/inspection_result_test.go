@@ -36,8 +36,7 @@ import (
 )
 
 func TestInspectionResult(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -244,8 +243,7 @@ func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, 
 }
 
 func TestThresholdCheckInspection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(str string) types.Time {
@@ -337,8 +335,7 @@ func TestThresholdCheckInspection(t *testing.T) {
 }
 
 func TestThresholdCheckInspection2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
@@ -422,8 +419,7 @@ func TestThresholdCheckInspection2(t *testing.T) {
 }
 
 func TestThresholdCheckInspection3(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
@@ -510,8 +506,7 @@ func createClusterGRPCServer(t testing.TB) map[string]*testServer {
 }
 
 func TestCriticalErrorInspection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -633,8 +628,7 @@ func TestCriticalErrorInspection(t *testing.T) {
 }
 
 func TestNodeLoadInspection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
@@ -711,8 +705,7 @@ func TestNodeLoadInspection(t *testing.T) {
 }
 
 func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {

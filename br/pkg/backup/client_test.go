@@ -76,8 +76,7 @@ func createBackupSuite(t *testing.T) (s *testBackup, clean func()) {
 }
 
 func TestGetTS(t *testing.T) {
-	s, clean := createBackupSuite(t)
-	defer clean()
+	s :=createBackupSuite(t)
 
 	// mockPDClient' physical ts and current ts will have deviation
 	// so make this deviation tolerance 100ms
@@ -254,8 +253,7 @@ func TestOnBackupRegionErrorResponse(t *testing.T) {
 }
 
 func TestSkipUnsupportedDDLJob(t *testing.T) {
-	s, clean := createBackupSuite(t)
-	defer clean()
+	s :=createBackupSuite(t)
 
 	tk := testkit.NewTestKit(t, s.cluster.Storage)
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
@@ -307,8 +305,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 }
 
 func TestCheckBackupIsLocked(t *testing.T) {
-	s, clean := createBackupSuite(t)
-	defer clean()
+	s :=createBackupSuite(t)
 
 	ctx := context.Background()
 

@@ -105,8 +105,7 @@ func createReadOnlySuite(t *testing.T) (s *ReadOnlySuite, clean func()) {
 }
 
 func TestRestriction(t *testing.T) {
-	s, clean := createReadOnlySuite(t)
-	defer clean()
+	s :=createReadOnlySuite(t)
 
 	var err error
 	_, err = s.db.Exec("drop table if exists t")
@@ -176,8 +175,7 @@ func TestRestriction(t *testing.T) {
 }
 
 func TestRestrictionWithConnectionPool(t *testing.T) {
-	s, clean := createReadOnlySuite(t)
-	defer clean()
+	s :=createReadOnlySuite(t)
 	var err error
 	_, err = s.db.Exec("drop table if exists t")
 	require.NoError(t, err)
@@ -218,8 +216,7 @@ func TestRestrictionWithConnectionPool(t *testing.T) {
 }
 
 func TestReplicationWriter(t *testing.T) {
-	s, clean := createReadOnlySuite(t)
-	defer clean()
+	s :=createReadOnlySuite(t)
 	_, err := s.db.Exec("set global tidb_restricted_read_only=0")
 	require.NoError(t, err)
 	_, err = s.db.Exec("drop table if exists t")

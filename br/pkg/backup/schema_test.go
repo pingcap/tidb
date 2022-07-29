@@ -89,8 +89,7 @@ func (sp *simpleProgress) get() int64 {
 }
 
 func TestBuildBackupRangeAndSchema(t *testing.T) {
-	m, clean := createMockCluster(t)
-	defer clean()
+	m :=createMockCluster(t)
 
 	tk := testkit.NewTestKit(t, m.Storage)
 
@@ -189,8 +188,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 }
 
 func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
-	m, clean := createMockCluster(t)
-	defer clean()
+	m :=createMockCluster(t)
 
 	tk := testkit.NewTestKit(t, m.Storage)
 	tk.MustExec("use test")
@@ -270,8 +268,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 }
 
 func TestBackupSchemasForSystemTable(t *testing.T) {
-	m, clean := createMockCluster(t)
-	defer clean()
+	m :=createMockCluster(t)
 
 	tk := testkit.NewTestKit(t, m.Storage)
 	es2 := GetRandomStorage(t)

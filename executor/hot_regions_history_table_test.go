@@ -65,7 +65,7 @@ func createHotRegionsHistoryTableSuite(t *testing.T) *hotRegionsHistoryTableSuit
 	var clean func()
 
 	s := new(hotRegionsHistoryTableSuite)
-	s.store, clean = testkit.CreateMockStore(t)
+	s.store = testkit.CreateMockStore(t)
 	store := &mockStoreWithMultiPD{
 		s.store.(helper.Storage),
 		make([]string, 3),

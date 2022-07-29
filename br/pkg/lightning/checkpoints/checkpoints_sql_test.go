@@ -59,8 +59,7 @@ func newCPSQLSuite(t *testing.T) (*cpSQLSuite, func()) {
 
 func TestNormalOperations(t *testing.T) {
 	ctx := context.Background()
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s :=newCPSQLSuite(t)
 	cpdb := s.cpdb
 
 	// 2. initialize with checkpoint data.
@@ -298,8 +297,7 @@ func TestNormalOperations(t *testing.T) {
 }
 
 func TestRemoveAllCheckpoints_SQL(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s :=newCPSQLSuite(t)
 
 	s.mock.ExpectExec("DROP SCHEMA `mock-schema`").WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -334,8 +332,7 @@ func TestRemoveAllCheckpoints_SQL(t *testing.T) {
 }
 
 func TestRemoveOneCheckpoint_SQL(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s :=newCPSQLSuite(t)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -357,8 +354,7 @@ func TestRemoveOneCheckpoint_SQL(t *testing.T) {
 }
 
 func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s :=newCPSQLSuite(t)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -376,8 +372,7 @@ func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
 }
 
 func TestIgnoreOneErrorCheckpoint(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s :=newCPSQLSuite(t)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -395,8 +390,7 @@ func TestIgnoreOneErrorCheckpoint(t *testing.T) {
 }
 
 func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s :=newCPSQLSuite(t)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -430,8 +424,7 @@ func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
 }
 
 func TestDestroyOneErrorCheckpoints(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s :=newCPSQLSuite(t)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -466,8 +459,7 @@ func TestDestroyOneErrorCheckpoints(t *testing.T) {
 
 func TestDump(t *testing.T) {
 	ctx := context.Background()
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s :=newCPSQLSuite(t)
 	tm := time.Unix(1555555555, 0).UTC()
 
 	s.mock.
@@ -529,8 +521,7 @@ func TestDump(t *testing.T) {
 
 func TestMoveCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s :=newCPSQLSuite(t)
 
 	s.mock.
 		ExpectExec("CREATE SCHEMA IF NOT EXISTS `mock-schema\\.12345678\\.bak`").

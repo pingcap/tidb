@@ -143,8 +143,7 @@ func setInvalidStatus(cpdb *checkpoints.FileCheckpointsDB) {
 
 func TestGet(t *testing.T) {
 	ctx := context.Background()
-	cpdb, clean := newFileCheckpointsDB(t)
-	defer clean()
+	cpdb :=newFileCheckpointsDB(t)
 
 	// 5. get back the checkpoints
 
@@ -205,8 +204,7 @@ func TestGet(t *testing.T) {
 
 func TestRemoveAllCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	cpdb, clean := newFileCheckpointsDB(t)
-	defer clean()
+	cpdb :=newFileCheckpointsDB(t)
 
 	err := cpdb.RemoveCheckpoint(ctx, "all")
 	require.NoError(t, err)
@@ -222,8 +220,7 @@ func TestRemoveAllCheckpoints(t *testing.T) {
 
 func TestRemoveOneCheckpoint(t *testing.T) {
 	ctx := context.Background()
-	cpdb, clean := newFileCheckpointsDB(t)
-	defer clean()
+	cpdb :=newFileCheckpointsDB(t)
 
 	err := cpdb.RemoveCheckpoint(ctx, "`db1`.`t2`")
 	require.NoError(t, err)
@@ -239,8 +236,7 @@ func TestRemoveOneCheckpoint(t *testing.T) {
 
 func TestIgnoreAllErrorCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	cpdb, clean := newFileCheckpointsDB(t)
-	defer clean()
+	cpdb :=newFileCheckpointsDB(t)
 
 	setInvalidStatus(cpdb)
 
@@ -258,8 +254,7 @@ func TestIgnoreAllErrorCheckpoints(t *testing.T) {
 
 func TestIgnoreOneErrorCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	cpdb, clean := newFileCheckpointsDB(t)
-	defer clean()
+	cpdb :=newFileCheckpointsDB(t)
 
 	setInvalidStatus(cpdb)
 
@@ -277,8 +272,7 @@ func TestIgnoreOneErrorCheckpoints(t *testing.T) {
 
 func TestDestroyAllErrorCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	cpdb, clean := newFileCheckpointsDB(t)
-	defer clean()
+	cpdb :=newFileCheckpointsDB(t)
 
 	setInvalidStatus(cpdb)
 
@@ -310,8 +304,7 @@ func TestDestroyAllErrorCheckpoints(t *testing.T) {
 
 func TestDestroyOneErrorCheckpoint(t *testing.T) {
 	ctx := context.Background()
-	cpdb, clean := newFileCheckpointsDB(t)
-	defer clean()
+	cpdb :=newFileCheckpointsDB(t)
 
 	setInvalidStatus(cpdb)
 

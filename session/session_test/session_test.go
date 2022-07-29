@@ -56,8 +56,7 @@ import (
 )
 
 func TestSchemaCheckerSQL(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -132,8 +131,7 @@ func TestSchemaCheckerSQL(t *testing.T) {
 }
 
 func TestSchemaCheckerTempTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -234,8 +232,7 @@ func TestSchemaCheckerTempTable(t *testing.T) {
 }
 
 func TestDisableTxnAutoRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -333,8 +330,7 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 // but this test checks we check them again at commit time.
 // The main use case for this is a long-running auto-commit statement.
 func TestAutoCommitRespectsReadOnly(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	var wg sync.WaitGroup
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -381,8 +377,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 		domain.SchemaOutOfDateRetryInterval.Store(originalRetryInterval)
 	}()
 
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
@@ -429,8 +424,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 }
 
 func TestSysdateIsNow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -442,8 +436,7 @@ func TestSysdateIsNow(t *testing.T) {
 }
 
 func TestEnableLegacyInstanceScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -460,8 +453,7 @@ func TestEnableLegacyInstanceScope(t *testing.T) {
 }
 
 func TestSetPDClientDynamicOption(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
@@ -496,8 +488,7 @@ func TestSetPDClientDynamicOption(t *testing.T) {
 }
 
 func TestSameNameObjectWithLocalTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -561,8 +552,7 @@ func TestSameNameObjectWithLocalTemporaryTable(t *testing.T) {
 }
 
 func TestWriteOnMultipleCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -603,8 +593,7 @@ func TestWriteOnMultipleCachedTable(t *testing.T) {
 }
 
 func TestForbidSettingBothTSVariable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// For mock tikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -630,8 +619,7 @@ func TestForbidSettingBothTSVariable(t *testing.T) {
 }
 
 func TestTiDBReadStaleness(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_read_staleness='-5'")
@@ -645,8 +633,7 @@ func TestTiDBReadStaleness(t *testing.T) {
 }
 
 func TestFixSetTiDBSnapshotTS(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	safePointName := "tikv_gc_safe_point"
@@ -670,8 +657,7 @@ func TestFixSetTiDBSnapshotTS(t *testing.T) {
 }
 
 func TestSetVarHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -855,8 +841,7 @@ func TestSetVarHint(t *testing.T) {
 }
 
 func TestPrepareZero(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -873,8 +858,7 @@ func TestPrepareZero(t *testing.T) {
 }
 
 func TestPrimaryKeyAutoIncrement(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -900,8 +884,7 @@ func TestPrimaryKeyAutoIncrement(t *testing.T) {
 
 // TestSetGroupConcatMaxLen is for issue #7034
 func TestSetGroupConcatMaxLen(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -950,8 +933,7 @@ func TestSetGroupConcatMaxLen(t *testing.T) {
 }
 
 func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -994,8 +976,7 @@ func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
 }
 
 func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1039,8 +1020,7 @@ func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
 }
 
 func TestLocalTemporaryTableReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1073,8 +1053,7 @@ func TestLocalTemporaryTableReplace(t *testing.T) {
 }
 
 func TestLocalTemporaryTableDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1168,8 +1147,7 @@ func TestLocalTemporaryTableDelete(t *testing.T) {
 }
 
 func TestLocalTemporaryTablePointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1209,8 +1187,7 @@ func TestLocalTemporaryTablePointGet(t *testing.T) {
 }
 
 func TestLocalTemporaryTableBatchPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1251,8 +1228,7 @@ func TestLocalTemporaryTableBatchPointGet(t *testing.T) {
 }
 
 func TestLocalTemporaryTableScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1345,8 +1321,7 @@ func TestLocalTemporaryTableScan(t *testing.T) {
 }
 
 func TestRetryForCurrentTxn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -1373,8 +1348,7 @@ func TestRetryForCurrentTxn(t *testing.T) {
 
 // TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
 func TestTruncateAlloc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1386,8 +1360,7 @@ func TestTruncateAlloc(t *testing.T) {
 }
 
 func TestString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1397,8 +1370,7 @@ func TestString(t *testing.T) {
 }
 
 func TestDatabase(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1423,8 +1395,7 @@ func TestDatabase(t *testing.T) {
 }
 
 func TestSkipWithGrant(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	save2 := privileges.SkipWithGrant
@@ -1445,8 +1416,7 @@ func TestSkipWithGrant(t *testing.T) {
 }
 
 func TestParseWithParams(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
 	exec := se.(sqlexec.RestrictedSQLExecutor)
@@ -1485,8 +1455,7 @@ func TestParseWithParams(t *testing.T) {
 }
 
 func TestStatementCountLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
@@ -1513,8 +1482,7 @@ func TestStatementCountLimit(t *testing.T) {
 }
 
 func TestBatchCommit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
@@ -1576,8 +1544,7 @@ func TestBatchCommit(t *testing.T) {
 }
 
 func TestKVVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_backoff_lock_fast = 1")
@@ -1609,8 +1576,7 @@ func TestKVVars(t *testing.T) {
 }
 
 func TestTxnRetryErrMsg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
@@ -1633,8 +1599,7 @@ func TestTxnRetryErrMsg(t *testing.T) {
 
 func TestSetTxnScope(t *testing.T) {
 	// Check the default value of @@tidb_enable_local_txn and @@txn_scope whitout configuring the zone label.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
@@ -1752,8 +1717,7 @@ func TestDoDDLJobQuit(t *testing.T) {
 
 func TestCoprocessorOOMAction(t *testing.T) {
 	// Assert Coprocessor OOMAction
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database testoom")
 	tk.MustExec("use testoom")
@@ -1871,8 +1835,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 
 // TestDefaultWeekFormat checks for issue #21510.
 func TestDefaultWeekFormat(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("set @@global.default_week_format = 4;")
@@ -1883,8 +1846,7 @@ func TestDefaultWeekFormat(t *testing.T) {
 }
 
 func TestIssue21944(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	_, err := tk1.Exec("set @@tidb_current_ts=1;")
@@ -1892,8 +1854,7 @@ func TestIssue21944(t *testing.T) {
 }
 
 func TestIssue21943(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	_, err := tk.Exec("set @@last_plan_from_binding='123';")
@@ -1904,8 +1865,7 @@ func TestIssue21943(t *testing.T) {
 }
 
 func TestRemovedSysVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1928,8 +1888,7 @@ func TestRemovedSysVars(t *testing.T) {
 }
 
 func TestCorrectScopeError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1968,8 +1927,7 @@ func TestCorrectScopeError(t *testing.T) {
 }
 
 func TestTiKVSystemVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2021,8 +1979,7 @@ func TestTiKVSystemVars(t *testing.T) {
 }
 
 func TestGlobalVarCollationServer(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.collation_server=utf8mb4_general_ci")
@@ -2033,8 +1990,7 @@ func TestGlobalVarCollationServer(t *testing.T) {
 }
 
 func TestProcessInfoIssue22068(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
@@ -2051,8 +2007,7 @@ func TestProcessInfoIssue22068(t *testing.T) {
 }
 
 func TestIssue19127(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2064,8 +2019,7 @@ func TestIssue19127(t *testing.T) {
 }
 
 func TestMemoryUsageAlarmVariable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2089,8 +2043,7 @@ func TestMemoryUsageAlarmVariable(t *testing.T) {
 }
 
 func TestSelectLockInShare(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2104,8 +2057,7 @@ func TestSelectLockInShare(t *testing.T) {
 }
 
 func TestReadDMLBatchSize(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_dml_batch_size=1000")
@@ -2118,8 +2070,7 @@ func TestReadDMLBatchSize(t *testing.T) {
 }
 
 func TestPerStmtTaskID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2136,8 +2087,7 @@ func TestPerStmtTaskID(t *testing.T) {
 }
 
 func TestSetEnableRateLimitAction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2178,8 +2128,7 @@ func TestSetEnableRateLimitAction(t *testing.T) {
 }
 
 func TestStmtHints(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2260,8 +2209,7 @@ func TestStmtHints(t *testing.T) {
 }
 
 func TestMaxExecutionTime(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2297,8 +2245,7 @@ func TestMaxExecutionTime(t *testing.T) {
 }
 
 func TestGrantViewRelated(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tkRoot := testkit.NewTestKit(t, store)
 	tkUser := testkit.NewTestKit(t, store)
@@ -2337,8 +2284,7 @@ func TestGrantViewRelated(t *testing.T) {
 }
 
 func TestLoadClientInteractive(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.RefreshSession()
@@ -2347,8 +2293,7 @@ func TestLoadClientInteractive(t *testing.T) {
 }
 
 func TestReplicaRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	require.Equal(t, kv.ReplicaReadLeader, tk.Session().GetSessionVars().GetReplicaRead())
@@ -2359,8 +2304,7 @@ func TestReplicaRead(t *testing.T) {
 }
 
 func TestIsolationRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	require.Len(t, tk.Session().GetSessionVars().GetIsolationReadEngines(), 3)
@@ -2374,8 +2318,7 @@ func TestIsolationRead(t *testing.T) {
 }
 
 func TestUpdatePrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2445,8 +2388,7 @@ and s.b !='xx';`)
 }
 
 func TestDBUserNameLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2458,8 +2400,7 @@ func TestDBUserNameLength(t *testing.T) {
 }
 
 func TestHostLengthMax(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2472,8 +2413,7 @@ func TestHostLengthMax(t *testing.T) {
 }
 
 func TestCommitRetryCount(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -2498,8 +2438,7 @@ func TestCommitRetryCount(t *testing.T) {
 }
 
 func TestEnablePartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2540,8 +2479,7 @@ func TestEnablePartition(t *testing.T) {
 }
 
 func TestRollbackOnCompileError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2576,8 +2514,7 @@ func TestRollbackOnCompileError(t *testing.T) {
 }
 
 func TestCastTimeToDate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2591,8 +2528,7 @@ func TestCastTimeToDate(t *testing.T) {
 }
 
 func TestSetGlobalTZ(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set time_zone = '+08:00'")
@@ -2607,8 +2543,7 @@ func TestSetGlobalTZ(t *testing.T) {
 }
 
 func TestErrorRollback(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2639,8 +2574,7 @@ func TestErrorRollback(t *testing.T) {
 }
 
 func TestDeletePanic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2651,8 +2585,7 @@ func TestDeletePanic(t *testing.T) {
 }
 
 func TestInformationSchemaCreateTime(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2684,8 +2617,7 @@ func TestInformationSchemaCreateTime(t *testing.T) {
 }
 
 func TestPrepare(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2728,8 +2660,7 @@ func TestPrepare(t *testing.T) {
 }
 
 func TestSpecifyIndexPrefixLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2833,8 +2764,7 @@ func TestSpecifyIndexPrefixLength(t *testing.T) {
 }
 
 func TestResultField(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2855,8 +2785,7 @@ func TestResultField(t *testing.T) {
 
 // Testcase for https://github.com/pingcap/tidb/issues/325
 func TestResultType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2870,8 +2799,7 @@ func TestResultType(t *testing.T) {
 }
 
 func TestFieldText(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2902,8 +2830,7 @@ func TestFieldText(t *testing.T) {
 }
 
 func TestIndexMaxLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2992,8 +2919,7 @@ func TestIndexMaxLength(t *testing.T) {
 }
 
 func TestIndexColumnLength(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3013,8 +2939,7 @@ func TestIndexColumnLength(t *testing.T) {
 }
 
 func TestIgnoreForeignKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3030,8 +2955,7 @@ func TestIgnoreForeignKey(t *testing.T) {
 
 // TestISColumns tests information_schema.columns.
 func TestISColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3040,8 +2964,7 @@ func TestISColumns(t *testing.T) {
 }
 
 func TestMultiStmts(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3050,8 +2973,7 @@ func TestMultiStmts(t *testing.T) {
 }
 
 func TestLastExecuteDDLFlag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3063,8 +2985,7 @@ func TestLastExecuteDDLFlag(t *testing.T) {
 }
 
 func TestDecimal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3077,8 +2998,7 @@ func TestDecimal(t *testing.T) {
 }
 
 func TestParser(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3096,8 +3016,7 @@ func TestParser(t *testing.T) {
 }
 
 func TestOnDuplicate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3113,8 +3032,7 @@ func TestOnDuplicate(t *testing.T) {
 }
 
 func TestReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3132,8 +3050,7 @@ func TestReplace(t *testing.T) {
 func TestDelete(t *testing.T) {
 	// test for https://github.com/pingcap/tidb/pull/1135
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3175,8 +3092,7 @@ func TestDelete(t *testing.T) {
 }
 
 func TestResetCtx(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -3214,8 +3130,7 @@ func TestResetCtx(t *testing.T) {
 
 // test for https://github.com/pingcap/tidb/pull/461
 func TestUnique(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -3289,8 +3204,7 @@ func TestUnique(t *testing.T) {
 
 // Test for https://github.com/pingcap/tidb/issues/1114
 func TestSet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3310,8 +3224,7 @@ func TestSet(t *testing.T) {
 }
 
 func TestMySQLTypes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3320,8 +3233,7 @@ func TestMySQLTypes(t *testing.T) {
 }
 
 func TestIssue986(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3333,8 +3245,7 @@ func TestIssue986(t *testing.T) {
 }
 
 func TestCast(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3355,8 +3266,7 @@ func TestCast(t *testing.T) {
 }
 
 func TestTableInfoMeta(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3390,8 +3300,7 @@ func TestTableInfoMeta(t *testing.T) {
 }
 
 func TestCaseInsensitive(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3424,8 +3333,7 @@ func TestCaseInsensitive(t *testing.T) {
 }
 
 func TestLastMessage(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3470,8 +3378,7 @@ func TestLastMessage(t *testing.T) {
 }
 
 func TestQueryString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3502,8 +3409,7 @@ func TestQueryString(t *testing.T) {
 }
 
 func TestAffectedRows(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3565,8 +3471,7 @@ func TestAffectedRows(t *testing.T) {
 
 // TestRowLock . See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
 func TestRowLock(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -3612,8 +3517,7 @@ func TestRowLock(t *testing.T) {
 
 // TestAutocommit . See https://dev.mysql.com/doc/internals/en/status-flags.html
 func TestAutocommit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3709,8 +3613,7 @@ func TestTxnLazyInitialize(t *testing.T) {
 }
 
 func testTxnLazyInitialize(t *testing.T, isPessimistic bool) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3769,8 +3672,7 @@ func TestGlobalVarAccessor(t *testing.T) {
 	varValue1 := "4194305"
 	varValue2 := "4194306"
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3849,8 +3751,7 @@ func TestGlobalVarAccessor(t *testing.T) {
 }
 
 func TestUpgradeSysvars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3901,8 +3802,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	varName := "tidb_general_log"
 	defaultValue := "OFF" // This is the default value for tidb_general_log
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3938,8 +3838,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 }
 
 func TestMatchIdentity(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3986,8 +3885,7 @@ func TestMatchIdentity(t *testing.T) {
 }
 
 func TestGetSysVariables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4016,8 +3914,7 @@ func TestGetSysVariables(t *testing.T) {
 
 // TestInTrans . See https://dev.mysql.com/doc/internals/en/status-flags.html
 func TestInTrans(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4063,8 +3960,7 @@ func TestInTrans(t *testing.T) {
 }
 
 func TestSession(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4073,8 +3969,7 @@ func TestSession(t *testing.T) {
 }
 
 func TestSessionAuth(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4082,8 +3977,7 @@ func TestSessionAuth(t *testing.T) {
 }
 
 func TestLastInsertID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4131,8 +4025,7 @@ func TestLastInsertID(t *testing.T) {
 }
 
 func TestBinaryReadOnly(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -4157,8 +4050,7 @@ func TestBinaryReadOnly(t *testing.T) {
 }
 
 func TestIndexMergeRuntimeStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

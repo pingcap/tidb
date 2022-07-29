@@ -74,8 +74,7 @@ func createSuite(t *testing.T) (s *lightningServerSuite, clean func()) {
 }
 
 func TestRunServer(t *testing.T) {
-	s, clean := createSuite(t)
-	defer clean()
+	s :=createSuite(t)
 
 	url := "http://" + s.lightning.serverAddr.String() + "/tasks"
 
@@ -147,8 +146,7 @@ func TestRunServer(t *testing.T) {
 }
 
 func TestGetDeleteTask(t *testing.T) {
-	s, clean := createSuite(t)
-	defer clean()
+	s :=createSuite(t)
 
 	url := "http://" + s.lightning.serverAddr.String() + "/tasks"
 
@@ -304,8 +302,7 @@ func TestGetDeleteTask(t *testing.T) {
 }
 
 func TestHTTPAPIOutsideServerMode(t *testing.T) {
-	s, clean := createSuite(t)
-	defer clean()
+	s :=createSuite(t)
 
 	s.lightning.globalCfg.App.ServerMode = false
 

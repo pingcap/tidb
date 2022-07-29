@@ -108,8 +108,7 @@ func newMetaMgrSuite(t *testing.T) (*metaMgrSuite, func()) {
 }
 
 func TestAllocTableRowIDsSingleTable(t *testing.T) {
-	s, clean := newMetaMgrSuite(t)
-	defer clean()
+	s :=newMetaMgrSuite(t)
 
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
@@ -129,8 +128,7 @@ func TestAllocTableRowIDsSingleTable(t *testing.T) {
 }
 
 func TestAllocTableRowIDsSingleTableAutoIDNot0(t *testing.T) {
-	s, clean := newMetaMgrSuite(t)
-	defer clean()
+	s :=newMetaMgrSuite(t)
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -150,8 +148,7 @@ func TestAllocTableRowIDsSingleTableAutoIDNot0(t *testing.T) {
 }
 
 func TestAllocTableRowIDsSingleTableContainsData(t *testing.T) {
-	s, clean := newMetaMgrSuite(t)
-	defer clean()
+	s :=newMetaMgrSuite(t)
 
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
@@ -171,8 +168,7 @@ func TestAllocTableRowIDsSingleTableContainsData(t *testing.T) {
 }
 
 func TestAllocTableRowIDsSingleTableSkipChecksum(t *testing.T) {
-	s, clean := newMetaMgrSuite(t)
-	defer clean()
+	s :=newMetaMgrSuite(t)
 
 	s.mgr.needChecksum = false
 	defer func() {
@@ -197,8 +193,7 @@ func TestAllocTableRowIDsSingleTableSkipChecksum(t *testing.T) {
 }
 
 func TestAllocTableRowIDsAllocated(t *testing.T) {
-	s, clean := newMetaMgrSuite(t)
-	defer clean()
+	s :=newMetaMgrSuite(t)
 
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
@@ -216,8 +211,7 @@ func TestAllocTableRowIDsAllocated(t *testing.T) {
 }
 
 func TestAllocTableRowIDsFinished(t *testing.T) {
-	s, clean := newMetaMgrSuite(t)
-	defer clean()
+	s :=newMetaMgrSuite(t)
 
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
@@ -235,8 +229,7 @@ func TestAllocTableRowIDsFinished(t *testing.T) {
 }
 
 func TestAllocTableRowIDsMultiTasksInit(t *testing.T) {
-	s, clean := newMetaMgrSuite(t)
-	defer clean()
+	s :=newMetaMgrSuite(t)
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -256,8 +249,7 @@ func TestAllocTableRowIDsMultiTasksInit(t *testing.T) {
 }
 
 func TestAllocTableRowIDsMultiTasksAllocated(t *testing.T) {
-	s, clean := newMetaMgrSuite(t)
-	defer clean()
+	s :=newMetaMgrSuite(t)
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
