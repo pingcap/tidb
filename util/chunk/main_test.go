@@ -28,7 +28,7 @@ func TestMain(m *testing.M) {
 
 	path, _ := os.MkdirTemp("", "oom-use-tmp-storage")
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = path
+		conf.Instance.TmpStoragePath = path
 	})
 
 	goleak.VerifyTestMain(wrapper{

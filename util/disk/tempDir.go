@@ -51,7 +51,7 @@ func CheckAndInitTempDir() (err error) {
 }
 
 func checkTempDirExist() bool {
-	tempDir := config.GetGlobalConfig().TempStoragePath
+	tempDir := config.GetGlobalConfig().Instance.TmpStoragePath
 	_, err := os.Stat(tempDir)
 	if err != nil && !os.IsExist(err) {
 		return false
@@ -61,7 +61,7 @@ func checkTempDirExist() bool {
 
 // InitializeTempDir initializes the temp directory.
 func InitializeTempDir() error {
-	tempDir := config.GetGlobalConfig().TempStoragePath
+	tempDir := config.GetGlobalConfig().Instance.TmpStoragePath
 	_, err := os.Stat(tempDir)
 	if err != nil && !os.IsExist(err) {
 		err = os.MkdirAll(tempDir, 0750)
@@ -74,7 +74,7 @@ func InitializeTempDir() error {
 		switch err {
 		case fslock.ErrLockHeld:
 			log.Error("The current temporary storage dir has been occupied by another instance, "+
-				"check tmp-storage-path config and make sure they are different.", zap.String("TempStoragePath", tempDir), zap.Error(err))
+				"check [instance].tidb_tmp_storage_path config and make sure they are different.", zap.String("TempStoragePath", tempDir), zap.Error(err))
 		default:
 			log.Error("Failed to acquire exclusive lock on the temporary storage dir.", zap.String("TempStoragePath", tempDir), zap.Error(err))
 		}

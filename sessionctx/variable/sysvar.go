@@ -17,6 +17,8 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/disk"
 	"math"
 	"runtime"
 	"strconv"
@@ -432,6 +434,31 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), nil
+	}},
+	{Scope: ScopeInstance, Name: config.GetGlobalConfig().Instance.TmpStoragePath, Value: config.TempStorageDirName, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
+		config.GetGlobalConfig().Instance.TmpStoragePath = val
+		config.GetGlobalConfig().UpdateTempStoragePath()
+		err := disk.InitializeTempDir()
+		terror.MustNil(err)
+		config.CheckTempStorageQuota()
+		// TODO
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return config.GetGlobalConfig().Instance.TmpStoragePath, nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBTmpStorageQuota, Value: strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), Type: TypeInt, SetGlobal: func(s *SessionVars, val string) error {
+		oldVal := config.GetGlobalConfig().Instance.TmpStorageQuota
+		newVal, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			return err
+		}
+		// TODO
+		if oldVal != newVal {
+
+		}
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), nil
 	}},
 
 	/* The system variables below have GLOBAL scope  */

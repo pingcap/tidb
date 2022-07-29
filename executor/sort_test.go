@@ -39,7 +39,7 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
-		conf.TempStoragePath = t.TempDir()
+		conf.Instance.TmpStoragePath = t.TempDir()
 	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
@@ -59,9 +59,9 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
 
 	if removeDir {
-		require.Nil(t, os.RemoveAll(config.GetGlobalConfig().TempStoragePath))
+		require.Nil(t, os.RemoveAll(config.GetGlobalConfig().Instance.TmpStoragePath))
 		defer func() {
-			_, err := os.Stat(config.GetGlobalConfig().TempStoragePath)
+			_, err := os.Stat(config.GetGlobalConfig().Instance.TmpStoragePath)
 			if err != nil {
 				require.True(t, os.IsExist(err))
 			}
@@ -99,7 +99,7 @@ func TestIssue16696(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
-		conf.TempStoragePath = t.TempDir()
+		conf.Instance.TmpStoragePath = t.TempDir()
 	})
 	alarmRatio := variable.MemoryUsageAlarmRatio.Load()
 	variable.MemoryUsageAlarmRatio.Store(0.0)

@@ -59,7 +59,7 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 		record.isServerMemoryQuotaSet = false
 	}
 	record.lastCheckTime = time.Time{}
-	record.tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
+	record.tmpDir = filepath.Join(config.GetGlobalConfig().Instance.TmpStoragePath, "record")
 	if record.err = disk.CheckAndCreateDir(record.tmpDir); record.err != nil {
 		return
 	}
