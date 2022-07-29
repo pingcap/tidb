@@ -68,5 +68,6 @@ func optimize(t *testing.T, sql string, p *parser.Parser, ctx sessionctx.Context
 	plan, err := builder.Build(context.TODO(), stmt)
 	require.NoError(t, err)
 	_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(core.LogicalPlan))
+	require.NoError(t, err)
 	return sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical.PhysicalPlanCostDetails
 }
