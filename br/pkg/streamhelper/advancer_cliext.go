@@ -49,7 +49,7 @@ func (t *TaskEvent) String() string {
 	return fmt.Sprintf("%s(%s)", t.Type, t.Name)
 }
 
-type TaskEventClient struct {
+type AdvancerExt struct {
 	MetaDataClient
 }
 
@@ -94,7 +94,7 @@ func eventFromWatch(resp clientv3.WatchResponse) ([]TaskEvent, error) {
 	return result, nil
 }
 
-func (t TaskEventClient) startListen(ctx context.Context, rev int64, ch chan<- TaskEvent) {
+func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskEvent) {
 	c := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
 	handleResponse := func(resp clientv3.WatchResponse) bool {
 		events, err := eventFromWatch(resp)
@@ -139,7 +139,7 @@ func (t TaskEventClient) startListen(ctx context.Context, rev int64, ch chan<- T
 	}()
 }
 
-func (t TaskEventClient) getFullTasksAsEvent(ctx context.Context) ([]TaskEvent, int64, error) {
+func (t AdvancerExt) getFullTasksAsEvent(ctx context.Context) ([]TaskEvent, int64, error) {
 	tasks, rev, err := t.GetAllTasksWithRevision(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -156,7 +156,7 @@ func (t TaskEventClient) getFullTasksAsEvent(ctx context.Context) ([]TaskEvent, 
 	return events, rev, nil
 }
 
-func (t TaskEventClient) Begin(ctx context.Context, ch chan<- TaskEvent) error {
+func (t AdvancerExt) Begin(ctx context.Context, ch chan<- TaskEvent) error {
 	initialTasks, rev, err := t.getFullTasksAsEvent(ctx)
 	if err != nil {
 		return err
@@ -167,4 +167,21 @@ func (t TaskEventClient) Begin(ctx context.Context, ch chan<- TaskEvent) error {
 	}
 	t.startListen(ctx, rev+1, ch)
 	return nil
+}
+
+func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error {
+	key := GlobalCheckpointOf(taskName)
+	value := string(encodeUint64(checkpoint))
+	_, err := t.KV.Put(ctx, key, value)
+
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t AdvancerExt) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error {
+	key := GlobalCheckpointOf(taskName)
+	_, err := t.KV.Delete(ctx, key)
+	return err
 }

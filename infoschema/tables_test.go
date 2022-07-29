@@ -567,13 +567,13 @@ func TestSlowQuery(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;",
-		"2021-09-08|14:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0|0||||INSERT INTO ...;",
+	re.Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4||update t set i = 2;|select * from t_slim;",
+		"2021-09-08|14:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0|0|||||INSERT INTO ...;",
 	))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testkit.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;",
-		"2021-09-08|06:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0|0||||INSERT INTO ...;",
+	re.Check(testkit.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4||update t set i = 2;|select * from t_slim;",
+		"2021-09-08|06:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0|0|||||INSERT INTO ...;",
 	))
 
 	// Test for long query.
@@ -825,10 +825,10 @@ func TestStmtSummaryTable(t *testing.T) {
 		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
-	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10    \troot     \t100    \t\n" +
-		"\t├─IndexRangeScan_8\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_9\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10           \troot     \t100    \t\n" +
+		"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -847,10 +847,10 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows(
-		"Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
-			"\tIndexLookUp_10    \troot     \t100    \t\n" +
-			"\t├─IndexRangeScan_8\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-			"\t└─TableRowIDScan_9\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+		"Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
+			"\tIndexLookUp_10           \troot     \t100    \t\n" +
+			"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+			"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -894,10 +894,10 @@ func TestStmtSummaryTable(t *testing.T) {
 		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
-	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10    \troot     \t1000   \t\n" +
-		"\t├─IndexRangeScan_8\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_9\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
+	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10           \troot     \t1000   \t\n" +
+		"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1577,9 +1577,10 @@ func TestVariablesInfo(t *testing.T) {
 
 	// current_value != default_value
 	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'innodb_compression_level'`).Check(testkit.Rows("innodb_compression_level GLOBAL 6 8 <nil> <nil> <nil> YES"))
+	tk.MustExec("SET GLOBAL innodb_compression_level = DEFAULT;")
 
 	// enum
-	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode'`).Check(testkit.Rows("tidb_txn_mode SESSION,GLOBAL   <nil> <nil> pessimistic,optimistic NO"))
+	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode'`).Check(testkit.Rows("tidb_txn_mode SESSION,GLOBAL  pessimistic <nil> <nil> pessimistic,optimistic NO"))
 
 	// noop
 	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'max_connections' AND is_noop='NO'`).Check(testkit.Rows("max_connections INSTANCE 0 0 0 100000 <nil> NO"))
@@ -1592,6 +1593,24 @@ func TestVariablesInfo(t *testing.T) {
 
 	// min, max populated for TypeUnsigned
 	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_metric_query_step'`).Check(testkit.Rows("tidb_metric_query_step SESSION 60 60 10 216000 <nil> NO"))
+
+	// stabalize timestamp val and EnableCollectExecutionInfo
+	tk.MustExec("SET TIMESTAMP=123456789")
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo = false
+	// Test that in the current_value matches the default value in all
+	// but a few permitted special cases.
+	// See session/bootstrap.go:doDMLWorks() for where the exceptions are defined.
+	stmt := tk.MustQuery(`SELECT variable_name, default_value, current_value FROM information_schema.variables_info WHERE current_value != default_value and default_value  != '' ORDER BY variable_name`)
+	stmt.Check(testkit.Rows(
+		"tidb_enable_auto_analyze ON OFF",           // always changed for tests
+		"tidb_enable_collect_execution_info ON OFF", // for test stability
+		"tidb_enable_mutation_checker OFF ON",       // for new installs
+		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
+		"tidb_partition_prune_mode static dynamic",  // for new installs
+		"tidb_row_format_version 1 2",               // for new installs
+		"tidb_txn_assertion_level OFF FAST",         // for new installs
+		"timestamp 0 123456789",                     // always dynamic
+	))
 }
 
 // TestTableConstraintsContainForeignKeys TiDB Issue: https://github.com/pingcap/tidb/issues/28918

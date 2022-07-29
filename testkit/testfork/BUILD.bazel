@@ -13,7 +13,9 @@ go_library(
 
 go_test(
     name = "testfork_test",
+    timeout = "short",
     srcs = ["fork_test.go"],
     embed = [":testfork"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

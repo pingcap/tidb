@@ -107,7 +107,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications []*ast.IndexPartSpecification) (*model.ColumnInfo, error) {
 	var lastCol *model.ColumnInfo
 	for _, colName := range indexPartSpecifications {
-		lastCol = getColumnInfoByName(tblInfo, colName.Column.Name.L)
+		lastCol = tblInfo.FindPublicColumnByName(colName.Column.Name.L)
 		if lastCol == nil {
 			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(colName.Column.Name)
 		}
@@ -338,11 +338,16 @@ func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	return ver, nil
 }
 
-func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
-	if idx := tbl.FindIndexByName(indexName.L); idx == nil {
+func validateAlterIndexVisibility(ctx sessionctx.Context, indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+	var idx *model.IndexInfo
+	if idx = tbl.FindIndexByName(indexName.L); idx == nil || idx.State != model.StatePublic {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
-	} else if idx.Invisible == invisible {
-		return true, nil
+	}
+	if ctx == nil || ctx.GetSessionVars() == nil || ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
+		// Early return.
+		if idx.Invisible == invisible {
+			return true, nil
+		}
 	}
 	return false, nil
 }
@@ -352,14 +357,27 @@ func onAlterIndexVisibility(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
-	idx := tblInfo.FindIndexByName(from.L)
-	idx.Invisible = invisible
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return updateVersionAndTableInfo(d, t, job, tblInfo, false)
+	}
+
+	setIndexVisibility(tblInfo, from, invisible)
 	if ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+func setIndexVisibility(tblInfo *model.TableInfo, name model.CIStr, invisible bool) {
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.L == name.L || (isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
+			idx.Invisible = invisible
+		}
+	}
 }
 
 func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*model.ColumnInfo, error) {
@@ -559,7 +577,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, err
 		}
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(0)
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String()).Set(0)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		indexInfo.State = model.StateWriteOnly
@@ -640,7 +658,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-	rh := newReorgHandler(t)
+	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
 	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
@@ -677,7 +695,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
 			job.Warning = toTError(err)
-			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.State = model.JobStateDone
 			return ver, nil
 		}
 		return ver, errors.Trace(err)
@@ -915,12 +933,13 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 
-	skip, err := validateAlterIndexVisibility(indexName, invisible, tblInfo)
+	skip, err := validateAlterIndexVisibility(nil, indexName, invisible, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 	if skip {
+		job.State = model.JobStateDone
 		return nil, indexName, invisible, nil
 	}
 	return tblInfo, indexName, invisible, nil
@@ -971,7 +990,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_rate"),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("add_idx_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
 			jobContext:     jc,
 		},
@@ -1333,7 +1352,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 			ts := oracle.GoTimeToTS(time.Now())
 			s := reorg.d.store.(tikv.Storage)
 			s.UpdateSPCache(ts, time.Now())
-			time.Sleep(time.Millisecond * 3)
+			time.Sleep(time.Second * 3)
 		}
 	})
 	currentVer, err := getValidCurrentVersion(reorg.d.store)
@@ -1347,7 +1366,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(start)
+	err = reorg.UpdateReorgMeta(start, w.sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo",
 		zap.Int64("jobID", reorg.Job.ID),
 		zap.ByteString("elementType", reorg.currElement.TypeKey),
@@ -1423,7 +1442,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("cleanup_idx_rate"),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("cleanup_idx_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
 			jobContext:     jc,
 		},
@@ -1533,7 +1552,7 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(reorg.StartKey)
+	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
 		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
 		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),

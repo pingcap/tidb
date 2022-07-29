@@ -428,3 +428,27 @@ func TestMustUtils(t *testing.T) {
 	MustFormatSQL(sql, "t")
 	MustEscapeSQL("tt")
 }
+
+func TestEscapeString(t *testing.T) {
+	type testCase struct {
+		input  string
+		output string
+	}
+	tests := []testCase{
+		{
+			input:  "testData",
+			output: "testData",
+		},
+		{
+			input:  `it's all good`,
+			output: `it\'s all good`,
+		},
+		{
+			input:  `+ -><()~*:""&|`,
+			output: `+ -><()~*:\"\"&|`,
+		},
+	}
+	for _, v := range tests {
+		require.Equal(t, v.output, EscapeString(v.input))
+	}
+}

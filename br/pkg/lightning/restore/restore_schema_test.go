@@ -42,10 +42,12 @@ import (
 
 type restoreSchemaSuite struct {
 	suite.Suite
-	ctx        context.Context
-	rc         *Controller
-	controller *gomock.Controller
-	tableInfos []*model.TableInfo
+	ctx              context.Context
+	rc               *Controller
+	controller       *gomock.Controller
+	tableInfos       []*model.TableInfo
+	infoGetter       *PreRestoreInfoGetterImpl
+	targetInfoGetter *TargetInfoGetterImpl
 }
 
 func TestRestoreSchemaSuite(t *testing.T) {
@@ -103,14 +105,29 @@ func (s *restoreSchemaSuite) SetupSuite() {
 	config.Mydumper.CharacterSet = "utf8mb4"
 	config.App.RegionConcurrency = 8
 	mydumpLoader, err := mydump.NewMyDumpLoaderWithStore(ctx, config, store)
-	require.NoError(s.T(), err)
+	s.Require().NoError(err)
+
+	dbMetas := mydumpLoader.GetDatabases()
+	targetInfoGetter := &TargetInfoGetterImpl{
+		cfg: config,
+	}
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:              config,
+		srcStorage:       store,
+		targetInfoGetter: targetInfoGetter,
+		dbMetas:          dbMetas,
+	}
+	preInfoGetter.Init()
 	s.rc = &Controller{
 		checkTemplate: NewSimpleTemplate(),
 		cfg:           config,
 		store:         store,
-		dbMetas:       mydumpLoader.GetDatabases(),
+		dbMetas:       dbMetas,
 		checkpointsDB: &checkpoints.NullCheckpointsDB{},
+		preInfoGetter: preInfoGetter,
 	}
+	s.infoGetter = preInfoGetter
+	s.targetInfoGetter = targetInfoGetter
 }
 
 //nolint:interfacer // change test case signature might cause Check failed to find this test case?
@@ -122,7 +139,9 @@ func (s *restoreSchemaSuite) SetupTest() {
 		AnyTimes().
 		Return(s.tableInfos, nil)
 	mockBackend.EXPECT().Close()
-	s.rc.backend = backend.MakeBackend(mockBackend)
+	theBackend := backend.MakeBackend(mockBackend)
+	s.rc.backend = theBackend
+	s.targetInfoGetter.backend = theBackend
 
 	mockDB, sqlMock, err := sqlmock.New()
 	require.NoError(s.T(), err)
@@ -140,6 +159,7 @@ func (s *restoreSchemaSuite) SetupTest() {
 		GetParser().
 		AnyTimes().
 		Return(parser)
+	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
 	s.rc.tidbGlue = mockTiDBGlue
 }
 
@@ -152,6 +172,7 @@ func (s *restoreSchemaSuite) TearDownTest() {
 		AnyTimes().
 		Return(exec)
 	s.rc.tidbGlue = mockTiDBGlue
+	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
 
 	s.rc.Close()
 	s.controller.Finish()
@@ -213,6 +234,7 @@ func (s *restoreSchemaSuite) TestRestoreSchemaFailed() {
 		AnyTimes().
 		Return(parser)
 	s.rc.tidbGlue = mockTiDBGlue
+	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
 	err = s.rc.restoreSchema(s.ctx)
 	require.Error(s.T(), err)
 	require.True(s.T(), errors.ErrorEqual(err, injectErr))
@@ -268,6 +290,7 @@ func (s *restoreSchemaSuite) TestRestoreSchemaContextCancel() {
 		AnyTimes().
 		Return(parser)
 	s.rc.tidbGlue = mockTiDBGlue
+	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
 	err = s.rc.restoreSchema(childCtx)
 	cancel()
 	require.Error(s.T(), err)

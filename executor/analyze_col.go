@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -107,11 +108,15 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+	startTS := uint64(math.MaxUint64)
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
+		startTS = e.snapshot
+	}
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
-		SetStartTS(e.snapshot).
+		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		SetMemTracker(e.memTracker).
@@ -257,7 +262,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if e.StatsVersion < 2 {
 			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		} else {
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true)
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true, nil)
 			topNs = append(topNs, topn)
 		}
 		if err != nil {

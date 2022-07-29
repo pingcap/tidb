@@ -9,11 +9,13 @@ go_library(
 
 go_test(
     name = "rowindexcodec_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "rowindexcodec_test.go",
     ],
     embed = [":rowindexcodec"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
