@@ -36,11 +36,12 @@ func run(pass *analysis.Pass) (any, error) {
 		pos := pass.Fset.PositionFor(f.Pos(), false)
 		fileNames = append(fileNames, pos.Filename)
 	}
-	var rawCfg gci.GciStringConfiguration
-	rawCfg.Cfg = config.FormatterConfiguration{
-		NoInlineComments: false,
-		NoPrefixComments: false,
-		Debug:            false,
+	rawCfg := config.YamlConfig{
+		Cfg: config.BoolConfig{
+			NoInlineComments: false,
+			NoPrefixComments: false,
+			Debug:            false,
+		},
 	}
 	cfg, _ := rawCfg.Parse()
 	var diffs []string
