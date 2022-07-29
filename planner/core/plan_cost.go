@@ -421,6 +421,11 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 		rowSize := math.Max(p.getScanRowSize(), 2.0) // to guarantee logRowSize >= 1
 		logRowSize := math.Log2(rowSize)
 		selfCost = getCardinality(p, costFlag) * logRowSize * scanFactor
+
+		// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
+		if p.StoreType == kv.TiFlash {
+			selfCost += 2000 * logRowSize * scanFactor
+		}
 	}
 
 	p.planCost = selfCost
