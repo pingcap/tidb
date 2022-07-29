@@ -1941,7 +1941,9 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
 
 	if expr.GetType().EvalType() == types.ETInt {
+		// todo set the flen returned by minimalDecimalLenForHoldingInteger
 		tp.SetFlen(mysql.MaxIntWidth)
+		tp.SetDecimal(0)
 	}
 	if tp.GetFlen() == types.UnspecifiedLength || tp.GetFlen() > mysql.MaxDecimalWidth {
 		tp.SetFlen(mysql.MaxDecimalWidth)
