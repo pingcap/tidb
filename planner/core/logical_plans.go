@@ -1145,6 +1145,11 @@ type DataSource struct {
 	// contain unique index and the first field is tidb_shard(),
 	// such as (tidb_shard(a), a ...), the fields are more than 2
 	containExprPrefixUk bool
+
+	// In partitionProcessor, newDatasource would use the same id as the origin one which will make optimizer trace hard
+	// to distinguish the different datasource operator for each partition table. Thus we introduce tracerID for
+	// partition table datasource in order to distinguish them.
+	tracerID int
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1154,6 +1159,13 @@ func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
+}
+
+func (ds *DataSource) getTracerID() int {
+	if ds.isPartition && ds.tracerID > 0 {
+		return ds.tracerID
+	}
+	return ds.baseLogicalPlan.getTracerID()
 }
 
 // TiKVSingleGather is a leaf logical operator of TiDB layer to gather

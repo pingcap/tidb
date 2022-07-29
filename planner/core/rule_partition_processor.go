@@ -1446,6 +1446,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			// id as FromID. So we set the id of the newDataSource with the original one to
 			// avoid traversing the whole plan tree to update the references.
 			newDataSource.id = ds.id
+			newDataSource.tracerID = ds.SCtx().GetSessionVars().AllocNewPlanID()
 			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
 			partitionNameSet.Insert(pi.Definitions[i].Name.L)
 			if err != nil {
@@ -1613,9 +1614,9 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 	return start, end
 }
 
-func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]model.PartitionDefinition, plan LogicalPlan, children []LogicalPlan, opt *logicalOptimizeOp) {
+func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]model.PartitionDefinition, plan LogicalPlan, children []LogicalPlan, opt *logicalOptimizeOp) {
 	if len(children) == 0 {
-		appendNoPartitionChildTraceStep(ds, plan, opt)
+		appendNoPartitionChildTraceStep(origin, plan, opt)
 		return
 	}
 	var action, reason func() string
@@ -1627,26 +1628,30 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 		return i.ID < j.ID
 	})
 	if len(children) == 1 {
+		newDS := plan.(*DataSource)
 		action = func() string {
-			return fmt.Sprintf("%v_%v becomes %s_%v", ds.TP(), ds.ID(), plan.TP(), plan.ID())
+			return fmt.Sprintf("%v_%v becomes %s_%v", origin.TP(), origin.ID(), newDS.TP(), newDS.getTracerID())
 		}
 		reason = func() string {
-			return fmt.Sprintf("%v_%v has one needed partition[%s] after pruning", ds.TP(), ds.ID(), used[0].Name)
+			return fmt.Sprintf("%v_%v has one needed partition[%s] after pruning", origin.TP(), origin.ID(), used[0].Name)
 		}
 	} else {
 		action = func() string {
-			buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v becomes %s_%v with children[", ds.TP(), ds.ID(), plan.TP(), plan.ID()))
+			buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v becomes %s_%v with children[",
+				origin.TP(), origin.ID(), plan.TP(), plan.ID()))
 			for i, child := range children {
 				if i > 0 {
 					buffer.WriteString(",")
 				}
-				buffer.WriteString(fmt.Sprintf("%s_%v", child.TP(), child.ID()))
+				newDS := child.(*DataSource)
+				buffer.WriteString(fmt.Sprintf("%s_%v", child.TP(), newDS.getTracerID()))
 			}
 			buffer.WriteString("]")
 			return buffer.String()
 		}
 		reason = func() string {
-			buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v has multiple needed partitions[", ds.TP(), ds.ID()))
+			buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v has multiple needed partitions[",
+				origin.TP(), origin.ID()))
 			for i, u := range used {
 				if i > 0 {
 					buffer.WriteString(",")
@@ -1657,7 +1662,7 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 			return buffer.String()
 		}
 	}
-	opt.appendStepToCurrent(ds.ID(), ds.TP(), reason, action)
+	opt.appendStepToCurrent(origin.ID(), origin.TP(), reason, action)
 }
 
 func appendNoPartitionChildTraceStep(ds *DataSource, dual LogicalPlan, opt *logicalOptimizeOp) {

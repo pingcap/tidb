@@ -322,6 +322,9 @@ type LogicalPlan interface {
 
 	// ExtractFD derive the FDSet from the tree bottom up.
 	ExtractFD() *fd.FDSet
+
+	// getTracerID indicates the ID in optimizer tracer
+	getTracerID() int
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -418,6 +421,10 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 // ExplainInfo implements Plan interface.
 func (p *baseLogicalPlan) ExplainInfo() string {
 	return ""
+}
+
+func (p *baseLogicalPlan) getTracerID() int {
+	return p.ID()
 }
 
 type basePhysicalPlan struct {
@@ -763,7 +770,7 @@ func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
 
 // buildPlanTrace implements Plan
 func (p *baseLogicalPlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
+	planTrace := &tracing.PlanTrace{ID: p.getTracerID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
 	}

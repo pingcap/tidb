@@ -354,7 +354,7 @@ func (op *physicalOptimizeOp) appendCandidate(lp LogicalPlan, pp PhysicalPlan, p
 	candidate := &tracing.CandidatePlanTrace{
 		PlanTrace: &tracing.PlanTrace{TP: pp.TP(), ID: pp.ID(),
 			ExplainInfo: pp.ExplainInfo(), Cost: pp.Cost(), ProperType: prop.String()},
-		MappingLogicalPlan: tracing.CodecPlanName(lp.TP(), lp.ID())}
+		MappingLogicalPlan: tracing.CodecPlanName(lp.TP(), lp.getTracerID())}
 	op.tracer.AppendCandidate(candidate)
 	pp.appendChildCandidate(op)
 }
