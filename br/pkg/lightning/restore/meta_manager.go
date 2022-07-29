@@ -8,10 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-<<<<<<< HEAD
-=======
 	"time"
->>>>>>> bf706ac12... lightning: add more retryable err (#36673)
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
@@ -187,31 +184,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 	if err != nil {
 		return nil, 0, errors.Annotate(err, "enable pessimistic transaction failed")
 	}
-<<<<<<< HEAD
 	needAutoID := common.TableHasAutoRowID(m.tr.tableInfo.Core) || m.tr.tableInfo.Core.GetAutoIncrementColInfo() != nil || m.tr.tableInfo.Core.ContainsAutoRandomBits()
-	err = exec.Transact(ctx, "init table allocator base", func(ctx context.Context, tx *sql.Tx) error {
-		rows, err := tx.QueryContext(
-			ctx,
-			fmt.Sprintf("SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from %s WHERE table_id = ? FOR UPDATE", m.tableName),
-			m.tr.tableInfo.ID,
-		)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer rows.Close()
-		var (
-			metaTaskID, rowIDBase, rowIDMax, maxRowIDMax int64
-			totalKvs, totalBytes, checksum               uint64
-			statusValue                                  string
-		)
-		for rows.Next() {
-			if err = rows.Scan(&metaTaskID, &rowIDBase, &rowIDMax, &totalKvs, &totalBytes, &checksum, &statusValue); err != nil {
-				return errors.Trace(err)
-			}
-			status, err := parseMetaStatus(statusValue)
-=======
-
-	needAutoID := common.TableHasAutoID(m.tr.tableInfo.Core)
 	tableChecksumingMsg := "Target table is calculating checksum. Please wait until the checksum is finished and try again."
 	doAllocTableRowIDsFn := func() error {
 		return exec.Transact(ctx, "init table allocator base", func(ctx context.Context, tx *sql.Tx) error {
@@ -220,7 +193,6 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				fmt.Sprintf("SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from %s WHERE table_id = ? FOR UPDATE", m.tableName),
 				m.tr.tableInfo.ID,
 			)
->>>>>>> bf706ac12... lightning: add more retryable err (#36673)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -273,78 +245,50 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 					maxRowIDMax = rowIDMax
 				}
 			}
-			if err := rows.Err(); err != nil {
-				return errors.Trace(err)
+			if rows.Err() != nil {
+				return errors.Trace(rows.Err())
 			}
-<<<<<<< HEAD
-		}
-		if rows.Err() != nil {
-			return errors.Trace(rows.Err())
-		}
-
-		// no enough info are available, fetch row_id max for table
-		if curStatus == metaStatusInitial {
-			if needAutoID && maxRowIDMax == 0 {
-				// NOTE: currently, if a table contains auto_incremental unique key and _tidb_rowid,
-				// the `show table next_row_id` will returns the unique key field only.
-				var autoIDField string
-				for _, col := range m.tr.tableInfo.Core.Columns {
-					if mysql.HasAutoIncrementFlag(col.GetFlag()) {
-						autoIDField = col.Name.L
-						break
-					} else if mysql.HasPriKeyFlag(col.GetFlag()) && m.tr.tableInfo.Core.AutoRandomBits > 0 {
-						autoIDField = col.Name.L
-						break
-					}
-				}
-				if len(autoIDField) == 0 && common.TableHasAutoRowID(m.tr.tableInfo.Core) {
-					autoIDField = model.ExtraHandleName.L
-				}
-				if len(autoIDField) == 0 {
-					return common.ErrAllocTableRowIDs.GenWithStack("table %s contains auto increment id or _tidb_rowid, but target field not found", m.tr.tableName)
-				}
-
-				autoIDInfos, err := tidb.FetchTableAutoIDInfos(ctx, tx, m.tr.tableName)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				found := false
-				for _, info := range autoIDInfos {
-					if strings.ToLower(info.Column) == autoIDField {
-						maxRowIDMax = info.NextID - 1
-						found = true
-						break
-					}
-				}
-				if !found {
-					return common.ErrAllocTableRowIDs.GenWithStack("can't fetch previous auto id base for table %s field '%s'", m.tr.tableName, autoIDField)
-				}
-			}
-			newRowIDBase = maxRowIDMax
-			newRowIDMax = newRowIDBase + rawRowIDMax
-			// table contains no data, can skip checksum
-			if needAutoID && newRowIDBase == 0 && newStatus < metaStatusRestoreStarted {
-				newStatus = metaStatusRestoreStarted
-			}
-=======
 
 			// no enough info are available, fetch row_id max for table
 			if curStatus == metaStatusInitial {
-				if needAutoID {
-					// maxRowIDMax is the max row_id that other tasks has allocated, we need to rebase the global autoid base first.
-					if err := rebaseGlobalAutoID(ctx, maxRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
-						return errors.Trace(err)
+				if needAutoID && maxRowIDMax == 0 {
+					// NOTE: currently, if a table contains auto_incremental unique key and _tidb_rowid,
+					// the `show table next_row_id` will returns the unique key field only.
+					var autoIDField string
+					for _, col := range m.tr.tableInfo.Core.Columns {
+						if mysql.HasAutoIncrementFlag(col.GetFlag()) {
+							autoIDField = col.Name.L
+							break
+						} else if mysql.HasPriKeyFlag(col.GetFlag()) && m.tr.tableInfo.Core.AutoRandomBits > 0 {
+							autoIDField = col.Name.L
+							break
+						}
 					}
-					newRowIDBase, newRowIDMax, err = allocGlobalAutoID(ctx, rawRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
+					if len(autoIDField) == 0 && common.TableHasAutoRowID(m.tr.tableInfo.Core) {
+						autoIDField = model.ExtraHandleName.L
+					}
+					if len(autoIDField) == 0 {
+						return common.ErrAllocTableRowIDs.GenWithStack("table %s contains auto increment id or _tidb_rowid, but target field not found", m.tr.tableName)
+					}
+
+					autoIDInfos, err := tidb.FetchTableAutoIDInfos(ctx, tx, m.tr.tableName)
 					if err != nil {
 						return errors.Trace(err)
 					}
-				} else {
-					// Though we don't need auto ID, we still guarantee that the row ID is unique across all lightning instances.
-					newRowIDBase = maxRowIDMax
-					newRowIDMax = newRowIDBase + rawRowIDMax
+					found := false
+					for _, info := range autoIDInfos {
+						if strings.ToLower(info.Column) == autoIDField {
+							maxRowIDMax = info.NextID - 1
+							found = true
+							break
+						}
+					}
+					if !found {
+						return common.ErrAllocTableRowIDs.GenWithStack("can't fetch previous auto id base for table %s field '%s'", m.tr.tableName, autoIDField)
+					}
 				}
-
+				newRowIDBase = maxRowIDMax
+				newRowIDMax = newRowIDBase + rawRowIDMax
 				// table contains no data, can skip checksum
 				if needAutoID && newRowIDBase == 0 && newStatus < metaStatusRestoreStarted {
 					newStatus = metaStatusRestoreStarted
@@ -356,7 +300,6 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				if err != nil {
 					return errors.Trace(err)
 				}
->>>>>>> bf706ac12... lightning: add more retryable err (#36673)
 
 				curStatus = newStatus
 			}
@@ -373,7 +316,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		}
 		// we only retry if it's tableChecksuming error, it happens during parallel import.
 		// for detail see https://docs.pingcap.com/tidb/stable/tidb-lightning-distributed-import
-		log.FromContext(ctx).Warn("target table is doing checksum, will try again",
+		log.L().Warn("target table is doing checksum, will try again",
 			zap.Int("retry time", i+1), log.ShortError(err))
 		backOffTime *= 2
 		if backOffTime > maxBackoffTime {

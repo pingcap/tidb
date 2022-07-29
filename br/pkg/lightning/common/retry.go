@@ -20,10 +20,7 @@ import (
 	"io"
 	"net"
 	"os"
-<<<<<<< HEAD
-=======
 	"strings"
->>>>>>> bf706ac12... lightning: add more retryable err (#36673)
 	"syscall"
 
 	"github.com/go-sql-driver/mysql"
@@ -34,8 +31,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-<<<<<<< HEAD
-=======
 // some component doesn't have an accurate named error or transform a named error into string,
 // so we need to check by error message,
 // such as distsql.Checksum which transforms tikv other-error into its own error
@@ -58,7 +53,6 @@ func isRetryableFromErrorMessage(err error) bool {
 	return false
 }
 
->>>>>>> bf706ac12... lightning: add more retryable err (#36673)
 // IsRetryableError returns whether the error is transient (e.g. network
 // connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
 // function returns `false` (irrecoverable) if `err == nil`.
