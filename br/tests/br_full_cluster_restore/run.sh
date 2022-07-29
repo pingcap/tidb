@@ -85,7 +85,27 @@ run_br restore full --log-file $br_log_file -s "local://$backup_dir" -f 'mysql.*
 run_sql "select count(*) from mysql.user"
 check_contains "count(*): 1"
 
+echo "--> full cluster restore, will not clear cloud_admin@'%'"
+restart_services
+# create cloud_admin on target cluster manually, this user will **not** be cleared
+run_sql "create user cloud_admin identified by 'xxxxxxxx'"
+run_br restore full --with-sys-table --log-file $br_log_file -s "local://$backup_dir"
+# cloud_admin@'127.0.0.1' is restored
+run_sql "select count(*) from mysql.user where user='cloud_admin'"
+check_contains "count(*): 2"
+run_sql "select count(*) from mysql.tables_priv where user='cloud_admin'"
+check_contains "count(*): 0"
+run_sql "select count(*) from mysql.columns_priv where user='cloud_admin'"
+check_contains "count(*): 0"
+run_sql "select count(*) from mysql.global_priv where user='cloud_admin'"
+check_contains "count(*): 2"
+run_sql "select priv from mysql.global_priv where user='cloud_admin' and host='%'"
+check_contains "priv: {}"
+run_sql "select priv from mysql.global_priv where user='cloud_admin' and host='127.0.0.1'"
+check_contains "priv: {}"
+
 echo "--> full cluster restore"
+restart_services
 # create cloud_admin on target cluster manually, this user will be cleared
 run_sql "create user cloud_admin@'1.1.1.1' identified by 'xxxxxxxx'"
 run_br restore full --with-sys-table --log-file $br_log_file -s "local://$backup_dir"
