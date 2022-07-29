@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -165,8 +166,13 @@ const (
 )
 
 func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp string) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	isTestPartition := (testPartition & tp) > 0
@@ -321,8 +327,13 @@ LOOP:
 }
 
 func TestAddIndexForGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
@@ -564,8 +575,12 @@ LOOP:
 }
 
 func TestAddAnonymousIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -625,8 +640,13 @@ func TestAddAnonymousIndex(t *testing.T) {
 }
 
 func TestAddIndexWithPK(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -808,8 +828,13 @@ func checkGlobalIndexRow(
 }
 
 func TestDropIndexes(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	// drop multiple indexes
 	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));"
 	dropIdxSQL := "alter table test_drop_indexes drop index i1, drop index i2;"
@@ -922,8 +947,13 @@ func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
 }
 
 func TestDropPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	idxName := "primary"
 	createSQL := "create table test_drop_index (c1 int, c2 int, c3 int, unique key(c1), primary key(c3) nonclustered)"
 	dropIdxSQL := "alter table test_drop_index drop primary key;"
@@ -931,8 +961,13 @@ func TestDropPrimaryKey(t *testing.T) {
 }
 
 func TestDropIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	idxName := "c3_index"
 	createSQL := "create table test_drop_index (c1 int, c2 int, c3 int, unique key(c1), key c3_index(c3))"
 	dropIdxSQL := "alter table test_drop_index drop index c3_index;"
@@ -1027,8 +1062,13 @@ func TestAddIndexWithDupCols(t *testing.T) {
 }
 
 func TestAnonymousIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS t")
