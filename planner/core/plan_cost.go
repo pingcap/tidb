@@ -538,7 +538,7 @@ func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost flo
 		//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
 		// Use an empirical value batchRatio to handle this now.
 		// TODO: remove this empirical value.
-		batchRatio := 50.0
+		batchRatio := 30.0
 		innerPlanCost /= batchRatio
 	}
 	return outerCost + innerPlanCost + cpuCost + memoryCost + p.estDoubleReadCost(outerCnt)
