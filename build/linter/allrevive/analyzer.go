@@ -101,7 +101,7 @@ var allRules = append([]lint.Rule{
 	&rule.DuplicatedImportsRule{},
 	//&rule.ImportShadowingRule{},
 	//&rule.BareReturnRule{},
-	&rule.UnusedReceiverRule{},
+	//&rule.UnusedReceiverRule{},
 	//&rule.UnhandledErrorRule{},
 	//&rule.CognitiveComplexityRule{},
 	&rule.StringOfIntRule{},
