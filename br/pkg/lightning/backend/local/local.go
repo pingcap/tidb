@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -1307,6 +1308,19 @@ const (
 	retryIngest
 )
 
+func (local *local) isRetryableTiKVWriteError(err error) bool {
+	err = errors.Cause(err)
+	// io.EOF is not retryable in normal case
+	// but on TiKV restart, if we're writing to TiKV(through GRPC)
+	// it might return io.EOF(it's GRPC Unavailable in most case),
+	// we need to retry on this error.
+	// see SendMsg in https://pkg.go.dev/google.golang.org/grpc#ClientStream
+	if err == io.EOF {
+		return true
+	}
+	return common.IsRetryableError(err)
+}
+
 func (local *local) writeAndIngestPairs(
 	ctx context.Context,
 	engine *Engine,
@@ -1324,7 +1338,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if !common.IsRetryableError(err) {
+			if !local.isRetryableTiKVWriteError(err) {
 				return err
 			}
 
