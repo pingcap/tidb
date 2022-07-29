@@ -96,7 +96,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	}
 
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
-		if req.Paging {
+		if req.Paging.Enable {
 			isSorted := slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
 				return bytes.Compare(i.StartKey, j.StartKey) < 0
 			})
