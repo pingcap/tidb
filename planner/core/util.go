@@ -50,6 +50,7 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 
 // Leave implements Visitor interface.
 func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	//nolint: revive
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
 		if _, ok := a.skipAggMap[v]; !ok {
