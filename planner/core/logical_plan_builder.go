@@ -4846,7 +4846,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	o := b.buildingCTE
 	b.buildingCTE = false
 	defer func() {
-		if saveCte != nil {
+		if saveCte != nil && b.outerCTEs != nil {
 			b.outerCTEs = append(saveCte, b.outerCTEs...)
 		}
 		b.buildingCTE = o
