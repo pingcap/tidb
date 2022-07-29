@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/daixiang0/gci/pkg/configuration"
+	"github.com/daixiang0/gci/pkg/config"
 	"github.com/daixiang0/gci/pkg/gci"
 	"golang.org/x/tools/go/analysis"
 )
@@ -37,7 +37,7 @@ func run(pass *analysis.Pass) (any, error) {
 		fileNames = append(fileNames, pos.Filename)
 	}
 	var rawCfg gci.GciStringConfiguration
-	rawCfg.Cfg = configuration.FormatterConfiguration{
+	rawCfg.Cfg = config.FormatterConfiguration{
 		NoInlineComments: false,
 		NoPrefixComments: false,
 		Debug:            false,
