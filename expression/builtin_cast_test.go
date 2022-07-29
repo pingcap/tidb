@@ -348,10 +348,9 @@ func TestCastFuncSig(t *testing.T) {
 	}
 	for i, c := range castToDecCases {
 		args := []Expression{c.before}
-		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeNewDecimal))
 		require.NoError(t, err)
 		decFunc := newBaseBuiltinCastFunc(b, false)
-		decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 		switch i {
 		case 0:
 			sig = &builtinCastIntAsDecimalSig{decFunc}
@@ -435,10 +434,9 @@ func TestCastFuncSig(t *testing.T) {
 		tp := types.NewFieldType(mysql.TypeNewDecimal)
 		tp.SetFlen(c.flen)
 		tp.SetDecimal(c.decimal)
-		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		b, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
 		decFunc := newBaseBuiltinCastFunc(b, false)
-		decFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastIntAsDecimalSig{decFunc}
@@ -505,7 +503,7 @@ func TestCastFuncSig(t *testing.T) {
 	}
 	for i, c := range castToIntCases {
 		args := []Expression{c.before}
-		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeLonglong))
 		require.NoError(t, err)
 		intFunc := newBaseBuiltinCastFunc(b, false)
 		switch i {
@@ -573,7 +571,7 @@ func TestCastFuncSig(t *testing.T) {
 	}
 	for i, c := range castToRealCases {
 		args := []Expression{c.before}
-		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeDouble))
 		require.NoError(t, err)
 		realFunc := newBaseBuiltinCastFunc(b, false)
 		switch i {
@@ -649,9 +647,8 @@ func TestCastFuncSig(t *testing.T) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetCharset(charset.CharsetBin)
 		args := []Expression{c.before}
-		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		stringFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsStringSig{stringFunc}
@@ -729,9 +726,8 @@ func TestCastFuncSig(t *testing.T) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetFlen(c.flen)
 		tp.SetCharset(charset.CharsetBin)
-		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		stringFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsStringSig{stringFunc}
@@ -805,9 +801,8 @@ func TestCastFuncSig(t *testing.T) {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(mysql.TypeDatetime)
 		tp.SetDecimal(types.DefaultFsp)
-		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		timeFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsTimeSig{timeFunc}
@@ -890,9 +885,8 @@ func TestCastFuncSig(t *testing.T) {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(c.tp)
 		tp.SetDecimal(c.fsp)
-		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		timeFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsTimeSig{timeFunc}
@@ -972,9 +966,8 @@ func TestCastFuncSig(t *testing.T) {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
 		tp.SetDecimal(types.DefaultFsp)
-		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		durationFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsDurationSig{durationFunc}
@@ -1050,9 +1043,8 @@ func TestCastFuncSig(t *testing.T) {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
 		tp.SetDecimal(c.fsp)
-		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		durationFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsDurationSig{durationFunc}
@@ -1083,9 +1075,8 @@ func TestCastFuncSig(t *testing.T) {
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)})
-	bf, err := newBaseBuiltinFunc(ctx, "", args, 0)
+	bf, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeVarString))
 	require.NoError(t, err)
-	bf.tp = types.NewFieldType(mysql.TypeVarString)
 	sig = &builtinCastRealAsStringSig{bf}
 	sRes, isNull, err := sig.evalString(row.ToRow())
 	require.Equal(t, "", sRes)
@@ -1094,7 +1085,7 @@ func TestCastFuncSig(t *testing.T) {
 
 	// test hybridType case.
 	args = []Expression{&Constant{Value: types.NewDatum(types.Enum{Name: "a", Value: 0}), RetType: types.NewFieldType(mysql.TypeEnum)}}
-	b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+	b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeLonglong))
 	require.NoError(t, err)
 	sig = &builtinCastStringAsIntSig{newBaseBuiltinCastFunc(b, false)}
 	iRes, isNull, err := sig.evalInt(chunk.Row{})
@@ -1113,10 +1104,9 @@ func TestCastJSONAsDecimalSig(t *testing.T) {
 	}()
 
 	col := &Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0}
-	b, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, 0)
+	b, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
 	require.NoError(t, err)
 	decFunc := newBaseBuiltinCastFunc(b, false)
-	decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 	decFunc.tp.SetFlen(60)
 	decFunc.tp.SetDecimal(2)
 	sig := &builtinCastJSONAsDecimalSig{decFunc}
@@ -1453,11 +1443,10 @@ func TestCastIntAsIntVec(t *testing.T) {
 // for issue https://github.com/pingcap/tidb/issues/16825
 func TestCastStringAsDecimalSigWithUnsignedFlagInUnion(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
-	b, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	b, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
 	require.NoError(t, err)
 	// set `inUnion` to `true`
 	decFunc := newBaseBuiltinCastFunc(b, true)
-	decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 	// set the `UnsignedFlag` bit
 	decFunc.tp.AddFlag(mysql.UnsignedFlag)
 	cast := &builtinCastStringAsDecimalSig{decFunc}
