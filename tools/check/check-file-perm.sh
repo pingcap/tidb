@@ -19,7 +19,6 @@ find . \( -name "*.png" \
 	-o -name "*.toml" \
 	-o -name "*.yaml" \
 	-o -name "*.json" \
-	-o -name "*.go" \
 	-o -name "*.bazel" \
 	-o -name "*.txt" \
 	-o -name "*.jpg" \

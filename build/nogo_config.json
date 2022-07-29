@@ -712,6 +712,12 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "perm": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "prealloc": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
