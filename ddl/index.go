@@ -1095,7 +1095,8 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in baseIndexWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			taskDone = recordKey.Cmp(taskRange.endKey) > 0
+			// Beside the last region, the boundary should be [startKey, endKey)
+			taskDone = recordKey.Cmp(taskRange.endKey) >= 0 && taskRange.endKey.Cmp(w.reorgInfo.EndKey) != 0
 
 			if taskDone || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
