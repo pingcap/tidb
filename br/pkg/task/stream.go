@@ -888,7 +888,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 			return cfg.DryRun
 		},
 	}
-	if err := metas.LoadFrom(ctx, storage); err != nil {
+	if err := metas.LoadUntil(ctx, storage, cfg.Until); err != nil {
 		return err
 	}
 	readMetaDone()
@@ -1091,8 +1091,13 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
+	shiftStartTS, err := client.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
+	if err != nil {
+		return errors.Annotate(err, "failed to get shift TS")
+	}
+
 	// read meta by given ts.
-	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
+	metas, err := client.ReadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1101,10 +1106,6 @@ func restoreStream(
 		return nil
 	}
 
-	shiftStartTS, exist := restore.CalculateShiftTS(metas, cfg.StartTS, cfg.RestoreTS)
-	if !exist {
-		shiftStartTS = cfg.StartTS
-	}
 	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
 
 	// read data file by given ts.
