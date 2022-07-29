@@ -26,6 +26,9 @@ type StreamMetadataSet struct {
 	BeforeDoWriteBack func(path string, last, current *backuppb.Metadata) (skip bool)
 }
 
+// LoadUntil loads the metadata until the specified timestamp.
+// This would load all metadata files that *may* contain data from transaction committed before that TS.
+// Note: maybe record the timestamp and reject reading data files after this TS?
 func (ms *StreamMetadataSet) LoadUntil(ctx context.Context, s storage.ExternalStorage, until uint64) error {
 	metadataMap := struct {
 		sync.Mutex
