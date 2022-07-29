@@ -255,13 +255,13 @@ func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 	}
 	// if it Contains 'aliyuncs', fetch the sts token.
 	if strings.Contains(endpoint, domainAliyun) {
-		return createOssRamCred()
+		return createOssRAMCred()
 	}
 	// other case ,return no error and run default(aws) follow.
 	return nil, nil
 }
 
-func createOssRamCred() (*credentials.Credentials, error) {
+func createOssRAMCred() (*credentials.Credentials, error) {
 	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
 	if err != nil {
 		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
@@ -338,6 +338,7 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		}
 
 		qs.Region = region
+		backend.Region = region
 		if region != defaultRegion {
 			awsConfig.WithRegion(region)
 			c = s3.New(ses, awsConfig)
@@ -553,7 +554,6 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			if err = fn(path, itemSize); err != nil {
 				return errors.Trace(err)
 			}
-
 		}
 		if !aws.BoolValue(res.IsTruncated) {
 			break

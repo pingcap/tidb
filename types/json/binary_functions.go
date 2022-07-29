@@ -1103,7 +1103,6 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 	default:
 		return CreateBinary(result), false, nil
 	}
-
 }
 
 // extractCallbackFn the type of CALLBACK function for extractToCallback

@@ -31,5 +31,6 @@ go_test(
         "type_test.go",
     ],
     embed = [":mysql"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

@@ -304,8 +304,8 @@ func (e *Client) DoTxn(ctx context.Context, operations []*Operation) (int64, err
 	return txnResp.Header.Revision, nil
 }
 
-func parseToDirTree(root *Node, path string) *Node {
-	pathDirs := strings.Split(path, "/")
+func parseToDirTree(root *Node, p string) *Node {
+	pathDirs := strings.Split(p, "/")
 	current := root
 	var next *Node
 	var ok bool

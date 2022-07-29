@@ -149,13 +149,13 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 	}
 	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
 	if err != nil {
-		return errors.New(fmt.Sprintf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String()))
+		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String())
 	}
 	if percent <= 0 || percent > 100 || isNull {
 		if isNull {
 			return errors.New("APPROX_PERCENTILE: Percentage value cannot be NULL")
 		}
-		return errors.New(fmt.Sprintf("Percentage value %d is out of range [1, 100]", percent))
+		return fmt.Errorf("Percentage value %d is out of range [1, 100]", percent)
 	}
 
 	switch a.Args[0].GetType().GetType() {
@@ -287,7 +287,7 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	a.RetTp.SetFlen(21)
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
-	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
 func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {

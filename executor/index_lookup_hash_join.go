@@ -181,7 +181,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
 		e.IndexLookUpJoin.finished.Store(true)
-		err := errors.New(fmt.Sprintf("%v", r))
+		err := fmt.Errorf("%v", r)
 		if !e.keepOuterOrder {
 			e.resultCh <- &indexHashJoinResult{err: err}
 		} else {
@@ -608,7 +608,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		if task.keepOuterOrder {
 			if err != nil {
 				joinResult.err = err
-				resultCh <- joinResult
+				select {
+				case <-ctx.Done():
+				case resultCh <- joinResult:
+				}
 			}
 			close(resultCh)
 		}

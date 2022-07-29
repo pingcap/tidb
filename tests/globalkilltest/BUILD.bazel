@@ -6,6 +6,7 @@ go_test(
         "global_kill_test.go",
         "main_test.go",
     ],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "//util/logutil",

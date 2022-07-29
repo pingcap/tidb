@@ -28,11 +28,13 @@ go_library(
 
 go_test(
     name = "pump_client_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "client_test.go",
     ],
     embed = [":pump_client"],
+    flaky = True,
     deps = [
         "//tidb-binlog/node",
         "@com_github_pingcap_errors//:errors",

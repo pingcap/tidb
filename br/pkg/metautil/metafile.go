@@ -55,10 +55,12 @@ const (
 	MetaV2
 )
 
+// CreateMetaFileName is the name of meta file.
 func CreateMetaFileName(ts uint64) string {
 	return fmt.Sprintf("%s_%d", MetaFile, ts)
 }
 
+// Encrypt encrypts the content according to CipherInfo.
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
 	if len(content) == 0 || cipher == nil {
 		return content, iv, nil
@@ -83,6 +85,7 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 	}
 }
 
+// Decrypt decrypts the content according to CipherInfo and IV.
 func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
 	if len(content) == 0 || cipher == nil {
 		return content, nil
@@ -222,7 +225,7 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 }
 
 // ArchiveSize return the size of Archive data
-func (reader *MetaReader) ArchiveSize(ctx context.Context, files []*backuppb.File) uint64 {
+func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64 {
 	total := uint64(0)
 	for _, file := range files {
 		total += file.Size_
@@ -424,9 +427,7 @@ func (op AppendOp) name() string {
 }
 
 // appends item to MetaFile
-func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (int, int) {
-	size := 0
-	itemCount := 0
+func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (size int, itemCount int) {
 	switch op {
 	case AppendMetaFile:
 		a.MetaFiles = append(a.MetaFiles, b.(*backuppb.File))
@@ -449,7 +450,6 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (int, int) {
 		itemCount++
 		size += len(b.([]byte))
 	}
-
 	return size, itemCount
 }
 
@@ -554,7 +554,7 @@ func (writer *MetaWriter) Update(f func(m *backuppb.BackupMeta)) {
 }
 
 // Send sends the item to buffer.
-func (writer *MetaWriter) Send(m interface{}, op AppendOp) error {
+func (writer *MetaWriter) Send(m interface{}, _ AppendOp) error {
 	select {
 	case writer.metasCh <- m:
 	// receive an error from StartWriteMetasAsync
@@ -665,7 +665,7 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 
 // fillMetasV1 keep the compatibility for old version.
 // for MetaV1, just put in backupMeta
-func (writer *MetaWriter) fillMetasV1(ctx context.Context, op AppendOp) {
+func (writer *MetaWriter) fillMetasV1(_ context.Context, op AppendOp) {
 	switch op {
 	case AppendDataFile:
 		writer.backupMeta.Files = writer.metafiles.root.DataFiles
@@ -717,7 +717,7 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 	name := op.name()
 	writer.metafileSizes[name] += writer.metafiles.size
 	// Flush metafiles to external storage.
-	writer.metafileSeqNum["metafiles"] += 1
+	writer.metafileSeqNum["metafiles"]++
 	fname := fmt.Sprintf("backupmeta.%s.%09d", name, writer.metafileSeqNum["metafiles"])
 
 	encyptedContent, iv, err := Encrypt(content, writer.cipher)

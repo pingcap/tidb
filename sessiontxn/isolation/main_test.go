@@ -78,7 +78,7 @@ func (a *txnAssert[T]) Check(t testing.TB) {
 	require.Equal(t, sessVars.CheckAndGetTxnScope(), txnCtx.TxnScope)
 	require.Equal(t, sessVars.ShardAllocateStep, int64(txnCtx.ShardStep))
 	require.False(t, txnCtx.IsStaleness)
-	require.GreaterOrEqual(t, txnCtx.CreateTime.Nanosecond(), a.minStartTime.Nanosecond())
+	require.GreaterOrEqual(t, txnCtx.CreateTime.UnixNano(), a.minStartTime.UnixNano())
 	require.Equal(t, a.inTxn, sessVars.InTxn())
 	require.Equal(t, a.inTxn, txnCtx.IsExplicit)
 	require.Equal(t, a.couldRetry, txnCtx.CouldRetry)
