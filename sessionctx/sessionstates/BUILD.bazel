@@ -30,7 +30,7 @@ go_test(
     ],
     embed = [":sessionstates"],
     flaky = True,
-    race = "on",
+    shard_count = 2,
     deps = [
         "//config",
         "//errno",

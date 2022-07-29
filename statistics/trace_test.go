@@ -102,7 +102,7 @@ func TestTraceCE(t *testing.T) {
 }
 
 func TestTraceCEPartitionTable(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
