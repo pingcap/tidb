@@ -924,7 +924,7 @@ const (
 	DefTiDBSuperReadOnly                           = false
 	DefTiDBShardAllocateStep                       = math.MaxInt64
 	DefTiDBEnableTelemetry                         = true
-	DefTiDBEnableParallelApply                     = true
+	DefTiDBEnableParallelApply                     = false
 	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "static"
 	DefTiDBEnableRateLimitAction                   = true
@@ -987,7 +987,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
-	DefTiDBEnablePaging                            = true
+	DefTiDBEnablePaging                            = false
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
