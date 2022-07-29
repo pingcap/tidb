@@ -311,14 +311,6 @@ func DefineFilterFlags(command *cobra.Command, defaultFilter []string, setHidden
 	}
 }
 
-func DefineWithSysFlags(command *cobra.Command, setHidden bool) {
-	flags := command.Flags()
-	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
-	if setHidden {
-		_ = flags.MarkHidden(flagWithSysTable)
-	}
-}
-
 // ParseTLSTripleFromFlags parses the (ca, cert, key) triple from flags.
 func ParseTLSTripleFromFlags(flags *pflag.FlagSet) (ca, cert, key string, err error) {
 	ca, err = flags.GetString(flagCA)

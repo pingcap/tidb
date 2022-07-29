@@ -113,6 +113,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"after how long a restore batch would be auto sended.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"batch size for ddl to create a batch of tabes once.")
+	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
