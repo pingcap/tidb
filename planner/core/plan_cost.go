@@ -511,6 +511,14 @@ func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost flo
 	memoryCost := innerConcurrency * (batchSize * distinctFactor) * innerCnt * sessVars.GetMemoryFactor()
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
 	innerPlanCost := outerCnt * innerCost
+	if p.ctx.GetSessionVars().CostModelVersion == 2 {
+		// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
+		//  `innerCostPerBatch * numberOfBatche` instead of `innerCostPerRow * numberOfOuterRow`.
+		// Use an empirical value batchRatio to handle this now.
+		// TODO: remove this empirical value.
+		batchRatio := 50.0
+		innerPlanCost /= batchRatio
+	}
 	return outerCost + innerPlanCost + cpuCost + memoryCost + p.estDoubleReadCost(outerCnt)
 }
 
