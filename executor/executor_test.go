@@ -7252,32 +7252,72 @@ func TestForeignKeyCascadeReferenceCascadeUpdateAndCascadeDelete(t *testing.T) {
 			},
 		},
 		// Case-2: test unique index contain foreign key columns and other columns.
-		//{
-		//	prepareSQLs: []string{
-		//		"create table t1 (a int, b int, name varchar(10), unique index (a, b, name))",
-		//		"create table t2 (a int, b int, name varchar(10), unique index (a, b, name), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
-		//		"create table t3 (a int, b int, name varchar(10), unique index (a, b, name), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
-		//		"create table t4 (a int, b int, name varchar(10), unique index (a, b, name), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
-		//	},
-		//},
+		{
+			prepareSQLs: []string{
+				"create table t1 (a int, b int, name varchar(10), unique index (a, b, name))",
+				"create table t2 (a int, b int, name varchar(10), unique index (a, b, name), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t3 (a int, b int, name varchar(10), unique index (a, b, name), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t4 (a int, b int, name varchar(10), unique index (a, b, name), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+			},
+		},
 		// Case-3: test non-unique index only contain foreign key columns.
-		//{
-		//	prepareSQLs: []string{
-		//		"create table t1 (a int, b int, name varchar(10), index (a, b))",
-		//		"create table t2 (a int, b int, name varchar(10), index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
-		//		"create table t3 (a int, b int, name varchar(10), index (a, b), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
-		//		"create table t4 (a int, b int, name varchar(10), index (a), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
-		//	},
-		//},
+		{
+			prepareSQLs: []string{
+				"create table t1 (a int, b int, name varchar(10), index (a, b))",
+				"create table t2 (a int, b int, name varchar(10), index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t3 (a int, b int, name varchar(10), index (a, b), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t4 (a int, b int, name varchar(10), index (a), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+			},
+		},
 		// Case-4: test non-unique index contain foreign key columns and other columns.
-		//{
-		//	prepareSQLs: []string{
-		//		"create table t1 (a int, b int, name varchar(10), index (a, b, name))",
-		//		"create table t2 (a int, b int, name varchar(10), index (a, b, name), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
-		//		"create table t3 (a int, b int, name varchar(10), index (a, b, name), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
-		//		"create table t4 (a int, b int, name varchar(10), index (a, b, name), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
-		//	},
-		//},
+		{
+			prepareSQLs: []string{
+				"create table t1 (a int, b int, name varchar(10), index (a, b, name))",
+				"create table t2 (a int, b int, name varchar(10), index (a, b, name), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t3 (a int, b int, name varchar(10), index (a, b, name), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t4 (a int, b int, name varchar(10), index (a, b, name), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+			},
+		},
+		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (a int, b int, name varchar(10), primary key (a, b))",
+				"create table t2 (a int, b int, name varchar(10), primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t3 (a int, b int, name varchar(10), primary key (a, b), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t4 (a int, b int, name varchar(10), primary key (a), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+			},
+		},
+		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (a int, b int, name varchar(10), primary key (a, b))",
+				"create table t2 (a int, b int, name varchar(10), primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t3 (a int, b int, name varchar(10), primary key (a, b), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t4 (a int, b int, name varchar(10), primary key (a), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+			},
+		},
+		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (a int, b int, name varchar(10), primary key (a, b, name))",
+				"create table t2 (a int, b int, name varchar(10), primary key (a, b, name), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t3 (a int, b int, name varchar(10), primary key (a, b, name), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t4 (a int, b int, name varchar(10), primary key (a, b, name), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+			},
+		},
+		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (a int, b int, name varchar(10), primary key (a, b, name))",
+				"create table t2 (a int, b int, name varchar(10), primary key (a, b, name), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t3 (a int, b int, name varchar(10), primary key (a, b, name), foreign key fk(a, b) references t2(a, b) ON UPDATE CASCADE ON DELETE CASCADE)",
+				"create table t4 (a int, b int, name varchar(10), primary key (a, b, name), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)",
+			},
+		},
 	}
 
 	for _, ca := range cases {
@@ -7293,13 +7333,98 @@ func TestForeignKeyCascadeReferenceCascadeUpdateAndCascadeDelete(t *testing.T) {
 		tk.MustExec("insert into t3 (a, b, name) values (1,2,'f'), (3, 4, 'h')")
 		tk.MustExec("insert into t4 (a, b, name) values (1,2,'j'), (3, 4, 'k')")
 		tk.MustExec("update t1 set a=11, b=12 where a = 1")
+		tk.MustQuery("select * from t1 order by name").Check(testkit.Rows("11 12 a", "3 4 b", "5 6 c"))
 		tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("11 12 d", "3 4 e"))
 		tk.MustQuery("select * from t3 order by name").Check(testkit.Rows("11 12 f", "3 4 h"))
 		tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("11 2 j", "3 4 k"))
 		tk.MustExec("update t2 set a=5, b=6 where a = 3")
 		tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("11 12 d", "5 6 e"))
 		tk.MustQuery("select * from t3 order by name").Check(testkit.Rows("11 12 f", "5 6 h"))
-		//tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("11 2 j", "5 4 k"))
+		tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("11 2 j", "5 4 k"))
+		tk.MustExec("delete from t3 where a=11")
+		tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("11 12 d", "5 6 e"))
+		tk.MustQuery("select * from t3 order by name").Check(testkit.Rows("5 6 h"))
+		tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("5 4 k"))
+		tk.MustExec("update t3 set a=11, b=12 where name = 'h'")
+		tk.MustQuery("select * from t1 order by name").Check(testkit.Rows("11 12 a", "3 4 b", "5 6 c"))
+		tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("11 12 d", "5 6 e"))
+		tk.MustQuery("select * from t3 order by name").Check(testkit.Rows("11 12 h"))
+		tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("11 4 k"))
+		tk.MustExec("delete from t1 where a=11")
+		tk.MustQuery("select * from t1 order by name").Check(testkit.Rows("3 4 b", "5 6 c"))
+		tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("5 6 e"))
+		tk.MustQuery("select * from t3 order by name").Check(testkit.Rows())
+		tk.MustQuery("select * from t4 order by name").Check(testkit.Rows())
+		tk.MustExec("delete from t1")
+		tk.MustQuery("select * from t1 order by name").Check(testkit.Rows())
+		tk.MustQuery("select * from t2 order by name").Check(testkit.Rows())
+		tk.MustQuery("select * from t3 order by name").Check(testkit.Rows())
+		tk.MustQuery("select * from t4 order by name").Check(testkit.Rows())
+		tk.MustExec("insert into t1 (a, b, name) values (1,2,'a'), (3, 4, 'b'), (5, 6, 'c'), (7, 8, '0')")
+		tk.MustExec("insert into t2 (a, b, name) values (1,2,'d'), (3, 4, 'e'), (7, 8, 'p')")
+		tk.MustExec("insert into t3 (a, b, name) values (1,2,'f'), (3, 4, 'h'), (7, 8, 'q')")
+		tk.MustExec("insert into t4 (a, b, name) values (1,2,'j'), (3, 4, 'k'), (7, 100, 'r')")
+		tk.MustExec("delete from t1 where a != 5")
+		tk.MustQuery("select * from t1 order by name").Check(testkit.Rows("5 6 c"))
+		tk.MustQuery("select * from t2 order by name").Check(testkit.Rows())
+		tk.MustQuery("select * from t3 order by name").Check(testkit.Rows())
+		tk.MustQuery("select * from t4 order by name").Check(testkit.Rows())
+		tk.MustExec("delete from t1")
+		tk.MustQuery("select * from t1 order by name").Check(testkit.Rows())
 		tk.MustExec("admin check table t1,t2,t3,t4")
 	}
+	// Case-9: test primary key is handle and contain foreign key column.
+	tk.MustExec("drop table if exists t4;")
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
+	tk.MustExec("create table t1 (a int, b int, name varchar(10), primary key (a))")
+	tk.MustExec("create table t2 (a int, b int, name varchar(10), primary key (a), foreign key fk(a) references t1(a) ON UPDATE CASCADE ON DELETE CASCADE)")
+	tk.MustExec("create table t3 (a int, b int, name varchar(10), primary key (a), foreign key fk(a) references t2(a) ON UPDATE CASCADE ON DELETE CASCADE)")
+	tk.MustExec("create table t4 (a int, b int, name varchar(10), primary key (a), foreign key fk(a) references t3(a) ON UPDATE CASCADE ON DELETE CASCADE)")
+	tk.MustExec("insert into t1 (a, b, name) values (1,2,'a'), (3, 4, 'b'), (5, 6, 'c')")
+	tk.MustExec("insert into t2 (a, b, name) values (1,2,'d'), (3, 4, 'e')")
+	tk.MustExec("insert into t3 (a, b, name) values (1,2,'f'), (3, 4, 'h')")
+	tk.MustExec("insert into t4 (a, b, name) values (1,2,'j'), (3, 4, 'k')")
+	tk.MustExec("update t1 set a=11, b=12 where a = 1")
+	tk.MustQuery("select * from t1 order by name").Check(testkit.Rows("11 12 a", "3 4 b", "5 6 c"))
+	tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("11 2 d", "3 4 e"))
+	tk.MustQuery("select * from t3 order by name").Check(testkit.Rows("11 2 f", "3 4 h"))
+	tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("11 2 j", "3 4 k"))
+	tk.MustExec("update t2 set a=5, b=6 where a = 3")
+	tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("11 2 d", "5 6 e"))
+	tk.MustQuery("select * from t3 order by name").Check(testkit.Rows("11 2 f", "5 4 h"))
+	tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("11 2 j", "5 4 k"))
+	tk.MustExec("delete from t3 where a=11")
+	tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("11 2 d", "5 6 e"))
+	tk.MustQuery("select * from t3 order by name").Check(testkit.Rows("5 4 h"))
+	tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("5 4 k"))
+	tk.MustExec("update t3 set a=11, b=12 where name = 'h'")
+	tk.MustQuery("select * from t1 order by name").Check(testkit.Rows("11 12 a", "3 4 b", "5 6 c"))
+	tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("11 2 d", "5 6 e"))
+	tk.MustQuery("select * from t3 order by name").Check(testkit.Rows("11 12 h"))
+	tk.MustQuery("select * from t4 order by name").Check(testkit.Rows("11 4 k"))
+	tk.MustExec("delete from t1 where a=11")
+	tk.MustQuery("select * from t1 order by name").Check(testkit.Rows("3 4 b", "5 6 c"))
+	tk.MustQuery("select * from t2 order by name").Check(testkit.Rows("5 6 e"))
+	tk.MustQuery("select * from t3 order by name").Check(testkit.Rows())
+	tk.MustQuery("select * from t4 order by name").Check(testkit.Rows())
+	tk.MustExec("delete from t1")
+	tk.MustQuery("select * from t1 order by name").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 order by name").Check(testkit.Rows())
+	tk.MustQuery("select * from t3 order by name").Check(testkit.Rows())
+	tk.MustQuery("select * from t4 order by name").Check(testkit.Rows())
+	tk.MustExec("insert into t1 (a, b, name) values (1,2,'a'), (3, 4, 'b'), (5, 6, 'c'), (7, 8, '0')")
+	tk.MustExec("insert into t2 (a, b, name) values (1,2,'d'), (3, 4, 'e'), (7, 8, 'p')")
+	tk.MustExec("insert into t3 (a, b, name) values (1,2,'f'), (3, 4, 'h'), (7, 8, 'q')")
+	tk.MustExec("insert into t4 (a, b, name) values (1,2,'j'), (3, 4, 'k'), (7, 100, 'r')")
+	tk.MustExec("delete from t1 where a != 5")
+	tk.MustQuery("select * from t1 order by name").Check(testkit.Rows("5 6 c"))
+	tk.MustQuery("select * from t2 order by name").Check(testkit.Rows())
+	tk.MustQuery("select * from t3 order by name").Check(testkit.Rows())
+	tk.MustQuery("select * from t4 order by name").Check(testkit.Rows())
+	tk.MustExec("delete from t1")
+	tk.MustQuery("select * from t1 order by name").Check(testkit.Rows())
+	tk.MustExec("admin check table t1,t2,t3,t4")
 }
