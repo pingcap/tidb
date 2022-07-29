@@ -7259,4 +7259,3 @@ func TestIssue36609(t *testing.T) {
 	tk.MustQuery("select * from t3 straight_join t4 on t3.a = t4.b straight_join t2 on t3.d = t2.c straight_join t1 on t1.a = t2.b straight_join t5 on t4.c = t5.d where t2.b < 100 and t4.a = 10;")
 	tk.MustQuery("select * from information_schema.statements_summary;")
 }
-
