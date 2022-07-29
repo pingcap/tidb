@@ -52,7 +52,7 @@ var defaultRules = []lint.Rule{
 	//&rule.DotImportsRule{},
 	&rule.BlankImportsRule{},
 	//&rule.ExportedRule{},
-	&rule.VarNamingRule{},
+	//&rule.VarNamingRule{},
 	&rule.IndentErrorFlowRule{},
 	&rule.RangeRule{},
 	&rule.ErrorfRule{},
