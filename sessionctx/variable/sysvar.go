@@ -1697,7 +1697,7 @@ var defaultSysVars = []*SysVar{
 		s.MinPagingSize = tidbOptPositiveInt32(val, DefMinPagingSize)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxPagingSize, Value: strconv.Itoa(DefMaxPagingSize), Type: TypeUnsigned, MinValue: int64(DefMaxPagingSize), MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxPagingSize, Value: strconv.Itoa(DefMaxPagingSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MaxPagingSize = tidbOptPositiveInt32(val, DefMaxPagingSize)
 		return nil
 	}},

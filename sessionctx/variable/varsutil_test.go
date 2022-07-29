@@ -447,7 +447,7 @@ func TestVarsutil(t *testing.T) {
 
 	err = SetSessionSystemVar(v, TiDBMaxPagingSize, "456")
 	require.NoError(t, err)
-	require.Equal(t, v.MaxPagingSize, 8192)
+	require.Equal(t, v.MaxPagingSize, 456)
 
 	err = SetSessionSystemVar(v, TiDBMaxPagingSize, "45678")
 	require.NoError(t, err)
