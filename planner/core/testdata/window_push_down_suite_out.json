@@ -271,7 +271,7 @@
       {
         "SQL": "explain select *, avg(empid) over () FROM employee",
         "Plan": [
-          "Window_8 10000.00 root  avg(cast(test.employee.empid, decimal(15,4) BINARY))->Column#6 over()",
+          "Window_8 10000.00 root  avg(cast(test.employee.empid, decimal(20,0) BINARY))->Column#6 over()",
           "└─TableReader_12 10000.00 root  data:TableFullScan_11",
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
