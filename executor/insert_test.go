@@ -1007,7 +1007,6 @@ func TestInsertWithAutoidSchema(t *testing.T) {
 			tk.MustQuery(tt.query).Check(tt.result)
 		}
 	}
-
 }
 
 func TestPartitionInsertOnDuplicate(t *testing.T) {

@@ -79,7 +79,7 @@ require (
 	go.uber.org/goleak v1.1.12
 	go.uber.org/multierr v1.8.0
 	go.uber.org/zap v1.21.0
-	golang.org/x/exp v0.0.0-20220428152302-39d4317da171
+	golang.org/x/exp v0.0.0-20220722155223-a9213eeb770e
 	golang.org/x/net v0.0.0-20220722155237-a158d28d115b
 	golang.org/x/oauth2 v0.0.0-20220411215720-9780585627b5
 	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4

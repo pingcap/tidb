@@ -59,7 +59,7 @@ var defaultRules = []lint.Rule{
 	&rule.ErrorNamingRule{},
 	&rule.ErrorStringsRule{},
 	&rule.ReceiverNamingRule{},
-	&rule.IncrementDecrementRule{},
+	//&rule.IncrementDecrementRule{},
 	&rule.ErrorReturnRule{},
 	//&rule.UnexportedReturnRule{},
 	&rule.TimeNamingRule{},
@@ -76,13 +76,13 @@ var allRules = append([]lint.Rule{
 	//&rule.ConfusingNamingRule{},
 	&rule.GetReturnRule{},
 	&rule.ModifiesParamRule{},
-	&rule.ConfusingResultsRule{},
+	//&rule.ConfusingResultsRule{},
 	//&rule.DeepExitRule{},
 	//&rule.UnusedParamRule{},
 	&rule.UnreachableCodeRule{},
 	//&rule.AddConstantRule{},
 	//&rule.FlagParamRule{},
-	&rule.UnnecessaryStmtRule{},
+	//&rule.UnnecessaryStmtRule{},
 	//&rule.StructTagRule{},
 	//&rule.ModifiesValRecRule{},
 	&rule.ConstantLogicalExprRule{},
@@ -97,7 +97,7 @@ var allRules = append([]lint.Rule{
 	&rule.AtomicRule{},
 	&rule.EmptyLinesRule{},
 	//&rule.LineLengthLimitRule{},
-	&rule.CallToGCRule{},
+	//&rule.CallToGCRule{},
 	&rule.DuplicatedImportsRule{},
 	//&rule.ImportShadowingRule{},
 	//&rule.BareReturnRule{},
@@ -114,7 +114,7 @@ var allRules = append([]lint.Rule{
 	//&rule.FunctionLength{},
 	//&rule.NestedStructs{},
 	&rule.IfReturnRule{},
-	&rule.UselessBreak{},
+	//&rule.UselessBreak{},
 	&rule.TimeEqualRule{},
 	//&rule.BannedCharsRule{},
 	&rule.OptimizeOperandsOrderRule{},
@@ -139,6 +139,10 @@ func run(pass *analysis.Pass) (any, error) {
 	for _, r := range allRules {
 		conf.Rules[r.Name()] = lint.RuleConfig{}
 	}
+	conf.Rules["defer"] = lint.RuleConfig{
+		Arguments: []interface{}{[]interface{}{"loop", "method-call", "immediate-recover", "return"}},
+	}
+
 	lintingRules, err := config.GetLintingRules(&conf, []lint.Rule{})
 	if err != nil {
 		return nil, err

@@ -106,7 +106,7 @@ func runTestData(t *testing.T, tk *testkit.TestKit, name string) {
 		Plan []string
 	}
 	statsSuiteData := plannercore.GetOrderedResultModeSuiteData()
-	statsSuiteData.GetTestCasesByName(name, t, &input, &output)
+	statsSuiteData.LoadTestCasesByName(name, t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		testdata.OnRecord(func() {

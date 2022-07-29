@@ -883,7 +883,7 @@ func TestJSON(t *testing.T) {
 
 	// check CAST AS JSON.
 	tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`).Check(testkit.Rows(`3 {} <nil>`))
-
+	//nolint:revive,all_revive
 	tk.MustQuery("select a, count(1) from test_json group by a order by a").Check(testkit.Rows(
 		"<nil> 1",
 		"null 1",
@@ -1477,7 +1477,7 @@ func TestSetOperation(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1508,7 +1508,7 @@ func TestSetOperationOnDiffColType(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1536,7 +1536,7 @@ func TestIndexScanWithYearCol(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1628,7 +1628,7 @@ func TestTimezonePushDown(t *testing.T) {
 	ctx := context.Background()
 	count := 0
 	ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
-		count += 1
+		count++
 		dagReq := new(tipb.DAGRequest)
 		require.NoError(t, proto.Unmarshal(req.Data, dagReq))
 		require.Equal(t, systemTZ.String(), dagReq.GetTimeZoneName())
@@ -2014,6 +2014,7 @@ func TestCheckIndex(t *testing.T) {
 	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "admin check index t c")
 	require.Error(t, err)
+	//nolint:revive,all_revive
 	require.Contains(t, err.Error(), "table count 3 != index(c) count 2")
 
 	// TODO: pass the case below：
@@ -2707,7 +2708,6 @@ func TestSelectForUpdate(t *testing.T) {
 
 	err = tk1.ExecToErr("commit")
 	require.Error(t, err)
-
 }
 
 func TestSelectForUpdateOf(t *testing.T) {
@@ -2846,7 +2846,6 @@ func TestInsertValuesWithSubQuery(t *testing.T) {
 	tk.MustGetErrMsg(
 		"insert into t set a = 81, b =  (select ( SELECT '1' AS `c0` WHERE '1' >= `subq_0`.`c0` ) as `c1` FROM ( SELECT '1' AS `c0` ) AS `subq_0` );",
 		"Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
-
 }
 
 func TestDIVZeroInPartitionExpr(t *testing.T) {

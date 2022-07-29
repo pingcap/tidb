@@ -41,6 +41,7 @@ func run(pass *analysis.Pass) (any, error) {
 			NoInlineComments: false,
 			NoPrefixComments: false,
 			Debug:            false,
+			SkipGenerated:    true,
 		},
 	}
 	cfg, _ := rawCfg.Parse()

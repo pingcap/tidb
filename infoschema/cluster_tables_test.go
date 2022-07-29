@@ -178,7 +178,6 @@ func TestTestDataLockWaits(t *testing.T) {
 		"6B657932 <nil> 3 4 "+digest2.String()+" <nil>",
 		"6B657933 <nil> 5 6 <nil> <nil>",
 		"6B657934 <nil> 7 8 <nil> <nil>"))
-
 }
 
 func SubTestDataLockWaitsPrivilege(t *testing.T) {
@@ -215,7 +214,6 @@ func SubTestDataLockWaitsPrivilege(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil))
 	_ = tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS")
-
 }
 
 func TestSelectClusterTable(t *testing.T) {

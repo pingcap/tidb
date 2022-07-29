@@ -155,19 +155,13 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
 	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
@@ -191,8 +185,6 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	}
 	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_not_exist")
 	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 
