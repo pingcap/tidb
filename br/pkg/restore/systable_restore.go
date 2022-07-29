@@ -45,18 +45,18 @@ var unRecoverableTable = map[string]struct{}{
 }
 
 // tables in this map is restored when fullClusterRestore=true
-// the value part is the column name of USER which is used to
-// skip clearing or restoring cloud_admin which is a special
+// the value part is the filter in SQL where clause which is used to
+// skip clearing or restoring 'cloud_admin'@'%' which is a special
 // user on TiDB Cloud
 var sysPrivilegeTableMap = map[string]string{
-	"user":          "user",    // since v1.0.0
-	"db":            "user",    // since v1.0.0
-	"tables_priv":   "user",    // since v1.0.0
-	"columns_priv":  "user",    // since v1.0.0
-	"default_roles": "user",    // since v3.0.0
-	"role_edges":    "to_user", // since v3.0.0
-	"global_priv":   "user",    // since v3.0.8
-	"global_grants": "user",    // since v5.0.3
+	"user":          "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"db":            "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"tables_priv":   "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"columns_priv":  "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"default_roles": "not (user = 'cloud_admin' and host = '%')",       // since v3.0.0
+	"role_edges":    "not (to_user = 'cloud_admin' and to_host = '%')", // since v3.0.0
+	"global_priv":   "not (user = 'cloud_admin' and host = '%')",       // since v3.0.8
+	"global_grants": "not (user = 'cloud_admin' and host = '%')",       // since v5.0.3
 }
 
 func isUnrecoverableTable(tableName string) bool {
@@ -77,7 +77,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 	temporaryDB := utils.TemporaryDBName(sysDB)
 	defer rc.cleanTemporaryDatabase(ctx, sysDB)
 
-	if !f.MatchSchema(sysDB) {
+	if !f.MatchSchema(sysDB) || !rc.withSysTable {
 		log.Debug("system database filtered out", zap.String("database", sysDB))
 		return
 	}
@@ -204,7 +204,7 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 		whereClause := ""
 		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
 			// cloud_admin is a special user on tidb cloud, need to skip it.
-			whereClause = fmt.Sprintf("WHERE %s != 'cloud_admin'", sysPrivilegeTableMap[tableName])
+			whereClause = fmt.Sprintf("WHERE %s", sysPrivilegeTableMap[tableName])
 			log.Info("full cluster restore, delete existing data",
 				zap.String("table", tableName), zap.Stringer("schema", db.Name))
 			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",

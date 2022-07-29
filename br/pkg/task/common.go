@@ -210,8 +210,6 @@ type Config struct {
 
 	CipherInfo backuppb.CipherInfo `json:"-" toml:"-"`
 
-	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
-	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
 	// whether there's explicit filter
 	ExplicitFilter bool `json:"-" toml:"-"`
 }
@@ -515,12 +513,6 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	if !caseSensitive {
 		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
-	}
-	if flags.Lookup(flagWithSysTable) != nil {
-		cfg.WithSysTable, err = flags.GetBool(flagWithSysTable)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
 	checkRequirements, err := flags.GetBool(flagCheckRequirement)
 	if err != nil {

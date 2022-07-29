@@ -71,10 +71,23 @@ run_sql "alter table mysql.tables_priv modify column Table_priv set('Select') DE
 run_br restore full --with-sys-table --log-file $br_log_file -s "local://$backup_dir" > $res_file 2>&1 || true
 check_contains "the target cluster is not compatible with the backup data"
 
-echo "--> full cluster restore"
 restart_services
-# create cloud_admin on target cluster manually
-run_sql "create user cloud_admin identified by 'xxxxxxxx'"
+
+echo "--> restore without with-sys-table flag, only restore data"
+run_br restore full --log-file $br_log_file -s "local://$backup_dir"
+run_sql "select count(*) from mysql.user"
+check_contains "count(*): 1"
+
+echo "--> restore without with-sys-table flag and set explicit mysql.* filter, will not restore priv data"
+run_sql "drop database db1;"
+run_sql "drop database db2;"
+run_br restore full --log-file $br_log_file -s "local://$backup_dir" -f 'mysql.*'
+run_sql "select count(*) from mysql.user"
+check_contains "count(*): 1"
+
+echo "--> full cluster restore"
+# create cloud_admin on target cluster manually, this user will be cleared
+run_sql "create user cloud_admin@'1.1.1.1' identified by 'xxxxxxxx'"
 run_br restore full --with-sys-table --log-file $br_log_file -s "local://$backup_dir"
 run_sql_as user1 "123456" "select count(*) from db1.t1"
 check_contains "count(*): 2"
@@ -93,11 +106,14 @@ run_sql_as user3 "123456" "select count(*) from db1.t1" --ssl
 check_contains "count(*): 2"
 run_sql_as user3 "123456" "select count(*) from db1.t2" --ssl || true
 check_contains "SELECT command denied to user"
-# we don't clear or restore data about user cloud_admin
-# so we can login using old password
-run_sql_as cloud_admin "xxxxxxxx" "show grants"
+# we don't clear or restore data about user cloud_admin@'%'
+# but other cloud_admin@'any-other-host' will be cleared and restored
+# so cloud_admin@'1.1.1.1' is cleared, cloud_admin@'127.0.0.1' is restored
+run_sql_as cloud_admin "000000" "show grants"
 check_contains ": GRANT USAGE"
 run_sql "select count(*) from mysql.user where user='cloud_admin'"
+check_contains "count(*): 1"
+run_sql "select count(*) from mysql.user where user='cloud_admin' and host='127.0.0.1'"
 check_contains "count(*): 1"
 run_sql "select count(*) from mysql.db where user='cloud_admin'"
 check_contains "count(*): 0"

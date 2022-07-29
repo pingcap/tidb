@@ -28,6 +28,8 @@ create user user3 identified by '123456' require ssl;
 grant select on db1.t1 to user3;
 
 -- cloud_admin
+create user cloud_admin@'127.0.0.1' identified by '000000';
+
 create user cloud_admin identified by '123456' require ssl; -- require ssl stores in global_priv
 grant role1 to cloud_admin; -- mysql.role_edges
 set default role all to cloud_admin; -- mysql.default_roles

@@ -164,6 +164,9 @@ type Client struct {
 	deleteRangeQuery          []string
 	deleteRangeQueryCh        chan string
 	deleteRangeQueryWaitGroup sync.WaitGroup
+
+	// see RestoreCommonConfig.WithSysTable
+	withSysTable bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -2326,6 +2329,10 @@ func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
 
 func (rc *Client) IsFullClusterRestore() bool {
 	return rc.fullClusterRestore
+}
+
+func (rc *Client) SetWithSysTable(withSysTable bool) {
+	rc.withSysTable = withSysTable
 }
 
 // MockClient create a fake client used to test.
