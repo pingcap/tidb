@@ -32,7 +32,7 @@ func createBackendSuite(c gomock.TestReporter) *backendSuite {
 		controller:  controller,
 		mockBackend: mockBackend,
 		backend:     backend.MakeBackend(mockBackend),
-		ts:          oracle.ComposeTS(time.Now().UnixMilli(), 0),
+		ts:          oracle.ComposeTS(time.Now().Unix()*1000, 0),
 	}
 }
 
