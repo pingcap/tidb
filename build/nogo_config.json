@@ -312,6 +312,7 @@
       "/cgo/": "no need to vet third party code for cgo",
       "br/pkg/lightning/common/conn.go": "ignore: to fix it",
       "br/pkg/lightning/common/storage_unix.go": "ignore: to fix it",
+      "br/pkg/task/common.go": "ignore: to fix it",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
