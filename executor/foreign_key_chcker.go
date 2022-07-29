@@ -314,11 +314,11 @@ func (fkt *ForeignKeyTriggerExec) buildFKTriggerPlan(ctx context.Context) (plann
 	planBuilder, _ := plannercore.NewPlanBuilder().Init(fkt.b.ctx, fkt.b.is, &hint.BlockHintProcessor{})
 	switch fkt.fkTrigger.Tp {
 	case plannercore.FKTriggerOnDelete:
-		return planBuilder.BuildOnDeleteFKTriggerPlan(ctx, fkt.fkTrigger.ReferredFK)
+		return planBuilder.BuildOnDeleteFKTriggerPlan(ctx, fkt.fkTrigger.OnModifyReferredTable)
 	case plannercore.FKTriggerOnUpdate:
-		return planBuilder.BuildOnUpdateFKTriggerPlan(ctx, fkt.fkTrigger.ReferredFK)
+		return planBuilder.BuildOnUpdateFKTriggerPlan(ctx, fkt.fkTrigger.OnModifyReferredTable)
 	case plannercore.FKTriggerOnInsertOrUpdateChildTable:
-		return planBuilder.BuildOnInsertFKTriggerPlan(fkt.fkTrigger.OnInsert)
+		return planBuilder.BuildOnInsertFKTriggerPlan(fkt.fkTrigger.OnModifyChildTable)
 	default:
 		return nil, fmt.Errorf("unknown foreign key trigger type %v", fkt.fkTrigger.Tp)
 	}
@@ -384,10 +384,10 @@ func (b *executorBuilder) buildTblForeignKeyTriggerExecs(tbl table.Table, fkTrig
 
 func (b *executorBuilder) buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fkTrigger *plannercore.ForeignKeyTrigger) (*ForeignKeyTriggerExec, error) {
 	var cols []model.CIStr
-	if fkTrigger.ReferredFK != nil {
-		cols = fkTrigger.ReferredFK.Cols
-	} else if fkTrigger.FK != nil {
-		cols = fkTrigger.FK.Cols
+	if fkTrigger.OnModifyChildTable != nil {
+		cols = fkTrigger.OnModifyChildTable.FK.Cols
+	} else if fkTrigger.OnModifyReferredTable != nil {
+		cols = fkTrigger.OnModifyReferredTable.ReferredFK.Cols
 	}
 	colsOffsets, err := getColumnsOffsets(tbInfo, cols)
 	if err != nil {

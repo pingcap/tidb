@@ -5161,8 +5161,16 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.PartitionedTable = b.partitionedTable
 	updt.tblID2Table = tblID2table
 
+	tblID2Schema := make(map[int64]string)
+	for tid, tbl := range tblID2table {
+		dbInfo, exist := b.is.SchemaByTable(tbl.Meta())
+		if !exist {
+			return nil, infoschema.ErrDatabaseNotExists
+		}
+		tblID2Schema[tid] = dbInfo.Name.L
+	}
 	tblID2UpdateColumns := buildTbl2UpdateColumns(updt)
-	updt.FKTriggers = buildOnUpdateForeignKeyTrigger(b.ctx, b.is, tblID2table, tblID2UpdateColumns)
+	updt.FKTriggers = buildOnUpdateForeignKeyTrigger(b.ctx, b.is, tblID2table, tblID2UpdateColumns, tblID2Schema)
 	return updt, err
 }
 

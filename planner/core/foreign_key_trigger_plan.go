@@ -30,17 +30,23 @@ import (
 )
 
 type ForeignKeyTrigger struct {
-	Tp         FKTriggerType
-	FK         *model.FKInfo
-	ReferredFK *model.ReferredFKInfo
-	OnInsert   *OnInsertOrUpdateChildTableFKInfo
+	Tp                    FKTriggerType
+	OnModifyReferredTable *OnModifyReferredTableFKInfo
+	OnModifyChildTable    *OnModifyChildTableFKInfo
 }
 
-type OnInsertOrUpdateChildTableFKInfo struct {
+type OnModifyReferredTableFKInfo struct {
+	ReferredFK *model.ReferredFKInfo
+	ChildTable table.Table
+	FK         *model.FKInfo
+}
+
+// OnModifyChildTableFKInfo contains foreign key information when Insert or Update child table.
+type OnModifyChildTableFKInfo struct {
 	DBName     string
 	TblName    string
-	FK         *model.FKInfo
 	ReferTable table.Table
+	FK         *model.FKInfo
 }
 
 type FKTriggerType int8
@@ -66,7 +72,7 @@ func buildOnDeleteForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSc
 	return fkTriggers
 }
 
-func buildOnUpdateForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table, tblID2UpdateColumns map[int64]map[string]*model.ColumnInfo) map[int64][]*ForeignKeyTrigger {
+func buildOnUpdateForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table, tblID2UpdateColumns map[int64]map[string]*model.ColumnInfo, tblID2Schema map[int64]string) map[int64][]*ForeignKeyTrigger {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
@@ -90,14 +96,13 @@ func buildOnUpdateForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSc
 			fkTrigger := buildForeignKeyTriggerForReferredFK(is, referredFK, FKTriggerOnUpdate)
 			fkTriggers[tid] = append(fkTriggers[tid], fkTrigger)
 		}
-		// todo: fix me
-		triggers := buildOnInsertOrUpdateChildForeignKeyTrigger(ctx, is, "", tbl.Meta())
+		triggers := buildOnModifyChildForeignKeyTrigger(ctx, is, tblID2Schema[tid], tbl.Meta())
 		fkTriggers[tid] = append(fkTriggers[tid], triggers...)
 	}
 	return fkTriggers
 }
 
-func buildOnInsertOrUpdateChildForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) []*ForeignKeyTrigger {
+func buildOnModifyChildForeignKeyTrigger(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) []*ForeignKeyTrigger {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
@@ -110,8 +115,7 @@ func buildOnInsertOrUpdateChildForeignKeyTrigger(ctx sessionctx.Context, is info
 		}
 		fkTriggers = append(fkTriggers, &ForeignKeyTrigger{
 			Tp: FKTriggerOnInsertOrUpdateChildTable,
-			FK: fk,
-			OnInsert: &OnInsertOrUpdateChildTableFKInfo{
+			OnModifyChildTable: &OnModifyChildTableFKInfo{
 				FK:         fk,
 				DBName:     dbName,
 				TblName:    tblInfo.Name.L,
@@ -132,19 +136,18 @@ func buildForeignKeyTriggerForReferredFK(is infoschema.InfoSchema, referredFK *m
 		// todo: append warning?
 		return nil
 	}
-	return &ForeignKeyTrigger{Tp: tp, ReferredFK: referredFK}
+	return &ForeignKeyTrigger{
+		Tp: tp,
+		OnModifyReferredTable: &OnModifyReferredTableFKInfo{
+			ReferredFK: referredFK,
+			ChildTable: childTable,
+			FK:         fk,
+		},
+	}
 }
 
-func (b *PlanBuilder) BuildOnUpdateFKTriggerPlan(ctx context.Context, referredFK *model.ReferredFKInfo) (FKTriggerPlan, error) {
-	childTable, err := b.is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
-	if err != nil {
-		// todo: append warning?
-		return nil, nil
-	}
-	fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
-	if fk == nil || fk.Version == 0 {
-		return nil, nil
-	}
+func (b *PlanBuilder) BuildOnUpdateFKTriggerPlan(ctx context.Context, onModifyReferredTable *OnModifyReferredTableFKInfo) (FKTriggerPlan, error) {
+	fk, referredFK, childTable := onModifyReferredTable.FK, onModifyReferredTable.ReferredFK, onModifyReferredTable.ChildTable
 	switch ast.ReferOptionType(fk.OnUpdate) {
 	case ast.ReferOptionCascade:
 		return b.buildUpdateForeignKeyCascade(ctx, referredFK.ChildSchema, childTable, fk)
@@ -157,16 +160,8 @@ func (b *PlanBuilder) BuildOnUpdateFKTriggerPlan(ctx context.Context, referredFK
 	return nil, nil
 }
 
-func (b *PlanBuilder) BuildOnDeleteFKTriggerPlan(ctx context.Context, referredFK *model.ReferredFKInfo) (FKTriggerPlan, error) {
-	childTable, err := b.is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
-	if err != nil {
-		// todo: append warning?
-		return nil, nil
-	}
-	fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
-	if fk == nil || fk.Version == 0 {
-		return nil, nil
-	}
+func (b *PlanBuilder) BuildOnDeleteFKTriggerPlan(ctx context.Context, onModifyReferredTable *OnModifyReferredTableFKInfo) (FKTriggerPlan, error) {
+	fk, referredFK, childTable := onModifyReferredTable.FK, onModifyReferredTable.ReferredFK, onModifyReferredTable.ChildTable
 	switch ast.ReferOptionType(fk.OnDelete) {
 	case ast.ReferOptionCascade:
 		return b.buildForeignKeyCascadeDelete(ctx, referredFK)
@@ -179,7 +174,7 @@ func (b *PlanBuilder) BuildOnDeleteFKTriggerPlan(ctx context.Context, referredFK
 	return nil, nil
 }
 
-func (b *PlanBuilder) BuildOnInsertFKTriggerPlan(info *OnInsertOrUpdateChildTableFKInfo) (FKTriggerPlan, error) {
+func (b *PlanBuilder) BuildOnInsertFKTriggerPlan(info *OnModifyChildTableFKInfo) (FKTriggerPlan, error) {
 	fk := info.FK
 	failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(info.DBName, info.TblName))
 	return buildFKCheckPlan(b.ctx, info.ReferTable, fk, fk.RefCols, fk.Cols, true, failedErr)
