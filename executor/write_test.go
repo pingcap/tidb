@@ -2106,7 +2106,31 @@ func (s *testSuite4) TestIssue18681(c *C) {
 	c.Assert(sc.WarningCount(), Equals, uint16(0))
 }
 
+<<<<<<< HEAD
 func (s *testSuite4) TestLoadData(c *C) {
+=======
+func TestIssue34358(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test")
+	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
+
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ( @v1, @v2 ) set a = @v1, b = @v2")
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	require.True(t, ok)
+	require.NotNil(t, ld)
+	checkCases([]testCase{
+		{nil, []byte("\\N\n"), []string{"<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
+}
+
+func TestLoadData(t *testing.T) {
+>>>>>>> 6b83cdbea... executor: handle NULL values properly when `LOAD DATA INFILE` (#36124)
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
