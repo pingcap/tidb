@@ -137,7 +137,8 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 	flag := data[pos]
 	pos++
-	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
+	// Please refer to https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_stmt_execute.html
+	// Note that if the highest bit (0x80) is set this means the type is unsigned.
 	// The client indicates that it wants to use cursor by setting this flag.
 	// 0x00 CURSOR_TYPE_NO_CURSOR
 	// 0x01 CURSOR_TYPE_READ_ONLY
@@ -149,6 +150,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	case 0:
 		useCursor = false
 	case 1:
+		useCursor = true
+	case 128: // highest bit set (0x80) so unsigned, no flags (0)
+		useCursor = false
+	case 129: // highest bit set (0x80) so unsigned, flag CURSOR_TYPE_READ_ONLY set.
 		useCursor = true
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", nil, flag)
