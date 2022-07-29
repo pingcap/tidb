@@ -924,7 +924,7 @@ const (
 	DefTiDBSuperReadOnly                           = false
 	DefTiDBShardAllocateStep                       = math.MaxInt64
 	DefTiDBEnableTelemetry                         = true
-	DefTiDBEnableParallelApply                     = false
+	DefTiDBEnableParallelApply                     = true
 	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "static"
 	DefTiDBEnableRateLimitAction                   = true
