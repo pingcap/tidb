@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package all_revive
+package allrevive
 
 import (
 	"encoding/json"

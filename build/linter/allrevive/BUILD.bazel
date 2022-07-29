@@ -19,7 +19,7 @@ go_library(
 go_library(
     name = "all_revive",
     srcs = ["analyzer.go"],
-    importpath = "github.com/pingcap/tidb/build/linter/all_revive",
+    importpath = "github.com/pingcap/tidb/build/linter/allrevive",
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
