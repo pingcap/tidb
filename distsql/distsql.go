@@ -58,7 +58,6 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 		rootPlanID: rootID,
 		storeType:  kv.TiFlash,
 	}, nil
-
 }
 
 // Select sends a DAG request, returns SelectResult.
