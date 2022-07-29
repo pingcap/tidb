@@ -78,6 +78,7 @@ func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 
 // Leave implements Visitor interface.
 func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	//nolint: revive
 	switch v := n.(type) {
 	case *ast.WindowFuncExpr:
 		a.windowFuncs = append(a.windowFuncs, v)
