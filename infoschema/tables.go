@@ -1510,7 +1510,7 @@ var tablePlacementPoliciesCols = []columnInfo{
 
 var tableVariablesInfoCols = []columnInfo{
 	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "VARIABLES_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "VARIABLE_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "DEFAULT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "CURRENT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 64},

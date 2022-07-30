@@ -1079,7 +1079,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("err", fmt.Sprintf("%v", r)),
 				zap.Stack("stack"),
 			)
-			err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
+			err := cc.writeError(ctx, fmt.Errorf("%v", r))
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}

@@ -350,7 +350,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			}
 			if selected.IsTablePath() {
 				// TODO: primary key / handle / real name?
-				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(fmt.Sprintf("handle of %s is selected since the path only has point ranges", tableName)))
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(fmt.Errorf("handle of %s is selected since the path only has point ranges", tableName))
 			} else {
 				var sb strings.Builder
 				if selected.Index.Unique {

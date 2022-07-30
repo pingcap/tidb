@@ -1859,11 +1859,11 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// Default is -1.
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("-1"))
+	// Default is 0.
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("0"))
 
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("-1"))
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("0"))
 	// Min val is -1.
 	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -2")
 	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("-1"))
