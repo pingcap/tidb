@@ -64,6 +64,11 @@ func isUnrecoverableTable(tableName string) bool {
 	return ok
 }
 
+func isRecoverableSysTable(tableName string) bool {
+	_, ok := sysPrivilegeTableMap[tableName]
+	return ok
+}
+
 func isStatsTable(tableName string) bool {
 	_, ok := statsTables[tableName]
 	return ok
@@ -77,7 +82,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 	temporaryDB := utils.TemporaryDBName(sysDB)
 	defer rc.cleanTemporaryDatabase(ctx, sysDB)
 
-	if !f.MatchSchema(sysDB) || !rc.withSysTable {
+	if !f.MatchSchema(sysDB) {
 		log.Debug("system database filtered out", zap.String("database", sysDB))
 		return
 	}
@@ -96,6 +101,16 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 	tablesRestored := make([]string, 0, len(originDatabase.Tables))
 	for _, table := range originDatabase.Tables {
 		tableName := table.Info.Name
+		// --with-sys-table must be specified for recoverable system tables.
+		// One drawback of this filtering algorithm is that if a system table is not in both the unrecoverable and recoverable table list,
+		// the system table can be recovered  using only `--filter` flag
+		if !rc.withSysTable && isRecoverableSysTable(tableName.L) {
+			log.Warn("this system table under mysql.* wouldn't be restoreed without flag `--with-sys-table`",
+				zap.Stringer("table", tableName),
+			)
+			continue
+		}
+
 		if f.MatchTable(sysDB, tableName.O) {
 			if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, db); err != nil {
 				log.Warn("error during merging temporary tables into system tables",

@@ -486,7 +486,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// to avoid import cycle problem which we won't do it in this pr, then refactor this
 	//
 	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
-	if cmdName == FullRestoreCmd && cfg.WithSysTable {
+	if cmdName == FullRestoreCmd {
 		client.InitFullClusterRestore(cfg.ExplicitFilter)
 	}
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
