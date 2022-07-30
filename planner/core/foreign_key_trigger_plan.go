@@ -201,13 +201,13 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, referred
 		return nil, err
 	}
 	var ds *DataSource
-	//isUnionScan := false
+	var logicalUnionScan *LogicalUnionScan
 	switch v := datasource.(type) {
 	case *DataSource:
 		ds = v
 	case *LogicalUnionScan:
 		ds = v.children[0].(*DataSource)
-		//isUnionScan = true
+		logicalUnionScan = v
 	default:
 		return nil, errors.Errorf("unknown datasource plan: %#v", datasource)
 	}
@@ -220,6 +220,14 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, referred
 	tableReader, err := b.buildTableReaderForFK(ds, fk.Cols)
 	if err != nil {
 		return nil, err
+	}
+	if logicalUnionScan != nil {
+		physicalUnionScan := PhysicalUnionScan{
+			Conditions: logicalUnionScan.conditions,
+			HandleCols: logicalUnionScan.handleCols,
+		}.Init(logicalUnionScan.ctx, tableReader.statsInfo(), logicalUnionScan.blockOffset, nil)
+		physicalUnionScan.SetChildren(tableReader)
+		tableReader = physicalUnionScan
 	}
 	del := Delete{
 		SelectPlan: tableReader,
@@ -304,6 +312,9 @@ func (p *baseFKTriggerPlan) GetCols() []model.CIStr {
 }
 
 func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkValues [][]types.Datum) error {
+	if us, ok := selectPlan.(*PhysicalUnionScan); ok {
+		return p.setRangeForSelectPlan(us.children[0], fkValues)
+	}
 	ranges := make([]*ranger.Range, 0, len(fkValues))
 	for _, vals := range fkValues {
 		ranges = append(ranges, &ranger.Range{
@@ -314,12 +325,12 @@ func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkVal
 		})
 	}
 
-	switch p := selectPlan.(type) {
+	switch v := selectPlan.(type) {
 	case *PhysicalIndexLookUpReader:
-		is := p.IndexPlans[0].(*PhysicalIndexScan)
+		is := v.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges = ranges
 	case *PhysicalTableReader:
-		reader := p.tablePlan.(*PhysicalTableScan)
+		reader := v.tablePlan.(*PhysicalTableScan)
 		reader.Ranges = ranges
 	default:
 		return errors.Errorf("unknown")

@@ -5728,6 +5728,7 @@ func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName m
 		return nil, errors.Errorf("expected datasource, but got %v", dsPlan)
 	}
 
+	// todo: fix union scan
 	tableReader, err := b.buildTableReaderForFK(ds, fk.Cols)
 	if err != nil {
 		return nil, err
