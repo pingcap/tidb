@@ -159,11 +159,15 @@ type Client struct {
 	// fullClusterRestore = true when there is no explicit filter setting, and it's full restore or point command
 	// 	with a full backup data.
 	// todo: maybe change to an enum
+	// this feature is controlled by flag with-sys-table
 	fullClusterRestore bool
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []string
 	deleteRangeQueryCh        chan string
 	deleteRangeQueryWaitGroup sync.WaitGroup
+
+	// see RestoreCommonConfig.WithSysTable
+	withSysTable bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -895,7 +899,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableSet[table.Info.Name.L] {
+		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
@@ -2354,6 +2358,10 @@ func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
 
 func (rc *Client) IsFullClusterRestore() bool {
 	return rc.fullClusterRestore
+}
+
+func (rc *Client) SetWithSysTable(withSysTable bool) {
+	rc.withSysTable = withSysTable
 }
 
 // MockClient create a fake client used to test.
