@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -1249,4 +1250,10 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), splitSize)
 	require.Equal(t, int64(2), splitKeys)
+}
+
+func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
+	l := local{}
+	require.True(t, l.isRetryableTiKVWriteError(io.EOF))
+	require.True(t, l.isRetryableTiKVWriteError(errors.Trace(io.EOF)))
 }

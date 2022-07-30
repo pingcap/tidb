@@ -702,11 +702,11 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	r := new(bytes.Buffer)
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
-		st := time.Unix(0, st*1e6)
+		st := time.UnixMilli(st)
 		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
 	if et > 0 {
-		et := time.Unix(0, et*1e6)
+		et := time.UnixMilli(et)
 		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
 	if len(e.NodeTypes) > 0 {
@@ -837,11 +837,11 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 	r := new(bytes.Buffer)
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
-		st := time.Unix(0, st*1e6)
+		st := time.UnixMilli(st)
 		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05")))
 	}
 	if et > 0 {
-		et := time.Unix(0, et*1e6)
+		et := time.UnixMilli(et)
 		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05")))
 	}
 	if len(e.RegionIDs) > 0 {
