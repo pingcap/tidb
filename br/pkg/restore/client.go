@@ -159,11 +159,15 @@ type Client struct {
 	// fullClusterRestore = true when there is no explicit filter setting, and it's full restore or point command
 	// 	with a full backup data.
 	// todo: maybe change to an enum
+	// this feature is controlled by flag with-sys-table
 	fullClusterRestore bool
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []string
 	deleteRangeQueryCh        chan string
 	deleteRangeQueryWaitGroup sync.WaitGroup
+
+	// see RestoreCommonConfig.WithSysTable
+	withSysTable bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -895,7 +899,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableSet[table.Info.Name.L] {
+		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
@@ -1693,8 +1697,34 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
+func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error) {
+	shiftTS := struct {
+		sync.Mutex
+		value  uint64
+		exists bool
+	}{}
+	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, m *backuppb.Metadata) error {
+		shiftTS.Lock()
+		defer shiftTS.Unlock()
+
+		ts, ok := UpdateShiftTS(m, startTS, restoreTS)
+		if ok && (!shiftTS.exists || shiftTS.value > ts) {
+			shiftTS.value = ts
+			shiftTS.exists = true
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if !shiftTS.exists {
+		return startTS, nil
+	}
+	return shiftTS.value, nil
+}
+
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
+func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) ([]*backuppb.Metadata, error) {
 	streamBackupMetaFiles := struct {
 		sync.Mutex
 		metas []*backuppb.Metadata
@@ -1703,7 +1733,9 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 
 	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
 		streamBackupMetaFiles.Lock()
-		streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		if restoreTS >= metadata.MinTs && metadata.MaxTs >= shiftedStartTS {
+			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		}
 		streamBackupMetaFiles.Unlock()
 		return nil
 	})
@@ -2326,6 +2358,10 @@ func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
 
 func (rc *Client) IsFullClusterRestore() bool {
 	return rc.fullClusterRestore
+}
+
+func (rc *Client) SetWithSysTable(withSysTable bool) {
+	rc.withSysTable = withSysTable
 }
 
 // MockClient create a fake client used to test.

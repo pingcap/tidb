@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -273,6 +274,8 @@ func TestRequestBuilder1(t *testing.T) {
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -354,6 +357,8 @@ func TestRequestBuilder2(t *testing.T) {
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -401,6 +406,8 @@ func TestRequestBuilder3(t *testing.T) {
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -447,6 +454,8 @@ func TestRequestBuilder4(t *testing.T) {
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -555,6 +564,8 @@ func TestRequestBuilder7(t *testing.T) {
 				ReplicaRead:      replicaRead.replicaReadType,
 				ReadReplicaScope: kv.GlobalReplicaScope,
 			}
+			expect.Paging.MinPagingSize = paging.MinPagingSize
+			expect.Paging.MaxPagingSize = paging.MaxPagingSize
 			actual.ResourceGroupTagger = nil
 			require.Equal(t, expect, actual)
 		})
@@ -578,6 +589,8 @@ func TestRequestBuilder8(t *testing.T) {
 		SchemaVar:        0,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
