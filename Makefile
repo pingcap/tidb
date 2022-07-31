@@ -413,7 +413,7 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
-bazel_build: bazel_ci_prepare
+bazel_build: bazel_golangcilinter bazel_ci_prepare
 	mkdir -p bin
 	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci //... --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
@@ -430,3 +430,8 @@ bazel_junit:
 	bazel_collect
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
+
+bazel_golangcilinter:
+	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci //:golangci-lint  \
+		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
+	-- run  --config .cilinter.yaml
