@@ -50,6 +50,8 @@ func TestNoRetryForCurrentTxn(t *testing.T) {
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -73,6 +75,8 @@ func TestRetryPreparedStmt(t *testing.T) {
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -210,6 +214,8 @@ func TestAutoIncrementWithRetry(t *testing.T) {
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -307,6 +313,8 @@ func TestRetryCleanTxn(t *testing.T) {
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table retrytxn (a int unique, b int)")
@@ -339,6 +347,8 @@ func TestRetryUnion(t *testing.T) {
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table history (a int)")
@@ -366,6 +376,8 @@ func TestRetryResetStmtCtx(t *testing.T) {
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table retrytxn (a int unique, b int)")
@@ -387,6 +399,8 @@ func TestReadOnlyNotInHistory(t *testing.T) {
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
+	tkk := testkit.NewTestKit(t, store)
+	tkk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table history (a int)")

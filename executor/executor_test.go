@@ -2629,6 +2629,8 @@ func TestSelectForUpdate(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -3787,6 +3789,8 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("drop database if exists ps_text")
 	defer tk1.MustExec("drop database if exists ps_text")
@@ -3961,6 +3965,8 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("drop database if exists pu_test2")
 	defer tk1.MustExec("drop database if exists pu_test2")
@@ -5769,6 +5775,8 @@ func TestAdmin(t *testing.T) {
 func TestForSelectScopeInUnion(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	// A union B for update, the "for update" option belongs to union statement, so
 	// it should works on both A and B.
 	tk1 := testkit.NewTestKit(t, store)

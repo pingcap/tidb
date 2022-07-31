@@ -138,6 +138,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)
 	prometheus.MustRegister(QueryTotalCounter)
+	prometheus.MustRegister(AffectedRowsCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
 	prometheus.MustRegister(ServerEventCounter)
 	prometheus.MustRegister(SessionExecuteCompileDuration)

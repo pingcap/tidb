@@ -662,9 +662,6 @@ create table log_message_1 (
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t(a binary) partition by range columns (a) (partition p0 values less than (X'0C'));`)
 
-	// TODO: we haven't implement AlterTable in SchemaTracker yet
-	ddlChecker.Disable()
-
 	tk.MustExec(`alter table t add partition (partition p1 values less than (X'0D'), partition p2 values less than (X'0E'));`)
 	tk.MustExec(`insert into t values (X'0B'), (X'0C'), (X'0D')`)
 	tk.MustQuery(`select * from t where a < X'0D' order by a`).Check(testkit.Rows("\x0B", "\x0C"))
@@ -915,7 +912,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 			dbterror.ErrUniqueKeyNeedAllFieldsInPf,
 		},
 		{
-			generatePartitionTableByNum(ddl.PartitionCountLimit + 1),
+			generatePartitionTableByNum(mysql.PartitionCountLimit + 1),
 			dbterror.ErrTooManyPartitions,
 		},
 	}
@@ -946,7 +943,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
 		"create table t(a binary) partition by list columns (a) (partition p0 values in (X'0C'));",
-		generatePartitionTableByNum(ddl.PartitionCountLimit),
+		generatePartitionTableByNum(mysql.PartitionCountLimit),
 	}
 
 	for id, sql := range validCases {
@@ -2476,7 +2473,7 @@ func TestAddPartitionTooManyPartitions(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	count := ddl.PartitionCountLimit
+	count := mysql.PartitionCountLimit
 	tk.MustExec("drop table if exists p1;")
 	sql1 := `create table p1 (
 		id int not null

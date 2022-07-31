@@ -1,5 +1,13 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
+package_group(
+    name = "ddl_friend",
+    packages = [
+        "-//planner/...",
+        "//...",
+    ],
+)
+
 go_library(
     name = "ddl",
     srcs = [
@@ -36,7 +44,9 @@ go_library(
         "table_lock.go",
     ],
     importpath = "github.com/pingcap/tidb/ddl",
-    visibility = ["//visibility:public"],
+    visibility = [
+        ":ddl_friend",
+    ],
     deps = [
         "//config",
         "//ddl/label",
@@ -235,7 +245,6 @@ go_test(
         "@com_github_tikv_client_go_v2//tikv",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_x_exp//slices",
-        "@org_golang_x_net//context",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",

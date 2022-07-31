@@ -562,7 +562,7 @@
           "fillGradient": 0,
           "gridPos": {
             "h": 6,
-            "w": 24,
+            "w": 12,
             "x": 0,
             "y": 13
           },
@@ -630,6 +630,130 @@
               "format": "short",
               "label": null,
               "logBase": 2,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Affected rows of DMLs (INSERT/UPDATE/DELETE/REPLACE) per second. It could present the written rows/s for TiDB instances.",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 6,
+            "w": 12,
+            "x": 12,
+            "y": 13
+          },
+          "hiddenSeries": false,
+          "id": 267,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": true,
+            "hideEmpty": true,
+            "hideZero": true,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "sideWidth": 250,
+            "sort": "max",
+            "sortDesc": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "maxPerRow": 1,
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.11",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [
+            {
+              "alias": "total",
+              "lines": false
+            }
+          ],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_server_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type)",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "{{sql_type}}",
+              "refId": "A",
+              "step": 30
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_server_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "total",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Affected Rows By Type",
+          "tooltip": {
+            "msResolution": true,
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
               "max": null,
               "min": "0",
               "show": true
@@ -2073,8 +2197,8 @@
             },
             {
               "expr": "tidb_server_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
-              "hide": true,
               "format": "time_series",
+              "hide": true,
               "intervalFactor": 1,
               "legendFormat": "{{module}}-{{type}}-{{instance}}",
               "refId": "H"
@@ -3477,6 +3601,12 @@
           "description": "TiDB transaction processing counts by type and source.",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -3484,8 +3614,9 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 5
+            "y": 4
           },
+          "hiddenSeries": false,
           "id": 69,
           "legend": {
             "alignAsTable": true,
@@ -3503,9 +3634,10 @@
           "links": [],
           "nullPointMode": "null as zero",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -3572,14 +3704,21 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "Bucketed histogram of transaction execution durations, including retry",
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 5
+            "y": 4
           },
+          "hiddenSeries": false,
           "id": 72,
           "legend": {
             "alignAsTable": true,
@@ -3597,9 +3736,10 @@
           "links": [],
           "nullPointMode": "null",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -3686,11 +3826,15 @@
           "dataFormat": "tsbuckets",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB statements numbers within one transaction.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 5
+            "y": 4
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -3700,7 +3844,6 @@
             "show": false
           },
           "links": [],
-          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -3752,11 +3895,15 @@
           "dataFormat": "tsbuckets",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB transaction retry histogram bucket statistics",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 12
+            "y": 11
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -3766,7 +3913,6 @@
             "show": false
           },
           "links": [],
-          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -3813,6 +3959,12 @@
           "description": "Error numbers of transaction retry",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -3820,8 +3972,9 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 12
+            "y": 11
           },
+          "hiddenSeries": false,
           "id": 36,
           "legend": {
             "avg": false,
@@ -3837,9 +3990,10 @@
           "links": [],
           "nullPointMode": "null as zero",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -3906,14 +4060,21 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "The duration of a transaction waits for a token when committing.",
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 12
+            "y": 11
           },
+          "hiddenSeries": false,
           "id": 196,
           "legend": {
             "alignAsTable": true,
@@ -3931,9 +4092,10 @@
           "links": [],
           "nullPointMode": "null",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4014,6 +4176,12 @@
           "description": "TiDB total kv transaction counts",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -4021,8 +4189,9 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 19
+            "y": 18
           },
+          "hiddenSeries": false,
           "id": 4,
           "legend": {
             "alignAsTable": true,
@@ -4040,9 +4209,10 @@
           "links": [],
           "nullPointMode": "null as zero",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4109,14 +4279,21 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "The duration of the transaction commit/rollback on TiKV.",
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 19
+            "y": 18
           },
+          "hiddenSeries": false,
           "id": 193,
           "legend": {
             "alignAsTable": true,
@@ -4134,9 +4311,10 @@
           "links": [],
           "nullPointMode": "null",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -4223,11 +4401,15 @@
           "dataFormat": "tsbuckets",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "regions transaction operates on count",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 19
+            "y": 18
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -4237,7 +4419,6 @@
             "show": false
           },
           "links": [],
-          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -4284,6 +4465,12 @@
           "description": "kv write times per transaction execution",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -4291,8 +4478,9 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 26
+            "y": 25
           },
+          "hiddenSeries": false,
           "id": 33,
           "legend": {
             "alignAsTable": true,
@@ -4312,9 +4500,10 @@
           "links": [],
           "nullPointMode": "null as zero",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4401,11 +4590,15 @@
           "dataFormat": "tsbuckets",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "kv write times per transaction execution",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 26
+            "y": 25
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -4415,7 +4608,6 @@
             "show": false
           },
           "links": [],
-          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -4467,11 +4659,15 @@
           "dataFormat": "tsbuckets",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "The number of statement acquires locks.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 26
+            "y": 25
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -4481,7 +4677,6 @@
             "show": false
           },
           "links": [],
-          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -4529,6 +4724,12 @@
           "description": "When the pessimistic transaction begins to work, it will send heartbeat requests to update its TTL. \nThis metric is the latency of the send heartbeat operation.",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -4536,8 +4737,9 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 33
+            "y": 32
           },
+          "hiddenSeries": false,
           "id": 194,
           "legend": {
             "alignAsTable": true,
@@ -4557,9 +4759,10 @@
           "links": [],
           "nullPointMode": "null as zero",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4642,6 +4845,12 @@
           "description": "kv write size per transaction execution",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -4649,8 +4858,9 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 33
+            "y": 32
           },
+          "hiddenSeries": false,
           "id": 34,
           "legend": {
             "alignAsTable": true,
@@ -4670,9 +4880,10 @@
           "links": [],
           "nullPointMode": "null as zero",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4759,11 +4970,15 @@
           "dataFormat": "tsbuckets",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "kv write size per transaction execution",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 33
+            "y": 32
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -4773,7 +4988,6 @@
             "show": false
           },
           "links": [],
-          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -4820,6 +5034,12 @@
           "description": "The duration of a statement acquiring all pessimistic locks at a time.",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -4827,8 +5047,9 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 40
+            "y": 39
           },
+          "hiddenSeries": false,
           "id": 197,
           "legend": {
             "alignAsTable": true,
@@ -4848,9 +5069,10 @@
           "links": [],
           "nullPointMode": "null as zero",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -4933,6 +5155,12 @@
           "description": "This metric means the pessimistic lives too long which is abnormal.",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -4940,8 +5168,9 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 40
+            "y": 39
           },
+          "hiddenSeries": false,
           "id": 195,
           "legend": {
             "alignAsTable": true,
@@ -4959,9 +5188,10 @@
           "links": [],
           "nullPointMode": "null as zero",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -5029,6 +5259,12 @@
           "description": "safe point loading times",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -5036,8 +5272,9 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 40
+            "y": 39
           },
+          "hiddenSeries": false,
           "id": 83,
           "legend": {
             "alignAsTable": true,
@@ -5057,9 +5294,10 @@
           "links": [],
           "nullPointMode": "null as zero",
           "options": {
-            "dataLinks": []
+            "alertThreshold": true
           },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -5134,11 +5372,15 @@
           "dataFormat": "tsbuckets",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "When the pessimistic statement is executed, the lock fails and it can retry automatically. The number of times the statement is retried is recorded.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 47
+            "y": 46
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -5148,7 +5390,6 @@
             "show": false
           },
           "links": [],
-          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -5195,6 +5436,12 @@
           "description": "This metric shows the OPS of different types of transactions.",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -5220,10 +5467,8 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null as zero",
-          "options": {
-            "dataLinks": []
-          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -5305,6 +5550,12 @@
           "description": "99th percentile of backoff count and duration in a transaction commit",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -5332,10 +5583,8 @@
           "linewidth": 2,
           "links": [],
           "nullPointMode": "null as zero",
-          "options": {
-            "dataLinks": []
-          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -5422,6 +5671,12 @@
           "description": "This metric refers to the SafeTS update status count.",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {
+              "links": []
+            },
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -5447,10 +5702,8 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null as zero",
-          "options": {
-            "dataLinks": []
-          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -5518,6 +5771,10 @@
           "description": "The gap between SafeTS and current time",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
           "grid": {},
           "gridPos": {
@@ -5546,6 +5803,7 @@
           "links": [],
           "nullPointMode": "null as zero",
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -5611,6 +5869,10 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
           "fillGradient": 0,
           "grid": {},
@@ -5637,8 +5899,8 @@
           "lines": true,
           "linewidth": 1,
           "nullPointMode": "null",
-          "options": {},
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -5700,7 +5962,9 @@
         },
         {
           "aliasColors": {},
+          "bars": false,
           "dashLength": 10,
+          "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "How much time transactions spend on each state",
           "fieldConfig": {
@@ -5710,12 +5974,14 @@
             "overrides": []
           },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 0,
             "y": 60
           },
+          "hiddenSeries": false,
           "id": 252,
           "legend": {
             "avg": false,
@@ -5732,39 +5998,45 @@
           "options": {
             "alertThreshold": false
           },
+          "percentage": false,
           "pluginVersion": "7.5.11",
           "pointradius": 2,
+          "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
           "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
-              "legendFormat": "{{type}}-99",
-              "interval": "",
               "exemplar": true,
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
               "hide": false,
+              "interval": "",
+              "legendFormat": "{{type}}-99",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.9, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
-              "legendFormat": "{{type}}-90",
-              "interval": "",
               "exemplar": true,
-              "refId": "B",
-              "hide": false
+              "expr": "histogram_quantile(0.9, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{type}}-90",
+              "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.8, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
-              "legendFormat": "{{type}}-80",
-              "interval": "",
               "exemplar": true,
-              "refId": "C",
-              "hide": false
+              "expr": "histogram_quantile(0.8, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{type}}-80",
+              "refId": "C"
             }
           ],
           "thresholds": [],
+          "timeFrom": null,
           "timeRegions": [],
+          "timeShift": null,
           "title": "Transaction execution states duration",
           "tooltip": {
             "shared": true,
@@ -5802,21 +6074,13 @@
           "yaxis": {
             "align": false,
             "alignLevel": null
-          },
-          "bars": false,
-          "dashes": false,
-          "fillGradient": 0,
-          "hiddenSeries": false,
-          "percentage": false,
-          "points": false,
-          "stack": false,
-          "steppedLine": false,
-          "timeFrom": null,
-          "timeShift": null
+          }
         },
         {
           "aliasColors": {},
+          "bars": false,
           "dashLength": 10,
+          "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "How much time transactions spend on each state after it acquire at least one lock",
           "fieldConfig": {
@@ -5826,12 +6090,14 @@
             "overrides": []
           },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 8,
             "y": 60
           },
+          "hiddenSeries": false,
           "id": 253,
           "legend": {
             "avg": false,
@@ -5848,18 +6114,22 @@
           "options": {
             "alertThreshold": false
           },
+          "percentage": false,
           "pluginVersion": "7.5.11",
           "pointradius": 2,
+          "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
           "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", has_lock=\"true\"}[1m])) by (le, type))",
-              "legendFormat": "{{type}}-99",
-              "interval": "",
               "exemplar": true,
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", has_lock=\"true\"}[1m])) by (le, type))",
               "hide": false,
+              "interval": "",
+              "legendFormat": "{{type}}-99",
               "refId": "A"
             },
             {
@@ -5879,7 +6149,9 @@
             }
           ],
           "thresholds": [],
+          "timeFrom": null,
           "timeRegions": [],
+          "timeShift": null,
           "title": "Transaction with lock execution states duration",
           "tooltip": {
             "shared": true,
@@ -5917,22 +6189,13 @@
           "yaxis": {
             "align": false,
             "alignLevel": null
-          },
-          "bars": false,
-          "dashes": false,
-          "fillGradient": 0,
-          "hiddenSeries": false,
-          "percentage": false,
-          "points": false,
-          "stack": false,
-          "steppedLine": false,
-          "timeFrom": null,
-          "timeShift": null
+          }
         },
         {
           "aliasColors": {},
           "bars": true,
           "dashLength": 10,
+          "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "How much time transactions spend on each state",
           "fieldConfig": {
@@ -5940,12 +6203,14 @@
             "overrides": []
           },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 16,
             "y": 60
           },
+          "hiddenSeries": false,
           "id": 255,
           "legend": {
             "avg": false,
@@ -5956,13 +6221,16 @@
             "total": false,
             "values": false
           },
+          "lines": false,
           "linewidth": 1,
           "nullPointMode": "null",
           "options": {
             "alertThreshold": false
           },
+          "percentage": false,
           "pluginVersion": "7.5.11",
           "pointradius": 2,
+          "points": false,
           "renderer": "flot",
           "seriesOverrides": [
             {
@@ -5974,13 +6242,14 @@
           ],
           "spaceLength": 10,
           "stack": true,
+          "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_session_txn_state_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
-              "legendFormat": "{{type}}",
-              "interval": "",
               "exemplar": true,
+              "expr": "sum(rate(tidb_session_txn_state_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "hide": false,
+              "interval": "",
+              "legendFormat": "{{type}}",
               "refId": "A"
             },
             {
@@ -5994,7 +6263,9 @@
             }
           ],
           "thresholds": [],
+          "timeFrom": null,
           "timeRegions": [],
+          "timeShift": null,
           "title": "Transaction execution states duration",
           "tooltip": {
             "shared": true,
@@ -6032,21 +6303,13 @@
           "yaxis": {
             "align": false,
             "alignLevel": null
-          },
-          "dashes": false,
-          "fillGradient": 0,
-          "hiddenSeries": false,
-          "lines": false,
-          "percentage": false,
-          "points": false,
-          "steppedLine": false,
-          "timeFrom": null,
-          "timeShift": null
+          }
         },
         {
           "aliasColors": {},
           "bars": true,
           "dashLength": 10,
+          "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "How many times transactions enter this state in the last minute",
           "fieldConfig": {
@@ -6054,12 +6317,14 @@
             "overrides": []
           },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 0,
             "y": 67
           },
+          "hiddenSeries": false,
           "id": 254,
           "legend": {
             "avg": false,
@@ -6070,30 +6335,36 @@
             "total": false,
             "values": false
           },
+          "lines": false,
           "linewidth": 1,
           "nullPointMode": "null",
           "options": {
             "alertThreshold": false
           },
+          "percentage": false,
           "pluginVersion": "7.5.11",
           "pointradius": 2,
+          "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
           "spaceLength": 10,
           "stack": true,
+          "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(increase(tidb_session_txn_state_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
-              "legendFormat": "{{type}}",
-              "interval": "",
               "exemplar": true,
+              "expr": "sum(increase(tidb_session_txn_state_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "hide": false,
+              "interval": "",
               "intervalFactor": 1,
+              "legendFormat": "{{type}}",
               "refId": "A"
             }
           ],
           "thresholds": [],
+          "timeFrom": null,
           "timeRegions": [],
+          "timeShift": null,
           "title": "Transaction enter state",
           "tooltip": {
             "shared": true,
@@ -6131,21 +6402,13 @@
           "yaxis": {
             "align": false,
             "alignLevel": null
-          },
-          "dashes": false,
-          "fillGradient": 0,
-          "hiddenSeries": false,
-          "lines": false,
-          "percentage": false,
-          "points": false,
-          "steppedLine": false,
-          "timeFrom": null,
-          "timeShift": null
+          }
         },
         {
           "aliasColors": {},
           "bars": true,
           "dashLength": 10,
+          "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "How many times transactions leave this state in the last minute",
           "fieldConfig": {
@@ -6153,12 +6416,14 @@
             "overrides": []
           },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 8,
             "y": 67
           },
+          "hiddenSeries": false,
           "id": 256,
           "legend": {
             "avg": false,
@@ -6169,30 +6434,36 @@
             "total": false,
             "values": false
           },
+          "lines": false,
           "linewidth": 1,
           "nullPointMode": "null",
           "options": {
             "alertThreshold": false
           },
+          "percentage": false,
           "pluginVersion": "7.5.11",
           "pointradius": 2,
+          "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
           "spaceLength": 10,
           "stack": true,
+          "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(increase(tidb_session_txn_state_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
-              "legendFormat": "{{type}}",
-              "interval": "",
               "exemplar": true,
+              "expr": "sum(increase(tidb_session_txn_state_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "hide": false,
+              "interval": "",
               "intervalFactor": 1,
+              "legendFormat": "{{type}}",
               "refId": "A"
             }
           ],
           "thresholds": [],
+          "timeFrom": null,
           "timeRegions": [],
+          "timeShift": null,
           "title": "Transaction leave state",
           "tooltip": {
             "shared": true,
@@ -6230,33 +6501,28 @@
           "yaxis": {
             "align": false,
             "alignLevel": null
-          },
-          "dashes": false,
-          "fillGradient": 0,
-          "hiddenSeries": false,
-          "lines": false,
-          "percentage": false,
-          "points": false,
-          "steppedLine": false,
-          "timeFrom": null,
-          "timeShift": null
+          }
         },
         {
           "aliasColors": {},
           "bars": true,
           "dashLength": 10,
+          "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Transaction leave state minus Transaction enter state",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
           },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 16,
             "y": 67
           },
+          "hiddenSeries": false,
           "id": 261,
           "legend": {
             "avg": false,
@@ -6267,30 +6533,36 @@
             "total": false,
             "values": false
           },
+          "lines": false,
           "linewidth": 1,
           "nullPointMode": "null",
           "options": {
             "alertThreshold": false
           },
+          "percentage": false,
           "pluginVersion": "7.5.11",
           "pointradius": 2,
+          "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
           "spaceLength": 10,
           "stack": true,
+          "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(increase(tidb_session_txn_state_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type) - on (type) increase(tidb_session_txn_state_entering_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])",
-              "legendFormat": "{{type}}",
-              "interval": "",
               "exemplar": true,
+              "expr": "sum(increase(tidb_session_txn_state_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type) - on (type) increase(tidb_session_txn_state_entering_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])",
               "hide": false,
+              "interval": "",
               "intervalFactor": 1,
+              "legendFormat": "{{type}}",
               "refId": "A"
             }
           ],
           "thresholds": [],
+          "timeFrom": null,
           "timeRegions": [],
+          "timeShift": null,
           "title": "Transaction state count change",
           "tooltip": {
             "shared": true,
@@ -6328,17 +6600,7 @@
           "yaxis": {
             "align": false,
             "alignLevel": null
-          },
-          "description": "Transaction leave state minus Transaction enter state",
-          "dashes": false,
-          "fillGradient": 0,
-          "hiddenSeries": false,
-          "lines": false,
-          "percentage": false,
-          "points": false,
-          "steppedLine": false,
-          "timeFrom": null,
-          "timeShift": null
+          }
         }
       ],
       "repeat": null,
@@ -16324,7 +16586,12 @@
     "list": [
       {
         "allValue": null,
-        "current": {},
+        "current": {
+          "isNone": true,
+          "selected": false,
+          "text": "None",
+          "value": ""
+        },
         "datasource": "${DS_TEST-CLUSTER}",
         "definition": "",
         "description": null,
@@ -16337,7 +16604,7 @@
         "options": [],
         "query": {
           "query": "label_values(pd_cluster_status, k8s_cluster)",
-          "refId": "test-cluster-k8s_cluster-Variable-Query"
+          "refId": "${DS_TEST-CLUSTER}-k8s_cluster-Variable-Query"
         },
         "refresh": 2,
         "regex": "",
@@ -16351,7 +16618,12 @@
       },
       {
         "allValue": null,
-        "current": {},
+        "current": {
+          "isNone": true,
+          "selected": false,
+          "text": "None",
+          "value": ""
+        },
         "datasource": "${DS_TEST-CLUSTER}",
         "definition": "",
         "description": null,
@@ -16364,7 +16636,7 @@
         "options": [],
         "query": {
           "query": "label_values(pd_cluster_status{k8s_cluster=\"$k8s_cluster\"}, tidb_cluster)",
-          "refId": "test-cluster-tidb_cluster-Variable-Query"
+          "refId": "${DS_TEST-CLUSTER}-tidb_cluster-Variable-Query"
         },
         "refresh": 2,
         "regex": "",
@@ -16378,7 +16650,11 @@
       },
       {
         "allValue": ".*",
-        "current": {},
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
         "datasource": "${DS_TEST-CLUSTER}",
         "definition": "",
         "description": null,

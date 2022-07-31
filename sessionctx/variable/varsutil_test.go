@@ -440,6 +440,18 @@ func TestVarsutil(t *testing.T) {
 	err = SetSessionSystemVar(v, TiDBMinPagingSize, "123")
 	require.NoError(t, err)
 	require.Equal(t, v.MinPagingSize, 123)
+
+	val, err = GetSessionOrGlobalSystemVar(v, TiDBMaxPagingSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.Itoa(DefMaxPagingSize), val)
+
+	err = SetSessionSystemVar(v, TiDBMaxPagingSize, "456")
+	require.NoError(t, err)
+	require.Equal(t, v.MaxPagingSize, 456)
+
+	err = SetSessionSystemVar(v, TiDBMaxPagingSize, "45678")
+	require.NoError(t, err)
+	require.Equal(t, v.MaxPagingSize, 45678)
 }
 
 func TestValidate(t *testing.T) {
