@@ -224,7 +224,8 @@ type Controller struct {
 	compactState   atomic.Int32
 	status         *LightningStatus
 
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter       PreRestoreInfoGetter
+	precheckItemBuilder *PrecheckItemBuilder
 }
 
 type LightningStatus struct {
@@ -385,6 +386,10 @@ func NewRestoreControllerWithPauser(
 		return nil, errors.Trace(err)
 	}
 
+	preCheckBuilder := NewPrecheckItemBuilder(
+		cfg, p.DBMetas, preInfoGetter, cpdb,
+	)
+
 	rc := &Controller{
 		taskCtx:       ctx,
 		cfg:           cfg,
@@ -413,7 +418,8 @@ func NewRestoreControllerWithPauser(
 		status:         p.Status,
 		taskMgr:        nil,
 
-		preInfoGetter: preInfoGetter,
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: preCheckBuilder,
 	}
 
 	return rc, nil
@@ -1967,7 +1973,9 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	}
 
 	if rc.cfg.App.CheckRequirements {
-		rc.ClusterIsAvailable(ctx)
+		if err := rc.ClusterIsAvailable(ctx); err != nil {
+			return errors.Trace(err)
+		}
 
 		if rc.ownStore {
 			if err := rc.StoragePermission(ctx); err != nil {
@@ -2028,17 +2036,18 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				needCheck = taskCheckpoints == nil
 			}
 			if needCheck {
-				err = rc.localResource(ctx, estimatedDataSizeWithIndex)
+				withSizeCacheCtx := WithPreInfoGetterEstimatedSrcSizeCache(ctx, estimatedSizeResult)
+				err = rc.localResource(withSizeCacheCtx)
 				if err != nil {
 					return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
 				}
-				if err := rc.clusterResource(ctx, estimatedDataSizeWithIndex); err != nil {
+				if err := rc.clusterResource(withSizeCacheCtx); err != nil {
 					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
 						log.FromContext(ctx).Warn("cleanup task failed", zap.Error(err1))
 						return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 					}
 				}
-				if err := rc.checkClusterRegion(ctx); err != nil {
+				if err := rc.checkClusterRegion(withSizeCacheCtx); err != nil {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
 			}
@@ -2062,50 +2071,26 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 
 // DataCheck checks the data schema which needs #rc.restoreSchema finished.
 func (rc *Controller) DataCheck(ctx context.Context) error {
-	var err error
 	if rc.cfg.App.CheckRequirements {
-		rc.HasLargeCSV(rc.dbMetas)
-	}
-	checkPointCriticalMsgs := make([]string, 0, len(rc.dbMetas))
-	schemaCriticalMsgs := make([]string, 0, len(rc.dbMetas))
-	var msgs []string
-	for _, dbInfo := range rc.dbMetas {
-		for _, tableInfo := range dbInfo.Tables {
-			// if hasCheckpoint is true, the table will start import from the checkpoint
-			// so we can skip TableHasDataInCluster and SchemaIsValid check.
-			noCheckpoint := true
-			if rc.cfg.Checkpoint.Enable {
-				msgs, noCheckpoint = rc.CheckpointIsValid(ctx, tableInfo)
-				if len(msgs) != 0 {
-					checkPointCriticalMsgs = append(checkPointCriticalMsgs, msgs...)
-				}
-			}
-
-			if rc.cfg.App.CheckRequirements && noCheckpoint && rc.cfg.TikvImporter.Backend != config.BackendTiDB {
-				if msgs, err = rc.SchemaIsValid(ctx, tableInfo); err != nil {
-					return errors.Trace(err)
-				}
-				if len(msgs) != 0 {
-					schemaCriticalMsgs = append(schemaCriticalMsgs, msgs...)
-				}
-			}
+		if err := rc.HasLargeCSV(ctx); err != nil {
+			return errors.Trace(err)
 		}
 	}
-	if len(checkPointCriticalMsgs) != 0 {
-		rc.checkTemplate.Collect(Critical, false, strings.Join(checkPointCriticalMsgs, "\n"))
-	} else {
-		rc.checkTemplate.Collect(Critical, true, "checkpoints are valid")
+
+	if err := rc.checkCheckpoints(ctx); err != nil {
+		return errors.Trace(err)
 	}
-	if len(schemaCriticalMsgs) != 0 {
-		rc.checkTemplate.Collect(Critical, false, strings.Join(schemaCriticalMsgs, "\n"))
-	} else {
-		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
+
+	if rc.cfg.App.CheckRequirements {
+		if err := rc.checkSourceSchema(ctx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	if err := rc.checkTableEmpty(ctx); err != nil {
 		return common.ErrCheckTableEmpty.Wrap(err).GenWithStackByArgs()
 	}
-	if err = rc.checkCSVHeader(ctx, rc.dbMetas); err != nil {
+	if err := rc.checkCSVHeader(ctx); err != nil {
 		return common.ErrCheckCSVHeader.Wrap(err).GenWithStackByArgs()
 	}
 

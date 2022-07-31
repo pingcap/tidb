@@ -52,7 +52,7 @@ done
 
 # new version restore full
 echo "restore start..."
-run_br restore full --filter '*.*' --filter '!mysql.*' \
+run_br restore full \
     -s "azure://$CONTAINER/$DB?" \
     --pd $PD_ADDR --azblob.endpoint="$AZBLOB_ENDPOINT" \
     --azblob.account-name="$ACCOUNT_NAME" \

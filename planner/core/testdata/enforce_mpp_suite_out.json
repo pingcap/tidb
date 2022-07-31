@@ -921,7 +921,7 @@
           "        └─ExchangeReceiver_55 8000.00 mpp[tiflash]  ",
           "          └─ExchangeSender_54 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary]",
           "            └─HashAgg_51 8000.00 mpp[tiflash]  group by:Column#62, Column#63, funcs:sum(Column#58)->Column#48, funcs:count(Column#59)->Column#49, funcs:sum(Column#60)->Column#50, funcs:firstrow(Column#61)->Column#52",
-          "              └─Projection_59 8000.00 mpp[tiflash]  cast(Column#11, decimal(20,0) BINARY)->Column#58, test.t.c, cast(test.t.c, decimal(24,4) BINARY)->Column#60, test.t.d, date_format(test.t.d, %Y)->Column#62, test.t.a",
+          "              └─Projection_59 8000.00 mpp[tiflash]  cast(Column#11, decimal(20,0) BINARY)->Column#58, test.t.c, cast(test.t.c, decimal(20,0) BINARY)->Column#60, test.t.d, date_format(test.t.d, %Y)->Column#62, test.t.a",
           "                └─Projection_38 8000.00 mpp[tiflash]  Column#11, test.t.c, test.t.a, test.t.d",
           "                  └─HashAgg_39 8000.00 mpp[tiflash]  group by:Column#28, test.t.a, test.t.c, funcs:sum(Column#29)->Column#11, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(Column#32)->test.t.d",
           "                    └─ExchangeReceiver_41 8000.00 mpp[tiflash]  ",
@@ -950,7 +950,7 @@
         "Plan": [
           "Projection_4 8000.00 root  test.t.a, Column#7, Column#8, Column#9",
           "└─HashAgg_6 8000.00 root  group by:Column#14, funcs:count(Column#10)->Column#7, funcs:avg(distinct Column#11)->Column#8, funcs:count(distinct Column#12)->Column#9, funcs:firstrow(Column#13)->test.t.a",
-          "  └─Projection_11 10000.00 root  test.t.b, cast(test.t.c, decimal(24,4) BINARY)->Column#11, test.t.c, test.t.a, test.t.a",
+          "  └─Projection_11 10000.00 root  test.t.b, cast(test.t.c, decimal(20,0) BINARY)->Column#11, test.t.c, test.t.a, test.t.a",
           "    └─TableReader_10 10000.00 root  data:TableFullScan_9",
           "      └─TableFullScan_9 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],

@@ -103,7 +103,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage == 0)
 	require.True(t, statsTbl.Pseudo)
 
 	testKit.MustExec("analyze table t")
@@ -3288,10 +3288,10 @@ func TestIncrementalModifyCountUpdate(t *testing.T) {
 				"3",
 			))
 		} else {
-			// Since analyze use max ts to read data, count and modify_count are overestimated here. Analyze finds the row count is 6
-			// and the increment of count and modify_count is +3, +3. Hence, we see count is 9 and modify_count is 3.
+			// Since analyze use max ts to read data, it finds the row count is 6 and directly set count to 6 rather than incrementally update it.
+			// But it still incrementally updates modify_count.
 			tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
-				"9 3",
+				"6 3",
 			))
 			// Check the histogram is collected from the latest data rather than the snapshot at startTS.
 			tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
