@@ -432,6 +432,6 @@ bazel_junit:
 	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
 
 bazel_golangcilinter:
-	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci //:golangci-lint  \
+	bazel --output_user_root=/home/jenkins/.tidb/tmp run  \
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
 	-- run  --config .cilinter.yaml
