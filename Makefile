@@ -434,4 +434,4 @@ bazel_junit:
 bazel_golangcilinter:
 	bazel --output_user_root=/home/jenkins/.tidb/tmp run  \
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
-	-- run  --config .cilinter.yaml
+	-- run  --config ./.cilinter.yaml
