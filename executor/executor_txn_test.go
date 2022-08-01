@@ -254,7 +254,6 @@ func TestInvalidReadCacheTable(t *testing.T) {
 	for _, query := range queries {
 		// enable historical read cache table
 		tk.MustExec(query.sql)
-
 	}
 }
 

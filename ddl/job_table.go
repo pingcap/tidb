@@ -185,12 +185,12 @@ func (d *ddl) startDispatchLoop() {
 		case <-d.ctx.Done():
 			return
 		}
-		d.getDDLJobAndRun(sess, d.generalDDLWorkerPool, d.getGeneralJob)
-		d.getDDLJobAndRun(sess, d.reorgWorkerPool, d.getReorgJob)
+		d.loadDDLJobAndRun(sess, d.generalDDLWorkerPool, d.getGeneralJob)
+		d.loadDDLJobAndRun(sess, d.reorgWorkerPool, d.getReorgJob)
 	}
 }
 
-func (d *ddl) getDDLJobAndRun(sess *session, pool *workerPool, getJob func(*session) (*model.Job, error)) {
+func (d *ddl) loadDDLJobAndRun(sess *session, pool *workerPool, getJob func(*session) (*model.Job, error)) {
 	wk, err := pool.get()
 	if err != nil || wk == nil {
 		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))

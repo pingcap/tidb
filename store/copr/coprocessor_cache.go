@@ -113,7 +113,7 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 		totalLength += 2 + len(r.Start) + 2 + len(r.End)
 	}
 	if copReq.PagingSize > 0 {
-		totalLength += 1
+		totalLength++
 	}
 
 	key := make([]byte, totalLength)

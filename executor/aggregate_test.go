@@ -660,7 +660,6 @@ func TestSelectDistinct(t *testing.T) {
 	r := tk.MustQuery("select distinct name from select_distinct_test;")
 	r.Check(testkit.Rows("hello"))
 	tk.MustExec("commit")
-
 }
 
 func TestAggPushDown(t *testing.T) {
@@ -1002,7 +1001,7 @@ func TestInjectProjBelowTopN(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	aggMergeSuiteData.GetTestCases(t, &input, &output)
+	aggMergeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
@@ -1111,7 +1110,6 @@ func TestIssue10608(t *testing.T) {
 	tk.MustExec("insert into t values(508931), (508932)")
 	tk.MustQuery("select (select  /*+ stream_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
 	tk.MustQuery("select (select  /*+ hash_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
-
 }
 
 func TestIssue12759HashAggCalledByApply(t *testing.T) {
@@ -1135,7 +1133,7 @@ func TestIssue12759HashAggCalledByApply(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	aggMergeSuiteData.GetTestCases(t, &input, &output)
+	aggMergeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
@@ -1158,7 +1156,6 @@ func TestPR15242ShallowCopy(t *testing.T) {
 	tk.MustExec(`insert into t values ('{"id": 3,"score":233}');`)
 	tk.Session().GetSessionVars().MaxChunkSize = 2
 	tk.MustQuery(`select max(JSON_EXTRACT(a, '$.score')) as max_score,JSON_EXTRACT(a,'$.id') as id from t group by id order by id;`).Check(testkit.Rows("233 1", "233 2", "233 3"))
-
 }
 
 func TestIssue15690(t *testing.T) {

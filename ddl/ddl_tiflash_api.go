@@ -130,8 +130,8 @@ func (b *PollTiFlashBackoffContext) Tick(ID int64) (bool, bool, int) {
 		return false, false, 0
 	}
 	grew := e.MaybeGrow(b)
-	e.Counter += 1
-	e.TotalCounter += 1
+	e.Counter++
+	e.TotalCounter++
 	return grew, true, e.TotalCounter
 }
 
@@ -264,8 +264,8 @@ func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
 	return addr, nil
 }
 
-// GetTiFlashReplicaInfo parses model.TableInfo into []TiFlashReplicaStatus.
-func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplicaStatus) {
+// LoadTiFlashReplicaInfo parses model.TableInfo into []TiFlashReplicaStatus.
+func LoadTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplicaStatus) {
 	if tblInfo.TiFlashReplica == nil {
 		// reject tables that has no tiflash replica such like `INFORMATION_SCHEMA`
 		return
@@ -349,7 +349,7 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) (bool, error) {
 	allReplicaReady := true
 	defer func() {
-		pollTiFlashContext.HandlePdCounter += 1
+		pollTiFlashContext.HandlePdCounter++
 		pollTiFlashContext.HandlePdCounter %= PullTiFlashPdTick.Load()
 	}()
 
@@ -384,7 +384,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		tbls := schema.SchemaTables(db.Name)
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
-			GetTiFlashReplicaInfo(tblInfo, &tableList)
+			LoadTiFlashReplicaInfo(tblInfo, &tableList)
 		}
 	}
 
@@ -484,7 +484,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 			return false, nil
 		}
 		uniqueIDMap[tblInfo.ID] = struct{}{}
-		GetTiFlashReplicaInfo(tblInfo, replicaInfos)
+		LoadTiFlashReplicaInfo(tblInfo, replicaInfos)
 		return false, nil
 	}
 	fn := func(jobs []*model.Job) (bool, error) {

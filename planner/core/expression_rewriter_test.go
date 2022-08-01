@@ -414,7 +414,7 @@ func TestMultiColInExpression(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
-	expressionRewriterSuiteData.GetTestCases(t, &input, &output)
+	expressionRewriterSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -441,7 +441,7 @@ func TestBitFuncsReturnType(t *testing.T) {
 	}
 
 	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
-	expressionRewriterSuiteData.GetTestCases(t, &input, &output)
+	expressionRewriterSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}

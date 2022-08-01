@@ -190,7 +190,6 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 			} else {
 				require.Equal(t, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)), err.Error())
 			}
-
 		}
 		sysTables = sysTables[:0]
 	}
@@ -444,5 +443,4 @@ func TestTruncateTable2(t *testing.T) {
 	require.Equal(t, t1.Meta().TiFlashReplica.LocationLabels, t2.Meta().TiFlashReplica.LocationLabels)
 	require.False(t, t2.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[1].ID}, t2.Meta().TiFlashReplica.AvailablePartitionIDs)
-
 }

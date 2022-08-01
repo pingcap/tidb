@@ -429,7 +429,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	tps := make([]*types.FieldType, 0, fullColLen)
 	for _, col := range is.Columns {
-		tps = append(tps, &col.FieldType)
+		tps = append(tps, &(col.FieldType))
 	}
 
 	if !e.isCommonHandle() {
@@ -1037,7 +1037,6 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 						b.Ti.PartitionTelemetry.UseTablePartitionList = true
 					}
 				}
-
 			}
 		}
 	}
@@ -2815,7 +2814,6 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
 	execPB, err := p.ToPB(sctx, kv.TiFlash)
 	return []*tipb.Executor{execPB}, err
-
 }
 
 func constructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, storeType kv.StoreType) (dagReq *tipb.DAGRequest, err error) {
