@@ -259,6 +259,21 @@ func testListInDisk(t *testing.T, concurrency int) {
 	wg.Wait()
 }
 
+func BenchmarkListInDisk_GetChunk(b *testing.B) {
+	numChk, numRow := 10, 1000
+	chks, fields := initChunks(numChk, numRow)
+	l := NewListInDisk(fields)
+	defer l.Close()
+	for _, chk := range chks {
+		_ = l.Add(chk)
+	}
+
+	for i := 0; i < b.N; i++ {
+		v := i % numChk
+		_, _ = l.GetChunk(v)
+	}
+}
+
 func TestListInDiskWithChecksum1(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
