@@ -174,7 +174,8 @@ func FastUnmarshalMetaData(
 			log.Info("fast read meta file from storage", zap.String("path", readPath))
 			b, err := s.ReadFile(ectx, readPath)
 			if err != nil {
-				return errors.Trace(err)
+				log.Error("failed to read file", zap.String("file", readPath))
+				return errors.Annotatef(err, "during reading meta file %s from storage", readPath)
 			}
 			m := &backuppb.Metadata{}
 			err = m.Unmarshal(b)
@@ -190,7 +191,11 @@ func FastUnmarshalMetaData(
 		return nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		readErr := eg.Wait()
+		if readErr != nil {
+			return errors.Annotatef(readErr, "scanning metadata meets error %s", err)
+		}
+		return errors.Annotate(err, "scanning metadata meets error")
 	}
 	return eg.Wait()
 }

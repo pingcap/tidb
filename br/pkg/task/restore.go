@@ -171,9 +171,9 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 // DefineStreamRestoreFlags defines for the restore log command.
 func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().String(FlagStreamStartTS, "", "the start timestamp which log restore from.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for log restore.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
 }
