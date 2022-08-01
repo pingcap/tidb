@@ -4349,8 +4349,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 }
 
 func TestAdminShowDDLJobsRowCount(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// Test for issue: https://github.com/pingcap/tidb/issues/25968
