@@ -16,9 +16,9 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/bindinfo"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
