@@ -192,10 +192,11 @@ func (r *reorgBackfillTask) String() string {
 	physicalID := strconv.FormatInt(r.physicalTableID, 10)
 	startKey := tryDecodeToHandleString(r.startKey)
 	endKey := tryDecodeToHandleString(r.endKey)
+	rangeStr := "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey 
 	if r.endInclude {
-		return "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey + "]"
+		return rangeStr + "]"
 	}
-	return "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey + ")"
+	return rangeStr + ")"
 }
 
 func logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
