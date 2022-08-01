@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -62,7 +63,8 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	dom, clean := bootstrap(t, store, 0)
-	return store, dom, clean
+	// unwrap for WithDDLChecker opt.
+	return schematracker.UnwrapStorage(store), dom, clean
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) (*domain.Domain, func()) {

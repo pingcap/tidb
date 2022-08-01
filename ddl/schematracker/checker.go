@@ -34,9 +34,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 )
+
+func init() {
+	mockstore.DDLCheckerInjector = NewStorageDDLInjector
+}
 
 // Checker is used to check the result of SchemaTracker is same as real DDL.
 type Checker struct {
@@ -67,6 +72,11 @@ func (d *Checker) Enable() {
 // CreateTestDB creates a `test` database like the default behaviour of TiDB.
 func (d Checker) CreateTestDB() {
 	d.tracker.createTestDB()
+}
+
+// CreateConcurrentDDLTables imitates set concorrent DDL related tables to store.
+func (d Checker) CreateConcurrentDDLTables() {
+	d.tracker.createConcurrentDDLTables()
 }
 
 func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
@@ -518,4 +528,27 @@ func (d Checker) MoveJobFromQueue2Table(bool) error {
 // MoveJobFromTable2Queue implements the DDL interface.
 func (d Checker) MoveJobFromTable2Queue() error {
 	panic("implement me")
+}
+
+// StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.
+type StorageDDLInjector struct {
+	kv.Storage
+	Injector func(ddl.DDL) *Checker
+}
+
+// NewStorageDDLInjector creates a new StorageDDLInjector to inject Checker.
+func NewStorageDDLInjector(s kv.Storage) kv.Storage {
+	return StorageDDLInjector{
+		Storage:  s,
+		Injector: NewChecker,
+	}
+}
+
+// UnwrapStorage unwraps StorageDDLInjector for one level.
+func UnwrapStorage(s kv.Storage) kv.Storage {
+	injector, ok := s.(StorageDDLInjector)
+	if !ok {
+		return s
+	}
+	return injector.Storage
 }
