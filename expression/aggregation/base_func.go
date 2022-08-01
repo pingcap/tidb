@@ -255,7 +255,6 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
 		}
 	}
-
 }
 
 func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {

@@ -274,11 +274,11 @@ func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
 	}
 	lastIDX := len(c.bucketDelta) - 1
 	if add {
-		c.bucketDelta[idx] += 1
-		c.bucketDelta[lastIDX] += 1
+		c.bucketDelta[idx]++
+		c.bucketDelta[lastIDX]++
 	} else {
-		c.bucketDelta[idx] -= 1
-		c.bucketDelta[lastIDX] -= 1
+		c.bucketDelta[idx]--
+		c.bucketDelta[lastIDX]--
 	}
 }
 

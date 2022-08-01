@@ -164,7 +164,6 @@ disable-timestamp = true
 enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
-
 }
 
 func TestRemovedVariableCheck(t *testing.T) {

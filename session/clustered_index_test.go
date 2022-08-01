@@ -85,7 +85,7 @@ func TestClusteredPrefixColumn(t *testing.T) {
 		Res  []string
 	}
 	testData := session.GetClusteredIndexSuiteData()
-	testData.GetTestCases(t, &input, &output)
+	testData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

@@ -1032,7 +1032,6 @@ func TestSimpleDelete(t *testing.T) {
 		for _, test := range tests {
 			tblName := test.name
 			t.Run(test.name, func(t *testing.T) {
-
 				workerNum := 10
 				rowCount := 1000
 				batch := rowCount / workerNum
@@ -1083,7 +1082,6 @@ func TestSimpleDelete(t *testing.T) {
 		for _, test := range tests {
 			tblName := test.name
 			t.Run(test.name, func(t *testing.T) {
-
 				var mu sync.Mutex
 				keysMap := make(map[int64]int64)
 

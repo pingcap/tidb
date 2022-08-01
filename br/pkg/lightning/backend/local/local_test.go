@@ -835,7 +835,6 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 func TestMergeSSTs(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
 	for i := 0; i < 5; i++ {
-
 		var pairs []common.KvPair
 		for j := 0; j < 10; j++ {
 			var kv common.KvPair

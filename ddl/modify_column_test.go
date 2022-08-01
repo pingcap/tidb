@@ -420,7 +420,6 @@ func TestModifyColumnCharset(t *testing.T) {
 			"  `a` varchar(8) DEFAULT NULL,\n" +
 			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
 }
 
 func TestModifyColumnTime_TimeToYear(t *testing.T) {

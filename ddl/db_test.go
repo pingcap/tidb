@@ -228,7 +228,6 @@ func TestDdlMaxLimitOfIdentifier(t *testing.T) {
 
 	// alter table
 	tk.MustExec(fmt.Sprintf("alter table %s change f2 %s int", longTblName, strings.Repeat("二", mysql.MaxColumnNameLength-1)))
-
 }
 
 // Close issue #23321.
@@ -850,7 +849,6 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 			} else {
 				require.EqualError(t, err, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)))
 			}
-
 		}
 		sysTables = sysTables[:0]
 	}
@@ -1305,7 +1303,6 @@ func TestShowCountWarningsOrErrors(t *testing.T) {
 	// Error: Table exist
 	_, _ = tk.Exec("create table show_errors (a int)")
 	tk.MustQuery("show count(*) errors").Check(tk.MustQuery("select @@session.error_count").Rows())
-
 }
 
 // Close issue #24172.
@@ -1686,7 +1683,6 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 	sqlTemplate := "create table %s (id int, name %s, age int, %s index(name%s%s)) charset=%s;"
 	// test character strings for varchar and text
 	for _, tc := range tt {
-
 		for _, cs := range charset.CharacterSetInfos {
 			tableName := fmt.Sprintf("t_%s", cs.Name)
 			tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))

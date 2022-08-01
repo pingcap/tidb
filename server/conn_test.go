@@ -1260,7 +1260,6 @@ func TestAuthPlugin2(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 	require.Equal(t, respAuthSwitch, []byte(mysql.AuthNativePassword))
 	require.NoError(t, err)
-
 }
 
 func TestAuthTokenPlugin(t *testing.T) {
