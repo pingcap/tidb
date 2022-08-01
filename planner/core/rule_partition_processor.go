@@ -1446,7 +1446,6 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			// id as FromID. So we set the id of the newDataSource with the original one to
 			// avoid traversing the whole plan tree to update the references.
 			newDataSource.id = ds.id
-			newDataSource.tracerID = ds.SCtx().GetSessionVars().AllocNewPlanID()
 			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
 			partitionNameSet.Insert(pi.Definitions[i].Name.L)
 			if err != nil {
@@ -1615,6 +1614,9 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 }
 
 func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]model.PartitionDefinition, plan LogicalPlan, children []LogicalPlan, opt *logicalOptimizeOp) {
+	if opt.tracer == nil {
+		return
+	}
 	if len(children) == 0 {
 		appendNoPartitionChildTraceStep(origin, plan, opt)
 		return
@@ -1629,6 +1631,7 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 	})
 	if len(children) == 1 {
 		newDS := plan.(*DataSource)
+		newDS.tracerID = origin.SCtx().GetSessionVars().AllocNewPlanID()
 		action = func() string {
 			return fmt.Sprintf("%v_%v becomes %s_%v", origin.TP(), origin.ID(), newDS.TP(), newDS.getTracerID())
 		}
@@ -1644,6 +1647,7 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 					buffer.WriteString(",")
 				}
 				newDS := child.(*DataSource)
+				newDS.tracerID = origin.SCtx().GetSessionVars().AllocNewPlanID()
 				buffer.WriteString(fmt.Sprintf("%s_%v", child.TP(), newDS.getTracerID()))
 			}
 			buffer.WriteString("]")
