@@ -85,7 +85,7 @@ func TestGetTS(t *testing.T) {
 
 	// timeago not work
 	expectedDuration := 0
-	currentTS := time.Now().UnixNano() / int64(time.Millisecond)
+	currentTS := time.Now().UnixMilli()
 	ts, err := s.backupClient.GetTS(s.ctx, 0, 0)
 	require.NoError(t, err)
 	pdTS := oracle.ExtractPhysical(ts)
@@ -95,7 +95,7 @@ func TestGetTS(t *testing.T) {
 
 	// timeago = "1.5m"
 	expectedDuration = 90000
-	currentTS = time.Now().UnixNano() / int64(time.Millisecond)
+	currentTS = time.Now().UnixMilli()
 	ts, err = s.backupClient.GetTS(s.ctx, 90*time.Second, 0)
 	require.NoError(t, err)
 	pdTS = oracle.ExtractPhysical(ts)

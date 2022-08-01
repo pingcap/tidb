@@ -1058,7 +1058,6 @@ func getEvolveParameters(sctx sessionctx.Context) (time.Duration, time.Time, tim
 	startTime, err := time.ParseInLocation(variable.FullDayTimeFormat, startTimeStr, time.UTC)
 	if err != nil {
 		return 0, time.Time{}, time.Time{}, err
-
 	}
 	endTime, err := time.ParseInLocation(variable.FullDayTimeFormat, endTimeStr, time.UTC)
 	if err != nil {

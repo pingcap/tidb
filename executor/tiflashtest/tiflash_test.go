@@ -205,7 +205,6 @@ func TestJoinRace(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	tk.MustExec("set @@tidb_opt_broadcast_cartesian_join=0")
 	tk.MustQuery("select count(*) from (select count(a) x from t group by b) t1 join (select count(a) x from t group by b) t2 on t1.x > t2.x").Check(testkit.Rows("6"))
-
 }
 
 func TestMppExecution(t *testing.T) {
@@ -793,7 +792,6 @@ func TestMppUnionAll(t *testing.T) {
 	tk.MustExec("set @@tidb_enforce_mpp=1")
 	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
 	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
-
 }
 
 func TestUnionWithEmptyDualTable(t *testing.T) {

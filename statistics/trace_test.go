@@ -52,7 +52,7 @@ func TestTraceCE(t *testing.T) {
 		}
 	)
 	traceSuiteData := statistics.GetTraceSuiteData()
-	traceSuiteData.GetTestCases(t, &in, &out)
+	traceSuiteData.LoadTestCases(t, &in, &out)
 
 	// Load needed statistics.
 	for _, tt := range in {

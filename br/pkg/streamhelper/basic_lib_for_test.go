@@ -88,23 +88,23 @@ func overlaps(a, b kv.KeyRange) bool {
 	return bytes.Compare(a.StartKey, b.EndKey) < 0 && bytes.Compare(b.StartKey, a.EndKey) < 0
 }
 
-func (f *region) splitAt(newID uint64, k string) *region {
+func (r *region) splitAt(newID uint64, k string) *region {
 	newRegion := &region{
-		rng:        kv.KeyRange{StartKey: []byte(k), EndKey: f.rng.EndKey},
-		leader:     f.leader,
-		epoch:      f.epoch + 1,
+		rng:        kv.KeyRange{StartKey: []byte(k), EndKey: r.rng.EndKey},
+		leader:     r.leader,
+		epoch:      r.epoch + 1,
 		id:         newID,
-		checkpoint: f.checkpoint,
-		fsim:       f.fsim.fork(),
+		checkpoint: r.checkpoint,
+		fsim:       r.fsim.fork(),
 	}
-	f.rng.EndKey = []byte(k)
-	f.epoch += 1
-	f.fsim = f.fsim.fork()
+	r.rng.EndKey = []byte(k)
+	r.epoch += 1
+	r.fsim = r.fsim.fork()
 	return newRegion
 }
 
-func (f *region) flush() {
-	f.fsim.flushedEpoch = f.epoch
+func (r *region) flush() {
+	r.fsim.flushedEpoch = r.epoch
 }
 
 func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.GetLastFlushTSOfRegionRequest, opts ...grpc.CallOption) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
@@ -357,10 +357,10 @@ func (r *region) String() string {
 	return fmt.Sprintf("%d(%d):[%s,%s);%dL%d", r.id, r.epoch, hex.EncodeToString(r.rng.StartKey), hex.EncodeToString(r.rng.EndKey), r.checkpoint, r.leader)
 }
 
-func (s *fakeStore) String() string {
+func (f *fakeStore) String() string {
 	buf := new(strings.Builder)
-	fmt.Fprintf(buf, "%d: ", s.id)
-	for _, r := range s.regions {
+	fmt.Fprintf(buf, "%d: ", f.id)
+	for _, r := range f.regions {
 		fmt.Fprintf(buf, "%s ", r)
 	}
 	return buf.String()
@@ -372,9 +372,9 @@ func (f *fakeCluster) flushAll() {
 	}
 }
 
-func (s *fakeStore) flush() {
-	for _, r := range s.regions {
-		if r.leader == s.id {
+func (f *fakeStore) flush() {
+	for _, r := range f.regions {
+		if r.leader == f.id {
 			r.flush()
 		}
 	}

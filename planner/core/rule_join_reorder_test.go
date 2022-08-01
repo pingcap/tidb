@@ -33,7 +33,7 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
 		Warning []string
 	}
 	joinReorderSuiteData := plannercore.GetJoinReorderSuiteData()
-	joinReorderSuiteData.GetTestCasesByName(name, t, &input, &output)
+	joinReorderSuiteData.LoadTestCasesByName(name, t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		testdata.OnRecord(func() {

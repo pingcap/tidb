@@ -193,7 +193,6 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 		schema.Charset = mysql.DefaultCharset
 	}
 	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore)
-
 }
 
 // CreatePlacementPolicy implements glue.Session.
@@ -341,7 +340,6 @@ func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...i
 func (s *mockSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
-
 }
 
 // CreatePlacementPolicy implements glue.Session.

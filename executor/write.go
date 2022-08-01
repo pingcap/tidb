@@ -227,7 +227,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			}
 			return false, err
 		}
-
 	}
 	if onDup {
 		sc.AddAffectedRows(2)

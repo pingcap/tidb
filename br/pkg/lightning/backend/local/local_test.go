@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -834,7 +835,6 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 func TestMergeSSTs(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
 	for i := 0; i < 5; i++ {
-
 		var pairs []common.KvPair
 		for j := 0; j < 10; j++ {
 			var kv common.KvPair
@@ -1249,4 +1249,10 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), splitSize)
 	require.Equal(t, int64(2), splitKeys)
+}
+
+func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
+	l := local{}
+	require.True(t, l.isRetryableTiKVWriteError(io.EOF))
+	require.True(t, l.isRetryableTiKVWriteError(errors.Trace(io.EOF)))
 }

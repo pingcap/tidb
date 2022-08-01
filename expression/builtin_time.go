@@ -3169,7 +3169,6 @@ func (du *baseDateArithmetical) vecGetDateFromString(b *baseBuiltinFunc, input *
 		} else {
 			dates[i] = date
 		}
-
 	}
 	return nil
 }
@@ -6085,7 +6084,6 @@ func (c *timestampAddFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	sig := &builtinTimestampAddSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimestampAdd)
 	return sig, nil
-
 }
 
 type builtinTimestampAddSig struct {
