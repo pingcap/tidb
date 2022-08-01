@@ -1882,6 +1882,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return invalidTask, nil
 	}
+	if ts.StoreType == kv.TiFlash {
+		for _, col := range ts.schema.Columns {
+			if col.VirtualExpr != nil {
+				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
+				return invalidTask, nil
+			}
+		}
+	}
 	if prop.TaskTp == property.MppTaskType {
 		if ts.KeepOrder {
 			return invalidTask, nil
@@ -1890,12 +1898,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
 			return invalidTask, nil
-		}
-		for _, col := range ts.schema.Columns {
-			if col.VirtualExpr != nil {
-				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
-				return invalidTask, nil
-			}
 		}
 		mppTask := &mppTask{
 			p:      ts,
