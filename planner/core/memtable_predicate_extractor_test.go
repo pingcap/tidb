@@ -227,7 +227,7 @@ func TestClusterConfigTableExtractor(t *testing.T) {
 func timestamp(t *testing.T, s string) int64 {
 	tt, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
 	require.NoError(t, err)
-	return tt.UnixNano() / int64(time.Millisecond)
+	return tt.UnixMilli()
 }
 
 func TestClusterLogTableExtractor(t *testing.T) {
