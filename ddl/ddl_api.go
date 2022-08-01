@@ -1907,8 +1907,44 @@ func BuildTableInfo(
 		idxInfo.ID = allocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
+	err = addIndexForFk(ctx, tbInfo)
+	return tbInfo, err
+}
 
-	return
+func addIndexForFk(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	for _, fk := range tbInfo.ForeignKeys {
+		if tbInfo.PKIsHandle && len(fk.Cols) == 1 {
+			refColInfo := model.FindColumnInfo(tbInfo.Columns, fk.Cols[0].L)
+			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+				continue
+			}
+		}
+		if model.FindIndexByColumns(tbInfo.Indices, fk.Cols...) != nil {
+			continue
+		}
+
+		for _, idx := range tbInfo.Indices {
+			if idx.Name.L == fk.Name.L {
+				return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", fk.Name.O)
+			}
+		}
+
+		keys := make([]*ast.IndexPartSpecification, 0, len(fk.Cols))
+		for _, col := range fk.Cols {
+			keys = append(keys, &ast.IndexPartSpecification{
+				Column: &ast.ColumnName{Name: col},
+				Length: -1,
+			})
+		}
+
+		idxInfo, err := buildIndexInfo(ctx, tbInfo, fk.Name, keys, model.StatePublic)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		idxInfo.ID = allocateIndexID(tbInfo)
+		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
+	}
+	return nil
 }
 
 func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
