@@ -312,9 +312,10 @@ func TestTableStorageStats(t *testing.T) {
 	// Test information_schema.TABLE_STORAGE_STATS.
 	tk = testkit.NewTestKit(t, store)
 
-	// Test not set the schema.
+	// Test table_schema is not specified.
 	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS")
-	require.EqualError(t, err, "Please specify the 'table_schema'")
+	require.EqualError(t, err, "Please add where clause to filter the column TABLE_SCHEMA. "+
+		"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
 
 	// Test it would get null set when get the sys schema.
 	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]interface{}{})
