@@ -1254,23 +1254,6 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	}
 }
 
-// ContainTiKVIsolationRead ...
-func (s *SessionVars) ContainTiKVIsolationRead() bool {
-	_, ok := s.isolationReadEngines[kv.TiKV]
-	return ok
-}
-
-// ContainTiFlashIsolationRead ...
-func (s *SessionVars) ContainTiFlashIsolationRead() bool {
-	_, ok := s.isolationReadEngines[kv.TiFlash]
-	return ok
-}
-
-// GetIsolationReadEngines ...
-func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
-	return s.isolationReadEngines
-}
-
 const (
 	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
 	PlacementModeStrict string = "STRICT"
@@ -1592,10 +1575,22 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
 }
 
-//// GetIsolationReadEngines gets isolation read engines.
-//func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
-//	return s.IsolationReadEngines
-//}
+// ContainTiKVIsolationRead ...
+func (s *SessionVars) ContainTiKVIsolationRead() bool {
+	_, ok := s.isolationReadEngines[kv.TiKV]
+	return ok
+}
+
+// ContainTiFlashIsolationRead ...
+func (s *SessionVars) ContainTiFlashIsolationRead() bool {
+	_, ok := s.isolationReadEngines[kv.TiFlash]
+	return ok
+}
+
+// GetIsolationReadEngines gets isolation read engines.
+func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
+	return s.isolationReadEngines
+}
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
