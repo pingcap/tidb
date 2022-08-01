@@ -19,11 +19,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -60,11 +59,7 @@ func TestRenameTableWithLocked(t *testing.T) {
 		conf.EnableTableLock = true
 	})
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database renamedb")
@@ -99,16 +94,7 @@ func TestAlterTableRenameTable(t *testing.T) {
 }
 
 func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
-	var (
-		store kv.Storage
-		dom   *domain.Domain
-	)
-
-	store, dom = testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -198,11 +184,7 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 }
 
 func TestRenameMultiTables(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

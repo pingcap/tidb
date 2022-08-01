@@ -437,12 +437,9 @@ func TestPartitionAddIndexGC(t *testing.T) {
 
 func TestModifyColumn(t *testing.T) {
 	s := createFailDBSuite(t)
-	tk := testkit.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, schematracker.NewStorageDDLInjector(s.store))
 
 	dom := domain.GetDomain(tk.Session())
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
