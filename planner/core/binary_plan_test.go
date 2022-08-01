@@ -109,7 +109,7 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 		BinaryPlan *tipb.ExplainData
 	}
 	planSuiteData := core.GetBinaryPlanSuiteData()
-	planSuiteData.GetTestCases(t, &input, &output)
+	planSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, test := range input {
 		comment := fmt.Sprintf("case:%v sql:%s", i, test)

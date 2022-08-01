@@ -713,5 +713,4 @@ func TestShowTableRegion(t *testing.T) {
 		}
 		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
 	}
-
 }

@@ -542,7 +542,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
-			//nolint: errcheck
+			//nolint: errcheck,all_revive
 			defer v.Close()
 			_, err = toml.DecodeReader(v, &varMap)
 			if err != nil {

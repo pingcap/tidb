@@ -686,7 +686,6 @@ func TestIssue31629(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-
 		createTable := "create table t1 " + tt.create
 		res, err := tk.Exec(createTable)
 		if res != nil {

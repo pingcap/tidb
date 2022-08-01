@@ -214,5 +214,4 @@ func TestRenameViewOverDifferentSchemaError(t *testing.T) {
 
 	//same schema
 	tk.MustExec("rename table test.view_1 to test.view_1000;")
-
 }

@@ -120,7 +120,7 @@ func TestEnforceMPP(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	filterWarnings := func(originalWarnings []stmtctx.SQLWarn) []stmtctx.SQLWarn {
 		warnings := make([]stmtctx.SQLWarn, 0, 4)
 		for _, warning := range originalWarnings {
@@ -169,7 +169,7 @@ func TestEnforceMPPWarning1(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -253,7 +253,7 @@ func TestEnforceMPPWarning2(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -305,7 +305,7 @@ func TestEnforceMPPWarning3(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -368,7 +368,7 @@ func TestEnforceMPPWarning4(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -422,7 +422,7 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -474,7 +474,7 @@ func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
