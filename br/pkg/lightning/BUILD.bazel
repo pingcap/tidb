@@ -26,6 +26,8 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/utils",
         "//br/pkg/version/build",
+        "//expression",
+        "//planner/core",
         "//util/promutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -48,6 +50,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":lightning"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/config",

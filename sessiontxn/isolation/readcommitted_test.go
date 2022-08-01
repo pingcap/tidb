@@ -41,10 +41,11 @@ import (
 )
 
 func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	tk.MustExec("set @@tidb_rc_read_check_ts=1")
 	se := tk.Session()
 	provider := initializePessimisticRCProvider(t, tk)
@@ -141,11 +142,14 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 }
 
 func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
+
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, v int)")
@@ -181,6 +185,8 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(ctx, tk.Session(), rs)
 	require.Error(t, err)
+	rs.Close()
+
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Greater(t, compareTS, ts)
@@ -195,10 +201,11 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 }
 
 func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
 	provider := initializePessimisticRCProvider(t, tk)
 
@@ -232,10 +239,11 @@ func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
 }
 
 func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
 	provider := initializePessimisticRCProvider(t, tk)
 	compareTS := getOracleTS(t, se)
@@ -285,14 +293,15 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 }
 
 func TestRCProviderInitialize(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testfork.RunTest(t, func(t *testfork.T) {
 		clearScopeSettings := forkScopeSettings(t, store)
 		defer clearScopeSettings()
 
 		tk := testkit.NewTestKit(t, store)
+		defer tk.MustExec("rollback")
+
 		se := tk.Session()
 		tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
 		tk.MustExec("set @@tidb_txn_mode='pessimistic'")
@@ -351,10 +360,11 @@ func TestRCProviderInitialize(t *testing.T) {
 }
 
 func TestTidbSnapshotVarInRC(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
 	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
 	safePoint := "20160102-15:04:05 -0700"
@@ -443,12 +453,15 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 
 func TestConflictErrorsInRC(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
+
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")

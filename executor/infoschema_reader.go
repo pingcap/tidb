@@ -398,7 +398,6 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schema := range schemas {
-
 		charset := mysql.DefaultCharset
 		collation := mysql.DefaultCollationName
 
@@ -800,7 +799,7 @@ ForColumnsTag:
 			continue
 		}
 
-		ft := &col.FieldType
+		ft := &(col.FieldType)
 		if tbl.IsView() {
 			e.viewMu.RLock()
 			if e.viewSchemaMap[tbl.ID] != nil {
@@ -1271,6 +1270,7 @@ type DDLJobsReaderExec struct {
 
 	cacheJobs []*model.Job
 	is        infoschema.InfoSchema
+	sess      sessionctx.Context
 }
 
 // Open implements the Executor Next interface.
@@ -1278,13 +1278,23 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
+	e.DDLJobRetriever.is = e.is
+	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
+	sess, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	e.DDLJobRetriever.is = e.is
-	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
-	err = e.DDLJobRetriever.initial(txn)
+	e.sess = sess
+	err = sessiontxn.NewTxn(context.Background(), sess)
+	if err != nil {
+		return err
+	}
+	txn, err := sess.Txn(true)
+	if err != nil {
+		return err
+	}
+	sess.GetSessionVars().SetInTxn(true)
+	err = e.DDLJobRetriever.initial(txn, sess)
 	if err != nil {
 		return err
 	}
@@ -1303,6 +1313,11 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for i := e.cursor; i < e.cursor+num; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], checker)
 			req.AppendString(12, e.runningJobs[i].Query)
+			if e.runningJobs[i].MultiSchemaInfo != nil {
+				for range e.runningJobs[i].MultiSchemaInfo.SubJobs {
+					req.AppendString(12, e.runningJobs[i].Query)
+				}
+			}
 		}
 		e.cursor += num
 		count += num
@@ -1318,10 +1333,21 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for _, job := range e.cacheJobs {
 			e.appendJobToChunk(req, job, checker)
 			req.AppendString(12, job.Query)
+			if job.MultiSchemaInfo != nil {
+				for range job.MultiSchemaInfo.SubJobs {
+					req.AppendString(12, job.Query)
+				}
+			}
 		}
 		e.cursor += len(e.cacheJobs)
 	}
 	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *DDLJobsReaderExec) Close() error {
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), e.sess)
+	return e.baseExecutor.Close()
 }
 
 func (e *memtableRetriever) setDataFromEngines() {
@@ -1856,7 +1882,8 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 
 	// If not specify the table_schema, return an error to avoid traverse all schemas and their tables.
 	if len(schemas) == 0 {
-		return errors.Errorf("Please specify the 'table_schema'")
+		return errors.Errorf("Please add where clause to filter the column TABLE_SCHEMA. " +
+			"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
 	}
 
 	// Filter the sys or memory schema.
@@ -3164,18 +3191,18 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 
 func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 	if len(rule.Data) == 0 {
-		err = errors.New(fmt.Sprintf("there is no data in rule %s", rule.ID))
+		err = fmt.Errorf("there is no data in rule %s", rule.ID)
 		return
 	}
 	data := rule.Data[0]
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
-		err = errors.New(fmt.Sprintf("get the label rules %s failed", rule.ID))
+		err = fmt.Errorf("get the label rules %s failed", rule.ID)
 		return
 	}
 	key, err := hex.DecodeString(fmt.Sprintf("%s", dataMap["start_key"]))
 	if err != nil {
-		err = errors.New(fmt.Sprintf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID))
+		err = fmt.Errorf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID)
 		return
 	}
 	_, bs, err := codec.DecodeBytes(key, nil)
@@ -3184,7 +3211,7 @@ func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 	}
 	tableID = tablecodec.DecodeTableID(key)
 	if tableID == 0 {
-		err = errors.New(fmt.Sprintf("decode tableID from key %s in rule %s failed", key, rule.ID))
+		err = fmt.Errorf("decode tableID from key %s in rule %s failed", key, rule.ID)
 		return
 	}
 	return

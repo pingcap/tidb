@@ -263,7 +263,6 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
 			if err != nil {
 				return false, false, err
-
 			}
 		}
 		if i == 0 {
@@ -578,7 +577,7 @@ func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, 
 		case types.ETDecimal:
 			err = expr.VecEvalDecimal(ctx, input, result)
 		default:
-			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+			err = fmt.Errorf("invalid eval type %v", expr.GetType().EvalType())
 		}
 	} else {
 		ind, n := 0, input.NumRows()
@@ -686,7 +685,7 @@ func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, 
 				ind++
 			}
 		default:
-			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+			err = fmt.Errorf("invalid eval type %v", expr.GetType().EvalType())
 		}
 	}
 	return
@@ -766,6 +765,7 @@ type VarAssignment struct {
 
 // splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
 func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
+	//nolint: revive
 	switch v := onExpr.(type) {
 	case *ScalarFunction:
 		if v.FuncName.L == funcName {
@@ -1055,7 +1055,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength,
+		ast.JSONLength, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
@@ -1070,7 +1070,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return false
 		}
 		return true
-	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex:
+	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex, ast.Reverse:
 		switch function.Function.PbCode() {
 		case
 			tipb.ScalarFuncSig_LeftUTF8,
@@ -1078,7 +1078,9 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CharLengthUTF8,
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
 			tipb.ScalarFuncSig_Substring3ArgsUTF8,
-			tipb.ScalarFuncSig_SubstringIndex:
+			tipb.ScalarFuncSig_SubstringIndex,
+			tipb.ScalarFuncSig_ReverseUTF8,
+			tipb.ScalarFuncSig_Reverse:
 			return true
 		}
 	case ast.Cast:
@@ -1155,6 +1157,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return true
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
+		return true
+	case ast.GetFormat:
 		return true
 	}
 	return false

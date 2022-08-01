@@ -10,11 +10,13 @@ go_library(
 
 go_test(
     name = "vitess_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "vitess_hash_test.go",
     ],
     embed = [":vitess"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

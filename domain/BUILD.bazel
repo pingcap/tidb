@@ -17,6 +17,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//bindinfo",
+        "//br/pkg/streamhelper",
         "//config",
         "//ddl",
         "//ddl/util",
@@ -35,6 +36,7 @@ go_library(
         "//parser/terror",
         "//privilege/privileges",
         "//sessionctx",
+        "//sessionctx/sessionstates",
         "//sessionctx/variable",
         "//statistics/handle",
         "//telemetry",
@@ -49,6 +51,7 @@ go_library(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",

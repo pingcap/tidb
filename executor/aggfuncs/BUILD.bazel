@@ -86,6 +86,7 @@ go_test(
         "window_func_test.go",
     ],
     embed = [":aggfuncs"],
+    flaky = True,
     deps = [
         "//expression",
         "//expression/aggregation",

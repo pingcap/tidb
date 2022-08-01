@@ -41,6 +41,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     embed = [":cascades"],
+    flaky = True,
     deps = [
         "//domain",
         "//expression",

@@ -28,6 +28,7 @@ go_test(
         "tempDir_test.go",
     ],
     embed = [":disk"],
+    flaky = True,
     deps = [
         "//config",
         "//testkit/testsetup",

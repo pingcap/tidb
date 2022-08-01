@@ -40,6 +40,7 @@ go_test(
     ],
     data = glob(["**"]),
     embed = [":parser"],
+    flaky = True,
     deps = [
         "//parser/ast",
         "//parser/charset",

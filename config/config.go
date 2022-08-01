@@ -32,6 +32,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
 	typejson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/logutil"
@@ -118,6 +119,7 @@ var (
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
 				"max-server-connections":        "max_connections",
+				"run-ddl":                       "tidb_enable_ddl",
 			},
 		},
 		{
@@ -256,8 +258,8 @@ type Config struct {
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 	// EnableGlobalKill indicates whether to enable global kill.
-	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
 	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
+	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -416,6 +418,13 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 	return nil
 }
 
+// LogBackup is the config for log backup service.
+// For now, it includes the embed advancer.
+type LogBackup struct {
+	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
+	Enabled  bool                 `toml:"enabled" json:"enabled"`
+}
+
 // Log is the log section of config.
 type Log struct {
 	// Log level.
@@ -472,10 +481,11 @@ type Instance struct {
 	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
 	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
-	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
-	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
-	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
-	MaxConnections             uint32 `toml:"max_connections" json:"max_connections"`
+	EnableCollectExecutionInfo bool       `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
+	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
+	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
+	MaxConnections             uint32     `toml:"max_connections" json:"max_connections"`
+	TiDBEnableDDL              AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -851,6 +861,7 @@ var defaultConf = Config{
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
 		MaxConnections:              0,
+		TiDBEnableDDL:               *NewAtomicBool(true),
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -1186,7 +1197,7 @@ func (c *Config) Valid() error {
 		}
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, nameList)
 	}
-	if c.Store == "mocktikv" && !c.RunDDL {
+	if c.Store == "mocktikv" && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
 	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {

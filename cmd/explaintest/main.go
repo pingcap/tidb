@@ -250,10 +250,12 @@ func (t *tester) parserErrorHandle(query query, err error) error {
 		gotBuf := t.buf.Bytes()[offset:]
 		buf := make([]byte, t.buf.Len()-offset)
 		if _, err = t.resultFD.ReadAt(buf, int64(offset)); err != nil {
+			//nolint: all_revive,revive
 			return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", query.Query, query.Line, gotBuf, err))
 		}
 
 		if !bytes.Equal(gotBuf, buf) {
+			//nolint: all_revive,revive
 			return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need(%v):\n%s\nbut got(%v):\n%s\n", query.Query, query.Line, len(buf), buf, len(gotBuf), gotBuf))
 		}
 	}
@@ -360,10 +362,14 @@ func (t *tester) execute(query query) error {
 			}
 		}
 
+		skipCheckErrMsg := false
 		if err != nil && len(t.expectedErrs) > 0 {
 			for _, expectErr := range t.expectedErrs {
 				if strings.Contains(err.Error(), expectErr) {
 					// output expected err
+					if expectErr == "1105" {
+						skipCheckErrMsg = true
+					}
 					t.buf.WriteString(fmt.Sprintf("%s\n", err))
 					err = nil
 					break
@@ -386,7 +392,8 @@ func (t *tester) execute(query query) error {
 			if _, err = t.resultFD.ReadAt(buf, int64(offset)); !(err == nil || err == io.EOF) {
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", qText, query.Line, gotBuf, err))
 			}
-			if !bytes.Equal(gotBuf, buf) {
+			if !skipCheckErrMsg && !bytes.Equal(gotBuf, buf) {
+				//nolint: all_revive,revive
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", qText, query.Line, buf, gotBuf))
 			}
 			t.outputLen = t.buf.Len()
@@ -602,9 +609,11 @@ func (t *tester) checkLastResult() error {
 	}
 	buf := make([]byte, int(size)-t.outputLen+len(t.lastResult))
 	if _, err = t.resultFD.ReadAt(buf, int64(t.outputLen-len(t.lastResult))); !(err == nil || err == io.EOF) {
+		//nolint: all_revive,revive
 		return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", t.lastText, t.lastQuery.Line, t.lastResult, err))
 	}
 	if !bytes.Equal(t.lastResult, buf) {
+		//nolint: all_revive,revive
 		return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", t.lastText, t.lastQuery.Line, buf, t.lastResult))
 	}
 	return nil
