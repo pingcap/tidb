@@ -982,8 +982,8 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 
-	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2)")
-	tk.MustExec("create table t2(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2)")
+	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("create table t2(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
 
 	sqlSelectID, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id1 = ? for update")
 	sqlUpdateID, _, _, _ := tk.Session().PrepareStmt("update t1 set id3 = id3 + 10 where id = ?")
