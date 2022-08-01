@@ -896,7 +896,7 @@ func FetchStoresAddr(ctx context.Context, tls *common.TLS, pdAddr string) ([]str
 	}
 	var strStoresAddr []string
 
-	err := tls.WithHost(pdAddr).GetJSON(ctx, "/pd/api/v1/stores", &rawStoresAddr.Store)
+	err := tls.WithHost(pdAddr).GetJSON(ctx, "/pd/api/v1/stores", &rawStoresAddr.Stores)
 	if err != nil {
 		return strStoresAddr, errors.Trace(err)
 	}
