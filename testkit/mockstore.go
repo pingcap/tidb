@@ -86,6 +86,7 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) (*domain.Dom
 // CreateMockStoreWithSchemaLease return a new mock kv.Storage.
 func CreateMockStoreWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, clean func()) {
 	store, _, clean = CreateMockStoreAndDomainWithSchemaLease(t, lease, opts...)
+	store = schematracker.UnwrapStorage(store)
 	return
 }
 
@@ -94,7 +95,8 @@ func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, 
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	dom, clean := bootstrap(t, store, lease)
-	return store, dom, clean
+	// unwrap for WithDDLChecker opt.
+	return schematracker.UnwrapStorage(store), dom, clean
 }
 
 // CreateMockStoreWithOracle returns a new mock kv.Storage and *domain.Domain, providing the oracle for the store.

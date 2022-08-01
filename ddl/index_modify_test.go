@@ -166,13 +166,21 @@ const (
 )
 
 func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp string) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+	isTestShardRowID := (testShardRowID & tp) > 0
+	// we wrap type on store to implement WithDDLChecker, but shard row ID test will fail at checking the type of store
+	// sp, ok := d.store.(kv.SplittableStore)
+	// since hard row ID is not in the use case of SchemaTracker(WithDDLChecker) by design, we disable it
+	var opts []mockstore.MockTiKVStoreOption
+	if !isTestShardRowID {
+		opts = append(opts, mockstore.WithDDLChecker())
+	}
+
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, opts...)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	isTestPartition := (testPartition & tp) > 0
-	isTestShardRowID := (testShardRowID & tp) > 0
 	if isTestShardRowID {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 		tk.MustExec("set global tidb_scatter_region = 1")
