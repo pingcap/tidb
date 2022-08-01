@@ -18,9 +18,6 @@ path = "/tmp/tidb"
 # The socket file to use for connection.
 socket = "/tmp/tidb-{Port}.sock"
 
-# Run ddl worker on this tidb-server.
-run-ddl = true
-
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "45s"
 
@@ -462,3 +459,6 @@ tidb_record_plan_in_slow_log = 1
 
 # The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
 max_connections = 0
+
+# Run ddl worker on this tidb-server.
+tidb_enable_ddl = true
