@@ -889,7 +889,7 @@ func FetchStoresAddr(ctx context.Context, tls *common.TLS, pdAddr string) ([]str
 		Address string `json:"address"`
 	}
 	type rawStore struct {
-		Store rawStoreAddr `json:"Store"`
+		Store rawStoreAddr `json:"store"`
 	}
 	var rawStoresAddr struct {
 		Stores []rawStore `json:"stores"`
