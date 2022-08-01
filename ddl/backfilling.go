@@ -192,7 +192,7 @@ func (r *reorgBackfillTask) String() string {
 	physicalID := strconv.FormatInt(r.physicalTableID, 10)
 	startKey := tryDecodeToHandleString(r.startKey)
 	endKey := tryDecodeToHandleString(r.endKey)
-	rangeStr := "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey 
+	rangeStr := "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
 	if r.endInclude {
 		return rangeStr + "]"
 	}
