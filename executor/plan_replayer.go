@@ -62,8 +62,9 @@ type tableNamePair struct {
 }
 
 type tableNameExtractor struct {
-	curDB string
-	names map[tableNamePair]struct{}
+	curDB    string
+	names    map[tableNamePair]struct{}
+	cteNames map[string]struct{}
 }
 
 func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -82,26 +83,10 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 		if _, ok := tne.names[tp]; !ok {
 			tne.names[tp] = struct{}{}
 		}
-	}
-	return in, true
-}
-
-type cteNameExtractor struct {
-	names map[string]struct{}
-}
-
-func (cne *cteNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
-	if _, ok := in.(*ast.SelectStmt); ok {
-		return in, true
-	}
-	return in, false
-}
-
-func (cne *cteNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
-	if s, ok := in.(*ast.SelectStmt); ok {
+	} else if s, ok := in.(*ast.SelectStmt); ok {
 		if s.With != nil && len(s.With.CTEs) > 0 {
 			for _, cte := range s.With.CTEs {
-				cne.names[cte.Name.L] = struct{}{}
+				tne.cteNames[cte.Name.L] = struct{}{}
 			}
 		}
 	}
@@ -408,18 +393,15 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 
 func extractTableNames(ExecStmt ast.StmtNode, curDB string) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
-		curDB: curDB,
-		names: make(map[tableNamePair]struct{}),
+		curDB:    curDB,
+		names:    make(map[tableNamePair]struct{}),
+		cteNames: make(map[string]struct{}),
 	}
 	ExecStmt.Accept(tableExtractor)
-	cteExtractor := &cteNameExtractor{
-		names: make(map[string]struct{}),
-	}
-	ExecStmt.Accept(cteExtractor)
 	r := make(map[tableNamePair]struct{})
 	// remove cte in table names
 	for tablePair := range tableExtractor.names {
-		_, ok := cteExtractor.names[tablePair.TableName]
+		_, ok := tableExtractor.cteNames[tablePair.TableName]
 		if !ok {
 			r[tablePair] = struct{}{}
 		}
