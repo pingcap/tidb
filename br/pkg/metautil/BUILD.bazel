@@ -32,6 +32,7 @@ go_test(
         "metafile_test.go",
     ],
     embed = [":metautil"],
+    flaky = True,
     deps = [
         "//br/pkg/mock/storage",
         "//testkit/testsetup",

@@ -1271,6 +1271,7 @@ type DDLJobsReaderExec struct {
 
 	cacheJobs []*model.Job
 	is        infoschema.InfoSchema
+	sess      sessionctx.Context
 }
 
 // Open implements the Executor Next interface.
@@ -1278,13 +1279,23 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
+	e.DDLJobRetriever.is = e.is
+	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
+	sess, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	e.DDLJobRetriever.is = e.is
-	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
-	err = e.DDLJobRetriever.initial(txn)
+	e.sess = sess
+	err = sessiontxn.NewTxn(context.Background(), sess)
+	if err != nil {
+		return err
+	}
+	txn, err := sess.Txn(true)
+	if err != nil {
+		return err
+	}
+	sess.GetSessionVars().SetInTxn(true)
+	err = e.DDLJobRetriever.initial(txn, sess)
 	if err != nil {
 		return err
 	}
@@ -1333,6 +1344,12 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.cursor += len(e.cacheJobs)
 	}
 	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *DDLJobsReaderExec) Close() error {
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), e.sess)
+	return e.baseExecutor.Close()
 }
 
 func (e *memtableRetriever) setDataFromEngines() {
@@ -3175,18 +3192,18 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 
 func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 	if len(rule.Data) == 0 {
-		err = errors.New(fmt.Sprintf("there is no data in rule %s", rule.ID))
+		err = fmt.Errorf("there is no data in rule %s", rule.ID)
 		return
 	}
 	data := rule.Data[0]
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
-		err = errors.New(fmt.Sprintf("get the label rules %s failed", rule.ID))
+		err = fmt.Errorf("get the label rules %s failed", rule.ID)
 		return
 	}
 	key, err := hex.DecodeString(fmt.Sprintf("%s", dataMap["start_key"]))
 	if err != nil {
-		err = errors.New(fmt.Sprintf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID))
+		err = fmt.Errorf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID)
 		return
 	}
 	_, bs, err := codec.DecodeBytes(key, nil)
@@ -3195,7 +3212,7 @@ func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 	}
 	tableID = tablecodec.DecodeTableID(key)
 	if tableID == 0 {
-		err = errors.New(fmt.Sprintf("decode tableID from key %s in rule %s failed", key, rule.ID))
+		err = fmt.Errorf("decode tableID from key %s in rule %s failed", key, rule.ID)
 		return
 	}
 	return

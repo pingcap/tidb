@@ -364,6 +364,9 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 type CompactReplicaKind string
 
 const (
+	// CompactReplicaKindAll means compacting both TiKV and TiFlash replicas.
+	CompactReplicaKindAll = "ALL"
+
 	// CompactReplicaKindTiFlash means compacting TiFlash replicas.
 	CompactReplicaKindTiFlash = "TIFLASH"
 
@@ -386,10 +389,15 @@ func (n *CompactTableStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while add table")
 	}
 
-	// Note: There is only TiFlash replica available now. TiKV will be added later.
-	ctx.WriteKeyWord(" COMPACT ")
-	ctx.WriteKeyWord(string(n.ReplicaKind))
-	ctx.WriteKeyWord(" REPLICA")
+	if n.ReplicaKind == CompactReplicaKindAll {
+		ctx.WriteKeyWord(" COMPACT")
+	} else {
+		// Note: There is only TiFlash replica available now. TiKV will be added later.
+		ctx.WriteKeyWord(" COMPACT ")
+		ctx.WriteKeyWord(string(n.ReplicaKind))
+		ctx.WriteKeyWord(" REPLICA")
+	}
+
 	return nil
 }
 
@@ -2023,6 +2031,7 @@ const (
 	AdminCleanupIndex
 	AdminCheckIndexRange
 	AdminShowDDLJobQueries
+	AdminShowDDLJobQueriesWithRange
 	AdminChecksumTable
 	AdminShowSlow
 	AdminShowNextRowID
@@ -2110,6 +2119,12 @@ func (n *ShowSlow) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// LimitSimple is the struct for Admin statement limit option.
+type LimitSimple struct {
+	Count  uint64
+	Offset uint64
+}
+
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
@@ -2125,6 +2140,7 @@ type AdminStmt struct {
 	Plugins        []string
 	Where          ExprNode
 	StatementScope StatementScope
+	LimitSimple    LimitSimple
 }
 
 // Restore implements Node interface.
@@ -2219,6 +2235,9 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 	case AdminShowDDLJobQueries:
 		ctx.WriteKeyWord("SHOW DDL JOB QUERIES ")
 		restoreJobIDs()
+	case AdminShowDDLJobQueriesWithRange:
+		ctx.WriteKeyWord("SHOW DDL JOB QUERIES LIMIT ")
+		ctx.WritePlainf("%d, %d", n.LimitSimple.Offset, n.LimitSimple.Count)
 	case AdminShowSlow:
 		ctx.WriteKeyWord("SHOW SLOW ")
 		if err := n.ShowSlow.Restore(ctx); err != nil {
@@ -3534,7 +3553,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join":
+	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge":
 		ctx.WritePlain(")")
 		return nil
 	}

@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	split "github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
@@ -497,7 +497,7 @@ func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionI
 	case pdpb.OperatorStatus_SUCCESS:
 		return true, nil
 	default:
-		log.FromContext(ctx).Warn("scatter-region operator status is abnormal, will scatter region again",
+		log.FromContext(ctx).Debug("scatter-region operator status is abnormal, will scatter region again",
 			logutil.Region(regionInfo.Region), zap.Stringer("status", resp.GetStatus()))
 		return false, local.splitCli.ScatterRegion(ctx, regionInfo)
 	}
