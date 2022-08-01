@@ -1884,7 +1884,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	if ts.StoreType == kv.TiFlash {
 		for _, col := range ts.schema.Columns {
-			if col.VirtualExpr != nil {
+			// In theory, TiFlash does not support virtual expr, but in non-mpp mode, if the cop request only contain table scan, then
+			// TiDB will fill the virtual column after decoding the cop response(executor.FillVirtualColumnValue), that is to say, the virtual
+			// columns in Cop request is just a placeholder, so TiFlash can support virtual column in cop request mode. However, virtual column
+			// with TiDBShard is special, it can be added using create index statement, TiFlash's ddl does not handle create index statement, so
+			// there is a chance that the TiDBShard's virtual column is not seen by TiFlash, in this case, TiFlash will throw column not found error
+			if ds.containExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr) {
 				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
 				return invalidTask, nil
 			}
@@ -1898,6 +1903,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
 			return invalidTask, nil
+		}
+		for _, col := range ts.schema.Columns {
+			if col.VirtualExpr != nil {
+				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
+				return invalidTask, nil
+			}
 		}
 		mppTask := &mppTask{
 			p:      ts,
