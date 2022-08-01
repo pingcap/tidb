@@ -56,7 +56,6 @@ func (s *mockStoreWithMultiPD) Describe() string             { return "" }
 
 type hotRegionsHistoryTableSuite struct {
 	store       kv.Storage
-	clean       func()
 	httpServers []*httptest.Server
 	startTime   time.Time
 }
@@ -159,7 +158,6 @@ func (s *hotRegionsHistoryTableSuite) setUpMockPDHTTPServer() (*httptest.Server,
 
 func TestTiDBHotRegionsHistory(t *testing.T) {
 	s := createHotRegionsHistoryTableSuite(t)
-	defer s.clean()
 
 	var unixTimeMs = func(v string) int64 {
 		tt, err := time.ParseInLocation("2006-01-02 15:04:05", v, time.Local)
