@@ -4457,7 +4457,7 @@ func TestAdminShowDDLJobsRowCount(t *testing.T) {
 
 	// Test for issue: https://github.com/pingcap/tidb/issues/25968
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id bigint key,b int);")
 	tk.MustExec("split table t by (10),(20),(30);")
 	tk.MustExec("insert into t values (0,0),(10,10),(20,20),(30,30);")
