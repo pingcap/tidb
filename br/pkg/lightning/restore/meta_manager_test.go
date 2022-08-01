@@ -66,10 +66,7 @@ func newTableRestore(t *testing.T, kvStore kv.Storage) *TableRestore {
 		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil {
 			return err
 		}
-		if err := m.CreateTableOrView(dbInfo.ID, ti.Core); err != nil {
-			return err
-		}
-		return nil
+		return m.CreateTableOrView(dbInfo.ID, ti.Core)
 	})
 	require.NoError(t, err)
 
@@ -426,7 +423,6 @@ func TestCheckTasksExclusively(t *testing.T) {
 		return newTasks, nil
 	})
 	require.NoError(t, err)
-
 }
 
 type testChecksumMgr struct {

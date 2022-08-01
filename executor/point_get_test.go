@@ -269,7 +269,6 @@ func TestIndexLookupBinary(t *testing.T) {
 	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
 	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
-
 }
 
 func TestOverflowOrTruncated(t *testing.T) {
@@ -503,7 +502,7 @@ func TestClusterIndexCBOPointGet(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	pointGetSuiteData.GetTestCases(t, &input, &output)
+	pointGetSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + tt)
 		res := tk.MustQuery(tt).Sort()
@@ -793,7 +792,6 @@ func TestPointGetLockExistKey(t *testing.T) {
 		{rc: true, key: "primary key"},
 		{rc: true, key: "unique key"},
 	} {
-
 		tableName := fmt.Sprintf("t_%d", i)
 		func(rc bool, key string, tableName string) {
 			testLock(rc, key, tableName)

@@ -940,7 +940,6 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(99), count)
-
 }
 
 func TestTSOCmdCountForTextSql(t *testing.T) {

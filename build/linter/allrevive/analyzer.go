@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package revive
+package allrevive
 
 import (
 	"encoding/json"
@@ -31,7 +31,7 @@ import (
 
 // Analyzer is the analyzer struct of gofmt.
 var Analyzer = &analysis.Analyzer{
-	Name: "revive",
+	Name: "all_revive",
 	Doc:  "~6x faster, stricter, configurable, extensible, and beautiful drop-in replacement for golint",
 	Run:  run,
 }
@@ -48,22 +48,22 @@ type jsonObject struct {
 
 var defaultRules = []lint.Rule{
 	//&rule.VarDeclarationsRule{},
-	&rule.PackageCommentsRule{},
-	&rule.DotImportsRule{},
+	//&rule.PackageCommentsRule{},
+	//&rule.DotImportsRule{},
 	&rule.BlankImportsRule{},
-	&rule.ExportedRule{},
-	&rule.VarNamingRule{},
+	//&rule.ExportedRule{},
+	//&rule.VarNamingRule{},
 	&rule.IndentErrorFlowRule{},
 	&rule.RangeRule{},
 	&rule.ErrorfRule{},
 	&rule.ErrorNamingRule{},
 	&rule.ErrorStringsRule{},
 	&rule.ReceiverNamingRule{},
-	&rule.IncrementDecrementRule{},
+	//&rule.IncrementDecrementRule{},
 	&rule.ErrorReturnRule{},
 	//&rule.UnexportedReturnRule{},
 	&rule.TimeNamingRule{},
-	&rule.ContextKeysType{},
+	//&rule.ContextKeysType{},
 	&rule.ContextAsArgumentRule{},
 }
 
@@ -71,18 +71,18 @@ var allRules = append([]lint.Rule{
 	//&rule.ArgumentsLimitRule{},
 	//&rule.CyclomaticRule{},
 	//&rule.FileHeaderRule{},
-	&rule.EmptyBlockRule{},
+	//&rule.EmptyBlockRule{},
 	&rule.SuperfluousElseRule{},
 	//&rule.ConfusingNamingRule{},
 	&rule.GetReturnRule{},
 	&rule.ModifiesParamRule{},
-	&rule.ConfusingResultsRule{},
+	//&rule.ConfusingResultsRule{},
 	//&rule.DeepExitRule{},
-	&rule.UnusedParamRule{},
+	//&rule.UnusedParamRule{},
 	&rule.UnreachableCodeRule{},
 	//&rule.AddConstantRule{},
 	//&rule.FlagParamRule{},
-	&rule.UnnecessaryStmtRule{},
+	//&rule.UnnecessaryStmtRule{},
 	//&rule.StructTagRule{},
 	//&rule.ModifiesValRecRule{},
 	&rule.ConstantLogicalExprRule{},
@@ -97,11 +97,11 @@ var allRules = append([]lint.Rule{
 	&rule.AtomicRule{},
 	&rule.EmptyLinesRule{},
 	//&rule.LineLengthLimitRule{},
-	&rule.CallToGCRule{},
+	//&rule.CallToGCRule{},
 	&rule.DuplicatedImportsRule{},
 	//&rule.ImportShadowingRule{},
 	//&rule.BareReturnRule{},
-	&rule.UnusedReceiverRule{},
+	//&rule.UnusedReceiverRule{},
 	//&rule.UnhandledErrorRule{},
 	//&rule.CognitiveComplexityRule{},
 	&rule.StringOfIntRule{},
@@ -110,11 +110,11 @@ var allRules = append([]lint.Rule{
 	&rule.UnconditionalRecursionRule{},
 	&rule.IdenticalBranchesRule{},
 	&rule.DeferRule{},
-	&rule.UnexportedNamingRule{},
+	//&rule.UnexportedNamingRule{},
 	//&rule.FunctionLength{},
 	//&rule.NestedStructs{},
 	&rule.IfReturnRule{},
-	&rule.UselessBreak{},
+	//&rule.UselessBreak{},
 	&rule.TimeEqualRule{},
 	//&rule.BannedCharsRule{},
 	&rule.OptimizeOperandsOrderRule{},
@@ -142,6 +142,7 @@ func run(pass *analysis.Pass) (any, error) {
 	conf.Rules["defer"] = lint.RuleConfig{
 		Arguments: []interface{}{[]interface{}{"loop", "method-call", "immediate-recover", "return"}},
 	}
+
 	lintingRules, err := config.GetLintingRules(&conf, []lint.Rule{})
 	if err != nil {
 		return nil, err

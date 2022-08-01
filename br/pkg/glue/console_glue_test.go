@@ -77,7 +77,6 @@ func testPrettyString(t *testing.T) {
 			}
 		}
 	}
-
 }
 
 func testPrettyStringSlicing(t *testing.T) {

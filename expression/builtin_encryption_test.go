@@ -494,7 +494,6 @@ func TestMD5Hash(t *testing.T) {
 	}
 	_, err := funcs[ast.MD5].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
-
 }
 
 func TestRandomBytes(t *testing.T) {

@@ -392,7 +392,6 @@ func TestIgnoreSpaceMode(t *testing.T) {
 	require.Error(t, err)
 	tk.MustExec("CREATE TABLE test.NOW(a bigint);")
 	tk.MustExec("DROP TABLE NOW;")
-
 }
 
 func TestNoBackslashEscapesMode(t *testing.T) {

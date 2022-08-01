@@ -281,7 +281,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 		output [][]string
 	)
 	integrationSuiteData := statistics.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	inputLen := len(input)
 	// The test cases are:
 	// Query a = 1, b = 1, c = 1, d >= 3 and d <= 5 separately. We got 5, 3, 2, 3.
@@ -424,7 +424,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 		require.Equal(t, int64(3), col.NullCount)
 	}
 	integrationSuiteData := statistics.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	// Check the topn and buckets contains no null values.
 	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {

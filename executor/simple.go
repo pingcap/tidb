@@ -934,7 +934,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		} else {
-
 			// The user executing the query (user) does not match the user specified (spec.User)
 			// The MySQL manual states:
 			// "In most cases, ALTER USER requires the global CREATE USER privilege, or the UPDATE privilege for the mysql system schema"
@@ -1177,14 +1176,13 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 		// rename relationship from mysql.global_grants
 		// TODO: add global_grants into the parser
+		// TODO: need update columns_priv once we implement columns_priv functionality.
+		// When that is added, please refactor both executeRenameUser and executeDropUser to use an array of tables
+		// to loop over, so it is easier to maintain.
 		if err = renameUserHostInSystemTable(sqlExecutor, "global_grants", "User", "Host", userToUser); err != nil {
 			failedUser = oldUser.String() + " TO " + newUser.String() + " mysql.global_grants error"
 			break
 		}
-
-		//TODO: need update columns_priv once we implement columns_priv functionality.
-		// When that is added, please refactor both executeRenameUser and executeDropUser to use an array of tables
-		// to loop over, so it is easier to maintain.
 	}
 
 	if failedUser == "" {
@@ -1361,9 +1359,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 					break
 				}
 			}
-		}
-
-		//TODO: need delete columns_priv once we implement columns_priv functionality.
+		} //TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
 	if len(failedUsers) == 0 {

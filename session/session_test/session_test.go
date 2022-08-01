@@ -3654,7 +3654,7 @@ func TestAutocommit(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("insert into t select 1")
-
+	//nolint:all_revive,revive
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	tk.MustExec("delete from t")
 
