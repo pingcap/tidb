@@ -21,6 +21,7 @@ import (
 	"io"
 	"strings"
 
+	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -205,7 +207,14 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 		&dump,
 	)
 
+	isNoSuchTableErr := false
+	rootErr := errors.Cause(err)
+	if mysqlErr, ok := rootErr.(*mysql_sql_driver.MySQLError); ok && mysqlErr.Number == errno.ErrNoSuchTable {
+		isNoSuchTableErr = true
+	}
 	switch {
+	case isNoSuchTableErr:
+		result = true
 	case errors.ErrorEqual(err, sql.ErrNoRows):
 		result = true
 	case err != nil:
