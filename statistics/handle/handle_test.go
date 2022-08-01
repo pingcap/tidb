@@ -3170,8 +3170,8 @@ func TestColumnCountFromStorage(t *testing.T) {
 	require.Equal(t, int64(2), statsTbl.Columns[tblInfo.Columns[0].ID].Count)
 }
 
-func TestIncrementalModifyCountUpdate(t *testing.T) {
-	for _, analyzeSnapshot := range []bool{true, false} {
+func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.T) {
+	return func(t *testing.T) {
 		store, dom := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
@@ -3238,6 +3238,12 @@ func TestIncrementalModifyCountUpdate(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"))
+	}
+}
+
+func TestIncrementalModifyCountUpdate(t *testing.T) {
+	for _, analyzeSnapshot := range []bool{true, false} {
+		t.Run(fmt.Sprintf("%s-%t", t.Name(), analyzeSnapshot), testIncrementalModifyCountUpdateHelper(analyzeSnapshot))
 	}
 }
 
