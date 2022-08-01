@@ -817,7 +817,6 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 	pdServers []infoschema.ServerInfo,
 	req *HistoryHotRegionsRequest,
 ) ([]chan hotRegionsResult, error) {
-
 	var results []chan hotRegionsResult
 	for _, srv := range pdServers {
 		for typ := range e.extractor.HotRegionTypes {

@@ -76,7 +76,7 @@ func TestFlatPhysicalPlan(t *testing.T) {
 		CTEs [][]*FlatPhysicalOperatorForTest
 	}
 	planSuiteData := core.GetFlatPlanSuiteData()
-	planSuiteData.GetTestCases(t, &input, &output)
+	planSuiteData.LoadTestCases(t, &input, &output)
 	p := parser.New()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 

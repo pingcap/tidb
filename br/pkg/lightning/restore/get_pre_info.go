@@ -520,14 +520,12 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context,
 		if err != nil {
 			if errors.Cause(err) != io.EOF {
 				return nil, nil, errors.Trace(err)
-			} else {
-				break
 			}
+			break
 		}
 		rows = append(rows, parser.LastRow().Row)
 	}
 	return parser.Columns(), rows, nil
-
 }
 
 // EstimateSourceDataSize estimates the datasize to generate during the import as well as some other sub-informaiton.
@@ -598,7 +596,6 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (
 		HasUnsortedBigTables: (unSortedBigTableCount > 0),
 	}
 	return result, nil
-
 }
 
 // sampleDataFromTable samples the source data file to get the extra data ratio for the index
@@ -713,7 +710,7 @@ outloop:
 			return 0.0, false, errors.Trace(err)
 		}
 		lastRow := parser.LastRow()
-		rowCount += 1
+		rowCount++
 
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
@@ -725,9 +722,8 @@ outloop:
 			}
 			if rowCount < maxSampleRowCount {
 				continue
-			} else {
-				break
 			}
+			break
 		}
 		if isRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
@@ -794,8 +790,8 @@ func (p *PreRestoreInfoGetterImpl) FetchRemoteTableModels(ctx context.Context, s
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.
 // It implements the PreRestoreInfoGetter interface.
 // Mydump database metas are retrieved from the context.
-func (g *PreRestoreInfoGetterImpl) CheckVersionRequirements(ctx context.Context) error {
-	return g.targetInfoGetter.CheckVersionRequirements(ctx)
+func (p *PreRestoreInfoGetterImpl) CheckVersionRequirements(ctx context.Context) error {
+	return p.targetInfoGetter.CheckVersionRequirements(ctx)
 }
 
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.

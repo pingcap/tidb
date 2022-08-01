@@ -1033,7 +1033,6 @@ func (l *logEntry) checkField(t *testing.T, requireFields ...zapcore.Field) {
 		}
 		require.NotNilf(t, f, "matched log fields %s:%s not found in log", rf.Key, rf)
 	}
-
 }
 
 func (l *logEntry) checkFieldNotEmpty(t *testing.T, fieldName string) {

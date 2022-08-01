@@ -1448,7 +1448,7 @@ func TestMergeLockScanner(t *testing.T) {
 
 	for _, useMock := range []bool{false, true} {
 		channel := makeMergedChannel
-		if useMock == true {
+		if useMock {
 			channel = s.makeMergedMockClient
 		}
 

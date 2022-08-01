@@ -908,7 +908,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 			tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_ddl_limit"), model.NewCIStr(fmt.Sprintf("t%v", i)))
 			require.NoError(t, err)
 			if tb.Meta().TiFlashReplica != nil {
-				cnt += 1
+				cnt++
 			}
 		}
 		require.Equal(t, expected, cnt)

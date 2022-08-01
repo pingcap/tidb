@@ -612,7 +612,6 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 			Peers:       region.Meta.Peers,
 			RegionEpoch: region.Meta.RegionEpoch,
 		}
-
 	}
 	return regions, nil
 }
@@ -1822,7 +1821,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	}
 	colMap := make(map[int64]*types.FieldType, 3)
 	for _, col := range tb.Meta().Columns {
-		colMap[col.ID] = &col.FieldType
+		colMap[col.ID] = &(col.FieldType)
 	}
 
 	respValue := resp.Value

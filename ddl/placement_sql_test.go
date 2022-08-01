@@ -580,7 +580,6 @@ func TestPlacementMode(t *testing.T) {
 	err = dom.DDL().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create database db2").Check(testkit.Rows("db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
-
 }
 
 func TestPlacementTiflashCheck(t *testing.T) {

@@ -50,7 +50,7 @@ func TestGroupNDVs(t *testing.T) {
 		JoinInput string
 	}
 	statsSuiteData := core.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
@@ -142,7 +142,7 @@ func TestNDVGroupCols(t *testing.T) {
 		Plan []string
 	}
 	statsSuiteData := core.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
