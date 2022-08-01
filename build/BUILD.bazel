@@ -134,6 +134,7 @@ nogo(
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
+                   "//build/linter/allrevive:allrevive",
                    "//build/linter/errcheck:errcheck",
                    "//build/linter/revive:revive",
                ],

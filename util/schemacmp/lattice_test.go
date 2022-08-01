@@ -550,7 +550,6 @@ func TestCompatibilities(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-
 		cmp, err := tc.a.Compare(tc.b)
 		if len(tc.compareError) != 0 {
 			require.IsType(t, &IncompatibleError{}, err)

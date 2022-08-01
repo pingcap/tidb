@@ -862,6 +862,7 @@ func TestUnflodSequence(t *testing.T) {
 	tk.MustQuery("select nextval(seq), b from (select nextval(seq) as b, a from t1) t2").Check(testkit.Rows("227 228", "229 230", "231 232"))
 	tk.MustExec("insert into t2 select nextval(seq), b from (select nextval(seq) as b, a from t1) t2")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("233 234", "235 236", "237 238"))
+	//nolint:all_revive,revive
 	tk.MustExec("delete from t2")
 
 	// For union operator like select1 union select2, select1 and select2 will be executed parallelly,

@@ -308,7 +308,7 @@ func BuildHistAndTopN(
 		}
 		// case 1, this value is equal to the last one: current count++
 		if bytes.Equal(cur, sampleBytes) {
-			curCnt += 1
+			curCnt++
 			continue
 		}
 		// case 2, meet a different value: counting for the "current" is complete

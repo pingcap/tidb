@@ -244,5 +244,4 @@ func TestCacheable(t *testing.T) {
 		},
 	}
 	require.True(t, core.Cacheable(stmt, is))
-
 }

@@ -613,7 +613,6 @@ func TestSocketAndIp(t *testing.T) {
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
 			require.NoError(t, rows.Close())
 		})
-
 }
 
 // TestOnlySocket for server configuration without network interface for mysql clients
@@ -769,7 +768,6 @@ func TestOnlySocket(t *testing.T) {
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
 			require.NoError(t, rows.Close())
 		})
-
 }
 
 // generateCert generates a private key and a certificate in PEM format based on parameters.
@@ -1185,7 +1183,6 @@ func TestNullFlag(t *testing.T) {
 	}
 
 	{
-
 		rs, err := Execute(ctx, qctx, "select if(1, null, 1) ;")
 		require.NoError(t, err)
 		cols := rs.Columns()
@@ -2119,7 +2116,6 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		err = failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
 		require.NoError(t, err)
 		stmtstats.CloseAggregator()
-
 	}
 	return ts, total, tagChecker, collectedNotifyCh, cleanFn
 }

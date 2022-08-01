@@ -184,7 +184,7 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -210,7 +210,7 @@ func TestAggColumnPrune(t *testing.T) {
 		Res []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -233,7 +233,7 @@ func TestIsFromUnixtimeNullRejective(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -374,7 +374,7 @@ func TestSimplifyOuterJoinWithCast(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -446,7 +446,7 @@ func TestSelPushDownTiFlash(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -503,7 +503,7 @@ func TestVerboseExplain(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -544,7 +544,7 @@ func TestPushDownToTiFlashWithKeepOrder(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -586,7 +586,7 @@ func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -642,7 +642,7 @@ func TestMPPJoin(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -684,7 +684,7 @@ func TestMPPLeftSemiJoin(t *testing.T) {
 		Warn []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -740,7 +740,7 @@ func TestMPPOuterJoinBuildSideForBroadcastJoin(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -787,7 +787,7 @@ func TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -834,7 +834,7 @@ func TestMPPOuterJoinBuildSideForShuffleJoin(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -897,7 +897,7 @@ func TestMPPShuffledJoin(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -949,7 +949,7 @@ func TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -996,7 +996,7 @@ func TestJoinNotSupportedByTiFlash(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1008,7 +1008,7 @@ func TestJoinNotSupportedByTiFlash(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 1")
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1058,7 +1058,7 @@ func TestMPPWithHashExchangeUnderNewCollation(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1101,7 +1101,7 @@ func TestMPPWithBroadcastExchangeUnderNewCollation(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1184,7 +1184,7 @@ func TestMPPAvgRewrite(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1301,7 +1301,7 @@ func TestReadFromStorageHint(t *testing.T) {
 		Warn []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1343,7 +1343,7 @@ func TestReadFromStorageHintAndIsolationRead(t *testing.T) {
 		Warn []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
 		testdata.OnRecord(func() {
@@ -1385,7 +1385,7 @@ func TestIsolationReadTiFlashNotChoosePointGet(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1424,7 +1424,7 @@ func TestIsolationReadTiFlashUseIndexHint(t *testing.T) {
 		Warn []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1450,7 +1450,7 @@ func TestIsolationReadDoNotFilterSystemDB(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1480,7 +1480,7 @@ func TestPartitionTableStats(t *testing.T) {
 			Result []string
 		}
 		integrationSuiteData := core.GetIntegrationSuiteData()
-		integrationSuiteData.GetTestCases(t, &input, &output)
+		integrationSuiteData.LoadTestCases(t, &input, &output)
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
@@ -1507,7 +1507,7 @@ func TestPartitionPruningForInExpr(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1592,7 +1592,7 @@ func TestMaxMinEliminate(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1636,7 +1636,7 @@ func TestIndexJoinUniqueCompositeIndex(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1661,7 +1661,7 @@ func TestIndexMerge(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1686,7 +1686,7 @@ func TestIndexMergeHint4CNF(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1758,7 +1758,7 @@ func TestIndexJoinTableRange(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1793,7 +1793,7 @@ func TestSubqueryWithTopN(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1817,7 +1817,7 @@ func TestIndexHintWarning(t *testing.T) {
 		Warnings []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1921,7 +1921,7 @@ func TestApproxPercentile(t *testing.T) {
 		Res  []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1963,7 +1963,7 @@ func TestHintWithRequiredProperty(t *testing.T) {
 		Warnings []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -2045,7 +2045,7 @@ func TestHintWithoutTableWarning(t *testing.T) {
 		Warnings []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -2176,7 +2176,7 @@ func TestIndexJoinInnerIndexNDV(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -2222,7 +2222,7 @@ func TestIndexMergeSerial(t *testing.T) {
 		Warnings []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -2468,7 +2468,7 @@ func TestStreamAggProp(t *testing.T) {
 		Res  []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -2523,7 +2523,7 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 		Warn []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -2689,7 +2689,7 @@ func TestAccessPathOnClusterIndex(t *testing.T) {
 		Res  []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -2734,7 +2734,7 @@ func TestIndexJoinOnClusteredIndex(t *testing.T) {
 		Res  []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -3492,7 +3492,7 @@ partition p2 values less than (10))`)
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -3703,7 +3703,7 @@ func TestIssue20710(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -3803,7 +3803,6 @@ func TestOrderByHavingNotInSelect(t *testing.T) {
 		"[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t1.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 	tk.MustGetErrMsg("select v2, v1 from (select t1.v1, t2.v2 from ttest t1 join ttest t2) t3 join (select 1, 2) t2 group by v1",
 		"[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t3.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
-
 }
 
 func TestUpdateSetDefault(t *testing.T) {
@@ -4079,7 +4078,7 @@ func TestInvalidHint(t *testing.T) {
 		Warnings []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	warning := "show warnings;"
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -4138,7 +4137,7 @@ func TestConvertRangeToPoint(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4199,7 +4198,7 @@ func TestIssue22105(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4325,7 +4324,7 @@ func TestPushDownProjectionForTiKV(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4366,7 +4365,7 @@ func TestPushDownProjectionForTiFlashCoprocessor(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4407,7 +4406,7 @@ func TestPushDownProjectionForTiFlash(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4449,7 +4448,7 @@ func TestPushDownSelectionForMPP(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4491,7 +4490,7 @@ func TestPushDownProjectionForMPP(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4519,7 +4518,7 @@ func TestReorderSimplifiedOuterJoins(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4545,7 +4544,7 @@ func TestIssue23887(t *testing.T) {
 		Res  []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4626,7 +4625,7 @@ func TestPushDownAggForMPP(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4667,7 +4666,7 @@ func TestMppUnionAll(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4676,7 +4675,6 @@ func TestMppUnionAll(t *testing.T) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
-
 }
 
 func TestMppJoinDecimal(t *testing.T) {
@@ -4715,7 +4713,7 @@ func TestMppJoinDecimal(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4757,7 +4755,7 @@ func TestMppAggTopNWithJoin(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4782,7 +4780,7 @@ func TestLimitIndexLookUpKeepOrder(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4807,7 +4805,7 @@ func TestDecorrelateInnerJoinInSubquery(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -4835,7 +4833,7 @@ func TestDecorrelateLimitInSubquery(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -5008,7 +5006,7 @@ func TestMultiColMaxOneRow(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -5106,7 +5104,7 @@ func TestIssue24095(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -5239,7 +5237,7 @@ func TestSequenceAsDataSource(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -5331,7 +5329,7 @@ func TestMergeContinuousSelections(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -5370,7 +5368,6 @@ func TestSelectIgnoreTemporaryTableInView(t *testing.T) {
 	tk.MustQuery("select * from v3").Check(testkit.Rows("1 2", "3 4"))
 	tk.MustQuery("select * from v4").Check(testkit.Rows("3 4 3 5"))
 	tk.MustQuery("select * from v5").Check(testkit.Rows("1 2", "3 4"))
-
 }
 
 // TestIsMatchProp is used to test https://github.com/pingcap/tidb/issues/26017.
@@ -5390,7 +5387,7 @@ func TestIsMatchProp(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -5718,7 +5715,7 @@ func TestHeuristicIndexSelection(t *testing.T) {
 		Warnings []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -5748,7 +5745,7 @@ func TestOutputSkylinePruningInfo(t *testing.T) {
 		Warnings []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -5782,7 +5779,7 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 		Warnings []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -5819,7 +5816,7 @@ func TestIssue27083(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -5959,7 +5956,7 @@ func TestGroupBySetVar(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		res := tk.MustQuery("explain format = 'brief' " + tt)
 		testdata.OnRecord(func() {
@@ -6001,7 +5998,7 @@ func TestPushDownGroupConcatToTiFlash(t *testing.T) {
 		Warning []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -6159,7 +6156,7 @@ func TestRejectSortForMPP(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -6202,7 +6199,7 @@ func TestRegardNULLAsPoint(t *testing.T) {
 		Result       []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -6327,7 +6324,7 @@ func TestIssue30200(t *testing.T) {
 		Res  []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -6367,7 +6364,6 @@ func TestIssue30271(t *testing.T) {
 	tk.MustExec("insert into t values ('b', 'a', '1'), ('b', 'A', '2'), ('c', 'a', '3');")
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
-
 }
 
 func TestIssue30804(t *testing.T) {
@@ -6446,7 +6442,7 @@ func TestIndexMergeWithCorrelatedColumns(t *testing.T) {
 		Res  []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -6456,7 +6452,6 @@ func TestIndexMergeWithCorrelatedColumns(t *testing.T) {
 		tk.MustQuery("explain format=brief " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
-
 }
 
 func TestIssue20510(t *testing.T) {
@@ -6660,7 +6655,7 @@ func TestIssue31240(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -6722,7 +6717,7 @@ func TestIssue32632(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -6760,7 +6755,7 @@ func TestTiFlashPartitionTableScan(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -6792,7 +6787,7 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 		Plan []string
 	}
 	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

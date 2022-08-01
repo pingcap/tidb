@@ -921,7 +921,6 @@ func TestAddColumn2(t *testing.T) {
 		tk.MustExec("insert into t2 (a,_tidb_rowid) values (1,2);")
 		re = tk.MustQuery(" select a,_tidb_rowid from t2;")
 		tk.MustExec("commit")
-
 	}
 	dom.DDL().SetHook(hook)
 

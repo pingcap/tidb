@@ -831,7 +831,6 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk1.MustExec("show stats_meta")
 	tk1.MustExec("SHOW STATS_BUCKETS")
 	tk1.MustExec("SHOW STATS_HISTOGRAMS")
-
 }
 
 func TestIssue18878(t *testing.T) {
@@ -1122,7 +1121,6 @@ func TestUnprivilegedShow(t *testing.T) {
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
 
 	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   ", createTime)))
-
 }
 
 func TestCollation(t *testing.T) {
@@ -1898,7 +1896,6 @@ func TestShowTableStatusLike(t *testing.T) {
 	rows = tk.MustQuery("SHOW table status LIKE 'li%'").Rows()
 	require.Equal(t, "Li_1", rows[0][0])
 	require.Equal(t, "li_2", rows[1][0])
-
 }
 
 func TestShowCollationsLike(t *testing.T) {

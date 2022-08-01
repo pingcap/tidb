@@ -782,7 +782,6 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 
 // authSha implements the caching_sha2_password specific part of the protocol.
 func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
-
 	const (
 		ShaCommand       = 1
 		RequestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
@@ -1873,7 +1872,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 
 	var pointPlans []plannercore.Plan
 	if len(stmts) > 1 {
-
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
 		// by early terminating the first statement, and then running an entirely
