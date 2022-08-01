@@ -39,6 +39,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/expression"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -163,7 +164,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	)
 	cc.initInputEncoder(ctx)
 	numParams := stmt.NumParams()
-	args := make([]types.Datum, numParams)
+	args := make([]expression.Expression, numParams)
 	if numParams > 0 {
 		nullBitmapLen := (numParams + 7) >> 3
 		if len(data) < (pos + nullBitmapLen + 1) {
@@ -318,7 +319,7 @@ func parseStmtFetchCmd(data []byte) (uint32, uint32, error) {
 	return stmtID, fetchSize, nil
 }
 
-func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams [][]byte,
+func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boundParams [][]byte,
 	nullBitmap, paramTypes, paramValues []byte, enc *inputDecoder) (err error) {
 	pos := 0
 	var (
@@ -331,12 +332,16 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 		enc = newInputDecoder(charset.CharsetUTF8)
 	}
 
+	args := make([]types.Datum, len(params))
+	ftypes := make([]*types.FieldType, len(params))
 	for i := 0; i < len(args); i++ {
 		// if params had received via ComStmtSendLongData, use them directly.
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
 		// see clientConn#handleStmtSendLongData
 		if boundParams[i] != nil {
 			args[i] = types.NewBytesDatum(enc.decodeInput(boundParams[i]))
+			ftypes[i] = types.NewFieldType(mysql.TypeBit)
+			ftypes[i].AddFlag(mysql.BinaryFlag)
 			continue
 		}
 
@@ -348,6 +353,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			var nilDatum types.Datum
 			nilDatum.SetNull()
 			args[i] = nilDatum
+			ftypes[i] = types.NewFieldType(mysql.TypeNull)
 			continue
 		}
 
@@ -357,6 +363,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 
 		tp := paramTypes[i<<1]
 		isUnsigned := (paramTypes[(i<<1)+1] & 0x80) > 0
+		ftypes[i] = types.NewFieldType(tp)
 
 		switch tp {
 		case mysql.TypeNull:
@@ -373,6 +380,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 
 			if isUnsigned {
 				args[i] = types.NewUintDatum(uint64(paramValues[pos]))
+				ftypes[i].AddFlag(mysql.UnsignedFlag)
 			} else {
 				args[i] = types.NewIntDatum(int64(int8(paramValues[pos])))
 			}
@@ -388,6 +396,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			valU16 := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
 			if isUnsigned {
 				args[i] = types.NewUintDatum(uint64(valU16))
+				ftypes[i].AddFlag(mysql.UnsignedFlag)
 			} else {
 				args[i] = types.NewIntDatum(int64(int16(valU16)))
 			}
@@ -402,6 +411,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			valU32 := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 			if isUnsigned {
 				args[i] = types.NewUintDatum(uint64(valU32))
+				ftypes[i].AddFlag(mysql.UnsignedFlag)
 			} else {
 				args[i] = types.NewIntDatum(int64(int32(valU32)))
 			}
@@ -416,6 +426,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			valU64 := binary.LittleEndian.Uint64(paramValues[pos : pos+8])
 			if isUnsigned {
 				args[i] = types.NewUintDatum(valU64)
+				ftypes[i].AddFlag(mysql.UnsignedFlag)
 			} else {
 				args[i] = types.NewIntDatum(int64(valU64))
 			}
@@ -567,6 +578,11 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			return
 		}
 	}
+
+	for i := range params {
+		params[i] = &expression.Constant{Value: args[i], RetType: ftypes[i]}
+	}
+
 	return
 }
 
