@@ -600,3 +600,10 @@ const (
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
 	PartitionCountLimit = 8192
 )
+
+const (
+	CursorTypeNoCursor uint8 = 1 << iota
+	CursorTypeReadOnly
+	CursorTypeForUpdate
+	CursorTypeScrollable
+)
