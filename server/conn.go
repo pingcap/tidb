@@ -2322,7 +2322,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		start = time.Now()
 	}
 
-	var err error = nil
+	var err error
 	if cc.capability&mysql.ClientDeprecateEOF > 0 {
 		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
 			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), true)
