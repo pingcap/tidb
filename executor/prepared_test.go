@@ -539,7 +539,7 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 			Result           []string
 		}
 	}
-	prepareMergeSuiteData.GetTestCases(t, &input, &output)
+	prepareMergeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		tk.MustExec(tt.PrepareStmt)
 		testdata.OnRecord(func() {
@@ -1082,7 +1082,7 @@ func TestParameterPushDown(t *testing.T) {
 		Plan      []string
 		FromCache string
 	}
-	prepareMergeSuiteData.GetTestCases(t, &input, &output)
+	prepareMergeSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		if strings.HasPrefix(tt.SQL, "execute") {
@@ -1290,7 +1290,6 @@ func TestTemporaryTable4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-
 }
 
 func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {

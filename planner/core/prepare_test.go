@@ -1249,8 +1249,6 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		if pruneMode == string(variable.Dynamic) {
 			// When the temporary disabling of prepared plan cache for dynamic partition prune mode is disabled, change this to 1!
 			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-		} else {
-			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 		}
 	}
 }
@@ -2979,7 +2977,6 @@ func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 	// After beginning a new txn, the infoSchema should be the latest
 	tk1.MustExec("begin pessimistic")
 	tk1.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "3"))
-
 }
 
 func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *testkit.TestKit, stmtID uint32) {

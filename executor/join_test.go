@@ -680,7 +680,7 @@ func TestUsingAndNaturalJoinSchema(t *testing.T) {
 		SQL string
 		Res []string
 	}
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -708,7 +708,7 @@ func TestNaturalJoin(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -2762,7 +2762,6 @@ func TestIssue30211(t *testing.T) {
 
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
 		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
-
 	}()
 	tk.MustExec("insert into t1 values(1),(2);")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2);")

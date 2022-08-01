@@ -202,7 +202,6 @@ func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 	if err != nil {
 		log.Panic("write http response failed", zap.Error(err))
 	}
-
 }
 
 func getMockRegionsTableInfoSchema() []*model.DBInfo {

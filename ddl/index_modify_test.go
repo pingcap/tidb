@@ -766,7 +766,7 @@ func checkGlobalIndexRow(
 
 	tblColMap := make(map[int64]*types.FieldType, len(tblInfo.Columns))
 	for _, col := range tblInfo.Columns {
-		tblColMap[col.ID] = &col.FieldType
+		tblColMap[col.ID] = &(col.FieldType)
 	}
 
 	// Check local index entry does not exist.

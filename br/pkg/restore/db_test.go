@@ -127,7 +127,6 @@ func TestRestoreAutoIncID(t *testing.T) {
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
 	require.NoErrorf(t, err, "Error query auto inc id: %s", err)
 	require.Equal(t, uint64(globalAutoID+300), autoIncID)
-
 }
 
 func TestCreateTablesInDb(t *testing.T) {
@@ -166,7 +165,6 @@ func TestCreateTablesInDb(t *testing.T) {
 
 	err = db.CreateTables(context.Background(), tables, ddlJobMap, false, nil)
 	require.NoError(t, err)
-
 }
 
 func TestFilterDDLJobs(t *testing.T) {

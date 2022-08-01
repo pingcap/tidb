@@ -1572,7 +1572,6 @@ func TestEnableNoopFunctionsVar(t *testing.T) {
 	tk.MustExec("set global read_only = on")
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
 	require.Error(t, tk.ExecToErr("set global read_only = abc"))
-
 }
 
 // https://github.com/pingcap/tidb/issues/29670

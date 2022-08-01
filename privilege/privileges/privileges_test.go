@@ -979,7 +979,6 @@ func TestCheckCertBasedAuth(t *testing.T) {
 	// test old data and broken data
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "r12_old_tidb_user", Hostname: "localhost"}, nil, nil))
 	require.False(t, tk.Session().Auth(&auth.UserIdentity{Username: "r13_broken_user", Hostname: "localhost"}, nil, nil))
-
 }
 
 func connectionState(issuer, subject pkix.Name, cipher uint16, opt ...func(c *x509.Certificate)) *tls.ConnectionState {
@@ -1524,7 +1523,6 @@ func TestTableNotExistNoPermissions(t *testing.T) {
 		// Check it is permission denied, not not found.
 		require.EqualError(t, err2, fmt.Sprintf("[planner:1142]%s command denied to user 'testnotexist'@'localhost' for table 't1'", tt.stmtType))
 	}
-
 }
 
 func TestLoadDataPrivilege(t *testing.T) {
@@ -1908,7 +1906,6 @@ func TestSecurityEnhancedModeStatusVars(t *testing.T) {
 		Username: "unostatus",
 		Hostname: "localhost",
 	}, nil, nil)
-
 }
 
 func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
@@ -1952,7 +1949,6 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 
 	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'HDFS:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
-
 }
 
 func TestRenameUser(t *testing.T) {
@@ -2601,7 +2597,6 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "placement_user", Hostname: "localhost"}, nil, nil))
 	tk.MustExec(createStmt)
 	tk.MustExec(dropStmt)
-
 }
 
 func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
@@ -2779,7 +2774,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 			tk.MustGetErrCode(test.sql, test.errcode)
 		}
 	}
-
+	//nolint:revive,all_revive
 	// TODO: issue #29282 to be fixed.
 	//for i, test := range tests {
 	//	preparedStmt := fmt.Sprintf("prepare stmt%d from '%s'", i, test.sql)

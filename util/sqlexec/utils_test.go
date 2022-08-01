@@ -401,7 +401,6 @@ func TestEscapeSQL(t *testing.T) {
 				require.Equal(t, v.output, r2)
 				require.NoError(t, e3)
 				require.Equal(t, v.output, r3.String())
-
 			} else {
 				require.Error(t, e1)
 				require.Regexp(t, v.err, e1.Error())
