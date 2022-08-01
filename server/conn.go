@@ -2178,8 +2178,8 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		if err != nil {
 			return err
 		}
-		cc.pkt.flush()
-		return nil
+		err = cc.pkt.flush()
+		return err
 	}
 	if err := cc.writeEOF(0); err != nil {
 		return err
