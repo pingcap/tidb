@@ -197,7 +197,6 @@ go_test(
     shard_count = 50,
     deps = [
         "//config",
-        "//ddl",
         "//domain",
         "//errno",
         "//executor",
@@ -227,6 +226,7 @@ go_test(
         "//statistics/handle",
         "//table",
         "//testkit",
+        "//testkit/ddlhelper",
         "//testkit/testdata",
         "//testkit/testmain",
         "//testkit/testsetup",

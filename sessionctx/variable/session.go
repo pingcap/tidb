@@ -1469,6 +1469,7 @@ func NewSessionVars() *SessionVars {
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
 		MinPagingSize:      DefMinPagingSize,
+		MaxPagingSize:      DefMaxPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
@@ -1628,6 +1629,13 @@ func (s *SessionVars) SetUserVar(varName string, svalue string, collation string
 		_, collation = s.GetCharsetInfo()
 		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	}
+}
+
+// UnsetUserVar unset an user defined variable by name.
+func (s *SessionVars) UnsetUserVar(varName string) {
+	varName = strings.ToLower(varName)
+	delete(s.Users, varName)
+	delete(s.UserVarTypes, varName)
 }
 
 // SetLastInsertID saves the last insert id to the session context.
@@ -2207,6 +2215,9 @@ type BatchSize struct {
 
 	// MinPagingSize defines the min size used by the coprocessor paging protocol.
 	MinPagingSize int
+
+	// MinPagingSize defines the max size used by the coprocessor paging protocol.
+	MaxPagingSize int
 }
 
 const (

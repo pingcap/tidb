@@ -36,7 +36,7 @@ import (
 )
 
 func TestEnterNewTxn(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -256,7 +256,7 @@ func TestEnterNewTxn(t *testing.T) {
 }
 
 func TestGetSnapshot(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)

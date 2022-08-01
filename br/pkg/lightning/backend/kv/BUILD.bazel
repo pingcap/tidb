@@ -25,7 +25,6 @@ go_library(
         "//meta/autoid",
         "//parser/model",
         "//parser/mysql",
-        "//planner/core",
         "//sessionctx",
         "//sessionctx/variable",
         "//table",
@@ -49,9 +48,9 @@ go_test(
         "session_test.go",
         "sql2kv_test.go",
     ],
-    embed = [":kv"],
     flaky = True,
     deps = [
+        ":kv",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/verification",
