@@ -138,7 +138,7 @@ const (
 	ClientLongFlag                                      // CLIENT_LONG_FLAG
 	ClientConnectWithDB                                 // CLIENT_CONNECT_WITH_DB
 	ClientNoSchema                                      // CLIENT_NO_SCHEMA
-	ClientCompress                                      // CLIENT_COMPRESS
+	ClientCompress                                      // CLIENT_COMPRESS, Not supported: https://github.com/pingcap/tidb/issues/22605
 	ClientODBC                                          // CLIENT_ODBC
 	ClientLocalFiles                                    // CLIENT_LOCAL_FILES
 	ClientIgnoreSpace                                   // CLIENT_IGNORE_SPACE
