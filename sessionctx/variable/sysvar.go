@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -436,14 +435,14 @@ var defaultSysVars = []*SysVar{
 		return strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBTmpStoragePath, Value: config.GetGlobalConfig().TempStoragePath, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
+		// TODO: check if temp dir is being used; if used, reject
 		config.GetGlobalConfig().Instance.TmpStoragePath = val
 		config.GetGlobalConfig().UpdateTempStoragePath()
-		err := disk.InitializeTempDir()
-		terror.MustNil(err)
+		if err := disk.InitializeTempDir(); err != nil {
+			return err
+		}
 		config.CheckTempStorageQuota()
-		// TODO:
-		// 1. check if temp dir is being used; if used, reject
-		// 2. invoke alarm4ExcessiveMemUsage
+		UpdateMemoryUsageAlarmRecord()
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.TmpStoragePath, nil

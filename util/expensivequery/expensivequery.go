@@ -57,6 +57,7 @@ func (eqh *Handle) Run() {
 	defer ticker.Stop()
 	sm := eqh.sm.Load().(util.SessionManager)
 	record := &memoryUsageAlarm{}
+	variable.UpdateMemoryUsageAlarmRecord = record.updateMemoryUsageAlarmRecord
 	for {
 		select {
 		case <-ticker.C:

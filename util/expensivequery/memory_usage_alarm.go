@@ -46,19 +46,7 @@ type memoryUsageAlarm struct {
 	lastProfileFileName [][]string // heap, goroutine
 }
 
-func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
-	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
-		record.serverMemoryQuota = quota
-		record.isServerMemoryQuotaSet = true
-	} else {
-		record.serverMemoryQuota, record.err = memory.MemTotal()
-		if record.err != nil {
-			logutil.BgLogger().Error("get system total memory fail", zap.Error(record.err))
-			return
-		}
-		record.isServerMemoryQuotaSet = false
-	}
-	record.lastCheckTime = time.Time{}
+func (record *memoryUsageAlarm) updateMemoryUsageAlarmRecord() {
 	record.tmpDir = filepath.Join(config.GetGlobalConfig().Instance.TmpStoragePath, "record")
 	if record.err = disk.CheckAndCreateDir(record.tmpDir); record.err != nil {
 		return
@@ -82,6 +70,22 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 			record.lastProfileFileName[1] = append(record.lastProfileFileName[1], name)
 		}
 	}
+}
+
+func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
+	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
+		record.serverMemoryQuota = quota
+		record.isServerMemoryQuotaSet = true
+	} else {
+		record.serverMemoryQuota, record.err = memory.MemTotal()
+		if record.err != nil {
+			logutil.BgLogger().Error("get system total memory fail", zap.Error(record.err))
+			return
+		}
+		record.isServerMemoryQuotaSet = false
+	}
+	record.lastCheckTime = time.Time{}
+	record.updateMemoryUsageAlarmRecord()
 	record.initialized = true
 }
 

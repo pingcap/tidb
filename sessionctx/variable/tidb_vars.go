@@ -1067,4 +1067,6 @@ var (
 	SetStatsCacheCapacity atomic.Value
 	// SwitchConcurrentDDL is the func registered by DDL to switch concurrent DDL.
 	SwitchConcurrentDDL func(bool) error = nil
+	// UpdateMemoryUsageAlarmRecord is the func registered by ExpensiveQueryHandle to update memoryUsageAlarm.tmpDir
+	UpdateMemoryUsageAlarmRecord func() = nil
 )
