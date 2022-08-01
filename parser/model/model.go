@@ -1369,6 +1369,36 @@ type FKInfo struct {
 	Version   int         `json:"version"`
 }
 
+// ReferOptionType is the type for refer options.
+type ReferOptionType int
+
+// Refer option types.
+const (
+	ReferOptionNoOption ReferOptionType = iota
+	ReferOptionRestrict
+	ReferOptionCascade
+	ReferOptionSetNull
+	ReferOptionNoAction
+	ReferOptionSetDefault
+)
+
+// String implements fmt.Stringer interface.
+func (r ReferOptionType) String() string {
+	switch r {
+	case ReferOptionRestrict:
+		return "RESTRICT"
+	case ReferOptionCascade:
+		return "CASCADE"
+	case ReferOptionSetNull:
+		return "SET NULL"
+	case ReferOptionNoAction:
+		return "NO ACTION"
+	case ReferOptionSetDefault:
+		return "SET DEFAULT"
+	}
+	return ""
+}
+
 // Clone clones FKInfo.
 func (fk *FKInfo) Clone() *FKInfo {
 	nfk := *fk
@@ -1402,15 +1432,14 @@ func (fk *FKInfo) String(db, tb string) string {
 		buf.WriteString("`" + col.O + "`")
 	}
 	buf.WriteString(")")
-	// TODO: fix me
-	//if onDelete := ast.ReferOptionType(fk.OnDelete); onDelete != ast.ReferOptionNoOption {
-	//	buf.WriteString(" ON DELETE ")
-	//	buf.WriteString(onDelete.String())
-	//}
-	//if onUpdate := ast.ReferOptionType(fk.OnUpdate); onUpdate != ast.ReferOptionNoOption {
-	//	buf.WriteString(" ON UPDATE ")
-	//	buf.WriteString(onUpdate.String())
-	//}
+	if onDelete := ReferOptionType(fk.OnDelete); onDelete != ReferOptionNoOption {
+		buf.WriteString(" ON DELETE ")
+		buf.WriteString(onDelete.String())
+	}
+	if onUpdate := ReferOptionType(fk.OnUpdate); onUpdate != ReferOptionNoOption {
+		buf.WriteString(" ON UPDATE ")
+		buf.WriteString(onUpdate.String())
+	}
 	return buf.String()
 }
 

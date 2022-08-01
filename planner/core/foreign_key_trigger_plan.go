@@ -149,12 +149,12 @@ func buildForeignKeyTriggerForReferredFK(is infoschema.InfoSchema, referredFK *m
 
 func (b *PlanBuilder) BuildOnUpdateFKTriggerPlan(ctx context.Context, onModifyReferredTable *OnModifyReferredTableFKInfo) (FKTriggerPlan, error) {
 	fk, referredFK, childTable := onModifyReferredTable.FK, onModifyReferredTable.ReferredFK, onModifyReferredTable.ChildTable
-	switch ast.ReferOptionType(fk.OnUpdate) {
-	case ast.ReferOptionCascade:
+	switch model.ReferOptionType(fk.OnUpdate) {
+	case model.ReferOptionCascade:
 		return b.buildUpdateForeignKeyCascade(ctx, referredFK.ChildSchema, childTable, fk)
-	case ast.ReferOptionSetNull:
+	case model.ReferOptionSetNull:
 		return b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
-	case ast.ReferOptionRestrict, ast.ReferOptionNoOption, ast.ReferOptionNoAction, ast.ReferOptionSetDefault:
+	case model.ReferOptionRestrict, model.ReferOptionNoOption, model.ReferOptionNoAction, model.ReferOptionSetDefault:
 		failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
 		return buildFKCheckPlan(b.ctx, childTable, fk, fk.Cols, fk.RefCols, false, failedErr)
 	}
@@ -163,12 +163,12 @@ func (b *PlanBuilder) BuildOnUpdateFKTriggerPlan(ctx context.Context, onModifyRe
 
 func (b *PlanBuilder) BuildOnDeleteFKTriggerPlan(ctx context.Context, onModifyReferredTable *OnModifyReferredTableFKInfo) (FKTriggerPlan, error) {
 	fk, referredFK, childTable := onModifyReferredTable.FK, onModifyReferredTable.ReferredFK, onModifyReferredTable.ChildTable
-	switch ast.ReferOptionType(fk.OnDelete) {
-	case ast.ReferOptionCascade:
+	switch model.ReferOptionType(fk.OnDelete) {
+	case model.ReferOptionCascade:
 		return b.buildForeignKeyCascadeDelete(ctx, referredFK)
-	case ast.ReferOptionSetNull:
+	case model.ReferOptionSetNull:
 		return b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
-	case ast.ReferOptionRestrict, ast.ReferOptionNoOption, ast.ReferOptionNoAction, ast.ReferOptionSetDefault:
+	case model.ReferOptionRestrict, model.ReferOptionNoOption, model.ReferOptionNoAction, model.ReferOptionSetDefault:
 		failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
 		return buildFKCheckPlan(b.ctx, childTable, fk, fk.Cols, fk.RefCols, false, failedErr)
 	}
