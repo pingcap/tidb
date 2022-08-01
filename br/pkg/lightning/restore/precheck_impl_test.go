@@ -50,7 +50,7 @@ func (s *precheckImplSuite) SetupTest() {
 	s.mockTarget = mock.NewMockTargetInfo()
 	s.cfg = config.NewConfig()
 	s.cfg.TikvImporter.Backend = config.BackendLocal
-	s.Require().NoError(s.setMockImportData(nil)
+	s.Require().NoError(s.setMockImportData(nil))
 }
 
 func (s *precheckImplSuite) setMockImportData(mockDataMap map[string]*mock.MockDBSourceData) error {
