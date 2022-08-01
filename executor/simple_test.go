@@ -24,8 +24,7 @@ import (
 )
 
 func TestKillStmt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.EnableGlobalKill = false

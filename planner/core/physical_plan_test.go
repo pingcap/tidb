@@ -42,8 +42,7 @@ import (
 )
 
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -73,8 +72,7 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 }
 
 func TestAnalyzeBuildSucc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
@@ -134,8 +132,7 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 }
 
 func TestAnalyzeSetRate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -175,8 +172,7 @@ func TestAnalyzeSetRate(t *testing.T) {
 }
 
 func TestDAGPlanBuilderJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -211,8 +207,7 @@ func TestDAGPlanBuilderJoin(t *testing.T) {
 }
 
 func TestDAGPlanBuilderSubquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -248,8 +243,7 @@ func TestDAGPlanBuilderSubquery(t *testing.T) {
 }
 
 func TestDAGPlanTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -291,8 +285,7 @@ func assertSameHints(t *testing.T, expected, actual []*ast.TableOptimizerHint) {
 }
 
 func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -336,8 +329,7 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 }
 
 func TestDAGPlanBuilderUnion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -367,8 +359,7 @@ func TestDAGPlanBuilderUnion(t *testing.T) {
 }
 
 func TestDAGPlanBuilderUnionScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -403,8 +394,7 @@ func TestDAGPlanBuilderUnionScan(t *testing.T) {
 }
 
 func TestDAGPlanBuilderAgg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
@@ -439,8 +429,7 @@ func TestDAGPlanBuilderAgg(t *testing.T) {
 }
 
 func TestRefine(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -471,8 +460,7 @@ func TestRefine(t *testing.T) {
 }
 
 func TestAggEliminator(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -514,8 +502,7 @@ func TestINMJHint(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -546,8 +533,7 @@ func TestEliminateMaxOneRow(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
@@ -582,8 +568,7 @@ func (cli overrideClient) IsRequestTypeSupported(_, _ int64) bool {
 }
 
 func TestRequestTypeSupportedOff(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(overrideStore{store})
 	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "use test")
@@ -601,8 +586,7 @@ func TestRequestTypeSupportedOff(t *testing.T) {
 }
 
 func TestIndexJoinUnionScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -639,8 +623,7 @@ func TestIndexJoinUnionScan(t *testing.T) {
 }
 
 func TestMergeJoinUnionScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int))")
@@ -677,8 +660,7 @@ func TestMergeJoinUnionScan(t *testing.T) {
 }
 
 func TestDoSubQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -707,8 +689,7 @@ func TestDoSubQuery(t *testing.T) {
 }
 
 func TestIndexLookupCartesianJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -727,8 +708,7 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 }
 
 func TestSemiJoinToInner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -756,8 +736,7 @@ func TestSemiJoinToInner(t *testing.T) {
 }
 
 func TestUnmatchedTableInHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	var input []string
@@ -793,8 +772,7 @@ func TestUnmatchedTableInHint(t *testing.T) {
 }
 
 func TestHintScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -826,8 +804,7 @@ func TestHintScope(t *testing.T) {
 }
 
 func TestJoinHints(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -883,8 +860,7 @@ func TestJoinHints(t *testing.T) {
 }
 
 func TestAggregationHints(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -937,8 +913,7 @@ func TestAggregationHints(t *testing.T) {
 }
 
 func TestSemiJoinRewriteHints(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int)")
@@ -988,8 +963,7 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 }
 
 func TestExplainJoinHints(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1003,8 +977,7 @@ func TestExplainJoinHints(t *testing.T) {
 }
 
 func TestAggToCopHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ta")
@@ -1061,8 +1034,7 @@ func TestAggToCopHint(t *testing.T) {
 }
 
 func TestLimitToCopHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tn")
@@ -1111,8 +1083,7 @@ func TestLimitToCopHint(t *testing.T) {
 }
 
 func TestCTEMergeHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tc")
@@ -1242,8 +1213,7 @@ func doTestPushdownDistinct(t *testing.T, vars, input []string, output []struct 
 	Plan   []string
 	Result []string
 }) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1299,8 +1269,7 @@ func TestGroupConcatOrderby(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test;")
@@ -1331,8 +1300,7 @@ func TestGroupConcatOrderby(t *testing.T) {
 }
 
 func TestHintAlias(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1375,8 +1343,7 @@ func TestHintAlias(t *testing.T) {
 }
 
 func TestIndexHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1428,8 +1395,7 @@ func TestIndexHint(t *testing.T) {
 }
 
 func TestIndexMergeHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1482,8 +1448,7 @@ func TestIndexMergeHint(t *testing.T) {
 }
 
 func TestQueryBlockHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1525,8 +1490,7 @@ func TestQueryBlockHint(t *testing.T) {
 }
 
 func TestInlineProjection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1572,8 +1536,7 @@ func TestInlineProjection(t *testing.T) {
 }
 
 func TestDAGPlanBuilderSplitAvg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1640,8 +1603,7 @@ func testDAGPlanBuilderSplitAvg(t *testing.T, root core.PhysicalPlan) {
 }
 
 func TestIndexJoinHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1705,8 +1667,7 @@ func TestDAGPlanBuilderWindowParallel(t *testing.T) {
 }
 
 func TestTopNPushDownEmpty(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1718,8 +1679,7 @@ func doTestDAGPlanBuilderWindow(t *testing.T, vars, input []string, output []str
 	SQL  string
 	Best string
 }) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1748,8 +1708,7 @@ func doTestDAGPlanBuilderWindow(t *testing.T, vars, input []string, output []str
 }
 
 func TestNominalSort(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	var input []string
@@ -1777,8 +1736,7 @@ func TestNominalSort(t *testing.T) {
 }
 
 func TestHintFromDiffDatabase(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1815,8 +1773,7 @@ func TestHintFromDiffDatabase(t *testing.T) {
 }
 
 func TestNthPlanHintWithExplain(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists test.tt`)
@@ -1857,8 +1814,7 @@ func TestEnumIndex(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1887,8 +1843,7 @@ func TestIssue27233(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1907,8 +1862,7 @@ func TestIssue27233(t *testing.T) {
 }
 
 func TestPossibleProperties(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists student, sc")
@@ -1931,8 +1885,7 @@ func TestSelectionPartialPushDown(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -1958,8 +1911,7 @@ func TestIssue28316(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1975,8 +1927,7 @@ func TestIssue28316(t *testing.T) {
 }
 
 func TestIssue30965(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t30965")
@@ -2003,8 +1954,7 @@ func TestSkewDistinctAgg(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2054,8 +2004,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employee")

@@ -36,8 +36,7 @@ import (
 )
 
 func TestGlobalAndSessionBindingBothExist(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -88,8 +87,7 @@ func TestGlobalAndSessionBindingBothExist(t *testing.T) {
 }
 
 func TestSessionBinding(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -175,8 +173,7 @@ func TestSessionBinding(t *testing.T) {
 }
 
 func TestBaselineDBLowerCase(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -266,8 +263,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 }
 
 func TestShowGlobalBindings(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -315,8 +311,7 @@ func TestShowGlobalBindings(t *testing.T) {
 }
 
 func TestDuplicateBindings(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -344,8 +339,7 @@ func TestDuplicateBindings(t *testing.T) {
 }
 
 func TestDefaultDB(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -415,8 +409,7 @@ func (msm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
 }
 
 func TestIssue19836(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -441,8 +434,7 @@ func TestIssue19836(t *testing.T) {
 }
 
 func TestTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -457,8 +449,7 @@ func TestTemporaryTable(t *testing.T) {
 }
 
 func TestLocalTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -472,8 +463,7 @@ func TestLocalTemporaryTable(t *testing.T) {
 }
 
 func TestDropSingleBindings(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -517,8 +507,7 @@ func TestDropSingleBindings(t *testing.T) {
 }
 
 func TestPreparedStmt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 

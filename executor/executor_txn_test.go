@@ -31,8 +31,7 @@ import (
 )
 
 func TestInvalidReadTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -154,8 +153,7 @@ func TestInvalidReadTemporaryTable(t *testing.T) {
 }
 
 func TestInvalidReadCacheTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -258,8 +256,7 @@ func TestInvalidReadCacheTable(t *testing.T) {
 }
 
 func TestTxnSavepoint0(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int, a int, unique index idx(id))")
@@ -340,8 +337,7 @@ func TestTxnSavepoint0(t *testing.T) {
 }
 
 func TestTxnSavepoint1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int, a int, unique index idx(id))")
@@ -470,8 +466,7 @@ func TestTxnSavepoint1(t *testing.T) {
 }
 
 func TestRollbackToSavepoint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int, a int, unique index idx(id))")
@@ -501,8 +496,7 @@ func TestRollbackToSavepoint(t *testing.T) {
 }
 
 func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t(id int key, a int)")
@@ -548,8 +542,7 @@ func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {
 }
 
 func TestSavepointInPessimisticAndOptimistic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t(id int key, a int)")
@@ -590,8 +583,7 @@ func TestSavepointInPessimisticAndOptimistic(t *testing.T) {
 }
 
 func TestSavepointInBigTxn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t(id int key, a int)")
@@ -672,8 +664,7 @@ func TestSavepointInBigTxn(t *testing.T) {
 }
 
 func TestSavepointRandTestIssue0(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -689,8 +680,7 @@ func TestSavepointRandTestIssue0(t *testing.T) {
 }
 
 func TestSavepointWithTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -735,8 +725,7 @@ func TestSavepointWithTemporaryTable(t *testing.T) {
 }
 
 func TestSavepointWithCacheTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -776,8 +765,7 @@ func TestSavepointWithCacheTable(t *testing.T) {
 }
 
 func TestSavepointWithBinlog(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// mock for binlog enabled.
