@@ -53,7 +53,7 @@ func TestHashPartitionPruner(t *testing.T) {
 		Result []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -304,7 +304,7 @@ func TestListPartitionPruner(t *testing.T) {
 		Plan   []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -375,7 +375,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		IndexPlan []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
 		// Test for table without index.
@@ -673,7 +673,7 @@ func TestRangePartitionPredicatePruner(t *testing.T) {
 		Result []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

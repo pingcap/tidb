@@ -70,8 +70,7 @@ type readOnlyChecker struct {
 
 // Enter implements Visitor interface.
 func (checker *readOnlyChecker) Enter(in Node) (out Node, skipChildren bool) {
-	switch node := in.(type) {
-	case *VariableExpr:
+	if node, ok := in.(*VariableExpr); ok {
 		// like func rewriteVariable(), this stands for SetVar.
 		if !node.IsSystem && node.Value != nil {
 			checker.readOnly = false

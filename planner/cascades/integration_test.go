@@ -55,7 +55,7 @@ func TestPKIsHandleRangeScan(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
@@ -85,7 +85,7 @@ func TestIndexScan(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
@@ -129,7 +129,7 @@ func TestSort(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
@@ -161,7 +161,7 @@ func TestAggregation(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
@@ -181,7 +181,7 @@ func TestPushdownDistinctEnable(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
 	}
@@ -196,7 +196,7 @@ func TestPushdownDistinctDisable(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 0", variable.TiDBOptDistinctAggPushDown),
 	}
@@ -253,7 +253,7 @@ func TestSimplePlans(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
@@ -288,7 +288,7 @@ func TestJoin(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
@@ -319,7 +319,7 @@ func TestApply(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
@@ -345,7 +345,7 @@ func TestMemTableScan(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
@@ -374,7 +374,7 @@ func TestTopN(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
@@ -408,7 +408,7 @@ func TestCascadePlannerHashedPartTable(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
@@ -439,7 +439,7 @@ func TestInlineProjection(t *testing.T) {
 		Result []string
 	}
 	integrationSuiteData := cascades.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = sql

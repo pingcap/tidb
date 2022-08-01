@@ -325,7 +325,6 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				ck := verify.MakeKVChecksum(remoteCk.TotalBytes, remoteCk.TotalKVs, remoteCk.Checksum)
 				checksum = &ck
 			}
-
 		}
 
 		if checksum != nil {

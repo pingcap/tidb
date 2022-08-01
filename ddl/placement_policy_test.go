@@ -201,6 +201,7 @@ func TestPlacementPolicy(t *testing.T) {
 	tk.MustExec("drop placement policy x")
 	tk.MustGetErrCode("drop placement policy x", mysql.ErrPlacementPolicyNotExists)
 	tk.MustExec("drop placement policy if exists x")
+	//nolint:revive,all_revive
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 8239 Unknown placement policy 'x'"))
 
 	// TODO: privilege check & constraint syntax check.

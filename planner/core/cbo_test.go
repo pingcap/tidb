@@ -101,7 +101,7 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 		Plan []string
 	}
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		plan := testKit.MustQuery(sql)
 		testdata.OnRecord(func() {
@@ -125,7 +125,7 @@ func TestStraightJoin(t *testing.T) {
 	var input []string
 	var output [][]string
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
@@ -153,7 +153,7 @@ func TestTableDual(t *testing.T) {
 		Plan []string
 	}
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		plan := testKit.MustQuery(sql)
 		testdata.OnRecord(func() {
@@ -190,7 +190,7 @@ func TestEstimation(t *testing.T) {
 		Plan []string
 	}
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		plan := testKit.MustQuery(sql)
 		testdata.OnRecord(func() {
@@ -243,7 +243,7 @@ func TestIndexRead(t *testing.T) {
 	ctx := testKit.Session()
 	var input, output []string
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		stmts, err := session.Parse(ctx, tt)
@@ -274,7 +274,7 @@ func TestEmptyTable(t *testing.T) {
 	testKit.MustExec("analyze table t, t1")
 	var input, output []string
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		ctx := testKit.Session()
 		stmts, err := session.Parse(ctx, tt)
@@ -339,7 +339,7 @@ func TestAnalyze(t *testing.T) {
 
 	var input, output []string
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		ctx := testKit.Session()
@@ -392,7 +392,7 @@ func TestOutdatedAnalyze(t *testing.T) {
 		Plan                         []string
 	}
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testKit.Session().GetSessionVars().SetEnablePseudoForOutdatedStats(tt.EnablePseudoForOutdatedStats)
 		statistics.RatioOfPseudoEstimate.Store(tt.RatioOfPseudoEstimate)
@@ -419,7 +419,7 @@ func TestNullCount(t *testing.T) {
 	var input []string
 	var output [][]string
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < 2; i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -451,7 +451,7 @@ func TestCorrelatedEstimation(t *testing.T) {
 		output [][]string
 	)
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		rs := tk.MustQuery(tt)
 		testdata.OnRecord(func() {
@@ -483,7 +483,7 @@ func TestInconsistentEstimation(t *testing.T) {
 		Plan []string
 	}
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		plan := tk.MustQuery(sql)
 		testdata.OnRecord(func() {
@@ -624,7 +624,7 @@ func TestIssue9562(t *testing.T) {
 		Plan []string
 	}
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
 			if j != len(ts)-1 {
@@ -689,7 +689,7 @@ func TestLimitCrossEstimation(t *testing.T) {
 		Plan []string
 	}
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
 			if j != len(ts)-1 {
@@ -726,7 +726,7 @@ func TestLowSelIndexGreedySearch(t *testing.T) {
 	// - index `idx2` runs much faster than `idx4` experimentally;
 	// - estimated row count of IndexLookUp should be 0;
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -762,7 +762,7 @@ func TestTiFlashCostModel(t *testing.T) {
 
 	var input, output [][]string
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
 			if j != len(ts)-1 {
@@ -795,7 +795,7 @@ func TestIndexEqualUnknown(t *testing.T) {
 		Plan []string
 	}
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -824,7 +824,7 @@ func TestLimitIndexEstimation(t *testing.T) {
 	}
 
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
-	analyzeSuiteData.GetTestCases(t, &input, &output)
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
