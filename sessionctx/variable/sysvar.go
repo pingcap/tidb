@@ -518,6 +518,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal | ScopeSession, Name: TransactionIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
 			returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
@@ -529,6 +530,16 @@ var defaultSysVars = []*SysVar{
 			vars.StmtCtx.AppendWarning(returnErr)
 		}
 		return normalizedValue, nil
+=======
+	{Scope: ScopeGlobal | ScopeSession, Name: AutoCommit, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		isAutocommit := TiDBOptOn(val)
+		// Implicitly commit the possible ongoing transaction if mode is changed from off to on.
+		if !s.IsAutocommit() && isAutocommit {
+			s.SetInTxn(false)
+		}
+		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
+		return nil
+>>>>>>> 1cd8c31b1... session: fix auto commit variable change effect on transaction commit (#36631)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationConnection, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if _, err := collate.GetCollationByName(normalizedValue); err != nil {
