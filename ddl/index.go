@@ -719,17 +719,8 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 					return false, ver, errors.Trace(err)
 				}
 			}
-		} else if !isLightningEnabled(job.ID) && !needRestoreJob(job.ID) && indexInfo.SubState == model.StateBackfill {
+		} else if !isLightningEnabled(job.ID) {
 			// Be here, means the DDL Owner changed or restarted, the reorg state is re-entered.
-			job.SnapshotVer = 0
-			reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
-		}
-
-		// Check and set up lightning Backend.
-		// Whether use lightning add index will depends on
-		// 1) One backend has been built before.
-		// 2) Restore lightning reorg task，here means DDL owner changed or restarted, need rebuild lightning environment.
-		if !isLightningEnabled(job.ID) {
 			// If it is an empty table, do not need start lightning backfiller.
 			if reorgInfo.StartKey == nil && reorgInfo.EndKey == nil {
 				return false, ver, nil
@@ -738,7 +729,19 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			err = prepareBackend(w.ctx, indexInfo.Unique, job, reorgInfo.ReorgMeta.SQLMode)
 			if err == nil {
 				setLightningEnabled(job.ID, true)
+				// Todo: refactor when checkpoint implement.
+				if err := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err != nil {
+					logutil.BgLogger().Warn("[ddl] Lightning: removeDDLReorgHandle failed", zap.Error(err))
+					return false, 0, errors.Trace(err)
+				}
+				job.SnapshotVer = 0
+				reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
+				if err != nil {
+					logutil.BgLogger().Warn("[ddl] Lightning: resumeDDLReorgHandle failed", zap.Error(err))
+					return false, 0, errors.Trace(err)
+				}
 			}
+			
 		}
 		return true, ver, nil
 	case model.StateMergeSync:
@@ -762,6 +765,8 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			return false, 0, errors.Trace(err)
 		}
 		logutil.BgLogger().Info("Lightning finished merge the increment part of adding index")
+		// Clean lightning backend.
+		cleanUpLightningEnv(reorgInfo, false)
 		return true, ver, nil
 	default:
 		return false, 0, errors.New("Lightning go fast path wrong sub states: should not happened")
@@ -816,7 +821,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		// For error that will rollback the add index statement, here only remove locale lightning
 		// files, other rollback process will follow add index roll back flow.
 		cleanUpLightningEnv(reorgInfo, true, indexInfo.ID)
-
 		return false, ver, errors.Trace(err)
 	}
 	// Ingest data to TiKV
@@ -852,8 +856,8 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		// Original backfill finished from here.
 		return true, ver, errors.Trace(err)
 	}
-	// Cleanup lightning environment
-	cleanUpLightningEnv(reorgInfo, false)
+	// Cleanup lightning engines
+	cleanUpLightningEngines(reorgInfo)
 	return false, ver, errors.Trace(err)
 }
 

@@ -137,6 +137,15 @@ func cleanUpLightningEnv(reorg *reorgInfo, isCanceled bool, indexIDs ...int64) {
 	}
 }
 
+// cleanUpLightningEngines will clean one DDL job's engines.
+func cleanUpLightningEngines(reorg *reorgInfo) {
+	if isLightningEnabled(reorg.ID) {
+		bcKey := lit.GenBackendContextKey(reorg.ID)
+		setNeedRestoreJob(reorg.ID, false)
+		lit.GlobalEnv.LitMemRoot.DeleteBackendEngines(bcKey)
+	}
+}
+
 // Disk quota checking and ingest data.
 func importPartialDataToTiKV(jobID int64, indexIDs int64) error {
 	return lit.UnsafeImportEngineData(jobID, indexIDs)
