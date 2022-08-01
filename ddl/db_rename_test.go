@@ -28,8 +28,7 @@ import (
 )
 
 func TestRenameIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (pk int primary key, c int default 1, c1 int default 1, unique key k1(c), key k2(c1))")
@@ -60,8 +59,7 @@ func TestRenameTableWithLocked(t *testing.T) {
 		conf.EnableTableLock = true
 	})
 
-	store, clean := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-	defer clean()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database renamedb")
@@ -96,8 +94,7 @@ func TestAlterTableRenameTable(t *testing.T) {
 }
 
 func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
-	store, clean := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-	defer clean()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -187,8 +184,7 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 }
 
 func TestRenameMultiTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-	defer clean()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -175,8 +175,7 @@ func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp strin
 		opts = append(opts, mockstore.WithDDLChecker())
 	}
 
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, opts...)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, opts...)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -331,8 +330,7 @@ LOOP:
 }
 
 func TestAddIndexForGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -396,8 +394,7 @@ func TestAddUniqueIndexRollback(t *testing.T) {
 }
 
 func testAddIndexRollback(t *testing.T, idxName, addIdxSQL, errMsg string, hasNullValsInKey bool) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
@@ -476,8 +473,7 @@ func TestAddIndexWithShardRowID(t *testing.T) {
 }
 
 func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	hasAutoRandomField := len(splitTableSQL) > 0
@@ -575,8 +571,7 @@ LOOP:
 }
 
 func TestAddAnonymousIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -636,8 +631,7 @@ func TestAddAnonymousIndex(t *testing.T) {
 }
 
 func TestAddIndexWithPK(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -692,8 +686,7 @@ func TestAddGlobalIndex(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test_t1 (a int, b int) partition by range (b)" +
@@ -820,8 +813,7 @@ func checkGlobalIndexRow(
 }
 
 func TestDropIndexes(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	// drop multiple indexes
 	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));"
@@ -935,8 +927,7 @@ func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
 }
 
 func TestDropPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	idxName := "primary"
 	createSQL := "create table test_drop_index (c1 int, c2 int, c3 int, unique key(c1), primary key(c3) nonclustered)"
@@ -945,8 +936,7 @@ func TestDropPrimaryKey(t *testing.T) {
 }
 
 func TestDropIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	idxName := "c3_index"
 	createSQL := "create table test_drop_index (c1 int, c2 int, c3 int, unique key(c1), key c3_index(c3))"
@@ -998,8 +988,7 @@ LOOP:
 }
 
 func TestAddMultiColumnsIndexClusterIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_add_multi_col_index_clustered;")
 	tk.MustExec("create database test_add_multi_col_index_clustered;")
@@ -1020,8 +1009,7 @@ func TestAddMultiColumnsIndexClusterIndex(t *testing.T) {
 }
 
 func TestAddIndexWithDupCols(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1042,8 +1030,7 @@ func TestAddIndexWithDupCols(t *testing.T) {
 }
 
 func TestAnonymousIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1058,8 +1045,7 @@ func TestAnonymousIndex(t *testing.T) {
 }
 
 func TestAddIndexWithDupIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 

@@ -35,8 +35,7 @@ import (
 )
 
 func TestInferType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	s := InferTypeSuite{}
 	se, err := session.CreateSession4Test(store)
