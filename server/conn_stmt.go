@@ -119,7 +119,6 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 				return err
 			}
 		}
-
 	}
 	return cc.flush(ctx)
 }

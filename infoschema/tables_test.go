@@ -630,7 +630,6 @@ WHERE table_name = 'slow_query' and column_name = '` + columnName + `'`).
 	//check select
 	tk.MustQuery(`select ` + columnName +
 		` from information_schema.slow_query`).Check(testkit.Rows("1"))
-
 }
 
 func TestReloadDropDatabase(t *testing.T) {

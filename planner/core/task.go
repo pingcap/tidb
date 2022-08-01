@@ -1603,7 +1603,6 @@ func RemoveUnnecessaryFirstRow(
 	partialGbyItems []expression.Expression,
 	partialSchema *expression.Schema,
 	firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
-
 	partialCursor := 0
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
 	for _, aggFunc := range partialAggFuncs {

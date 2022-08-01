@@ -23,7 +23,6 @@ import (
 )
 
 func TestBaseImplementation(t *testing.T) {
-
 	sctx := plannercore.MockContext()
 	p := plannercore.PhysicalLimit{}.Init(sctx, nil, 0, nil)
 	impl := &baseImpl{plan: p}

@@ -84,7 +84,7 @@ func TestWindowFunctionDescCanPushDown(t *testing.T) {
 	var input Input
 	var output Output
 	suiteData := plannercore.GetWindowPushDownSuiteData()
-	suiteData.GetTestCases(t, &input, &output)
+	suiteData.LoadTestCases(t, &input, &output)
 	testWithData(t, tk, input, output)
 }
 
@@ -102,7 +102,7 @@ func TestWindowPushDownPlans(t *testing.T) {
 	var input Input
 	var output Output
 	suiteData := plannercore.GetWindowPushDownSuiteData()
-	suiteData.GetTestCases(t, &input, &output)
+	suiteData.LoadTestCases(t, &input, &output)
 	testWithData(t, tk, input, output)
 }
 
@@ -120,7 +120,7 @@ func TestWindowPlanWithOtherOperators(t *testing.T) {
 	var input Input
 	var output Output
 	suiteData := plannercore.GetWindowPushDownSuiteData()
-	suiteData.GetTestCases(t, &input, &output)
+	suiteData.LoadTestCases(t, &input, &output)
 	testWithData(t, tk, input, output)
 }
 
