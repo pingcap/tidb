@@ -45,7 +45,6 @@ import (
 type infosSchemaClusterTableSuite struct {
 	store      kv.Storage
 	dom        *domain.Domain
-	clean      func()
 	rpcServer  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
@@ -225,7 +224,6 @@ func (s *mockStore) Describe() string             { return "" }
 
 func TestTiDBClusterInfo(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
-	defer s.clean()
 
 	mockAddr := s.mockAddr
 	store := &mockStore{
@@ -298,7 +296,6 @@ func TestTiDBClusterInfo(t *testing.T) {
 
 func TestTableStorageStats(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
-	defer s.clean()
 
 	tk := testkit.NewTestKit(t, s.store)
 	err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test'")
