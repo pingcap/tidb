@@ -568,8 +568,8 @@ func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T)
 	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
 }
 
-func TestSnapshotAnalyzeAndMaxTSAnalyze(t *testing.T) {
-	for _, analyzeSnapshot := range []bool{true, false} {
+func testSnapshotAnalyzeAndMaxTSAnalyzeHelper(analyzeSnapshot bool) func(t *testing.T) {
+	return func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 
@@ -627,6 +627,12 @@ func TestSnapshotAnalyzeAndMaxTSAnalyze(t *testing.T) {
 		// The third analyze doesn't write results into mysql.stats_xxx because its snapshot is smaller than the second analyze.
 		require.Equal(t, s2Str, s3Str)
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
+	}
+}
+
+func TestSnapshotAnalyzeAndMaxTSAnalyze(t *testing.T) {
+	for _, analyzeSnapshot := range []bool{true, false} {
+		t.Run(fmt.Sprintf("%s-%t", t.Name(), analyzeSnapshot), testSnapshotAnalyzeAndMaxTSAnalyzeHelper(analyzeSnapshot))
 	}
 }
 

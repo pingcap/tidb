@@ -330,7 +330,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 
 var mu sync.Mutex
 
-func createTestWriter(conf *Config, t *testing.T) (w *Writer func()) {
+func createTestWriter(conf *Config, t *testing.T) *Writer {
 	mu.Lock()
 	extStore, err := conf.createExternalStorage(context.Background())
 	mu.Unlock()
@@ -342,10 +342,9 @@ func createTestWriter(conf *Config, t *testing.T) (w *Writer func()) {
 	require.NoError(t, err)
 
 	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
-	w = NewWriter(tcontext.Background(), 0, conf, conn, extStore, metrics)
-	clean = func() {
+	w := NewWriter(tcontext.Background(), 0, conf, conn, extStore, metrics)
+	t.Cleanup(func() {
 		require.NoError(t, db.Close())
-	}
-
-	return
+	})
+	return w
 }

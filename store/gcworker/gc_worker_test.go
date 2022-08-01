@@ -1975,7 +1975,7 @@ func TestSkipGCAndOnlyResolveLock(t *testing.T) {
 	require.Equal(t, last.Unix(), lastRunTime.Unix())
 }
 
-func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) (*domain.Domain) {
+func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(store)
