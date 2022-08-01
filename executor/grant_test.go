@@ -578,9 +578,7 @@ func TestNonExistTableIllegalGrant(t *testing.T) {
 }
 
 func TestIssue34610(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS d1;")
 	tk.MustExec("CREATE DATABASE d1;")
