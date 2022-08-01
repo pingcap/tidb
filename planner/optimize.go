@@ -60,6 +60,21 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return ast.IsReadOnly(node)
 }
 
+// GetAvailableIsolationReadEngines4Plan  ..
+func GetAvailableIsolationReadEngines4Plan(vars *variable.SessionVars) map[kv.StoreType]struct{} {
+	isolationReadEngines := vars.GetIsolationReadEngines()
+	availableReadEngines := make(map[kv.StoreType]struct{})
+	for isolationReadEngine := range isolationReadEngines {
+		availableReadEngines[isolationReadEngine] = struct{}{}
+	}
+	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && vars.StmtCtx.IsReadonlyStmt {
+		// Because for write stmt, TiFlash has a different results when lock the data in point get plan.
+		// We ban the TiFlash engine in not read only stmt.
+		delete(availableReadEngines, kv.TiFlash)
+	}
+	return availableReadEngines
+}
+
 func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
 	if !useBinding || stmtNode == nil {
@@ -88,15 +103,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
-	// engine in not read only stmt.
-	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(node, sessVars) {
-		delete(sessVars.IsolationReadEngines, kv.TiFlash)
-		defer func() {
-			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-		}()
-	}
-
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	originStmtHints, originStmtHintsOffs, warns := handleStmtHints(tableHints)
 	sessVars.StmtCtx.StmtHints = originStmtHints
@@ -112,7 +118,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	txnManger := sessiontxn.GetTxnManager(sctx)
-	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
+	if sessVars.ContainTiKVIsolationRead() {
 		var fp core.Plan
 		if fpv, ok := sctx.Value(core.PointPlanKey).(core.PointPlanVal); ok {
 			// point plan is already tried in a multi-statement query.
@@ -640,4 +646,5 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
+	core.GetAvailableIsolationReadEngines4Plan = GetAvailableIsolationReadEngines4Plan
 }

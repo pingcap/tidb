@@ -979,8 +979,8 @@ type SessionVars struct {
 	// this variable only take effect when `tidb_follower_read` = 'closest-adaptive'
 	ReplicaClosestReadThreshold int64
 
-	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
-	IsolationReadEngines map[kv.StoreType]struct{}
+	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
+	isolationReadEngines map[kv.StoreType]struct{}
 
 	PlannerSelectBlockAsName []ast.HintTable
 
@@ -1254,6 +1254,23 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	}
 }
 
+// ContainTiKVIsolationRead ...
+func (s *SessionVars) ContainTiKVIsolationRead() bool {
+	_, ok := s.isolationReadEngines[kv.TiKV]
+	return ok
+}
+
+// ContainTiFlashIsolationRead ...
+func (s *SessionVars) ContainTiFlashIsolationRead() bool {
+	_, ok := s.isolationReadEngines[kv.TiFlash]
+	return ok
+}
+
+// GetIsolationReadEngines ...
+func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
+	return s.isolationReadEngines
+}
+
 const (
 	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
 	PlacementModeStrict string = "STRICT"
@@ -1407,7 +1424,7 @@ func NewSessionVars() *SessionVars {
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
 		EnableExtendedStats:         false,
-		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
+		isolationReadEngines:        make(map[kv.StoreType]struct{}),
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
@@ -1482,11 +1499,11 @@ func NewSessionVars() *SessionVars {
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
 		case kv.TiFlash.Name():
-			vars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+			vars.isolationReadEngines[kv.TiFlash] = struct{}{}
 		case kv.TiKV.Name():
-			vars.IsolationReadEngines[kv.TiKV] = struct{}{}
+			vars.isolationReadEngines[kv.TiKV] = struct{}{}
 		case kv.TiDB.Name():
-			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
+			vars.isolationReadEngines[kv.TiDB] = struct{}{}
 		}
 	}
 	if !EnableLocalTxn.Load() {
@@ -1575,10 +1592,10 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
 }
 
-// GetIsolationReadEngines gets isolation read engines.
-func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
-	return s.IsolationReadEngines
-}
+//// GetIsolationReadEngines gets isolation read engines.
+//func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
+//	return s.IsolationReadEngines
+//}
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {

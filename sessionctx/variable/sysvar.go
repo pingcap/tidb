@@ -264,15 +264,15 @@ var defaultSysVars = []*SysVar{
 		}
 		return formatVal, nil
 	}, SetSession: func(s *SessionVars, val string) error {
-		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
+		s.isolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
 			switch engine {
 			case kv.TiKV.Name():
-				s.IsolationReadEngines[kv.TiKV] = struct{}{}
+				s.isolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
-				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				s.isolationReadEngines[kv.TiFlash] = struct{}{}
 			case kv.TiDB.Name():
-				s.IsolationReadEngines[kv.TiDB] = struct{}{}
+				s.isolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
 		return nil

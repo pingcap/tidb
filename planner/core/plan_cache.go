@@ -220,15 +220,6 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema
 		stmtCtx.SkipPlanCache = true
 	}
 	if prepared.UseCache && !stmtCtx.SkipPlanCache && !ignorePlanCache {
-		// rebuild key to exclude kv.TiFlash when stmt is not read only
-		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
-			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB,
-				prepared.SchemaVersion, latestSchemaVersion); err != nil {
-				return nil, nil, err
-			}
-			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-		}
 		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, isBinProtocol, binVarTypes, txtVarTypes, sessVars.StmtCtx.BindSQL)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
