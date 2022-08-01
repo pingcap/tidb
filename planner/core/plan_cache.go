@@ -102,8 +102,13 @@ func parseParamTypes(sctx sessionctx.Context, isBinProtocol bool, binProtoVars [
 	} else { // txt protocol
 		varsNum = len(txtProtoVars)
 		for _, param := range txtProtoVars {
+			if c, ok := param.(*expression.Constant); ok {
+				txtVarTypes = append(txtVarTypes, c.GetType())
+				continue
+			}
+
 			name := param.(*expression.ScalarFunction).GetArgs()[0].String()
-			tp := sctx.GetSessionVars().UserVarTypes[name]
+			tp := sctx.GetSessionVars().UserVarTypes[name] // TODO: ???
 			if tp == nil {
 				tp = types.NewFieldType(mysql.TypeNull)
 			}
