@@ -435,7 +435,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), nil
 	}},
-	{Scope: ScopeInstance, Name: config.GetGlobalConfig().Instance.TmpStoragePath, Value: config.TempStorageDirName, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeInstance, Name: TiDBTmpStoragePath, Value: config.GetGlobalConfig().TempStoragePath, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
 		config.GetGlobalConfig().Instance.TmpStoragePath = val
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
