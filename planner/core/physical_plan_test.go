@@ -1121,6 +1121,7 @@ func TestCTEMergeHint(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("drop table if exists t3")
 	tk.MustExec("drop table if exists t4")
+	tk.MustExec("drop view if exists v")
 	tk.MustExec("create table tc(a int)")
 	tk.MustExec("create table te(c int)")
 	tk.MustExec("create table t1(a int)")
@@ -1139,6 +1140,7 @@ func TestCTEMergeHint(t *testing.T) {
 	tk.MustExec("analyze table t2;")
 	tk.MustExec("analyze table t3;")
 	tk.MustExec("analyze table t4;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from tc")
 	var (
 		input  []string
 		output []struct {

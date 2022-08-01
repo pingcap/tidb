@@ -509,6 +509,8 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
+	//Check whether the current building query is a CTE
+	isCTE bool
 
 	// checkSemiJoinHint checks whether the SEMI_JOIN_REWRITE hint is possible to be applied on the current SELECT stmt.
 	// We need this variable for the hint since the hint is set in subquery, but we check its availability in its outer scope.

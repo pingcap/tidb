@@ -339,7 +339,7 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 		er.b.hasValidSemiJoinHint = oldHasHint
 	}()
 
-	np, err = er.b.buildResultSetNode(ctx, subq.Query)
+	np, err = er.b.buildResultSetNode(ctx, subq.Query, false)
 	if err != nil {
 		return nil, false, err
 	}
