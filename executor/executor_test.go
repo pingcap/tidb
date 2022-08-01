@@ -7155,6 +7155,193 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 101 21 a", "12 102 22 b", "13 103 23 c", "14 4 24 d"))
 }
 
+func TestForeignKeyOnUpdateCascadeInTxn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=1")
+	//tk.MustExec("set @@tidb_txn_mode = 'pessimistic';")
+
+	cases := []struct {
+		prepareSQLs []string
+	}{
+		// Case-1: test unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int, a int, b int,  unique index(a, b));",
+				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE);",
+			},
+		},
+		// Case-2: test unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
+				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE);",
+			},
+		},
+		// Case-3: test non-unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int, index(a, b));",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE);",
+			},
+		},
+		// Case-4: test non-unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int,  index(a, b, id));",
+				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE);",
+			},
+		},
+	}
+
+	for idx, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("begin")
+		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24), (5, 15, null), (6, null, 26), (7, null, null);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'),(2, 12, 22, 'b'), (3, 13, 23, 'c'), (4, 14, 24, 'd'), (5, 15, null, 'e'), (6, null, 26, 'f'), (7, null, null, 'g');")
+		tk.MustExec("update t1 set a=a+100, b = b+200 where id in (1, 2)")
+		tk.MustQuery("select id, a, b from t1 where id in (1,2) order by id").Check(testkit.Rows("1 111 221", "2 112 222"))
+		tk.MustQuery("select id, a, b, name from t2 where id in (1,2,3) order by id").Check(testkit.Rows("1 111 221 a", "2 112 222 b", "3 13 23 c"))
+		tk.MustExec("update t1 set a=101, b=null where id = 1 or b = 222")
+		tk.MustQuery("select id, a, b from t1 where id in (1,2) order by id").Check(testkit.Rows("1 101 <nil>", "2 101 <nil>"))
+		tk.MustQuery("select id, a, b, name from t2 where id in (1,2,3) order by id").Check(testkit.Rows("1 101 <nil> a", "2 101 <nil> b", "3 13 23 c"))
+		tk.MustExec("update t1 set a=null where b is null")
+		tk.MustQuery("select id, a, b from t1 where b is null order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "5 <nil> <nil>", "7 <nil> <nil>"))
+		tk.MustQuery("select id, a, b, name from t2 where b is null order by id").Check(testkit.Rows("1 101 <nil> a", "2 101 <nil> b", "5 15 <nil> e", "7 <nil> <nil> g"))
+		tk.MustExec("update t1 set a=0, b = 0 where id = 7")
+		tk.MustQuery("select id, a, b from t1 where a=0 and b=0 order by id").Check(testkit.Rows("7 0 0"))
+		tk.MustQuery("select id, a, b from t2 where a=0 and b=0 order by id").Check(testkit.Rows())
+		tk.MustExec("rollback")
+		tk.MustQuery("select id, a, b from t1 where a=0 and b=0 order by id").Check(testkit.Rows())
+		tk.MustQuery("select id, a, b from t2 where a=0 and b=0 order by id").Check(testkit.Rows())
+
+		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22)")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'),(2, 12, 22, 'b');")
+		tk.MustExec("update t1 set a=a+100, b = b+200 where id in (1, 2)")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 111 221", "2 112 222"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 111 221 a", "2 112 222 b"))
+		err := tk.ExecToErr("delete from t1 where id = 1")
+		require.Error(t, err)
+		require.True(t, plannercore.ErrRowIsReferenced2.Equal(err), err.Error())
+		tk.MustExec("update t1 set a=13, b =23 where id = 2")
+		tk.MustExec("commit")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 111 221", "2 13 23"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 111 221 a", "2 13 23 b"))
+		tk.MustExec("delete from t2")
+		tk.MustExec("delete from t1")
+
+		// only test in non-unique index
+		if idx >= 2 {
+			tk.MustExec("insert into t1 values (1, 1, 1),(2, 1, 1);")
+			tk.MustExec("begin")
+			tk.MustExec("delete from t1 where id = 1")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
+			tk.MustExec("update t1 set a=2, b=3 where id = 2")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 2 3"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 2 3 a"))
+			err := tk.ExecToErr("insert into t2 (id, a, b, name) values (3, 1, 1, 'a')")
+			require.Error(t, err)
+			require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+			tk.MustExec("insert into t1 values (3, 1, 1);")
+			tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
+			tk.MustExec("commit")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 2 3", "3 1 1"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 2 3 a", "3 1 1 e"))
+		}
+	}
+
+	cases = []struct {
+		prepareSQLs []string
+	}{
+		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE);",
+			},
+		},
+		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE);",
+			},
+		},
+		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE);",
+			},
+		},
+		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE);",
+			},
+		},
+	}
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+
+		tk.MustExec("begin")
+		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'),(2, 12, 22, 'b'), (3, 13, 23, 'c'), (4, 14, 24, 'd');")
+		tk.MustExec("update t1 set a=a+100, b = b+200 where id in (1, 2)")
+		tk.MustQuery("select id, a, b from t1 where id in (1,2) order by id").Check(testkit.Rows("1 111 221", "2 112 222"))
+		tk.MustQuery("select id, a, b, name from t2 where id in (1,2,3) order by id").Check(testkit.Rows("1 111 221 a", "2 112 222 b", "3 13 23 c"))
+		tk.MustExec("rollback")
+		tk.MustQuery("select id, a, b from t1 where a=0 and b=0 order by id").Check(testkit.Rows())
+		tk.MustQuery("select id, a, b from t2 where a=0 and b=0 order by id").Check(testkit.Rows())
+
+		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22)")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'),(2, 12, 22, 'b');")
+		tk.MustExec("update t1 set a=a+100, b = b+200 where id in (1, 2)")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 111 221", "2 112 222"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 111 221 a", "2 112 222 b"))
+		err := tk.ExecToErr("delete from t1 where id = 1")
+		require.Error(t, err)
+		require.True(t, plannercore.ErrRowIsReferenced2.Equal(err), err.Error())
+		tk.MustExec("update t1 set a=13, b =23 where id = 2")
+		tk.MustExec("commit")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 111 221", "2 13 23"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 111 221 a", "2 13 23 b"))
+		tk.MustExec("delete from t2")
+		tk.MustExec("delete from t1")
+	}
+
+	// Case-9: test primary key is handle and contain foreign key column.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
+	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
+	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id) ON UPDATE CASCADE);")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 (id, a, b) values       (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
+	tk.MustExec("insert into t2 (id, a, b, name) values (11, 1, 21, 'a'),(12, 2, 22, 'b'), (13, 3, 23, 'c'), (14, 4, 24, 'd')")
+	tk.MustExec("update t1 set id = id + 100 where id in (1, 2, 3)")
+	tk.MustExec("commit")
+	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("4 14 24", "101 11 21", "102 12 22", "103 13 23"))
+	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 101 21 a", "12 102 22 b", "13 103 23 c", "14 4 24 d"))
+}
+
 func TestForeignKeyOnUpdateSetNull(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

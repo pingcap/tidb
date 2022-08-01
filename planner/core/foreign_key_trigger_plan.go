@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -252,6 +253,188 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, referred
 		Delete:            del,
 		baseFKTriggerPlan: baseFKTriggerPlan{fk, fk.RefCols},
 	}, nil
+}
+
+func (b *PlanBuilder) buildUpdateForeignKeyCascade(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
+	triggerPlan, err := b.buildUpdateForeignKeySetNull(ctx, dbName, tbl, fk)
+	if err != nil {
+		return nil, err
+	}
+	return &FKOnUpdateCascadePlan{
+		baseFKTriggerPlan: triggerPlan.baseFKTriggerPlan,
+		Update:            triggerPlan.Update,
+	}, nil
+}
+
+func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (*FKUpdateSetNullPlan, error) {
+	b.pushSelectOffset(0)
+	b.pushTableHints(nil, 0)
+	defer func() {
+		b.popSelectOffset()
+		// table hints are only visible in the current UPDATE statement.
+		b.popTableHints()
+	}()
+	b.inUpdateStmt = true
+	b.isForUpdateRead = true
+
+	tn := &ast.TableName{
+		Schema: dbName,
+		Name:   tbl.Meta().Name,
+	}
+	datasource, err := b.buildDataSource(ctx, tn, &model.CIStr{})
+	if err != nil {
+		return nil, err
+	}
+	var ds *DataSource
+	var logicalUnionScan *LogicalUnionScan
+	switch v := datasource.(type) {
+	case *DataSource:
+		ds = v
+	case *LogicalUnionScan:
+		ds = v.children[0].(*DataSource)
+		logicalUnionScan = v
+	default:
+		return nil, errors.Errorf("unknown datasource plan: %#v", datasource)
+	}
+
+	tableReader, err := b.buildTableReaderForFK(ds, fk.Cols)
+	if err != nil {
+		return nil, err
+	}
+	if logicalUnionScan != nil {
+		physicalUnionScan := PhysicalUnionScan{
+			Conditions: logicalUnionScan.conditions,
+			HandleCols: logicalUnionScan.handleCols,
+		}.Init(logicalUnionScan.ctx, tableReader.statsInfo(), logicalUnionScan.blockOffset, nil)
+		physicalUnionScan.SetChildren(tableReader)
+		tableReader = physicalUnionScan
+	}
+
+	schema := tableReader.Schema()
+	orderedList := make([]*expression.Assignment, 0, len(fk.Cols))
+	for _, col := range fk.Cols {
+		idx := expression.FindFieldNameIdxByColName(ds.names, col.L)
+		if idx < 0 {
+			return nil, ErrUnknownColumn
+		}
+		value := expression.NewNull()
+		value.RetType.SetType(mysql.TypeNull)
+		assignment := &expression.Assignment{
+			Col:     schema.Columns[idx],
+			ColName: col,
+			Expr:    value,
+			LazyErr: nil,
+		}
+		orderedList = append(orderedList, assignment)
+	}
+
+	update := Update{
+		OrderedList:               orderedList,
+		AllAssignmentsAreConstant: true,
+		VirtualAssignmentsOffset:  len(orderedList),
+	}.Init(b.ctx)
+	update.SelectPlan = tableReader
+	update.names = ds.names
+	err = update.ResolveIndices()
+	if err != nil {
+		return nil, err
+	}
+
+	tblID2Handle := make(map[int64][]HandleCols)
+	tblID2Table := make(map[int64]table.Table)
+	tid := ds.tableInfo.ID
+	tblID2Handle[tid] = []HandleCols{ds.handleCols}
+	tblID2Table[tid] = tbl
+
+	tblID2Handle, err = resolveIndicesForTblID2Handle(tblID2Handle, tableReader.Schema())
+	if err != nil {
+		return nil, err
+	}
+	update.TblColPosInfos, err = buildColumns2Handle(update.names, tblID2Handle, tblID2Table, false)
+	if err != nil {
+		return nil, err
+	}
+	update.tblID2Table = tblID2Table
+	tblID2UpdateColumns := buildTbl2UpdateColumns(update)
+	tblID2Schema, err := buildTblID2Schema(b.is, tblID2Table)
+	if err != nil {
+		return nil, err
+	}
+	update.FKTriggers = buildOnUpdateForeignKeyTrigger(b.ctx, b.is, tblID2Table, tblID2UpdateColumns, tblID2Schema)
+	return &FKUpdateSetNullPlan{
+		Update:            update,
+		baseFKTriggerPlan: baseFKTriggerPlan{fk, fk.RefCols},
+	}, nil
+}
+
+func buildFKCheckPlan(ctx sessionctx.Context, tbl table.Table, fk *model.FKInfo, cols, rowCols []model.CIStr, checkExist bool, failedErr error) (*FKCheckPlan, error) {
+	tblInfo := tbl.Meta()
+	if tblInfo.PKIsHandle && len(cols) == 1 {
+		refColInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)
+		if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+			refCol := table.FindCol(tbl.Cols(), refColInfo.Name.O)
+			return FKCheckPlan{
+				baseFKTriggerPlan: baseFKTriggerPlan{fk, rowCols},
+				Tbl:               tbl,
+				IdxIsPrimaryKey:   true,
+				IdxIsExclusive:    true,
+				HandleCols:        []*table.Column{refCol},
+				CheckExist:        checkExist,
+				FailedErr:         failedErr,
+			}.Init(ctx), nil
+		}
+	}
+
+	referTbIdxInfo := model.FindIndexByColumns(tblInfo.Indices, cols...)
+	if referTbIdxInfo == nil {
+		return nil, failedErr
+	}
+	var tblIdx table.Index
+	for _, idx := range tbl.Indices() {
+		if idx.Meta().ID == referTbIdxInfo.ID {
+			tblIdx = idx
+		}
+	}
+	if tblIdx == nil {
+		return nil, failedErr
+	}
+
+	var handleCols []*table.Column
+	if referTbIdxInfo.Primary && tblInfo.IsCommonHandle {
+		cols := tbl.Cols()
+		for _, idxCol := range referTbIdxInfo.Columns {
+			handleCols = append(handleCols, cols[idxCol.Offset])
+		}
+	}
+
+	return FKCheckPlan{
+		baseFKTriggerPlan: baseFKTriggerPlan{fk, rowCols},
+		Tbl:               tbl,
+		Idx:               tblIdx,
+		IdxIsExclusive:    len(cols) == len(referTbIdxInfo.Columns),
+		IdxIsPrimaryKey:   referTbIdxInfo.Primary && tblInfo.IsCommonHandle,
+		CheckExist:        checkExist,
+		FailedErr:         failedErr,
+	}.Init(ctx), nil
+}
+
+func (b *PlanBuilder) buildTableReaderForFK(ds *DataSource, cols []model.CIStr) (PhysicalPlan, error) {
+	tblInfo := ds.tableInfo
+	if tblInfo.PKIsHandle && len(cols) == 1 {
+		colInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)
+		if colInfo != nil && mysql.HasPriKeyFlag(colInfo.GetFlag()) {
+			return b.buildPhysicalTableReader(ds)
+		}
+	}
+	idx := model.FindIndexByColumns(tblInfo.Indices, cols...)
+	if idx == nil {
+		return nil, errors.Errorf("foreign key doesn't have related index to use, should never happen")
+	}
+	if ds.tableInfo.IsCommonHandle && idx.Primary {
+		return b.buildPhysicalTableReader(ds)
+	}
+
+	return b.buildPhysicalIndexLookUpReader(ds.DBName, ds.table, idx, ds.schema, ds.Columns)
 }
 
 // FKTriggerPlan is the foreign key trigger plan
