@@ -1132,6 +1132,7 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 	tk.MustExec("create table t1(a varchar(20))")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
+	//nolint:revive,all_revive
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
 
 	// TODO(bb7133): fix the following cases by setting charset from collate firstly.

@@ -331,7 +331,6 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 
 	tk.MustExec(`drop role if exists r1, r2, r3, r4;`)
 	tk.MustExec(`drop table test.testatomic;`)
-
 }
 
 func TestIssue2654(t *testing.T) {

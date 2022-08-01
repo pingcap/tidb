@@ -478,9 +478,8 @@ func (c *CheckpointAdvancer) onConsistencyCheckTick(s *updateSmallTree) error {
 		log.Error("consistency check failed! log backup may lose data! rolling back to full scan for saving.", logutil.ShortError(err))
 		c.state = &fullScan{}
 		return err
-	} else {
-		log.Debug("consistency check passed.")
 	}
+	log.Debug("consistency check passed.")
 	s.consistencyCheckTick = config.DefaultConsistencyCheckTick
 	return nil
 }

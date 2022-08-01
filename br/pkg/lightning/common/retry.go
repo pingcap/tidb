@@ -20,7 +20,7 @@ import (
 	"io"
 	"net"
 	"os"
-	"regexp"
+	"strings"
 	"syscall"
 
 	"github.com/go-sql-driver/mysql"
@@ -31,7 +31,27 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-var regionNotFullyReplicatedRe = regexp.MustCompile(`region \d+ is not fully replicated`)
+// some component doesn't have an accurate named error or transform a named error into string,
+// so we need to check by error message,
+// such as distsql.Checksum which transforms tikv other-error into its own error
+var retryableErrorMsgList = []string{
+	"is not fully replicated",
+	// for cluster >= 4.x, lightning calls distsql.Checksum to do checksum
+	// this error happens on when distsql.Checksum calls TiKV
+	// see https://github.com/pingcap/tidb/blob/2c3d4f1ae418881a95686e8b93d4237f2e76eec6/store/copr/coprocessor.go#L941
+	"coprocessor task terminated due to exceeding the deadline",
+}
+
+func isRetryableFromErrorMessage(err error) bool {
+	msg := err.Error()
+	msgLower := strings.ToLower(msg)
+	for _, errStr := range retryableErrorMsgList {
+		if strings.Contains(msgLower, errStr) {
+			return true
+		}
+	}
+	return false
+}
 
 // IsRetryableError returns whether the error is transient (e.g. network
 // connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
@@ -91,16 +111,11 @@ func isSingleRetryableError(err error) bool {
 		}
 		return false
 	default:
-		if regionNotFullyReplicatedRe.MatchString(err.Error()) {
-			return true
-		}
 		switch status.Code(err) {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
 			return true
-		case codes.Unknown:
-			return false
 		default:
-			return false
+			return isRetryableFromErrorMessage(err)
 		}
 	}
 }

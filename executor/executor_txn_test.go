@@ -254,7 +254,6 @@ func TestInvalidReadCacheTable(t *testing.T) {
 	for _, query := range queries {
 		// enable historical read cache table
 		tk.MustExec(query.sql)
-
 	}
 }
 
@@ -297,6 +296,7 @@ func TestTxnSavepoint0(t *testing.T) {
 		{"set autocommit=1", nil, ""},
 		{"savepoint s1", nil, ""},
 
+		{"set autocommit=0", nil, ""},
 		{"begin", nil, ""},
 		{"savepoint s1", []string{"s1"}, ""},
 		{"set autocommit=1", nil, ""},
