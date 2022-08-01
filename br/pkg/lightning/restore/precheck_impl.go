@@ -590,6 +590,7 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 			log.FromContext(ctx).Debug("no checkpoint detected", zap.String("table", uniqueName))
 			return nil, nil
 		}
+		return nil, errors.Trace(err)
 	}
 	// if checkpoint enable and not missing, we skip the check table empty progress.
 	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMissing {
