@@ -705,7 +705,6 @@ func (d *ddl) DisableDDL() error {
 		if len(serverInfo) <= 1 {
 			return dbterror.ErrDDLSetting.GenWithStackByArgs("can not disable ddl when there is only one instance")
 		}
-
 		// FIXME: if possible, when this node is the only node with DDL, ths setting of DisableDDL should fail.
 	}
 
