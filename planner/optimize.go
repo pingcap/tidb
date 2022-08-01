@@ -60,21 +60,6 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return ast.IsReadOnly(node)
 }
 
-// GetAvailableIsolationReadEngines4Plan gets the available read engines for the current statement.
-// For example, for write stmt, TiFlash has a different results when lock the data in point get plan.
-// So we ban the TiFlash engine in not read only stmt.
-func GetAvailableIsolationReadEngines4Plan(vars *variable.SessionVars) map[kv.StoreType]struct{} {
-	isolationReadEngines := vars.GetIsolationReadEngines()
-	availableReadEngines := make(map[kv.StoreType]struct{})
-	for isolationReadEngine := range isolationReadEngines {
-		availableReadEngines[isolationReadEngine] = struct{}{}
-	}
-	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && vars.StmtCtx.IsReadonlyStmt {
-		delete(availableReadEngines, kv.TiFlash)
-	}
-	return availableReadEngines
-}
-
 func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
 	if !useBinding || stmtNode == nil {
@@ -646,5 +631,4 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
-	core.GetAvailableIsolationReadEngines4Plan = GetAvailableIsolationReadEngines4Plan
 }
