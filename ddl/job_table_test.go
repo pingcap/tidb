@@ -48,8 +48,7 @@ func TestDDLSchedulingMultiTimes(t *testing.T) {
 // This test checks the chosen job records to see if there are wrong scheduling, if job A and job B cannot run concurrently,
 // then the all the record of job A must before or after job B, no cross record between these 2 jobs should be in between.
 func testDDLScheduling(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -192,8 +191,7 @@ func check(t *testing.T, record []int64, ids ...int64) {
 }
 
 func TestConcurrentDDLSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	type table struct {
 		columnIdx int
