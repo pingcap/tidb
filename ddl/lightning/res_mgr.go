@@ -192,7 +192,7 @@ func (m *MemoryRoot) DeleteBackendContext(bcKey string) {
 	}
 
 	// Close and delete backend by key
-	_ = m.deleteBackendEngines(bcKey)
+	_ = m.DeleteBackendEngines(bcKey)
 	bc.Backend.Close()
 
 	// Reclaim memory.
@@ -332,7 +332,7 @@ func (m *MemoryRoot) RegistWorkerContext(engineInfoKey string, id int) (*WorkerC
 }
 
 // Uniform entry to release Engine info.
-func (m *MemoryRoot) deleteBackendEngines(bcKey string) error {
+func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 	var (
 		err   error
 		count int
