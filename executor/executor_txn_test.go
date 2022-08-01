@@ -297,6 +297,7 @@ func TestTxnSavepoint0(t *testing.T) {
 		{"set autocommit=1", nil, ""},
 		{"savepoint s1", nil, ""},
 
+		{"set autocommit=0", nil, ""},
 		{"begin", nil, ""},
 		{"savepoint s1", []string{"s1"}, ""},
 		{"set autocommit=1", nil, ""},
