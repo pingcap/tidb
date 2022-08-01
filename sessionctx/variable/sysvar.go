@@ -76,6 +76,7 @@ func init() {
 	initSynonymsSysVariables()
 }
 
+<<<<<<< HEAD
 // BoolToIntStr converts bool to int string, for example "0" or "1".
 func BoolToIntStr(b bool) string {
 	if b {
@@ -616,6 +617,210 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "information_schema_stats_expiry", "86400"},
 	{ScopeGlobal, "thread_pool_size", "16"},
 	{ScopeGlobal | ScopeSession, WindowingUseHighPrecision, "ON"},
+=======
+	/* The system variables below have GLOBAL and SESSION scope  */
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		result, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.SelectLimit = result
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: DefaultWeekFormat, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 7},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLModeVar, Value: mysql.DefaultSQLMode, IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		// Ensure the SQL mode parses
+		normalizedValue = mysql.FormatSQLModeStr(normalizedValue)
+		if _, err := mysql.GetSQLMode(normalizedValue); err != nil {
+			return originalValue, err
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		val = mysql.FormatSQLModeStr(val)
+		// Modes is a list of different modes separated by commas.
+		sqlMode, err := mysql.GetSQLMode(val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.StrictSQLMode = sqlMode.HasStrictMode()
+		s.SQLMode = sqlMode
+		s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxExecutionTime, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, IsHintUpdatable: true, SetSession: func(s *SessionVars, val string) error {
+		timeoutMS := tidbOptPositiveInt32(val, 0)
+		s.MaxExecutionTime = uint64(timeoutMS)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CollationServer, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCollation(vars, normalizedValue, originalValue, scope)
+	}, SetSession: func(s *SessionVars, val string) error {
+		if coll, err := collate.GetCollationByName(val); err == nil {
+			s.systems[CharacterSetServer] = coll.CharsetName
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: On, Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TimeZone, Value: "SYSTEM", IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if strings.EqualFold(normalizedValue, "SYSTEM") {
+			return "SYSTEM", nil
+		}
+		_, err := parseTimeZone(normalizedValue)
+		return normalizedValue, err
+	}, SetSession: func(s *SessionVars, val string) error {
+		tz, err := parseTimeZone(val)
+		if err != nil {
+			return err
+		}
+		s.TimeZone = tz
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: ForeignKeyChecks, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if TiDBOptOn(normalizedValue) {
+			// TiDB does not yet support foreign keys.
+			// Return the original value in the warning, so that users are not confused.
+			vars.StmtCtx.AppendWarning(ErrUnsupportedValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue))
+			return Off, nil
+		} else if !TiDBOptOn(normalizedValue) {
+			return Off, nil
+		}
+		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCollation(vars, normalizedValue, originalValue, scope)
+	}, SetSession: func(s *SessionVars, val string) error {
+		if coll, err := collate.GetCollationByName(val); err == nil {
+			s.systems[CharsetDatabase] = coll.CharsetName
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: AutoIncrementIncrement, Value: strconv.FormatInt(DefAutoIncrementIncrement, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint16, SetSession: func(s *SessionVars, val string) error {
+		// AutoIncrementIncrement is valid in [1, 65535].
+		s.AutoIncrementIncrement = tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: AutoIncrementOffset, Value: strconv.FormatInt(DefAutoIncrementOffset, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint16, SetSession: func(s *SessionVars, val string) error {
+		// AutoIncrementOffset is valid in [1, 65535].
+		s.AutoIncrementOffset = tidbOptPositiveInt32(val, DefAutoIncrementOffset)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetClient, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterSet(normalizedValue, CharacterSetClient)
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == "" {
+			return normalizedValue, nil
+		}
+		return checkCharacterSet(normalizedValue, "")
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TxnIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, Aliases: []string{TransactionIsolation}, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		// MySQL appends a warning here for tx_isolation is deprecated
+		// TiDB doesn't currently, but may in future. It is still commonly used by applications
+		// So it might be noisy to do so.
+		return checkIsolationLevel(vars, normalizedValue, originalValue, scope)
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TransactionIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, Aliases: []string{TxnIsolation}, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkIsolationLevel(vars, normalizedValue, originalValue, scope)
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CollationConnection, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCollation(vars, normalizedValue, originalValue, scope)
+	}, SetSession: func(s *SessionVars, val string) error {
+		if coll, err := collate.GetCollationByName(val); err == nil {
+			s.systems[CharacterSetConnection] = coll.CharsetName
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: AutoCommit, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		isAutocommit := TiDBOptOn(val)
+		// Implicitly commit the possible ongoing transaction if mode is changed from off to on.
+		if !s.IsAutocommit() && isAutocommit {
+			s.SetInTxn(false)
+		}
+		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharsetDatabase, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterSet(normalizedValue, CharsetDatabase)
+	}, SetSession: func(s *SessionVars, val string) error {
+		if cs, err := charset.GetCharsetInfo(val); err == nil {
+			s.systems[CollationDatabase] = cs.DefaultCollation
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: WaitTimeout, Value: strconv.FormatInt(DefWaitTimeout, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear},
+	{Scope: ScopeGlobal | ScopeSession, Name: InteractiveTimeout, Value: "28800", Type: TypeUnsigned, MinValue: 1, MaxValue: secondsPerYear},
+	{Scope: ScopeGlobal | ScopeSession, Name: InnodbLockWaitTimeout, Value: strconv.FormatInt(DefInnodbLockWaitTimeout, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 3600, SetSession: func(s *SessionVars, val string) error {
+		lockWaitSec := TidbOptInt64(val, DefInnodbLockWaitTimeout)
+		s.LockWaitTimeout = lockWaitSec * 1000
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: GroupConcatMaxLen, Value: "1024", IsHintUpdatable: true, Type: TypeUnsigned, MinValue: 4, MaxValue: math.MaxUint64, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len
+		// Minimum Value 4
+		// Maximum Value (64-bit platforms) 18446744073709551615
+		// Maximum Value (32-bit platforms) 4294967295
+		if mathutil.IntBits == 32 {
+			if val, err := strconv.ParseUint(normalizedValue, 10, 64); err == nil {
+				if val > uint64(math.MaxUint32) {
+					vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(GroupConcatMaxLen, originalValue))
+					return strconv.FormatInt(int64(math.MaxUint32), 10), nil
+				}
+			}
+		}
+		return normalizedValue, nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetConnection, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterSet(normalizedValue, CharacterSetConnection)
+	}, SetSession: func(s *SessionVars, val string) error {
+		if cs, err := charset.GetCharsetInfo(val); err == nil {
+			s.systems[CollationConnection] = cs.DefaultCollation
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterSet(normalizedValue, CharacterSetServer)
+	}, SetSession: func(s *SessionVars, val string) error {
+		if cs, err := charset.GetCharsetInfo(val); err == nil {
+			s.systems[CollationServer] = cs.DefaultCollation
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxAllowedPacket, Value: strconv.FormatUint(DefMaxAllowedPacket, 10), Type: TypeUnsigned, MinValue: 1024, MaxValue: MaxOfMaxAllowedPacket,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			if vars.StmtCtx.StmtType == "Set" && scope == ScopeSession {
+				err := ErrReadOnly.GenWithStackByArgs("SESSION", MaxAllowedPacket, "GLOBAL")
+				return normalizedValue, err
+			}
+			// Truncate the value of max_allowed_packet to be a multiple of 1024,
+			// nonmultiples are rounded down to the nearest multiple.
+			u, err := strconv.ParseUint(normalizedValue, 10, 64)
+			if err != nil {
+				return normalizedValue, err
+			}
+			remainder := u % 1024
+			if remainder != 0 {
+				vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, normalizedValue))
+				u -= remainder
+			}
+			return strconv.FormatUint(u, 10), nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return strconv.FormatUint(s.MaxAllowedPacket, 10), nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			var err error
+			if s.MaxAllowedPacket, err = strconv.ParseUint(val, 10, 64); err != nil {
+				return err
+			}
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: On, Type: TypeBool, IsHintUpdatable: true, SetSession: func(s *SessionVars, val string) error {
+		s.WindowingUseHighPrecision = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: BlockEncryptionMode, Value: "aes-128-ecb", Type: TypeEnum, PossibleValues: []string{"aes-128-ecb", "aes-192-ecb", "aes-256-ecb", "aes-128-cbc", "aes-192-cbc", "aes-256-cbc", "aes-128-ofb", "aes-192-ofb", "aes-256-ofb", "aes-128-cfb", "aes-192-cfb", "aes-256-cfb"}},
+>>>>>>> 1cd8c31b1... session: fix auto commit variable change effect on transaction commit (#36631)
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
