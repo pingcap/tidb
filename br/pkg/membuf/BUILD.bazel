@@ -9,7 +9,7 @@ go_library(
 
 go_test(
     name = "membuf_test",
-    timeout = ["short"],
+    timeout = "short",
     srcs = ["buffer_test.go"],
     embed = [":membuf"],
     flaky = True,

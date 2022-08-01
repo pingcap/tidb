@@ -20,7 +20,7 @@ go_library(
 
 go_test(
     name = "gluetikv_test",
-    timeout = ["short"],
+    timeout = "short",
     srcs = ["glue_test.go"],
     embed = [":gluetikv"],
     flaky = True,

@@ -18,7 +18,7 @@ go_library(
 
 go_test(
     name = "trace_test",
-    timeout = ["short"],
+    timeout = "short",
     srcs = [
         "main_test.go",
         "tracing_serial_test.go",

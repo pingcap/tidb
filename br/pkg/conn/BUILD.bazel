@@ -37,7 +37,7 @@ go_library(
 
 go_test(
     name = "conn_test",
-    timeout = ["short"],
+    timeout = "short",
     srcs = [
         "conn_test.go",
         "main_test.go",
