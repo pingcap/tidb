@@ -60,7 +60,9 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return ast.IsReadOnly(node)
 }
 
-// GetAvailableIsolationReadEngines4Plan  ..
+// GetAvailableIsolationReadEngines4Plan gets the available read engines for the current statement.
+// For example, for write stmt, TiFlash has a different results when lock the data in point get plan.
+// So we ban the TiFlash engine in not read only stmt.
 func GetAvailableIsolationReadEngines4Plan(vars *variable.SessionVars) map[kv.StoreType]struct{} {
 	isolationReadEngines := vars.GetIsolationReadEngines()
 	availableReadEngines := make(map[kv.StoreType]struct{})
@@ -68,8 +70,6 @@ func GetAvailableIsolationReadEngines4Plan(vars *variable.SessionVars) map[kv.St
 		availableReadEngines[isolationReadEngine] = struct{}{}
 	}
 	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && vars.StmtCtx.IsReadonlyStmt {
-		// Because for write stmt, TiFlash has a different results when lock the data in point get plan.
-		// We ban the TiFlash engine in not read only stmt.
 		delete(availableReadEngines, kv.TiFlash)
 	}
 	return availableReadEngines

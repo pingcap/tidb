@@ -189,6 +189,9 @@ func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
+// Note: The variables' type shouldn't be put into the planCacheKey. Because for the decimal type, the different values for the decimal type may have different precise.
+// If we put it to the planCacheKey, it's hard to hit the plan cache. And if there exists lots of decimal values' statements, it will cost a lot of memory.
+// You can see the `CheckTypesCompatibility4PC` for more details about the type match.
 type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName

@@ -1575,13 +1575,13 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
 }
 
-// ContainTiKVIsolationRead ...
+// ContainTiKVIsolationRead checks whether we can access the TiKV read engines.
 func (s *SessionVars) ContainTiKVIsolationRead() bool {
 	_, ok := s.isolationReadEngines[kv.TiKV]
 	return ok
 }
 
-// ContainTiFlashIsolationRead ...
+// ContainTiFlashIsolationRead checks whether we can access the TiFlash read engines.
 func (s *SessionVars) ContainTiFlashIsolationRead() bool {
 	_, ok := s.isolationReadEngines[kv.TiFlash]
 	return ok
