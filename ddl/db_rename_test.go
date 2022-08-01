@@ -102,10 +102,9 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	var (
 		store kv.Storage
 		dom   *domain.Domain
-		clean func()
 	)
 
-	store, dom, clean = testkit.CreateMockStoreAndDomain(t)
+	store, dom = testkit.CreateMockStoreAndDomain(t)
 
 	ddlChecker := schematracker.NewChecker(dom.DDL())
 	dom.SetDDL(ddlChecker)

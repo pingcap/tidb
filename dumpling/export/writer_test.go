@@ -22,7 +22,7 @@ func TestWriteDatabaseMeta(t *testing.T) {
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
 
-	writer :=createTestWriter(config, t)
+	writer := createTestWriter(config, t)
 
 	err := writer.WriteDatabaseMeta("test", "CREATE DATABASE `test`")
 	require.NoError(t, err)
@@ -41,7 +41,7 @@ func TestWritePolicyMeta(t *testing.T) {
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
 
-	writer :=createTestWriter(config, t)
+	writer := createTestWriter(config, t)
 
 	err := writer.WritePolicyMeta("testpolicy", "create placement policy `y` followers=2")
 	require.NoError(t, err)
@@ -61,7 +61,7 @@ func TestWriteTableMeta(t *testing.T) {
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
 
-	writer :=createTestWriter(config, t)
+	writer := createTestWriter(config, t)
 
 	err := writer.WriteTableMeta("test", "t", "CREATE TABLE t (a INT)")
 	require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestWriteViewMeta(t *testing.T) {
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
 
-	writer :=createTestWriter(config, t)
+	writer := createTestWriter(config, t)
 
 	specCmt := "/*!40101 SET NAMES binary*/;\n"
 	createTableSQL := "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n"
@@ -106,7 +106,7 @@ func TestWriteTableData(t *testing.T) {
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
 
-	writer :=createTestWriter(config, t)
+	writer := createTestWriter(config, t)
 
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
@@ -152,7 +152,7 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 	config.FileSize += uint64(len(specCmts[1]) + 1)
 	config.FileSize += uint64(len("INSERT INTO `employees` VALUES\n"))
 
-	writer :=createTestWriter(config, t)
+	writer := createTestWriter(config, t)
 
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
@@ -202,7 +202,7 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 	config.FileSize += uint64(len(specCmts[1]) + 1)
 	config.FileSize += uint64(len("INSERT INTO `employees` VALUES\n"))
 
-	writer :=createTestWriter(config, t)
+	writer := createTestWriter(config, t)
 
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
@@ -248,7 +248,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 	config.OutputFileTemplate, err = ParseOutputFileTemplate("specified-name")
 	require.NoError(t, err)
 
-	writer :=createTestWriter(config, t)
+	writer := createTestWriter(config, t)
 
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
@@ -299,7 +299,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 	require.NoError(t, err)
 	config.OutputDirPath, err = ioutil.TempDir("", "dumpling")
 
-	writer =createTestWriter(config, t)
+	writer = createTestWriter(config, t)
 
 	cases = map[string]string{
 		"000000000-employee-te%25%2Fst.sql": "/*!40101 SET NAMES binary*/;\n" +

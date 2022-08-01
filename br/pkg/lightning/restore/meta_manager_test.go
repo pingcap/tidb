@@ -82,7 +82,7 @@ func newTableRestore(t *testing.T, kvStore kv.Storage) *TableRestore {
 	}
 }
 
-func newMetaMgrSuite(t *testing.T) (*metaMgrSuite, func()) {
+func newMetaMgrSuite(t *testing.T) *metaMgrSuite {
 	db, m, err := sqlmock.New()
 	require.NoError(t, err)
 
@@ -101,14 +101,15 @@ func newMetaMgrSuite(t *testing.T) (*metaMgrSuite, func()) {
 	s.mockDB = m
 	s.checksumMgr = &testChecksumMgr{}
 
-	return &s, func() {
+	t.Cleanup(func() {
 		require.NoError(t, s.mockDB.ExpectationsWereMet())
 		require.NoError(t, kvStore.Close())
-	}
+	})
+	return &s
 }
 
 func TestAllocTableRowIDsSingleTable(t *testing.T) {
-	s :=newMetaMgrSuite(t)
+	s := newMetaMgrSuite(t)
 
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
@@ -128,7 +129,7 @@ func TestAllocTableRowIDsSingleTable(t *testing.T) {
 }
 
 func TestAllocTableRowIDsSingleTableAutoIDNot0(t *testing.T) {
-	s :=newMetaMgrSuite(t)
+	s := newMetaMgrSuite(t)
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -148,7 +149,7 @@ func TestAllocTableRowIDsSingleTableAutoIDNot0(t *testing.T) {
 }
 
 func TestAllocTableRowIDsSingleTableContainsData(t *testing.T) {
-	s :=newMetaMgrSuite(t)
+	s := newMetaMgrSuite(t)
 
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
@@ -168,7 +169,7 @@ func TestAllocTableRowIDsSingleTableContainsData(t *testing.T) {
 }
 
 func TestAllocTableRowIDsSingleTableSkipChecksum(t *testing.T) {
-	s :=newMetaMgrSuite(t)
+	s := newMetaMgrSuite(t)
 
 	s.mgr.needChecksum = false
 	defer func() {
@@ -193,7 +194,7 @@ func TestAllocTableRowIDsSingleTableSkipChecksum(t *testing.T) {
 }
 
 func TestAllocTableRowIDsAllocated(t *testing.T) {
-	s :=newMetaMgrSuite(t)
+	s := newMetaMgrSuite(t)
 
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
@@ -211,7 +212,7 @@ func TestAllocTableRowIDsAllocated(t *testing.T) {
 }
 
 func TestAllocTableRowIDsFinished(t *testing.T) {
-	s :=newMetaMgrSuite(t)
+	s := newMetaMgrSuite(t)
 
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
@@ -229,7 +230,7 @@ func TestAllocTableRowIDsFinished(t *testing.T) {
 }
 
 func TestAllocTableRowIDsMultiTasksInit(t *testing.T) {
-	s :=newMetaMgrSuite(t)
+	s := newMetaMgrSuite(t)
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -249,7 +250,7 @@ func TestAllocTableRowIDsMultiTasksInit(t *testing.T) {
 }
 
 func TestAllocTableRowIDsMultiTasksAllocated(t *testing.T) {
-	s :=newMetaMgrSuite(t)
+	s := newMetaMgrSuite(t)
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -268,8 +269,7 @@ func TestAllocTableRowIDsMultiTasksAllocated(t *testing.T) {
 }
 
 func TestAllocTableRowIDsRetryOnTableInChecksum(t *testing.T) {
-	s, clean := newMetaMgrSuite(t)
-	defer clean()
+	s := newMetaMgrSuite(t)
 
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").

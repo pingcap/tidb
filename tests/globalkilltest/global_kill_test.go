@@ -72,8 +72,8 @@ type GlobalKillSuite struct {
 	tikvProc  *exec.Cmd
 }
 
-func createGloabalKillSuite(t *testing.T) (s *GlobalKillSuite, clean func()) {
-	s = new(GlobalKillSuite)
+func createGloabalKillSuite(t *testing.T) *GlobalKillSuite {
+	s := new(GlobalKillSuite)
 	err := logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: *logLevel}})
 	require.NoError(t, err)
 
@@ -81,14 +81,14 @@ func createGloabalKillSuite(t *testing.T) (s *GlobalKillSuite, clean func()) {
 	err = s.startCluster()
 	require.NoError(t, err)
 	s.pdCli, s.pdErr = s.connectPD()
-	clean = func() {
+	t.Cleanup(func() {
 		if s.pdCli != nil {
 			require.NoError(t, err)
 		}
 		require.NoError(t, s.cleanCluster())
-	}
+	})
 
-	return
+	return s
 }
 
 func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
@@ -429,7 +429,7 @@ func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sq
 
 // [Test Scenario 1] A TiDB without PD, killed by Ctrl+C, and killed by KILL.
 func TestWithoutPD(t *testing.T) {
-	s :=createGloabalKillSuite(t)
+	s := createGloabalKillSuite(t)
 	var err error
 	port := *tidbStartPort
 	tidb, err := s.startTiDBWithoutPD(port, *tidbStatusPort)
@@ -455,7 +455,7 @@ func TestWithoutPD(t *testing.T) {
 
 // [Test Scenario 2] One TiDB with PD, killed by Ctrl+C, and killed by KILL.
 func TestOneTiDB(t *testing.T) {
-	s :=createGloabalKillSuite(t)
+	s := createGloabalKillSuite(t)
 	port := *tidbStartPort + 1
 	tidb, err := s.startTiDBWithPD(port, *tidbStatusPort+1, *pdClientPath)
 	require.NoError(t, err)
@@ -483,7 +483,7 @@ func TestOneTiDB(t *testing.T) {
 
 // [Test Scenario 3] Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
 func TestMultipleTiDB(t *testing.T) {
-	s :=createGloabalKillSuite(t)
+	s := createGloabalKillSuite(t)
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1 & conn1a,conn1b
@@ -529,7 +529,7 @@ func TestMultipleTiDB(t *testing.T) {
 }
 
 func TestLostConnection(t *testing.T) {
-	s :=createGloabalKillSuite(t)
+	s := createGloabalKillSuite(t)
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1

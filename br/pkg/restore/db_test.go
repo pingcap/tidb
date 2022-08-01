@@ -35,9 +35,9 @@ type testRestoreSchemaSuite struct {
 	storage  storage.ExternalStorage
 }
 
-func createRestoreSchemaSuite(t *testing.T) (s *testRestoreSchemaSuite, clean func()) {
+func createRestoreSchemaSuite(t *testing.T) *testRestoreSchemaSuite {
 	var err error
-	s = new(testRestoreSchemaSuite)
+	s := new(testRestoreSchemaSuite)
 	s.mockGlue = &gluetidb.MockGlue{}
 	s.mock, err = mock.NewCluster()
 	require.NoError(t, err)
@@ -45,14 +45,14 @@ func createRestoreSchemaSuite(t *testing.T) (s *testRestoreSchemaSuite, clean fu
 	s.storage, err = storage.NewLocalStorage(base)
 	require.NoError(t, err)
 	require.NoError(t, s.mock.Start())
-	clean = func() {
+	t.Cleanup(func() {
 		s.mock.Stop()
-	}
-	return
+	})
+	return s
 }
 
 func TestRestoreAutoIncID(t *testing.T) {
-	s :=createRestoreSchemaSuite(t)
+	s := createRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.mock.Storage)
 	tk.MustExec("use test")
 	tk.MustExec("set @@sql_mode=''")
@@ -129,7 +129,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 }
 
 func TestCreateTablesInDb(t *testing.T) {
-	s :=createRestoreSchemaSuite(t)
+	s := createRestoreSchemaSuite(t)
 	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
 
@@ -166,7 +166,7 @@ func TestCreateTablesInDb(t *testing.T) {
 }
 
 func TestFilterDDLJobs(t *testing.T) {
-	s :=createRestoreSchemaSuite(t)
+	s := createRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.mock.Storage)
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
@@ -230,7 +230,7 @@ func TestFilterDDLJobs(t *testing.T) {
 }
 
 func TestFilterDDLJobsV2(t *testing.T) {
-	s :=createRestoreSchemaSuite(t)
+	s := createRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.mock.Storage)
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
@@ -295,7 +295,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 }
 
 func TestDB_ExecDDL(t *testing.T) {
-	s :=createRestoreSchemaSuite(t)
+	s := createRestoreSchemaSuite(t)
 
 	ctx := context.Background()
 	ddlJobs := []*model.Job{
