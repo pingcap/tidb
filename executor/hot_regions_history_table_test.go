@@ -62,8 +62,6 @@ type hotRegionsHistoryTableSuite struct {
 }
 
 func createHotRegionsHistoryTableSuite(t *testing.T) *hotRegionsHistoryTableSuite {
-	var clean func()
-
 	s := new(hotRegionsHistoryTableSuite)
 	s.store = testkit.CreateMockStore(t)
 	store := &mockStoreWithMultiPD{
@@ -79,12 +77,11 @@ func createHotRegionsHistoryTableSuite(t *testing.T) *hotRegionsHistoryTableSuit
 	}
 	s.store = store
 	s.startTime = time.Now()
-	s.clean = func() {
+	t.Cleanup(func() {
 		for _, server := range s.httpServers {
 			server.Close()
 		}
-		clean()
-	}
+	})
 	return s
 }
 
@@ -509,7 +506,6 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 
 func TestTiDBHotRegionsHistoryError(t *testing.T) {
 	s := createHotRegionsHistoryTableSuite(t)
-	defer s.clean()
 
 	tk := testkit.NewTestKit(t, s.store)
 
