@@ -130,7 +130,8 @@
     "exclude_files": {
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*_/testmain\\.go$": "ignore code"
+      ".*_/testmain\\.go$": "ignore code",
+      ".*failpoint_binding__.go$": "ignore generated code"
     }
   },
   "findcall": {
