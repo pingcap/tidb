@@ -185,9 +185,8 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		if i >= maxErrorRetryCount {
 			require.Equal(t, mockChecksumKVClientErr, errors.Cause(err))
 			continue
-		} else {
-			require.NoError(t, err)
 		}
+		require.NoError(t, err)
 
 		// after checksum, safepint should be small than start ts
 		ts := pdClient.currentSafePoint()

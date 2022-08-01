@@ -398,7 +398,6 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schema := range schemas {
-
 		charset := mysql.DefaultCharset
 		collation := mysql.DefaultCollationName
 
@@ -800,7 +799,7 @@ ForColumnsTag:
 			continue
 		}
 
-		ft := &col.FieldType
+		ft := &(col.FieldType)
 		if tbl.IsView() {
 			e.viewMu.RLock()
 			if e.viewSchemaMap[tbl.ID] != nil {
@@ -1319,7 +1318,6 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					req.AppendString(12, e.runningJobs[i].Query)
 				}
 			}
-
 		}
 		e.cursor += num
 		count += num
@@ -1884,7 +1882,8 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 
 	// If not specify the table_schema, return an error to avoid traverse all schemas and their tables.
 	if len(schemas) == 0 {
-		return errors.Errorf("Please specify the 'table_schema'")
+		return errors.Errorf("Please add where clause to filter the column TABLE_SCHEMA. " +
+			"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
 	}
 
 	// Filter the sys or memory schema.

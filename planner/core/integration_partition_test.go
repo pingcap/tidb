@@ -51,7 +51,7 @@ func TestListPartitionPushDown(t *testing.T) {
 		Plan []string
 	}
 	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -93,7 +93,7 @@ func TestListColVariousTypes(t *testing.T) {
 		Results []string
 	}
 	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -130,7 +130,7 @@ func TestListPartitionPruning(t *testing.T) {
 		StaticPlan  []string
 	}
 	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -162,7 +162,7 @@ func TestListPartitionFunctions(t *testing.T) {
 		Results []string
 	}
 	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

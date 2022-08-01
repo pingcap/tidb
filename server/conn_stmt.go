@@ -115,7 +115,6 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 		if err := cc.writeEOF(0); err != nil {
 			return err
 		}
-
 	}
 	return cc.flush(ctx)
 }

@@ -560,7 +560,7 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 	count := int64(0)
 	for {
 		r, size := utf8.DecodeRuneInString(str)
-		count += 1
+		count++
 		index -= len(collator.KeyWithoutTrimRightSpace(string(r)))
 		if index <= 0 {
 			return count + 1

@@ -39,7 +39,7 @@ func TestOuterJoinPropConst(t *testing.T) {
 	}
 
 	expressionSuiteData := expression.GetExpressionSuiteData()
-	expressionSuiteData.GetTestCases(t, &input, &output)
+	expressionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

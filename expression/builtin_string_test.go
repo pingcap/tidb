@@ -2517,7 +2517,6 @@ func TestToBase64Sig(t *testing.T) {
 			lastWarn := warnings[len(warnings)-1]
 			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
 			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
-
 		} else {
 			require.False(t, isNull)
 		}

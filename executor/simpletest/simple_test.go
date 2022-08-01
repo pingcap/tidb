@@ -895,7 +895,6 @@ func TestSetPwd(t *testing.T) {
 	tk.MustExec(setPwdSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
-
 }
 
 func TestFlushPrivileges(t *testing.T) {
@@ -922,7 +921,6 @@ func TestFlushPrivileges(t *testing.T) {
 	// After flush.
 	_, err = se.Execute(ctx, `SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	require.NoError(t, err)
-
 }
 
 func TestFlushPrivilegesPanic(t *testing.T) {

@@ -271,7 +271,6 @@ func TestMyDecimal(t *testing.T) {
 
 		types.DecimalAdd(&ds[i], d, &ds[i])
 		require.NoError(t, err)
-
 	}
 
 	it := NewIterator4Chunk(chk)
