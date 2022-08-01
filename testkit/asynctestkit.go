@@ -19,6 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/expression"
 	"runtime"
 	"testing"
 
@@ -159,9 +160,12 @@ func (tk *AsyncTestKit) Exec(ctx context.Context, sql string, args ...interface{
 		return nil, err
 	}
 
-	params := make([]types.Datum, len(args))
+	params := make([]expression.Expression, len(args))
 	for i := 0; i < len(params); i++ {
-		params[i] = types.NewDatum(args[i])
+		params[i], err = datum2Expression4Test(types.NewDatum(args[i]))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
