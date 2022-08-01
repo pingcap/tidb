@@ -32,8 +32,7 @@ import (
 
 func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	p := parser.New()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
@@ -101,8 +100,7 @@ func getList(otrace *tracing.PhysicalOptimizeTracer) (pl []string) {
 // assert the case in https://github.com/pingcap/tidb/issues/34863
 func TestPhysicalOptimizerTrace(t *testing.T) {
 	p := parser.New()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)

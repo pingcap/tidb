@@ -25,8 +25,7 @@ import (
 )
 
 func TestSimpleProjDual(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
@@ -38,8 +37,7 @@ func TestSimpleProjDual(t *testing.T) {
 }
 
 func TestPKIsHandleRangeScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -68,8 +66,7 @@ func TestPKIsHandleRangeScan(t *testing.T) {
 }
 
 func TestIndexScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -98,8 +95,7 @@ func TestIndexScan(t *testing.T) {
 }
 
 func TestBasicShow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -113,8 +109,7 @@ func TestBasicShow(t *testing.T) {
 }
 
 func TestSort(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -142,8 +137,7 @@ func TestSort(t *testing.T) {
 }
 
 func TestAggregation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -208,8 +202,7 @@ func doTestPushdownDistinct(t *testing.T, vars, input []string, output []struct 
 	Plan   []string
 	Result []string
 }) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -237,8 +230,7 @@ func doTestPushdownDistinct(t *testing.T, vars, input []string, output []struct 
 }
 
 func TestSimplePlans(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -266,8 +258,7 @@ func TestSimplePlans(t *testing.T) {
 }
 
 func TestJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -301,8 +292,7 @@ func TestJoin(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -332,8 +322,7 @@ func TestApply(t *testing.T) {
 }
 
 func TestMemTableScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -358,8 +347,7 @@ func TestMemTableScan(t *testing.T) {
 }
 
 func TestTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -387,8 +375,7 @@ func TestTopN(t *testing.T) {
 }
 
 func TestCascadePlannerHashedPartTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -421,8 +408,7 @@ func TestCascadePlannerHashedPartTable(t *testing.T) {
 }
 
 func TestInlineProjection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
