@@ -980,7 +980,7 @@ func TestIssue36769(t *testing.T) {
 		"StreamAgg 1.00 root  funcs:count(Column#9)->Column#4",
 		"└─IndexLookUp 1.00 root  ",
 		"  ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t, index:b(b) range:[-inf,10), keep order:false, stats:pseudo",
-		"  └─StreamAgg(Probe) 1.00 cop[tikv]  funcs:count(1)->Column#9",
+		"  └─StreamAgg(Probe) 1.00 cop[tikv]  funcs:count(1)->Column#9", // StreamAgg can be pushed down to IndexLookup naturally without hint.
 		"    └─Selection 1104.45 cop[tikv]  lt(test.t.a, 10)",
 		"      └─TableRowIDScan 3323.33 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
