@@ -230,8 +230,15 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 	return nil
 }
 
+func isPointLockReadUseLastTso() bool {
+	return true
+}
+
 // AdviseOptimizeWithPlan in RC covers much fewer cases compared with pessimistic repeatable read.
-// We only optimize with insert operator with no selection in that we do not fetch latest ts immediately.
+// We do not fetch latest ts immediately for such scenes.
+// PointGet, Insert without select, update by PointGet, delete by PointGet.
+// We don't optimize for PointGet of SELECT ... FOR UPDATE defaultly, it may decrease the success rate
+// of transactions. The tidb_rc_point_lock_read_use_last_tso
 // We only update ts if write conflict is incurred.
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
@@ -251,7 +258,27 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	if v, ok := plan.(*plannercore.Insert); ok && v.SelectPlan == nil {
+	useLastOracleTS := false
+	switch v := plan.(type) {
+	case *plannercore.PointGetPlan:
+		if v.Lock && variable.PointLockReadUseLastTso.Load() {
+			useLastOracleTS = true
+		}
+	case *plannercore.Insert:
+		if v.SelectPlan == nil {
+			useLastOracleTS = true
+		}
+	case *plannercore.Update:
+		if _, Ok := v.SelectPlan.(*plannercore.PointGetPlan); Ok {
+			useLastOracleTS = true
+		}
+	case *plannercore.Delete:
+		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
+			useLastOracleTS = true
+		}
+	}
+
+	if useLastOracleTS {
 		p.stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	}
 

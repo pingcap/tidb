@@ -730,6 +730,7 @@ const (
 	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
 	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
 	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
+	TiDBPointLockReadUseLastTso    = "tidb_rc_point_lock_read_use_last_tso"
 )
 
 // TiDB vars that have only global scope
@@ -1024,6 +1025,7 @@ const (
 	MaxDDLReorgBatchSize           int32  = 10240
 	MinDDLReorgBatchSize           int32  = 32
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
+	DefTiDBPointLockReadUseLastTso                 = true
 )
 
 // Process global variables.
@@ -1070,6 +1072,7 @@ var (
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
+	PointLockReadUseLastTso           = atomic.NewBool(false)
 )
 
 var (
