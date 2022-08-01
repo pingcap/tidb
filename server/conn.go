@@ -2176,7 +2176,10 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
 			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), true)
 		cc.pkt.flush()
-		return err
+		if err != nil {
+			return err
+		}
+		return nil
 	}
 	if err := cc.writeEOF(0); err != nil {
 		return err
