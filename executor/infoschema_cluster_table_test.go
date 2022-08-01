@@ -54,19 +54,19 @@ type infosSchemaClusterTableSuite struct {
 }
 
 func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSuite {
-	var clean func()
-
 	s := new(infosSchemaClusterTableSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
 	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
-	s.clean = func() {
-		s.rpcServer.Stop()
-		s.httpServer.Close()
-		clean()
-	}
-
+	t.Cleanup(func() {
+		if s.rpcServer != nil {
+			s.rpcServer.Stop()
+		}
+		if s.httpServer != nil {
+			s.httpServer.Close()
+		}
+	})
 	return s
 }
 

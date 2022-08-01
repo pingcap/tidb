@@ -79,7 +79,9 @@ func createHotRegionsHistoryTableSuite(t *testing.T) *hotRegionsHistoryTableSuit
 	s.startTime = time.Now()
 	t.Cleanup(func() {
 		for _, server := range s.httpServers {
-			server.Close()
+			if server != nil {
+				server.Close()
+			}
 		}
 	})
 	return s
