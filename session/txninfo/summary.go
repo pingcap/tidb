@@ -123,7 +123,7 @@ func (recorder *TrxHistoryRecorder) DumpTrxSummary() [][]types.Datum {
 // OnTrxEnd should be called when a transaction ends, ie. leaves `TIDB_TRX` table.
 func (recorder *TrxHistoryRecorder) OnTrxEnd(info *TxnInfo) {
 	now := time.Now()
-	startTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+	startTime := time.UnixMilli(oracle.ExtractPhysical(info.StartTS))
 	if now.Sub(startTime) < recorder.minDuration {
 		return
 	}

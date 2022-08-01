@@ -515,19 +515,16 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
 }
 
 func formatTime(v int64, units *parquet.TimeUnit, format, utcFormat string, utc bool) string {
-	var sec, nsec int64
+	var t time.Time
 	if units.MICROS != nil {
-		sec = v / 1e6
-		nsec = (v % 1e6) * 1e3
+		t = time.UnixMicro(v)
 	} else if units.MILLIS != nil {
-		sec = v / 1e3
-		nsec = (v % 1e3) * 1e6
+		t = time.UnixMilli(v)
 	} else {
 		// nano
-		sec = v / 1e9
-		nsec = v % 1e9
+		t = time.Unix(0, v)
 	}
-	t := time.Unix(sec, nsec).UTC()
+	t = t.UTC()
 	if utc {
 		return t.Format(utcFormat)
 	}
