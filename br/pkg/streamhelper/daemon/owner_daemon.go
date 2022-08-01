@@ -53,6 +53,7 @@ func (od *OwnerDaemon) ownerTick(ctx context.Context) {
 	if !od.Running() {
 		cx, cancel := context.WithCancel(ctx)
 		od.cancel = cancel
+		log.Info("daemon became owner", zap.String("id", od.manager.ID()), zap.String("daemon-id", od.daemon.Name()))
 		// Note: maybe save the context so we can cancel the tick when we are not owner?
 		od.daemon.OnStart(cx)
 	}
@@ -77,7 +78,7 @@ func (od *OwnerDaemon) Begin(ctx context.Context) (func(), error) {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Info("advancer loop exits", zap.String("id", od.manager.ID()), zap.String("daemon-id", od.daemon.Name()))
+				log.Info("daemon loop exits", zap.String("id", od.manager.ID()), zap.String("daemon-id", od.daemon.Name()))
 				return
 			case <-tick.C:
 				log.Debug("daemon tick start", zap.Bool("is-owner", od.manager.IsOwner()), zap.String("daemon-id", od.daemon.Name()))
