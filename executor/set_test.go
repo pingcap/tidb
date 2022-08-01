@@ -42,8 +42,7 @@ import (
 )
 
 func TestSetVar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("SET @a = 1;")
 	tk.MustExec(`SET @a = "1";`)
@@ -754,8 +753,7 @@ func TestSetVar(t *testing.T) {
 }
 
 func TestGetSetNoopVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// By default you can get/set noop sysvars without issue.
@@ -779,8 +777,7 @@ func TestGetSetNoopVars(t *testing.T) {
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	testCases := []struct {
@@ -812,8 +809,7 @@ func TestTruncateIncorrectIntSessionVar(t *testing.T) {
 }
 
 func TestSetCharset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	sessionVars := tk.Session().GetSessionVars()
 
@@ -914,8 +910,7 @@ func TestSetCharset(t *testing.T) {
 }
 
 func TestSetCollationAndCharset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	ctx := tk.Session().(sessionctx.Context)
@@ -959,8 +954,7 @@ func TestSetCollationAndCharset(t *testing.T) {
 }
 
 func TestValidateSetVar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	err := tk.ExecToErr("set global tidb_distsql_scan_concurrency='fff';")
@@ -1347,8 +1341,7 @@ func TestValidateSetVar(t *testing.T) {
 }
 
 func TestSelectGlobalVar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("0"))
@@ -1369,8 +1362,7 @@ func TestSelectGlobalVar(t *testing.T) {
 }
 
 func TestSetConcurrency(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test default value
@@ -1469,8 +1461,7 @@ func TestSetConcurrency(t *testing.T) {
 }
 
 func TestEnableNoopFunctionsVar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	defer func() {
@@ -1572,13 +1563,11 @@ func TestEnableNoopFunctionsVar(t *testing.T) {
 	tk.MustExec("set global read_only = on")
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
 	require.Error(t, tk.ExecToErr("set global read_only = abc"))
-
 }
 
 // https://github.com/pingcap/tidb/issues/29670
 func TestDefaultBehavior(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("InnoDB"))
@@ -1603,8 +1592,7 @@ func TestDefaultBehavior(t *testing.T) {
 }
 
 func TestTiDBReadOnly(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// turn on tidb_restricted_read_only should turn on tidb_super_read_only
@@ -1627,8 +1615,7 @@ func TestTiDBReadOnly(t *testing.T) {
 }
 
 func TestRemovedSysVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test for tidb_enable_noop_functions
@@ -1645,8 +1632,7 @@ func TestRemovedSysVars(t *testing.T) {
 }
 
 func TestSetClusterConfig(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1739,8 +1725,7 @@ func TestSetTopSQLVariables(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_top_sql='On';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("1"))
@@ -1784,8 +1769,7 @@ func TestSetTopSQLVariables(t *testing.T) {
 }
 
 func TestPreparePlanCacheValid(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 0")
@@ -1822,8 +1806,7 @@ func TestPreparePlanCacheValid(t *testing.T) {
 }
 
 func TestInstanceScopeSwitching(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1838,8 +1821,7 @@ func TestInstanceScopeSwitching(t *testing.T) {
 }
 
 func TestGcMaxWaitTime(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1854,16 +1836,15 @@ func TestGcMaxWaitTime(t *testing.T) {
 }
 
 func TestTiFlashFineGrainedShuffle(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// Default is -1.
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("-1"))
+	// Default is 0.
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("0"))
 
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("-1"))
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("0"))
 	// Min val is -1.
 	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -2")
 	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("-1"))

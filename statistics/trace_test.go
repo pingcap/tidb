@@ -31,8 +31,7 @@ import (
 )
 
 func TestTraceCE(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -52,7 +51,7 @@ func TestTraceCE(t *testing.T) {
 		}
 	)
 	traceSuiteData := statistics.GetTraceSuiteData()
-	traceSuiteData.GetTestCases(t, &in, &out)
+	traceSuiteData.LoadTestCases(t, &in, &out)
 
 	// Load needed statistics.
 	for _, tt := range in {
@@ -102,8 +101,7 @@ func TestTraceCE(t *testing.T) {
 }
 
 func TestTraceCEPartitionTable(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

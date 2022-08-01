@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/conn",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/glue",
         "//br/pkg/logutil",
@@ -41,7 +42,9 @@ go_test(
         "main_test.go",
     ],
     embed = [":conn"],
+    flaky = True,
     deps = [
+        "//br/pkg/conn/util",
         "//br/pkg/pdutil",
         "//br/pkg/utils",
         "//testkit/testsetup",

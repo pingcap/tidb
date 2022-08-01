@@ -2514,7 +2514,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tidb_distsql_copr_cache": {
 		Comment: "The total count of TiDB distsql coprocessor cache",
-		PromQL:  "sum(rate(tidb_distsql_copr_cache{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance))",
+		PromQL:  "sum(rate(tidb_distsql_copr_cache{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
 		Labels:  []string{"instance", "type"},
 	},
 	"tidb_execute_total_count": {

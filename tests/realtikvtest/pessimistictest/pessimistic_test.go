@@ -73,8 +73,7 @@ func setLockTTL(v uint64) lockTTL { return lockTTL(atomic.SwapUint64(&transactio
 func (v lockTTL) restore() { atomic.StoreUint64(&transaction.ManagedLockTTL, uint64(v)) }
 
 func TestPessimisticTxn(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -125,8 +124,7 @@ func TestPessimisticTxn(t *testing.T) {
 }
 
 func TestTxnMode(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -189,8 +187,7 @@ func TestDeadlock(t *testing.T) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
 	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -258,11 +255,10 @@ func TestSingleStatementRollback(t *testing.T) {
 	}
 
 	var cluster testutils.Cluster
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store := realtikvtest.CreateMockStoreAndSetup(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -310,8 +306,7 @@ func TestSingleStatementRollback(t *testing.T) {
 }
 
 func TestFirstStatementFail(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -326,8 +321,7 @@ func TestFirstStatementFail(t *testing.T) {
 }
 
 func TestKeyExistsCheck(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -352,8 +346,7 @@ func TestKeyExistsCheck(t *testing.T) {
 }
 
 func TestInsertOnDup(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -371,8 +364,7 @@ func TestInsertOnDup(t *testing.T) {
 }
 
 func TestPointGetOverflow(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -383,8 +375,7 @@ func TestPointGetOverflow(t *testing.T) {
 }
 
 func TestPointGetKeyLock(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -433,8 +424,7 @@ func TestPointGetKeyLock(t *testing.T) {
 }
 
 func TestBankTransfer(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -468,8 +458,7 @@ func TestBankTransfer(t *testing.T) {
 }
 
 func TestLockUnchangedRowKey(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -503,9 +492,39 @@ func TestLockUnchangedRowKey(t *testing.T) {
 	tk2.MustExec("rollback")
 }
 
+func TestLockUnchangedUniqueKey(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
+	// ref https://github.com/pingcap/tidb/issues/36438
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (i varchar(10), unique key(i))")
+	tk.MustExec("insert into t values ('a')")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t set i = 'a'")
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := tk2.Exec("insert into t values ('a')")
+		errCh <- err
+	}()
+
+	select {
+	case <-errCh:
+		require.Fail(t, "insert is not blocked by update")
+	case <-time.After(500 * time.Millisecond):
+		tk.MustExec("rollback")
+	}
+
+	require.Error(t, <-errCh)
+}
+
 func TestOptimisticConflicts(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -555,8 +574,7 @@ func TestOptimisticConflicts(t *testing.T) {
 }
 
 func TestSelectForUpdateNoWait(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -647,8 +665,7 @@ func TestSelectForUpdateNoWait(t *testing.T) {
 }
 
 func TestAsyncRollBackNoWait(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -711,8 +728,7 @@ func TestAsyncRollBackNoWait(t *testing.T) {
 
 func TestWaitLockKill(t *testing.T) {
 	// Test kill command works on waiting pessimistic lock.
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -746,8 +762,7 @@ func TestWaitLockKill(t *testing.T) {
 func TestKillStopTTLManager(t *testing.T) {
 	// Test killing an idle pessimistic session stop its ttlManager.
 	defer setLockTTL(300).restore()
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -773,8 +788,7 @@ func TestKillStopTTLManager(t *testing.T) {
 }
 
 func TestConcurrentInsert(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
@@ -819,8 +833,7 @@ func TestConcurrentInsert(t *testing.T) {
 }
 
 func TestInnodbLockWaitTimeout(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -939,8 +952,7 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 }
 
 func TestPushConditionCheckForPessimisticTxn(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -962,8 +974,7 @@ func TestPushConditionCheckForPessimisticTxn(t *testing.T) {
 
 func TestInnodbLockWaitTimeoutWaitStart(t *testing.T) {
 	// prepare work
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1011,8 +1022,7 @@ func TestInnodbLockWaitTimeoutWaitStart(t *testing.T) {
 }
 
 func TestBatchPointGetWriteConflict(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1030,8 +1040,7 @@ func TestBatchPointGetWriteConflict(t *testing.T) {
 }
 
 func TestPessimisticSerializable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1172,8 +1181,7 @@ func TestPessimisticSerializable(t *testing.T) {
 }
 
 func TestPessimisticReadCommitted(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1287,8 +1295,7 @@ func TestPessimisticReadCommitted(t *testing.T) {
 }
 
 func TestPessimisticLockNonExistsKey(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1334,8 +1341,7 @@ func TestPessimisticLockNonExistsKey(t *testing.T) {
 
 func TestPessimisticCommitReadLock(t *testing.T) {
 	// tk1 lock wait timeout is 2s
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1384,8 +1390,7 @@ func TestPessimisticCommitReadLock(t *testing.T) {
 }
 
 func TestPessimisticLockReadValue(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1411,8 +1416,7 @@ func TestPessimisticLockReadValue(t *testing.T) {
 }
 
 func TestRCWaitTSOTwice(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1426,8 +1430,7 @@ func TestRCWaitTSOTwice(t *testing.T) {
 }
 
 func TestNonAutoCommitWithPessimisticMode(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1452,8 +1455,7 @@ func TestNonAutoCommitWithPessimisticMode(t *testing.T) {
 }
 
 func TestBatchPointGetLockIndex(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1481,8 +1483,7 @@ func TestBatchPointGetLockIndex(t *testing.T) {
 }
 
 func TestLockGotKeysInRC(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1510,8 +1511,7 @@ func TestLockGotKeysInRC(t *testing.T) {
 }
 
 func TestBatchPointGetAlreadyLocked(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1525,8 +1525,7 @@ func TestBatchPointGetAlreadyLocked(t *testing.T) {
 }
 
 func TestRollbackWakeupBlockedTxn(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1566,8 +1565,7 @@ func TestRollbackWakeupBlockedTxn(t *testing.T) {
 }
 
 func TestRCSubQuery(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1590,8 +1588,7 @@ func TestRCSubQuery(t *testing.T) {
 }
 
 func TestRCIndexMerge(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1626,8 +1623,7 @@ func TestRCIndexMerge(t *testing.T) {
 }
 
 func TestGenerateColPointGet(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1677,8 +1673,7 @@ func TestGenerateColPointGet(t *testing.T) {
 }
 
 func TestTxnWithExpiredPessimisticLocks(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1708,8 +1703,7 @@ func TestTxnWithExpiredPessimisticLocks(t *testing.T) {
 func TestKillWaitLockTxn(t *testing.T) {
 	// Test kill command works on waiting pessimistic lock.
 	defer setLockTTL(300).restore()
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1750,8 +1744,7 @@ func TestKillWaitLockTxn(t *testing.T) {
 }
 
 func TestDupLockInconsistency(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1766,8 +1759,7 @@ func TestDupLockInconsistency(t *testing.T) {
 }
 
 func TestUseLockCacheInRCMode(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1840,8 +1832,7 @@ func TestUseLockCacheInRCMode(t *testing.T) {
 }
 
 func TestPointGetWithDeleteInMem(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1871,8 +1862,7 @@ func TestPointGetWithDeleteInMem(t *testing.T) {
 }
 
 func TestPessimisticTxnWithDDLAddDropColumn(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1903,8 +1893,7 @@ func TestPessimisticTxnWithDDLAddDropColumn(t *testing.T) {
 }
 
 func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1970,8 +1959,7 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 }
 
 func TestPessimisticUnionForUpdate(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1987,8 +1975,7 @@ func TestPessimisticUnionForUpdate(t *testing.T) {
 }
 
 func TestInsertDupKeyAfterLock(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -2080,8 +2067,7 @@ func TestInsertDupKeyAfterLock(t *testing.T) {
 }
 
 func TestInsertDupKeyAfterLockBatchPointGet(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -2173,8 +2159,7 @@ func TestInsertDupKeyAfterLockBatchPointGet(t *testing.T) {
 }
 
 func TestAmendTxnVariable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2221,8 +2206,7 @@ func TestAmendTxnVariable(t *testing.T) {
 }
 
 func TestSelectForUpdateWaitSeconds(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2285,8 +2269,7 @@ func TestSelectForUpdateConflictRetry(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := createAsyncCommitTestKit(t, store)
 	tk.MustExec("drop table if exists tk")
@@ -2336,8 +2319,7 @@ func TestAsyncCommitWithSchemaChange(t *testing.T) {
 	require.NoError(t, failpoint.Enable("tikvclient/asyncCommitDoNothing", "return"))
 	defer func() { require.NoError(t, failpoint.Disable("tikvclient/asyncCommitDoNothing")) }()
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := createAsyncCommitTestKit(t, store)
 	tk.MustExec("drop table if exists tk")
@@ -2410,8 +2392,7 @@ func Test1PCWithSchemaChange(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := create1PCTestKit(t, store)
 	tk2 := create1PCTestKit(t, store)
@@ -2462,8 +2443,7 @@ func Test1PCWithSchemaChange(t *testing.T) {
 
 func TestAmendForUniqueIndex(t *testing.T) {
 	t.Skip("Skip this unstable test(#25986) and bring it back before 2021-07-29.")
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -2583,8 +2563,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 }
 
 func TestAmendWithColumnTypeChange(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -2602,8 +2581,7 @@ func TestAmendWithColumnTypeChange(t *testing.T) {
 }
 
 func TestIssue21498(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -2760,8 +2738,7 @@ func TestIssue21498(t *testing.T) {
 }
 
 func TestPlanCacheSchemaChange(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tmp := testkit.NewTestKit(t, store)
 	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
 	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
@@ -2831,8 +2808,7 @@ func TestAsyncCommitCalTSFail(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := createAsyncCommitTestKit(t, store)
 	tk2 := createAsyncCommitTestKit(t, store)
@@ -2856,8 +2832,7 @@ func TestAsyncCommitCalTSFail(t *testing.T) {
 }
 
 func TestChangeLockToPut(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -2941,8 +2916,7 @@ func TestAmendForIndexChange(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -3016,8 +2990,7 @@ func TestAmendForIndexChange(t *testing.T) {
 }
 
 func TestAmendForColumnChange(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -3099,8 +3072,7 @@ func TestAmendForColumnChange(t *testing.T) {
 }
 
 func TestPessimisticAutoCommitTxn(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3127,8 +3099,7 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 }
 
 func TestPessimisticLockOnPartition(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	// This test checks that 'select ... for update' locks the partition instead of the table.
 	// Cover a bug that table ID is used to encode the lock key mistakenly.

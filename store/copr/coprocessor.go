@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -51,6 +52,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var coprCacheCounterEvict = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
@@ -82,16 +84,28 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		return c.sendBatch(ctx, req, vars, option)
 	}
 	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
-		req.Paging = false
+		req.Paging.Enable = false
 	})
 	if req.StoreType == kv.TiDB {
 		// coprocessor on TiDB doesn't support paging
-		req.Paging = false
+		req.Paging.Enable = false
 	}
 	if req.Tp != kv.ReqTypeDAG {
 		// coprocessor request but type is not DAG
-		req.Paging = false
+		req.Paging.Enable = false
 	}
+
+	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
+		if req.Paging.Enable {
+			isSorted := slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
+				return bytes.Compare(i.StartKey, j.StartKey) < 0
+			})
+			if !isSorted {
+				logutil.BgLogger().Fatal("distsql request key range not sorted!")
+			}
+		}
+	})
+
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
@@ -207,7 +221,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	chanSize := 2
 	// in paging request, a request will be returned in multi batches,
 	// enlarge the channel size to avoid the request blocked by buffer full.
-	if req.Paging {
+	if req.Paging.Enable {
 		chanSize = 18
 	}
 
@@ -221,8 +235,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			// If this is a paging request, we set the paging size to minPagingSize,
 			// the size will grow every round.
 			pagingSize := uint64(0)
-			if req.Paging {
-				pagingSize = req.MinPagingSize
+			if req.Paging.Enable {
+				pagingSize = req.Paging.MinPagingSize
 			}
 			tasks = append(tasks, &copTask{
 				region:        loc.Location.Region,
@@ -232,7 +246,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				cmdType:       cmdType,
 				storeType:     req.StoreType,
 				eventCb:       eventCb,
-				paging:        req.Paging,
+				paging:        req.Paging.Enable,
 				pagingSize:    pagingSize,
 				requestSource: req.RequestSource,
 			})
@@ -798,7 +812,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
 	}
 
-	if worker.req.Paging {
+	if worker.req.Paging.Enable {
 		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
 	}
 
@@ -881,7 +895,8 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	if task.ranges.Len() == 0 {
 		return nil, nil
 	}
-	task.pagingSize = paging.GrowPagingSize(task.pagingSize)
+
+	task.pagingSize = paging.GrowPagingSize(task.pagingSize, worker.req.Paging.MaxPagingSize)
 	return []*copTask{task}, nil
 }
 
@@ -974,7 +989,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		data := make([]byte, len(cacheValue.Data))
 		copy(data, cacheValue.Data)
 		resp.pbResp.Data = data
-		if worker.req.Paging {
+		if worker.req.Paging.Enable {
 			var start, end []byte
 			if cacheValue.PageStart != nil {
 				start = make([]byte, len(cacheValue.PageStart))
@@ -999,7 +1014,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 			if resp.detail != nil {
-				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, worker.req.Paging) {
+				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, worker.req.Paging.Enable) {
 					data := make([]byte, len(resp.pbResp.Data))
 					copy(data, resp.pbResp.Data)
 

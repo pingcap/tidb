@@ -398,7 +398,6 @@ func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFun
 			restoreSQLs += "; "
 		}
 		restoreSQLs += restoreSQL
-
 	}
 	require.Equalf(t, expectSQLs, restoreSQLs, "restore %v; expect %v", restoreSQLs, expectSQLs)
 }
@@ -795,6 +794,10 @@ func TestDMLStmt(t *testing.T) {
 		{"admin show ddl jobs -1;", false, ""},
 		{"admin show ddl job queries 1", true, "ADMIN SHOW DDL JOB QUERIES 1"},
 		{"admin show ddl job queries 1, 2, 3, 4", true, "ADMIN SHOW DDL JOB QUERIES 1, 2, 3, 4"},
+		{"admin show ddl job queries limit 5", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 5"},
+		{"admin show ddl job queries limit 5, 10", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 5, 10"},
+		{"admin show ddl job queries limit 3 offset 2", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 2, 3"},
+		{"admin show ddl job queries limit 22 offset 0", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 22"},
 		{"admin show t1 next_row_id", true, "ADMIN SHOW `t1` NEXT_ROW_ID"},
 		{"admin check table t1, t2;", true, "ADMIN CHECK TABLE `t1`, `t2`"},
 		{"admin check index tableName idxName;", true, "ADMIN CHECK INDEX `tableName` idxName"},
@@ -5887,7 +5890,6 @@ func TestVisitFrameBound(t *testing.T) {
 		require.Equal(t, tbl.exprRc, checker.exprRc)
 		require.Equal(t, tbl.unit, checker.unit)
 	}
-
 }
 
 func TestFieldText(t *testing.T) {
@@ -6152,7 +6154,7 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 			col.Tp.SetCollate(strings.ToUpper(col.Tp.GetCollate()))
 
 			for i, option := range col.Options {
-				if option.Tp == 0 && option.Expr == nil && option.Stored == false && option.Refer == nil {
+				if option.Tp == 0 && option.Expr == nil && !option.Stored && option.Refer == nil {
 					col.Options = append(col.Options[:i], col.Options[i+1:]...)
 				}
 			}

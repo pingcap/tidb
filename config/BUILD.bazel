@@ -35,6 +35,7 @@ go_test(
     ],
     data = glob(["**"]),
     embed = [":config"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "//util/logutil",

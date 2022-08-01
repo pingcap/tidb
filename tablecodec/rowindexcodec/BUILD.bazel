@@ -15,6 +15,7 @@ go_test(
         "rowindexcodec_test.go",
     ],
     embed = [":rowindexcodec"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

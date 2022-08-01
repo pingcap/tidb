@@ -183,7 +183,7 @@ func (p *PhysicalIndexLookUpReader) GetCost(costFlag uint64) (cost float64) {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexLookUpReader) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
@@ -257,7 +257,7 @@ func (p *PhysicalIndexLookUpReader) estDoubleReadCost(tbl *model.TableInfo, cost
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexReader) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexReader) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
@@ -288,7 +288,7 @@ func (p *PhysicalIndexReader) GetNetDataSize() float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalTableReader) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
@@ -362,7 +362,7 @@ func (p *PhysicalTableReader) GetNetDataSize() float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexMergeReader) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
@@ -443,6 +443,11 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 		rowSize := math.Max(p.getScanRowSize(), 2.0) // to guarantee logRowSize >= 1
 		logRowSize := math.Log2(rowSize)
 		selfCost = getCardinality(p, costFlag) * logRowSize * scanFactor
+
+		// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
+		if p.StoreType == kv.TiFlash {
+			selfCost += 2000 * logRowSize * scanFactor
+		}
 	}
 
 	p.planCost = selfCost
@@ -451,7 +456,7 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexScan) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
@@ -528,6 +533,14 @@ func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost flo
 	memoryCost := innerConcurrency * (batchSize * distinctFactor) * innerCnt * sessVars.GetMemoryFactor()
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
 	innerPlanCost := outerCnt * innerCost
+	if p.ctx.GetSessionVars().CostModelVersion == 2 {
+		// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
+		//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
+		// Use an empirical value batchRatio to handle this now.
+		// TODO: remove this empirical value.
+		batchRatio := 30.0
+		innerPlanCost /= batchRatio
+	}
 	return outerCost + innerPlanCost + cpuCost + memoryCost + p.estDoubleReadCost(outerCnt)
 }
 
@@ -1163,7 +1176,7 @@ func (p *BatchPointGetPlan) GetCost() float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *BatchPointGetPlan) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *BatchPointGetPlan) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
@@ -1205,7 +1218,7 @@ func (p *PointGetPlan) GetCost() float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PointGetPlan) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PointGetPlan) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}

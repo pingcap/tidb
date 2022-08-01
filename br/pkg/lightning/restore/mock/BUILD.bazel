@@ -12,6 +12,7 @@ go_library(
         "//store/pdtypes",
         "//util/filter",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/metapb",
     ],
 )
 
@@ -19,6 +20,7 @@ go_test(
     name = "mock_test",
     srcs = ["mock_test.go"],
     embed = [":mock"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/restore",
         "//parser/model",

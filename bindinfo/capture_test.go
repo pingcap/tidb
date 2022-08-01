@@ -30,8 +30,7 @@ import (
 )
 
 func TestDMLCapturePlanBaseline(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -89,8 +88,7 @@ func TestDMLCapturePlanBaseline(t *testing.T) {
 }
 
 func TestCapturePlanBaseline(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -121,8 +119,7 @@ func TestCapturePlanBaseline(t *testing.T) {
 }
 
 func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -181,8 +178,7 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 }
 
 func TestCaptureDBCaseSensitivity(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -205,8 +201,7 @@ func TestCaptureDBCaseSensitivity(t *testing.T) {
 }
 
 func TestCaptureBaselinesDefaultDB(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -241,8 +236,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -274,8 +268,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 }
 
 func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -319,8 +312,7 @@ func TestBindingSource(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -374,8 +366,7 @@ func TestBindingSource(t *testing.T) {
 }
 
 func TestCapturedBindingCharset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -398,8 +389,7 @@ func TestCapturedBindingCharset(t *testing.T) {
 }
 
 func TestConcurrentCapture(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -425,8 +415,7 @@ func TestConcurrentCapture(t *testing.T) {
 }
 
 func TestUpdateSubqueryCapture(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -454,8 +443,7 @@ func TestIssue20417(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -526,8 +514,7 @@ func TestIssue20417(t *testing.T) {
 }
 
 func TestCaptureWithZeroSlowLogThreshold(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -547,8 +534,7 @@ func TestCaptureWithZeroSlowLogThreshold(t *testing.T) {
 }
 
 func TestIssue25505(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -617,8 +603,7 @@ func TestIssue25505(t *testing.T) {
 }
 
 func TestCaptureUserFilter(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -708,8 +693,7 @@ func TestCaptureTableFilterValid(t *testing.T) {
 }
 
 func TestCaptureWildcardFilter(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -811,8 +795,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 }
 
 func TestCaptureFilter(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -968,8 +951,7 @@ func TestCaptureFilter(t *testing.T) {
 }
 
 func TestCaptureHints(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {

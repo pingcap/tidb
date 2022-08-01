@@ -41,7 +41,7 @@ func (p *basePhysicalPlan) StatsCount() float64 {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalTableDual) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -57,7 +57,7 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo, selfSch
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalMemTable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -76,7 +76,7 @@ func (p *LogicalMemTable) DeriveStats(childStats []*property.StatsInfo, selfSche
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -97,7 +97,7 @@ func getFakeStats(schema *expression.Schema) *property.StatsInfo {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalShowDDLJobs) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalShowDDLJobs) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -137,7 +137,7 @@ func (p *baseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expres
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if len(childStats) == 1 {
 		p.stats = childStats[0]
 		return p.stats, nil
@@ -350,7 +350,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			}
 			if selected.IsTablePath() {
 				// TODO: primary key / handle / real name?
-				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(fmt.Sprintf("handle of %s is selected since the path only has point ranges", tableName)))
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(fmt.Errorf("handle of %s is selected since the path only has point ranges", tableName))
 			} else {
 				var sb strings.Builder
 				if selected.Index.Unique {
@@ -375,7 +375,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	if ds.stats != nil && len(colGroups) == 0 {
 		return ds.stats, nil
 	}
@@ -497,7 +497,7 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
-func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (_ *property.StatsInfo, err error) {
+func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (_ *property.StatsInfo, err error) {
 	ts.Source.initStats(nil)
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ts.AccessConds {
@@ -526,7 +526,7 @@ func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
-func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	is.Source.initStats(nil)
 	for i, expr := range is.AccessConds {
 		is.AccessConds[i] = expression.PushDownNot(is.ctx, expr)
@@ -752,7 +752,7 @@ func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, par
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -762,7 +762,7 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, selfSch
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -790,7 +790,7 @@ func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *pro
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -799,7 +799,7 @@ func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, selfSchema 
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if lt.stats != nil {
 		return lt.stats, nil
 	}
@@ -1190,7 +1190,7 @@ func getSingletonStats(schema *expression.Schema) *property.StatsInfo {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -1206,7 +1206,7 @@ func (p *LogicalWindow) getGroupNDVs(colGroups [][]*expression.Column, childStat
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		// Reload GroupNDVs since colGroups may have changed.
 		p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childStats)
@@ -1247,7 +1247,7 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -1297,7 +1297,7 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalCTETable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}

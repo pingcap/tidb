@@ -21,7 +21,6 @@ import (
 	"runtime/debug"
 	"testing"
 
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -29,8 +28,7 @@ import (
 func TestPBMemoryLeak(t *testing.T) {
 	debug.SetGCPercent(1000)
 	defer debug.SetGCPercent(100)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_mem")
 	tk.MustExec("use test_mem")
@@ -88,29 +86,4 @@ func memDiff(m1, m2 uint64) uint64 {
 		return m1 - m2
 	}
 	return m2 - m1
-}
-
-func TestGlobalMemoryTrackerOnCleanUp(t *testing.T) {
-	// TODO: assert the memory consume has happened in another way
-	originConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int)")
-
-	// assert insert
-	tk.MustExec("insert t (id) values (1)")
-	tk.MustExec("insert t (id) values (2)")
-	tk.MustExec("insert t (id) values (3)")
-	afterConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
-	require.Equal(t, afterConsume, originConsume)
-
-	// assert update
-	tk.MustExec("update t set id = 4 where id = 1")
-	tk.MustExec("update t set id = 5 where id = 2")
-	tk.MustExec("update t set id = 6 where id = 3")
-	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
-	require.Equal(t, afterConsume, originConsume)
 }
