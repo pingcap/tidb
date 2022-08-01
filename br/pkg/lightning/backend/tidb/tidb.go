@@ -778,10 +778,6 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 	return w.be.WriteRows(ctx, tableName, columnNames, rows)
 }
 
-func (w *Writer) AppendRow(ctx context.Context, tableName string, columnNames []string, row kv.Row) error {
-	return nil
-}
-
 func (w *Writer) IsSynced() bool {
 	return true
 }

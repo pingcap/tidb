@@ -1117,35 +1117,6 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 	return w.appendRowsUnsorted(ctx, kvs)
 }
 
-// Used to write one key:value pair into local writer.
-func (w *Writer) AppendRow(ctx context.Context, tableName string, columnNames []string, row kv.Row) error {
-	kvs := kv.KvPairsFromRow(row)
-	if len(kvs) == 0 {
-		return nil
-	}
-
-	if w.engine.closed.Load() {
-		return errorEngineClosed
-	}
-
-	w.Lock()
-	defer w.Unlock()
-
-	// if chunk has _tidb_rowid field, we can't ensure that the rows are sorted.
-	if w.isKVSorted && w.writer == nil {
-		for _, c := range columnNames {
-			if c == model.ExtraHandleName.L {
-				w.isKVSorted = false
-			}
-		}
-	}
-
-	if w.isKVSorted {
-		return w.appendRowsSorted(kvs)
-	}
-	return w.appendRowsUnsorted(ctx, kvs)
-}
-
 func (w *Writer) flush(ctx context.Context) error {
 	w.Lock()
 	defer w.Unlock()
