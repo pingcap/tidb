@@ -1112,7 +1112,7 @@ func (SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.Alte
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
 func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, onExist ddl.OnExist) error {
 	for _, tableInfo := range info {
-		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, onExist); err != nil {
+		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, onExist, nil); err != nil {
 			return err
 		}
 	}

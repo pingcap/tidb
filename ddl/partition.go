@@ -923,7 +923,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 	} else {
 		partDefs = make([]*ast.PartitionDefinition, 0, 1)
 	}
-	for i := 0; i < PartitionCountLimit; i++ {
+	for i := 0; i < mysql.PartitionCountLimit; i++ {
 		if i == 0 {
 			currExpr = startExpr
 			// TODO: adjust the startExpr and have an offset for interval to handle
@@ -1010,7 +1010,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 			break
 		}
 	}
-	if len(tbInfo.Partition.Definitions)+len(partDefs) > PartitionCountLimit {
+	if len(tbInfo.Partition.Definitions)+len(partDefs) > mysql.PartitionCountLimit {
 		return errors.Trace(dbterror.ErrTooManyPartitions)
 	}
 	partitionOptions.Definitions = partDefs
