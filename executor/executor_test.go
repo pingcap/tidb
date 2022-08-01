@@ -4454,6 +4454,25 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.Equal(t, t2.In(time.UTC), tt.In(time.UTC))
 }
 
+func TestAdminShowDDLJobsRowCount(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/25968
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id bigint key,b int);")
+	tk.MustExec("split table t by (10),(20),(30);")
+	tk.MustExec("insert into t values (0,0),(10,10),(20,20),(30,30);")
+	tk.MustExec("alter table t add index idx1(b);")
+	require.Equal(t, "4", tk.MustQuery("admin show ddl jobs 1").Rows()[0][7])
+
+	tk.MustExec("insert into t values (1,0),(2,10),(3,20),(4,30);")
+	tk.MustExec("alter table t add index idx2(b);")
+	require.Equal(t, "8", tk.MustQuery("admin show ddl jobs 1").Rows()[0][7])
+}
+
 func TestAdminShowDDLJobsInfo(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
