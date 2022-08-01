@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
@@ -91,20 +90,6 @@ func (d SchemaTracker) createTestDB() {
 	_ = d.CreateSchema(nil, &ast.CreateDatabaseStmt{
 		Name: model.NewCIStr("test"),
 	})
-}
-
-func (d SchemaTracker) createConcurrentDDLTables() {
-	_ = d.CreateSchema(nil, &ast.CreateDatabaseStmt{
-		Name: model.NewCIStr("mysql"),
-	})
-	p := parser.New()
-	createSQLs := []string{ddl.JobTableSQL, ddl.ReorgTableSQL, ddl.HistoryTableSQL}
-	for _, sql := range createSQLs {
-		stmt, _ := p.ParseOneStmt(sql, "", "")
-		createStmt := stmt.(*ast.CreateTableStmt)
-		createStmt.Table.Schema = model.NewCIStr(mysql.SystemDB)
-		_ = d.CreateTable(nil, createStmt)
-	}
 }
 
 // CreateSchemaWithInfo implements the DDL interface.

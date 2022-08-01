@@ -74,11 +74,6 @@ func (d Checker) CreateTestDB() {
 	d.tracker.createTestDB()
 }
 
-// CreateConcurrentDDLTables imitates set concorrent DDL related tables to store.
-func (d Checker) CreateConcurrentDDLTables() {
-	d.tracker.createConcurrentDDLTables()
-}
-
 func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	if d.closed {
 		return
