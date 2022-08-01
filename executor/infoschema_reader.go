@@ -398,7 +398,6 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schema := range schemas {
-
 		charset := mysql.DefaultCharset
 		collation := mysql.DefaultCollationName
 
@@ -800,7 +799,7 @@ ForColumnsTag:
 			continue
 		}
 
-		ft := &col.FieldType
+		ft := &(col.FieldType)
 		if tbl.IsView() {
 			e.viewMu.RLock()
 			if e.viewSchemaMap[tbl.ID] != nil {
@@ -1319,7 +1318,6 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					req.AppendString(12, e.runningJobs[i].Query)
 				}
 			}
-
 		}
 		e.cursor += num
 		count += num
@@ -1884,7 +1882,8 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 
 	// If not specify the table_schema, return an error to avoid traverse all schemas and their tables.
 	if len(schemas) == 0 {
-		return errors.Errorf("Please specify the 'table_schema'")
+		return errors.Errorf("Please add where clause to filter the column TABLE_SCHEMA. " +
+			"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
 	}
 
 	// Filter the sys or memory schema.
@@ -3192,18 +3191,18 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 
 func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 	if len(rule.Data) == 0 {
-		err = errors.New(fmt.Sprintf("there is no data in rule %s", rule.ID))
+		err = fmt.Errorf("there is no data in rule %s", rule.ID)
 		return
 	}
 	data := rule.Data[0]
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
-		err = errors.New(fmt.Sprintf("get the label rules %s failed", rule.ID))
+		err = fmt.Errorf("get the label rules %s failed", rule.ID)
 		return
 	}
 	key, err := hex.DecodeString(fmt.Sprintf("%s", dataMap["start_key"]))
 	if err != nil {
-		err = errors.New(fmt.Sprintf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID))
+		err = fmt.Errorf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID)
 		return
 	}
 	_, bs, err := codec.DecodeBytes(key, nil)
@@ -3212,7 +3211,7 @@ func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 	}
 	tableID = tablecodec.DecodeTableID(key)
 	if tableID == 0 {
-		err = errors.New(fmt.Sprintf("decode tableID from key %s in rule %s failed", key, rule.ID))
+		err = fmt.Errorf("decode tableID from key %s in rule %s failed", key, rule.ID)
 		return
 	}
 	return

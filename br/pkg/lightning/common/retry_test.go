@@ -96,4 +96,5 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})))
 
 	require.True(t, IsRetryableError(errors.Errorf("region %d is not fully replicated", 1234)))
+	require.True(t, IsRetryableError(errors.New("other error: Coprocessor task terminated due to exceeding the deadline")))
 }

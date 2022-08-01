@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -34,8 +35,7 @@ import (
 )
 
 func TestJoinPanic2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
@@ -56,8 +56,10 @@ func TestJoinPanic2(t *testing.T) {
 }
 
 func TestJoinInDisk(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	origin := config.RestoreFunc()
+	defer origin()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
@@ -82,8 +84,7 @@ func TestJoinInDisk(t *testing.T) {
 }
 
 func TestJoin2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 200")
@@ -341,8 +342,7 @@ func TestJoin2(t *testing.T) {
 }
 
 func TestJoinCast(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	var result *testkit.Result
 
@@ -529,8 +529,7 @@ func TestJoinCast(t *testing.T) {
 }
 
 func TestUsing(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -649,8 +648,7 @@ func TestUsing(t *testing.T) {
 }
 
 func TestUsingAndNaturalJoinSchema(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4")
@@ -673,7 +671,7 @@ func TestUsingAndNaturalJoinSchema(t *testing.T) {
 		SQL string
 		Res []string
 	}
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -684,8 +682,7 @@ func TestUsingAndNaturalJoinSchema(t *testing.T) {
 }
 
 func TestNaturalJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -701,7 +698,7 @@ func TestNaturalJoin(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -714,8 +711,7 @@ func TestNaturalJoin(t *testing.T) {
 }
 
 func TestMultiJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t35(a35 int primary key, b35 int, x35 int)")
@@ -808,8 +804,7 @@ AND b44=a42`)
 }
 
 func TestSubquerySameTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -822,8 +817,7 @@ func TestSubquerySameTable(t *testing.T) {
 }
 
 func TestSubquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("set @@tidb_hashagg_partial_concurrency=1")
@@ -1063,8 +1057,7 @@ func TestSubquery(t *testing.T) {
 }
 
 func TestInSubquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1132,8 +1125,7 @@ func TestInSubquery(t *testing.T) {
 }
 
 func TestJoinLeak(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("use test")
@@ -1156,8 +1148,7 @@ func TestJoinLeak(t *testing.T) {
 }
 
 func TestHashJoinExecEncodeDecodeRow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1171,8 +1162,7 @@ func TestHashJoinExecEncodeDecodeRow(t *testing.T) {
 }
 
 func TestSubqueryInJoinOn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1187,8 +1177,7 @@ func TestSubqueryInJoinOn(t *testing.T) {
 }
 
 func TestIssue5255(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -1202,8 +1191,7 @@ func TestIssue5255(t *testing.T) {
 }
 
 func TestIssue5278(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, tt")
@@ -1214,8 +1202,7 @@ func TestIssue5278(t *testing.T) {
 }
 
 func TestIssue15850JoinNullValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("SELECT * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
@@ -1232,8 +1219,7 @@ func TestIssue15850JoinNullValue(t *testing.T) {
 }
 
 func TestIndexLookupJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
@@ -1422,8 +1408,7 @@ func TestIndexLookupJoin(t *testing.T) {
 }
 
 func TestIndexNestedLoopHashJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
@@ -1562,8 +1547,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 }
 
 func TestIssue15686(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, k;")
@@ -1577,8 +1561,7 @@ func TestIssue15686(t *testing.T) {
 }
 
 func TestIssue13449(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s;")
@@ -1603,8 +1586,7 @@ func TestIssue13449(t *testing.T) {
 }
 
 func TestMergejoinOrder(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -1650,8 +1632,7 @@ func TestMergejoinOrder(t *testing.T) {
 }
 
 func TestEmbeddedOuterJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -1663,8 +1644,7 @@ func TestEmbeddedOuterJoin(t *testing.T) {
 }
 
 func TestHashJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -1693,8 +1673,7 @@ func TestHashJoin(t *testing.T) {
 }
 
 func TestJoinDifferentDecimals(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("Use test")
 	tk.MustExec("Drop table if exists t1")
@@ -1714,8 +1693,7 @@ func TestJoinDifferentDecimals(t *testing.T) {
 }
 
 func TestNullEmptyAwareSemiJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2110,8 +2088,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 }
 
 func TestScalarFuncNullSemiJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2128,8 +2105,7 @@ func TestScalarFuncNullSemiJoin(t *testing.T) {
 }
 
 func TestInjectProjOnTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -2143,8 +2119,7 @@ func TestInjectProjOnTopN(t *testing.T) {
 }
 
 func TestIssue11544(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table 11544t(a int)")
@@ -2163,8 +2138,7 @@ func TestIssue11544(t *testing.T) {
 }
 
 func TestIssue11390(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table 11390t (k1 int unsigned, k2 int unsigned, key(k1, k2))")
@@ -2177,8 +2151,7 @@ func TestIssue11390(t *testing.T) {
 func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 	plannercore.ForceUseOuterBuild4Test = true
 	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
@@ -2212,8 +2185,7 @@ func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 }
 
 func TestIssue13177(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -2254,8 +2226,7 @@ func TestIssue13177(t *testing.T) {
 }
 
 func TestIssue14514(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2266,8 +2237,7 @@ func TestIssue14514(t *testing.T) {
 func TestOuterMatchStatusIssue14742(t *testing.T) {
 	plannercore.ForceUseOuterBuild4Test = true
 	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists testjoin;")
@@ -2294,8 +2264,7 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 	// (2) the projection only contains a part of columns from the build side, i.e., pruning the same probe side
 	plannercore.ForcedHashLeftJoin4Test = true
 	defer func() { plannercore.ForcedHashLeftJoin4Test = false }()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists S, T")
@@ -2325,8 +2294,7 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 }
 
 func TestIssue18070(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
@@ -2350,8 +2318,7 @@ func TestIssue18070(t *testing.T) {
 }
 
 func TestIssue18564(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -2364,8 +2331,7 @@ func TestIssue18564(t *testing.T) {
 
 // test hash join when enum column got invalid value
 func TestInvalidEnumVal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set sql_mode = '';")
@@ -2380,8 +2346,7 @@ func TestInvalidEnumVal(t *testing.T) {
 }
 
 func TestIssue18572_1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -2402,8 +2367,7 @@ func TestIssue18572_1(t *testing.T) {
 }
 
 func TestIssue18572_2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -2424,8 +2388,7 @@ func TestIssue18572_2(t *testing.T) {
 }
 
 func TestIssue18572_3(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -2446,8 +2409,7 @@ func TestIssue18572_3(t *testing.T) {
 }
 
 func TestApplyOuterAggEmptyInput(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -2470,8 +2432,7 @@ func TestApplyOuterAggEmptyInput(t *testing.T) {
 }
 
 func TestIssue19112(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -2485,8 +2446,7 @@ func TestIssue19112(t *testing.T) {
 }
 
 func TestIssue11896(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2542,8 +2502,7 @@ func TestIssue11896(t *testing.T) {
 }
 
 func TestIssue19498(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2575,8 +2534,7 @@ func TestIssue19498(t *testing.T) {
 }
 
 func TestIssue19500(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
@@ -2593,8 +2551,7 @@ func TestIssue19500(t *testing.T) {
 }
 
 func TestExplainAnalyzeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2;")
@@ -2625,8 +2582,7 @@ func TestExplainAnalyzeJoin(t *testing.T) {
 }
 
 func TestIssue20270(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2653,8 +2609,7 @@ func TestIssue20270(t *testing.T) {
 }
 
 func TestIssue20710(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2679,8 +2634,7 @@ func TestIssue20710(t *testing.T) {
 }
 
 func TestIssue20779(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -2701,8 +2655,7 @@ func TestIssue20779(t *testing.T) {
 }
 
 func TestIssue20219(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,s ")
@@ -2717,8 +2670,7 @@ func TestIssue20219(t *testing.T) {
 }
 
 func TestIssue25902(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt1,tt2,tt3; ")
@@ -2737,8 +2689,7 @@ func TestIssue25902(t *testing.T) {
 }
 
 func TestIssue30211(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -2755,7 +2706,6 @@ func TestIssue30211(t *testing.T) {
 
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
 		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
-
 	}()
 	tk.MustExec("insert into t1 values(1),(2);")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
@@ -2770,8 +2720,7 @@ func TestIssue30211(t *testing.T) {
 }
 
 func TestIssue31129(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
@@ -2821,8 +2770,7 @@ func TestIssue31129(t *testing.T) {
 }
 
 func TestOuterJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4")

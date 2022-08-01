@@ -443,6 +443,11 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 		rowSize := math.Max(p.getScanRowSize(), 2.0) // to guarantee logRowSize >= 1
 		logRowSize := math.Log2(rowSize)
 		selfCost = getCardinality(p, costFlag) * logRowSize * scanFactor
+
+		// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
+		if p.StoreType == kv.TiFlash {
+			selfCost += 2000 * logRowSize * scanFactor
+		}
 	}
 
 	p.planCost = selfCost
@@ -528,6 +533,14 @@ func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost flo
 	memoryCost := innerConcurrency * (batchSize * distinctFactor) * innerCnt * sessVars.GetMemoryFactor()
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
 	innerPlanCost := outerCnt * innerCost
+	if p.ctx.GetSessionVars().CostModelVersion == 2 {
+		// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
+		//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
+		// Use an empirical value batchRatio to handle this now.
+		// TODO: remove this empirical value.
+		batchRatio := 30.0
+		innerPlanCost /= batchRatio
+	}
 	return outerCost + innerPlanCost + cpuCost + memoryCost + p.estDoubleReadCost(outerCnt)
 }
 

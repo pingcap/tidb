@@ -27,8 +27,7 @@ import (
 )
 
 func TestInTxnPSProtoPointGet(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -89,8 +88,7 @@ func TestInTxnPSProtoPointGet(t *testing.T) {
 }
 
 func TestTxnGoString(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -115,8 +113,7 @@ func TestTxnGoString(t *testing.T) {
 }
 
 func TestSetTransactionIsolationOneSho(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -153,8 +150,7 @@ func TestSetTransactionIsolationOneSho(t *testing.T) {
 }
 
 func TestStatementErrorInTransaction(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

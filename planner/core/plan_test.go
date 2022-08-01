@@ -39,8 +39,7 @@ import (
 )
 
 func TestPreferRangeScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test;")
@@ -68,7 +67,7 @@ func TestPreferRangeScan(t *testing.T) {
 		Plan []string
 	}
 	planNormalizedSuiteData := core.GetPlanNormalizedSuiteData()
-	planNormalizedSuiteData.GetTestCases(t, &input, &output)
+	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		if i == 0 {
 			tk.MustExec("set session tidb_opt_prefer_range_scan=0")
@@ -101,8 +100,7 @@ func TestPreferRangeScan(t *testing.T) {
 }
 
 func TestNormalizedPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='static';")
@@ -117,7 +115,7 @@ func TestNormalizedPlan(t *testing.T) {
 		Plan []string
 	}
 	planNormalizedSuiteData := core.GetPlanNormalizedSuiteData()
-	planNormalizedSuiteData.GetTestCases(t, &input, &output)
+	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.MustExec(tt)
@@ -145,8 +143,7 @@ func TestNormalizedPlan(t *testing.T) {
 }
 
 func TestNormalizedPlanForDiffStore(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -163,7 +160,7 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 		Plan   []string
 	}
 	planNormalizedSuiteData := core.GetPlanNormalizedSuiteData()
-	planNormalizedSuiteData.GetTestCases(t, &input, &output)
+	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	lastDigest := ""
 	for i, tt := range input {
 		tk.Session().GetSessionVars().PlanID = 0
@@ -194,8 +191,7 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 }
 
 func TestEncodeDecodePlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
@@ -299,8 +295,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 }
 
 func TestNormalizedDigest(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2,t3,t4, bmsql_order_line, bmsql_district,bmsql_stock")
@@ -530,8 +525,7 @@ func compareStringSlice(t *testing.T, ss1, ss2 []string) {
 }
 
 func TestExplainFormatHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -546,8 +540,7 @@ func TestExplainFormatHint(t *testing.T) {
 }
 
 func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -577,8 +570,7 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 }
 
 func TestNthPlanHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt")
@@ -637,8 +629,7 @@ func TestNthPlanHint(t *testing.T) {
 }
 
 func BenchmarkDecodePlan(b *testing.B) {
-	store, clean := testkit.CreateMockStore(b)
-	defer clean()
+	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -671,8 +662,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 }
 
 func BenchmarkEncodePlan(b *testing.B) {
-	store, clean := testkit.CreateMockStore(b)
-	defer clean()
+	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
@@ -696,8 +686,7 @@ func BenchmarkEncodePlan(b *testing.B) {
 }
 
 func BenchmarkEncodeFlatPlan(b *testing.B) {
-	store, clean := testkit.CreateMockStore(b)
-	defer clean()
+	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
@@ -726,8 +715,7 @@ func TestIssue25729(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt")
@@ -772,8 +760,7 @@ func TestIssue25729(t *testing.T) {
 }
 
 func TestCopPaging(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -978,8 +965,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 }
 
 func TestIssue34863(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1037,8 +1023,7 @@ func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/35527.
 func TestTableDualAsSubQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")

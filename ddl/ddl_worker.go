@@ -50,8 +50,6 @@ import (
 )
 
 var (
-	// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
-	RunWorker = true
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = atomicutil.NewInt32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
@@ -295,7 +293,8 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
 	var err error
 	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
-	if variable.EnableConcurrentDDL.Load() && !variable.DDLForce2Queue.Load() {
+	toTable := variable.EnableConcurrentDDL.Load() && !variable.DDLForce2Queue.Load()
+	if toTable {
 		err = d.addBatchDDLJobs2Table(tasks)
 	} else {
 		err = d.addBatchDDLJobs2Queue(tasks)
@@ -310,7 +309,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs), zap.Bool("table", toTable))
 	}
 }
 

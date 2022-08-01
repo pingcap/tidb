@@ -849,8 +849,7 @@ func TestGetSchema(t *testing.T) {
 	}
 	sort.Strings(names)
 	require.Equal(t, expects, names)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	userTbl := external.GetTableByName(t, tk, "mysql", "user")

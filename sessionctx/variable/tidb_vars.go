@@ -377,6 +377,9 @@ const (
 	// TiDBMinPagingSize is used to control the min paging size in the coprocessor paging protocol.
 	TiDBMinPagingSize = "tidb_min_paging_size"
 
+	// TiDBMaxPagingSize is used to control the max paging size in the coprocessor paging protocol.
+	TiDBMaxPagingSize = "tidb_max_paging_size"
+
 	// TiDBEnableCascadesPlanner is used to control whether to enable the cascades planner.
 	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
 
@@ -853,6 +856,7 @@ const (
 	DefCurretTS                                    = 0
 	DefInitChunkSize                               = 32
 	DefMinPagingSize                               = int(paging.MinPagingSize)
+	DefMaxPagingSize                               = int(paging.MaxPagingSize)
 	DefMaxChunkSize                                = 1024
 	DefDMLBatchSize                                = 0
 	DefMaxPreparedStmtCount                        = -1
@@ -1061,4 +1065,18 @@ var (
 	SetStatsCacheCapacity atomic.Value
 	// SwitchConcurrentDDL is the func registered by DDL to switch concurrent DDL.
 	SwitchConcurrentDDL func(bool) error = nil
+	// EnableDDL is the func registered by ddl to enable running ddl in this instance.
+	EnableDDL func() error = nil
+	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
+	DisableDDL func() error = nil
 )
+
+// switchDDL turns on/off DDL in an instance.
+func switchDDL(on bool) error {
+	if on && EnableDDL != nil {
+		return EnableDDL()
+	} else if !on && DisableDDL != nil {
+		return DisableDDL()
+	}
+	return nil
+}

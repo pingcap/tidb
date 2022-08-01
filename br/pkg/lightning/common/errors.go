@@ -210,7 +210,6 @@ func NormalizeOrWrapErr(rfcErr *errors.Error, err error, args ...interface{}) er
 	normalizedErr := NormalizeError(err)
 	if berrors.Is(normalizedErr, ErrUnknown) {
 		return rfcErr.Wrap(err).GenWithStackByArgs(args...)
-	} else {
-		return normalizedErr
 	}
+	return normalizedErr
 }

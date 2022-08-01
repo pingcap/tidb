@@ -28,8 +28,7 @@ import (
 )
 
 func TestBasicCTE(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -77,8 +76,7 @@ func TestBasicCTE(t *testing.T) {
 }
 
 func TestUnionDistinct(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -104,8 +102,7 @@ func TestUnionDistinct(t *testing.T) {
 }
 
 func TestCTEMaxRecursionDepth(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -145,8 +142,7 @@ func TestCTEMaxRecursionDepth(t *testing.T) {
 }
 
 func TestCTEWithLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -353,8 +349,7 @@ func TestCTEWithLimit(t *testing.T) {
 }
 
 func TestSpillToDisk(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("SET GLOBAL tidb_enable_tmp_storage_on_oom = 1")
@@ -408,8 +403,7 @@ func TestSpillToDisk(t *testing.T) {
 }
 
 func TestCTEExecError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -439,8 +433,7 @@ func TestCTEExecError(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/33965.
 func TestCTEsInView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
