@@ -160,20 +160,22 @@ func (fkc *ForeignKeyCheckExec) checkIndexKeyExistInReferTable(memBuffer kv.MemB
 	if err != nil {
 		return false, err
 	}
+	deletedKeys := set.NewStringSet()
 	defer memIter.Close()
 	for ; memIter.Valid(); err = memIter.Next() {
 		if err != nil {
 			return false, err
 		}
-		// check whether the key was been deleted.
-		if len(memIter.Value()) == 0 {
-			continue
-		}
 		k := memIter.Key()
 		// TODO: better decode to column datum and compare the datum value
-		if k.HasPrefix(key) {
+		if !k.HasPrefix(key) {
+			break
+		}
+		// check whether the key was been deleted.
+		if len(memIter.Value()) > 0 {
 			return true, nil
 		}
+		deletedKeys.Insert(string(k))
 	}
 
 	it, err := snap.Iter(key, key.PrefixNext())
@@ -181,10 +183,16 @@ func (fkc *ForeignKeyCheckExec) checkIndexKeyExistInReferTable(memBuffer kv.MemB
 		return false, err
 	}
 	defer it.Close()
-	if it.Valid() {
+	for ; it.Valid(); err = it.Next() {
+		if err != nil {
+			return false, err
+		}
 		k := it.Key()
+		if !k.HasPrefix(key) {
+			break
+		}
 		// TODO: better decode to column datum and compare the datum value
-		if k.HasPrefix(key) {
+		if k.HasPrefix(key) && !deletedKeys.Exist(string(k)) {
 			return true, nil
 		}
 	}
