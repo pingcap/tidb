@@ -491,7 +491,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*backfillWorker
 			physicalTableID: physicalTableID,
 			startKey:        keyRange.StartKey,
 			endKey:          endKey,
-			// If the boundaries overlap, we should ignore the preceding endKey
+			// If the boundaries overlap, we should ignore the preceding endKey.
 			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1}
 		batchTasks = append(batchTasks, task)
 
