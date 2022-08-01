@@ -30,8 +30,7 @@ import (
 )
 
 func TestStaleReadTxnScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -61,8 +60,7 @@ func TestStaleReadTxnScope(t *testing.T) {
 }
 
 func TestStaleReadReplicaReadScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 

@@ -45,7 +45,6 @@ import (
 type infosSchemaClusterTableSuite struct {
 	store      kv.Storage
 	dom        *domain.Domain
-	clean      func()
 	rpcServer  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
@@ -54,19 +53,19 @@ type infosSchemaClusterTableSuite struct {
 }
 
 func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSuite {
-	var clean func()
-
 	s := new(infosSchemaClusterTableSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
 	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
-	s.clean = func() {
-		s.rpcServer.Stop()
-		s.httpServer.Close()
-		clean()
-	}
-
+	t.Cleanup(func() {
+		if s.rpcServer != nil {
+			s.rpcServer.Stop()
+		}
+		if s.httpServer != nil {
+			s.httpServer.Close()
+		}
+	})
 	return s
 }
 
@@ -225,7 +224,6 @@ func (s *mockStore) Describe() string             { return "" }
 
 func TestTiDBClusterInfo(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
-	defer s.clean()
 
 	mockAddr := s.mockAddr
 	store := &mockStore{
@@ -298,7 +296,6 @@ func TestTiDBClusterInfo(t *testing.T) {
 
 func TestTableStorageStats(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
-	defer s.clean()
 
 	tk := testkit.NewTestKit(t, s.store)
 	err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test'")

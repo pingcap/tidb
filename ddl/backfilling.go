@@ -185,13 +185,18 @@ type reorgBackfillTask struct {
 	physicalTableID int64
 	startKey        kv.Key
 	endKey          kv.Key
+	endInclude      bool
 }
 
 func (r *reorgBackfillTask) String() string {
 	physicalID := strconv.FormatInt(r.physicalTableID, 10)
 	startKey := tryDecodeToHandleString(r.startKey)
 	endKey := tryDecodeToHandleString(r.endKey)
-	return "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey + "]"
+	rangeStr := "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
+	if r.endInclude {
+		return rangeStr + "]"
+	}
+	return rangeStr + ")"
 }
 
 func logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
@@ -472,7 +477,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*backfillWorker
 	physicalTableID := reorgInfo.PhysicalTableID
 
 	// Build reorg tasks.
-	for _, keyRange := range kvRanges {
+	for i, keyRange := range kvRanges {
 		endKey := keyRange.EndKey
 		endK, err := getRangeEndKey(reorgInfo.d.jobContext(reorgInfo.Job), workers[0].sessCtx.GetStore(), workers[0].priority, t, keyRange.StartKey, endKey)
 		if err != nil {
@@ -486,7 +491,9 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*backfillWorker
 		task := &reorgBackfillTask{
 			physicalTableID: physicalTableID,
 			startKey:        keyRange.StartKey,
-			endKey:          endKey}
+			endKey:          endKey,
+			// If the boundaries overlap, we should ignore the preceding endKey.
+			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1}
 		batchTasks = append(batchTasks, task)
 
 		if len(batchTasks) >= len(workers) {
