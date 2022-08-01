@@ -888,8 +888,11 @@ func FetchStoresAddr(ctx context.Context, tls *common.TLS, pdAddr string) ([]str
 	type rawStoreAddr struct {
 		Address string `json:"address"`
 	}
+	type rawStore struct {
+		Store rawStoreAddr `json:"Store"`
+	}
 	var rawStoresAddr struct {
-		Store []rawStoreAddr `json:"store"`
+		Stores []rawStore `json:"stores"`
 	}
 	var strStoresAddr []string
 
@@ -897,8 +900,8 @@ func FetchStoresAddr(ctx context.Context, tls *common.TLS, pdAddr string) ([]str
 	if err != nil {
 		return strStoresAddr, errors.Trace(err)
 	}
-	for _, store := range rawStoresAddr.Store {
-		strStoresAddr = append(strStoresAddr, store.Address)
+	for _, store := range rawStoresAddr.Stores {
+		strStoresAddr = append(strStoresAddr, store.Store.Address)
 	}
 	return strStoresAddr, nil
 
