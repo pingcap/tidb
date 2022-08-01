@@ -1423,6 +1423,10 @@ func (fk *FKInfo) String(db, tb string) string {
 		buf.WriteString("`" + col.O + "`")
 	}
 	buf.WriteString(") REFERENCES `")
+	if fk.RefSchema.L != db {
+		buf.WriteString(fk.RefSchema.L)
+		buf.WriteString("`.`")
+	}
 	buf.WriteString(fk.RefTable.O)
 	buf.WriteString("` (")
 	for i, col := range fk.RefCols {

@@ -208,15 +208,130 @@ func TestCreateTable(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
 }
 
-func TestCreateTableWithForeignKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t1 (i int, a int,b int as (a) virtual, index (b));")
-	_, err := tk.Exec("create table t2 (a int, b int, foreign key fk_b(b) references t1(b));")
-	require.Error(t, err)
-	require.Equal(t, "Foreign key 't2_ibfk_1' uses virtual column 'b' which is not supported.", err.Error())
+	tk.MustExec("create table t1 (id int key, a int,b int as (a) virtual);")
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id) ON UPDATE RESTRICT ON DELETE CASCADE)")
+	tb1Info := getTableInfo(t, dom, "test", "t1")
+	tb2Info := getTableInfo(t, dom, "test2", "t2")
+	require.Equal(t, 0, len(tb1Info.ForeignKeys))
+	require.Equal(t, 1, len(tb1Info.ReferredForeignKeys))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("t2"),
+		ChildFKName: model.NewCIStr("fk_b"),
+	}, *tb1Info.ReferredForeignKeys[0])
+	require.Equal(t, 0, len(tb2Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tb2Info.ForeignKeys))
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk_b"),
+		RefSchema: model.NewCIStr("test"),
+		RefTable:  model.NewCIStr("t1"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("b")},
+		OnDelete:  2,
+		OnUpdate:  1,
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tb2Info.ForeignKeys[0])
+	require.Equal(t, 1, len(tb2Info.Indices))
+	require.Equal(t, "fk_b", tb2Info.Indices[0].Name.L)
+	require.Equal(t, "`test2`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT", tb2Info.ForeignKeys[0].String("test2", "t2"))
+
+	tk.MustExec("create table t3 (id int, b int, index idx_b(b), foreign key fk_b(b) references t2(id) ON UPDATE SET NULL ON DELETE NO ACTION)")
+	tb2Info = getTableInfo(t, dom, "test2", "t2")
+	tb3Info := getTableInfo(t, dom, "test2", "t3")
+	require.Equal(t, 1, len(tb2Info.ForeignKeys))
+	require.Equal(t, 1, len(tb2Info.ReferredForeignKeys))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("t3"),
+		ChildFKName: model.NewCIStr("fk_b"),
+	}, *tb2Info.ReferredForeignKeys[0])
+	require.Equal(t, 0, len(tb3Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tb3Info.ForeignKeys))
+	require.Equal(t, model.FKInfo{
+		ID:        2,
+		Name:      model.NewCIStr("fk_b"),
+		RefSchema: model.NewCIStr("test2"),
+		RefTable:  model.NewCIStr("t2"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("b")},
+		OnDelete:  4,
+		OnUpdate:  3,
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tb3Info.ForeignKeys[0])
+	require.Equal(t, 1, len(tb3Info.Indices))
+	require.Equal(t, "idx_b", tb3Info.Indices[0].Name.L)
+	require.Equal(t, "`test2`.`t3`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `t2` (`id`) ON DELETE NO ACTION ON UPDATE SET NULL", tb3Info.ForeignKeys[0].String("test2", "t3"))
+}
+
+func TestCreateTableWithForeignKeyError(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		refer string
+		child string
+		err   string
+	}{
+		{
+			refer: "create table t1 (id int, a int, b int);",
+			child: "create table t2 (a int, b int, foreign key fk_b(b) references t_unknown(b));",
+			err:   "[schema:1146]Table 'test.t_unknown' doesn't exist",
+		},
+		{
+			refer: "create table t1 (id int, a int, b int);",
+			child: "create table t2 (a int, b int, foreign key fk_b(b) references t1(c_unknown));",
+			err:   "[ddl:1072]Key column 'c_unknown' doesn't exist in table",
+		},
+		{
+			refer: "create table t1 (id int, a int, b int);",
+			child: "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
+			err:   "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			refer: "create table t1 (id int, a int, b int not null, index(b));",
+			child: "create table t2 (a int, b int not null, foreign key fk_b(b) references t1(b) on update set null);",
+			err:   "[schema:1830]Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
+		},
+		{
+			refer: "create table t1 (id int, a int, b int not null, index(b));",
+			child: "create table t2 (a int, b int not null, foreign key fk_b(b) references t1(b) on delete set null);",
+			err:   "[schema:1830]Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
+		},
+		{
+			refer: "create table t1 (id int key, a int, b int as (a) virtual, index(b));",
+			child: "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
+			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
+		},
+	}
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec(ca.refer)
+		err := tk.ExecToErr(ca.child)
+		require.Error(t, err)
+		require.Equal(t, ca.err, err.Error())
+	}
+}
+
+func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb))
+	require.NoError(t, err)
+	return tbl.Meta()
 }
 
 func TestCreateView(t *testing.T) {

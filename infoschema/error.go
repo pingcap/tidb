@@ -86,4 +86,6 @@ var (
 	ErrForeignKeyCannotUseVirtualColumn = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyCannotUseVirtualColumn)
 	// ErrFkNoIndexParent returns when foreign key refer columns don't have related index in parent table.
 	ErrFkNoIndexParent = dbterror.ClassSchema.NewStd(mysql.ErrFkNoIndexParent)
+	// ErrFkColumnNotNull returns when foreign key with SET NULL constrain and the related column has not null.
+	ErrFkColumnNotNull = dbterror.ClassSchema.NewStd(mysql.ErrFkColumnNotNull)
 )
