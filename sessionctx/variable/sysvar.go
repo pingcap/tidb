@@ -17,8 +17,6 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/disk"
 	"math"
 	"runtime"
 	"strconv"
@@ -32,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -441,20 +441,25 @@ var defaultSysVars = []*SysVar{
 		err := disk.InitializeTempDir()
 		terror.MustNil(err)
 		config.CheckTempStorageQuota()
-		// TODO
+		// TODO:
+		// 1. check if temp dir is being used; if used, reject
+		// 2. invoke alarm4ExcessiveMemUsage
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.TmpStoragePath, nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBTmpStorageQuota, Value: strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), Type: TypeInt, SetGlobal: func(s *SessionVars, val string) error {
-		oldVal := config.GetGlobalConfig().Instance.TmpStorageQuota
 		newVal, err := strconv.ParseInt(val, 10, 64)
 		if err != nil {
 			return err
 		}
-		// TODO
-		if oldVal != newVal {
-
+		if newVal < 0 {
+			newVal = -1
+		}
+		if oldVal := config.GetGlobalConfig().Instance.TmpStorageQuota; oldVal != newVal {
+			config.GetGlobalConfig().Instance.TmpStorageQuota = newVal
+			config.CheckTempStorageQuota()
+			SetMemQuotaAnalyze(newVal)
 		}
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
