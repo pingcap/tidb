@@ -27,6 +27,7 @@ import (
 	stderrs "errors"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/expression"
 	"math/rand"
 	"runtime/pprof"
 	"runtime/trace"
@@ -82,7 +83,6 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -154,7 +154,7 @@ type Session interface {
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
-	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error)
+	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	// SetSessionStatesHandler sets SessionStatesHandler for type stateType.
 	SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler)
@@ -2297,7 +2297,7 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 }
 
 // ExecutePreparedStmt executes a prepared statement.
-func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
+func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []expression.Expression) (sqlexec.RecordSet, error) {
 	var err error
 	if err = s.PrepareTxnCtx(ctx); err != nil {
 		return nil, err

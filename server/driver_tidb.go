@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/expression"
 	"strings"
 	"sync/atomic"
 
@@ -74,7 +75,7 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs ResultSet, err error) {
+func (ts *TiDBStatement) Execute(ctx context.Context, args []expression.Expression) (rs ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.ExecutePreparedStmt(ctx, ts.id, args)
 	if err != nil {
 		return nil, err
