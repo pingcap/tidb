@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package file_permission
+package filepermission
 
 import (
 	"os"
@@ -21,7 +21,7 @@ import (
 )
 
 // Name is the name of the analyzer.
-const Name = "file_permission"
+const Name = "filepermission"
 
 // Analyzer is the analyzer struct of prealloc.
 var Analyzer = &analysis.Analyzer{
