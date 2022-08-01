@@ -353,7 +353,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 		if !ok {
 			break
 		}
-		count += 1
+		count++
 		if count <= 3 {
 			require.Len(s.T(), kvs, 1)
 		}

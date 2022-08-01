@@ -37,8 +37,7 @@ import (
 )
 
 func TestShowHistogramsInFlight(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -49,16 +48,14 @@ func TestShowHistogramsInFlight(t *testing.T) {
 }
 
 func TestShowOpenTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("show open tables")
 	tk.MustQuery("show open tables in test")
 }
 
 func TestShowCreateViewDefiner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%", AuthUsername: "root", AuthHostname: "%"}, nil, nil))
 
@@ -69,8 +66,7 @@ func TestShowCreateViewDefiner(t *testing.T) {
 }
 
 func TestShowCreateTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -472,8 +468,7 @@ func TestShowCreateTable(t *testing.T) {
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	defer tk.MustExec(`DROP TABLE IF EXISTS t`)
@@ -633,8 +628,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 }
 
 func TestShowVisibility(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database showdatabase")
 	tk.MustExec("use showdatabase")
@@ -670,8 +664,7 @@ func TestShowVisibility(t *testing.T) {
 }
 
 func TestShowDatabasesInfoSchemaFirst(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 	tk.MustExec(`create user 'show'@'%'`)
@@ -691,8 +684,7 @@ func TestShowDatabasesInfoSchemaFirst(t *testing.T) {
 }
 
 func TestShowWarnings(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_warnings (a int)`
@@ -726,8 +718,7 @@ func TestShowWarnings(t *testing.T) {
 }
 
 func TestShowErrors(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_errors (a int)`
@@ -745,8 +736,7 @@ func TestShowErrors(t *testing.T) {
 }
 
 func TestShowWarningsForExprPushdown(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
@@ -783,8 +773,7 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 }
 
 func TestShowGrantsPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user show_grants")
 	tk.MustExec("show grants for show_grants")
@@ -799,8 +788,7 @@ func TestShowGrantsPrivilege(t *testing.T) {
 }
 
 func TestShowStatsPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user show_stats")
 	tk1 := testkit.NewTestKit(t, store)
@@ -831,12 +819,10 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk1.MustExec("show stats_meta")
 	tk1.MustExec("SHOW STATS_BUCKETS")
 	tk1.MustExec("SHOW STATS_HISTOGRAMS")
-
 }
 
 func TestIssue18878(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil))
 	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
@@ -855,8 +841,7 @@ func TestIssue18878(t *testing.T) {
 }
 
 func TestIssue17794(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER 'root'@'8.8.%'")
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "9.9.9.9", AuthHostname: "%"}, nil, nil))
@@ -868,8 +853,7 @@ func TestIssue17794(t *testing.T) {
 }
 
 func TestIssue3641(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Exec("show tables;")
 	require.Equal(t, plannercore.ErrNoDB.Error(), err.Error())
@@ -878,8 +862,7 @@ func TestIssue3641(t *testing.T) {
 }
 
 func TestIssue10549(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE newdb;")
 	tk.MustExec("CREATE ROLE 'app_developer';")
@@ -896,8 +879,7 @@ func TestIssue10549(t *testing.T) {
 }
 
 func TestIssue11165(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE ROLE 'r_manager';")
 	tk.MustExec("CREATE USER 'manager'@'localhost';")
@@ -911,8 +893,7 @@ func TestIssue11165(t *testing.T) {
 
 // TestShow2 is moved from session_test
 func TestShow2(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1036,8 +1017,7 @@ func TestShow2(t *testing.T) {
 }
 
 func TestShowCreateUser(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`)
@@ -1097,8 +1077,7 @@ func TestShowCreateUser(t *testing.T) {
 }
 
 func TestUnprivilegedShow(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE testshow")
 	tk.MustExec("USE testshow")
@@ -1122,12 +1101,10 @@ func TestUnprivilegedShow(t *testing.T) {
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
 
 	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   ", createTime)))
-
 }
 
 func TestCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1143,8 +1120,7 @@ func TestCollation(t *testing.T) {
 }
 
 func TestShowTableStatus(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -1210,8 +1186,7 @@ func TestShowTableStatus(t *testing.T) {
 }
 
 func TestShowSlow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// The test result is volatile, because
 	// 1. Slow queries is stored in domain, which may be affected by other tests.
@@ -1225,8 +1200,7 @@ func TestShowSlow(t *testing.T) {
 }
 
 func TestShowCreateTableAutoRandom(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1294,8 +1268,7 @@ func TestShowCreateTableAutoRandom(t *testing.T) {
 
 // TestAutoIdCache overrides testAutoRandomSuite to test auto id cache.
 func TestAutoIdCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1331,8 +1304,7 @@ func TestAutoIdCache(t *testing.T) {
 }
 
 func TestShowCreateStmtIgnoreLocalTemporaryTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1367,8 +1339,7 @@ func TestAutoRandomBase(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("use test")
@@ -1398,8 +1369,7 @@ func TestAutoRandomBase(t *testing.T) {
 }
 
 func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db;")
 	defer tk.MustExec("drop database if exists auto_random_db;")
@@ -1419,8 +1389,7 @@ func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
 }
 
 func TestShowEscape(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -1450,8 +1419,7 @@ func TestShowEscape(t *testing.T) {
 }
 
 func TestShowBuiltin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	res := tk.MustQuery("show builtins;")
 	require.NotNil(t, res)
@@ -1463,8 +1431,7 @@ func TestShowBuiltin(t *testing.T) {
 }
 
 func TestShowClusterConfig(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1499,8 +1466,7 @@ func TestShowClusterConfig(t *testing.T) {
 }
 
 func TestInvisibleCoprCacheConfig(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show variables like '%config%'").Rows()
 	require.Equal(t, 1, len(rows))
@@ -1513,8 +1479,7 @@ func TestInvisibleCoprCacheConfig(t *testing.T) {
 }
 
 func TestEnableGlobalKillConfig(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show variables like '%config%'").Rows()
 	require.Equal(t, 1, len(rows))
@@ -1528,8 +1493,7 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 	defer func() {
 		parsertypes.TiDBStrictIntegerDisplayWidth = false
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1590,8 +1554,7 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 }
 
 func TestShowVar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	var showSQL string
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
@@ -1641,8 +1604,7 @@ func TestShowVar(t *testing.T) {
 }
 
 func TestIssue19507(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));")
@@ -1665,8 +1627,7 @@ func TestIssue19507(t *testing.T) {
 
 // TestShowPerformanceSchema tests for Issue 19231
 func TestShowPerformanceSchema(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Ideally we should create a new performance_schema table here with indices that we run the tests on.
 	// However, its not possible to create a new performance_schema table since its a special in memory table.
@@ -1677,8 +1638,7 @@ func TestShowPerformanceSchema(t *testing.T) {
 }
 
 func TestShowCreatePlacementPolicy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE PLACEMENT POLICY xyz PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2' FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" FOLLOWERS=4"))
@@ -1692,8 +1652,7 @@ func TestShowCreatePlacementPolicy(t *testing.T) {
 }
 
 func TestShowTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
@@ -1754,8 +1713,7 @@ func TestShowTemporaryTable(t *testing.T) {
 }
 
 func TestShowCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")
@@ -1777,8 +1735,7 @@ func TestShowCachedTable(t *testing.T) {
 }
 
 func TestShowBindingCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -1805,8 +1762,7 @@ func TestShowBindingCache(t *testing.T) {
 }
 
 func TestShowBindingCacheStatus(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1862,8 +1818,7 @@ func TestShowBindingCacheStatus(t *testing.T) {
 }
 
 func TestShowDatabasesLike(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{
@@ -1879,8 +1834,7 @@ func TestShowDatabasesLike(t *testing.T) {
 }
 
 func TestShowTableStatusLike(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1898,12 +1852,10 @@ func TestShowTableStatusLike(t *testing.T) {
 	rows = tk.MustQuery("SHOW table status LIKE 'li%'").Rows()
 	require.Equal(t, "Li_1", rows[0][0])
 	require.Equal(t, "li_2", rows[1][0])
-
 }
 
 func TestShowCollationsLike(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{
