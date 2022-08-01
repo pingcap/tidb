@@ -346,6 +346,13 @@ func (c *Column) dropTopN() {
 	}
 }
 
+func (c *Column) dropHist() {
+	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
+	c.Histogram.Buckets = make([]Bucket, 0)
+	c.Histogram.scalars = make([]scalar, 0)
+	c.evictedStatus = allEvicted
+}
+
 // IsAllEvicted indicates whether all stats evicted
 func (c *Column) IsAllEvicted() bool {
 	return c.statsInitialized && c.evictedStatus >= allEvicted

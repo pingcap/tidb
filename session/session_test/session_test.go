@@ -59,6 +59,8 @@ func TestSchemaCheckerSQL(t *testing.T) {
 	store, clean := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -235,6 +237,8 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	store, clean := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -1344,6 +1348,8 @@ func TestRetryForCurrentTxn(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1481,6 +1487,8 @@ func TestParseWithParams(t *testing.T) {
 func TestStatementCountLimit(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table stmt_count_limit (id int)")
@@ -1507,6 +1515,8 @@ func TestStatementCountLimit(t *testing.T) {
 func TestBatchCommit(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_batch_commit = 1")
@@ -1601,6 +1611,8 @@ func TestKVVars(t *testing.T) {
 func TestTxnRetryErrMsg(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -2463,6 +2475,8 @@ func TestCommitRetryCount(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
@@ -3164,6 +3178,8 @@ func TestResetCtx(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -3201,6 +3217,8 @@ func TestUnique(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -3550,6 +3568,8 @@ func TestRowLock(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -3626,7 +3646,7 @@ func TestAutocommit(t *testing.T) {
 
 	// When autocommit is 0, transaction start ts should be the first *valid*
 	// statement, rather than *any* statement.
-	tk.MustExec("create table t (id int)")
+	tk.MustExec("create table t (id int key)")
 	tk.MustExec("set @@autocommit = 0")
 	tk.MustExec("rollback")
 	tk.MustExec("set @@autocommit = 0")
@@ -3636,15 +3656,49 @@ func TestAutocommit(t *testing.T) {
 	tk1.MustExec("insert into t select 1")
 
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
 
-	// TODO: MySQL compatibility for setting global variable.
-	// tk.MustExec("begin")
-	// tk.MustExec("insert into t values (42)")
-	// tk.MustExec("set @@global.autocommit = 1")
-	// tk.MustExec("rollback")
-	// tk.MustQuery("select count(*) from t where id = 42").Check(testkit.Rows("0"))
-	// Even the transaction is rollbacked, the set statement succeed.
-	// tk.MustQuery("select @@global.autocommit").Rows("1")
+	// When the transaction is rolled back, the global set statement would succeed.
+	tk.MustExec("set @@global.autocommit = 0")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set @@global.autocommit = 1")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from t where id = 1").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.autocommit").Check(testkit.Rows("1"))
+
+	// When the transaction is committed because of switching mode, the session set statement shold succeed.
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set autocommit = 1")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from t where id = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
+
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("set autocommit = 1")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from t where id = 2").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
+
+	// Set should not take effect if the mode is not changed.
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (3)")
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from t where id = 3").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@autocommit").Check(testkit.Rows("0"))
+
+	tk.MustExec("set autocommit = 1")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (4)")
+	tk.MustExec("set autocommit = 1")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from t where id = 4").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
 }
 
 // TestTxnLazyInitialize tests that when autocommit = 0, not all statement starts
@@ -4080,6 +4134,8 @@ func TestBinaryReadOnly(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (i int key)")

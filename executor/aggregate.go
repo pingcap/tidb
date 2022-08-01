@@ -1703,7 +1703,7 @@ func (e *vecGroupChecker) getFirstAndLastRowDatum(item expression.Expression, ch
 			lastRowDatum.SetNull()
 		}
 	default:
-		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
+		err = fmt.Errorf("invalid eval type %v", eType)
 		return err
 	}
 
@@ -1853,7 +1853,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousIsNull = isNull
 		}
 	default:
-		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
+		err = fmt.Errorf("invalid eval type %v", eType)
 	}
 	if err != nil {
 		return err

@@ -1364,7 +1364,7 @@ func (store *MVCCStore) UpdateSafePoint(safePoint uint64) {
 }
 
 func tsToTime(ts uint64) time.Time {
-	return time.Unix(0, int64(ts>>18)*1000000)
+	return time.UnixMilli(int64(ts >> 18))
 }
 
 // StartDeadlockDetection implements the MVCCStore interface.

@@ -35,8 +35,8 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         importpath = "honnef.co/go/tools",
         replace = "honnef.co/go/tools",
-        sum = "h1:ytYb4rOqyp1TSa2EPvNVwtPQJctSELKaMyLfqNP4+34=",
-        version = "v0.3.2",
+        sum = "h1:oDx7VAwstgpYpb3wv0oxiZlxY+foCpRAwY7Vk6XpAgA=",
+        version = "v0.3.3",
     )
     go_repository(
         name = "com_4d63_gochecknoglobals",
@@ -3310,8 +3310,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:RW/8xnBK618j7B33mP4TTCVhzj1dgwZv/TT7vHaMpbg=",
-        version = "v2.0.1-0.20220725090834-0cdc7c1d0fb9",
+        sum = "h1:oCtRW/f0FZabdoLuvqxIewcmHR83RlsdN37dS0EBRTU=",
+        version = "v2.0.1-0.20220729034404-e10841f2d158",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

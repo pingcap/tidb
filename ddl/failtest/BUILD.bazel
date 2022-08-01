@@ -10,6 +10,7 @@ go_test(
     deps = [
         "//config",
         "//ddl",
+        "//ddl/schematracker",
         "//ddl/testutil",
         "//ddl/util",
         "//domain",

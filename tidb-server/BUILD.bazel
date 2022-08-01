@@ -85,6 +85,12 @@ go_binary(
     visibility = ["//visibility:public"],
 )
 
+go_binary(
+    name = "tidb-server-raw",
+    embed = [":tidb-server_lib"],
+    visibility = ["//visibility:public"],
+)
+
 go_test(
     name = "tidb-server_test",
     timeout = "short",

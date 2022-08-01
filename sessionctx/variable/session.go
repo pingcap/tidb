@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -1470,6 +1469,7 @@ func NewSessionVars() *SessionVars {
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
 		MinPagingSize:      DefMinPagingSize,
+		MaxPagingSize:      DefMaxPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
@@ -1479,11 +1479,6 @@ func NewSessionVars() *SessionVars {
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
-	enableChunkRPC := "0"
-	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
-		enableChunkRPC = "1"
-	}
-	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
 		case kv.TiFlash.Name():
@@ -1636,6 +1631,13 @@ func (s *SessionVars) SetUserVar(varName string, svalue string, collation string
 	}
 }
 
+// UnsetUserVar unset an user defined variable by name.
+func (s *SessionVars) UnsetUserVar(varName string) {
+	varName = strings.ToLower(varName)
+	delete(s.Users, varName)
+	delete(s.UserVarTypes, varName)
+}
+
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
@@ -1643,7 +1645,7 @@ func (s *SessionVars) SetLastInsertID(insertID uint64) {
 }
 
 // SetStatusFlag sets the session server status variable.
-// If on is ture sets the flag in session status,
+// If on is true sets the flag in session status,
 // otherwise removes the flag.
 func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	if on {
@@ -2213,6 +2215,9 @@ type BatchSize struct {
 
 	// MinPagingSize defines the min size used by the coprocessor paging protocol.
 	MinPagingSize int
+
+	// MinPagingSize defines the max size used by the coprocessor paging protocol.
+	MaxPagingSize int
 }
 
 const (

@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/terror"
@@ -405,9 +404,8 @@ func TestAggregation(t *testing.T) {
 	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)").Sort()
 	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
 
-	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
-	require.EqualError(t, errors.Cause(err), "[expression:1305]FUNCTION test.std_samp does not exist")
+	tk.MustGetErrMsg("select std_samp(a) from t", "[expression:1305]FUNCTION test.std_samp does not exist")
 
 	// For issue #14072: wrong result when using generated column with aggregate statement
 	tk.MustExec("drop table if exists t1;")
@@ -890,8 +888,8 @@ func TestIssue13652(t *testing.T) {
 	tk.MustQuery("select a from t group by ((a))")
 	tk.MustQuery("select a from t group by +a")
 	tk.MustQuery("select a from t group by ((+a))")
-	_, err := tk.Exec("select a from t group by (-a)")
-	require.EqualError(t, err, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	tk.MustGetErrMsg("select a from t group by (-a)",
+		"[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 }
 
 func TestIssue14947(t *testing.T) {

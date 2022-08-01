@@ -508,8 +508,8 @@ func TestBuildPagingTasks(t *testing.T) {
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
-	req.Paging = true
-	req.MinPagingSize = paging.MinPagingSize
+	req.Paging.Enable = true
+	req.Paging.MinPagingSize = paging.MinPagingSize
 	flashReq := &kv.Request{}
 	flashReq.StoreType = kv.TiFlash
 	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
