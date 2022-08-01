@@ -15,11 +15,13 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/config"
@@ -35,6 +37,7 @@ type PlanReplayerHandler struct {
 	address    string
 	statusPort uint
 	scheme     string
+	tlsCfg     *tls.Config
 }
 
 func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
@@ -47,7 +50,7 @@ func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
 	if s.dom != nil && s.dom.InfoSyncer() != nil {
 		prh.infoGetter = s.dom.InfoSyncer()
 	}
-	if len(cfg.Security.ClusterSSLCA) > 0 {
+	if len(cfg.Security.ClusterSSLKey) > 0 || len(cfg.Security.SSLKey) > 0 {
 		prh.scheme = "https"
 	}
 	return prh
@@ -62,7 +65,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		infoGetter:         prh.infoGetter,
 		address:            prh.address,
 		statusPort:         prh.statusPort,
-		urlPath:            fmt.Sprintf("plan_replyaer/dump/%s", name),
+		urlPath:            fmt.Sprintf("plan_replayer/dump/%s", name),
 		downloadedFilename: "plan_replayer",
 		scheme:             prh.scheme,
 	}
@@ -122,14 +125,25 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 		writeError(w, err)
 		return
 	}
+	var client *http.Client
+	if handler.scheme == "http" {
+		client = http.DefaultClient
+	} else {
+		client = &http.Client{
+			Timeout: 5 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	}
 	// transfer each remote tidb-server and try to find dump file
 	for _, topo := range topos {
 		if topo.IP == handler.address && topo.StatusPort == handler.statusPort {
 			continue
 		}
-		remoteAddr := fmt.Sprintf("%s/%v", topo.IP, topo.StatusPort)
+		remoteAddr := fmt.Sprintf("%s:%v", topo.IP, topo.StatusPort)
 		url := fmt.Sprintf("%s://%s/%s?forward=true", handler.scheme, remoteAddr, handler.urlPath)
-		resp, err := http.Get(url) // #nosec G107
+		resp, err := client.Get(url)
 		if err != nil {
 			logutil.BgLogger().Error("forward request failed",
 				zap.String("remote-addr", remoteAddr), zap.Error(err))
