@@ -880,10 +880,26 @@ func FetchPDVersion(ctx context.Context, tls *common.TLS, pdAddr string) (*semve
 
 // FetchStoresAddr get all address of stores
 func FetchStoresAddr(ctx context.Context, tls *common.TLS, pdAddr string) ([]string, error) {
-	// An example of PD Cluster ID API.
-	// curl http://pd_address/pd/api/v1/cluster
+	// An example of PD stores API.
+	// curl http://pd_address/pd/api/v1/stores
 	// {
-	//   "id": 7125154571691814555
+	// 	"stores": [
+	// 	  {
+	// 		"store": {
+	// 		  "address": "172.16.6.196:20160"
+	// 		}
+	// 	  },
+	// 	  {
+	// 		"store": {
+	// 		  "address": "172.16.6.194:20160"
+	// 		}
+	// 	  },
+	// 	  {
+	// 		"store": {
+	// 		  "address": "172.16.6.155:20160"
+	// 		}
+	// 	  }
+	// 	]
 	// }
 	type rawStoreAddr struct {
 		Address string `json:"address"`
@@ -896,7 +912,7 @@ func FetchStoresAddr(ctx context.Context, tls *common.TLS, pdAddr string) ([]str
 	}
 	var strStoresAddr []string
 
-	err := tls.WithHost(pdAddr).GetJSON(ctx, "/pd/api/v1/stores", &rawStoresAddr.Stores)
+	err := tls.WithHost(pdAddr).GetJSON(ctx, "/pd/api/v1/stores", &rawStoresAddr)
 	if err != nil {
 		return strStoresAddr, errors.Trace(err)
 	}
