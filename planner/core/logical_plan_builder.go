@@ -3799,6 +3799,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	// Determines whether to use the Merge hint in a CTE query.
+	//If the current query uses Merge Hint and the query is a CTE, we update the HINT information for the current query.
+	//If the current query is not a CTE query (it may be a subquery within a CTE query or an external non-CTE query), we will prompt an warning.
+	//In particular, recursive CTE have separate warnings, so they are no longer called.
 	if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
 		if b.buildingCTE {
 			if b.isCTE {
@@ -4841,7 +4844,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	//For the case that views appear in CTE queries,
 	//we need to save the CTEs after the views are established.
 	var saveCte []*cteInfo
-	if b.outerCTEs != nil {
+	if len(b.outerCTEs) > 0 {
 		saveCte = make([]*cteInfo, len(b.outerCTEs))
 		copy(saveCte, b.outerCTEs)
 	} else {
@@ -6714,7 +6717,6 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 		}
 		b.buildingRecursivePartForCTE = saveCheck
 	} else {
-		//When the query is CTE, we will turn the var to true.
 		p, err = b.buildResultSetNode(ctx, cte.Query.Query, true)
 		if err != nil {
 			return nil, err
