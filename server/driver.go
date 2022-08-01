@@ -17,8 +17,8 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"github.com/pingcap/tidb/expression"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/chunk"
 )
 

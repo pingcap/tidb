@@ -19,11 +19,11 @@ package testkit
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"runtime"
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/types"

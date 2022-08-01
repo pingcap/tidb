@@ -19,16 +19,16 @@ package testkit
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/mysql"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
