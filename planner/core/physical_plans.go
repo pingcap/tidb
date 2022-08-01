@@ -1601,7 +1601,7 @@ func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 }
 
 // OperatorInfo implements dataAccesser interface.
-func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
+func (p *PhysicalCTE) OperatorInfo(_ bool) string {
 	return fmt.Sprintf("data:%s", (*CTEDefinition)(p).ExplainID())
 }
 

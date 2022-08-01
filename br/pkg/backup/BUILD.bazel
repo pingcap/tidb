@@ -14,6 +14,7 @@ go_library(
     deps = [
         "//br/pkg/checksum",
         "//br/pkg/conn",
+        "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/glue",
         "//br/pkg/logutil",
@@ -29,7 +30,6 @@ go_library(
         "//meta",
         "//meta/autoid",
         "//parser/model",
-        "//sessionctx",
         "//statistics/handle",
         "//util",
         "//util/codec",
@@ -67,6 +67,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/conn",
+        "//br/pkg/gluetidb",
         "//br/pkg/metautil",
         "//br/pkg/mock",
         "//br/pkg/pdutil",

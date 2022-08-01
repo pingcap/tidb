@@ -143,7 +143,6 @@ func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...
 				partitions = append(partitions[:index], partitions[index+1:]...)
 			}
 		}
-
 	}
 	if !ok {
 		tk.require.Len(partitions, 0)

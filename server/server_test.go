@@ -1635,6 +1635,7 @@ func (cli *testServerClient) runTestExplainForConn(t *testing.T) {
 
 func (cli *testServerClient) runTestErrorCode(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "ErrorCode", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@tidb_txn_mode=''")
 		dbt.MustExec("create table test (c int PRIMARY KEY);")
 		dbt.MustExec("insert into test values (1);")
 		txn1, err := dbt.GetDB().Begin()
@@ -1872,7 +1873,6 @@ func (cli *testServerClient) runTestStatusAPI(t *testing.T) {
 
 func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "FailedMultiStatements", func(dbt *testkit.DBTestKit) {
-
 		// Default is now OFF in new installations.
 		// It is still WARN in upgrade installations (for now)
 		_, err := dbt.GetDB().Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
@@ -1933,7 +1933,6 @@ func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 }
 
 func (cli *testServerClient) runTestMultiStatements(t *testing.T) {
-
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.Params["multiStatements"] = "true"
 	}, "MultiStatements", func(dbt *testkit.DBTestKit) {
@@ -2166,7 +2165,6 @@ func (cli *testServerClient) waitUntilServerOnline() {
 }
 
 func (cli *testServerClient) runTestInitConnect(t *testing.T) {
-
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());SET @a=1;"`)
 		dbt.MustExec(`CREATE USER init_nonsuper`)
@@ -2224,7 +2222,6 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 // and not internal SQL statements. Thus, this test is in the server-test suite.
 func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "clientErrors", func(dbt *testkit.DBTestKit) {
-
 		clientErrors := []struct {
 			stmt              string
 			incrementWarnings bool
@@ -2254,7 +2251,6 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 
 		for _, test := range clientErrors {
 			for _, tbl := range sources {
-
 				var errors, warnings int
 				rows := dbt.MustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
 				if rows.Next() {
@@ -2289,6 +2285,5 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 				require.Equalf(t, warnings, newWarnings, "source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt)
 			}
 		}
-
 	})
 }

@@ -339,7 +339,7 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 		er.b.hasValidSemiJoinHint = oldHasHint
 	}()
 
-	np, err = er.b.buildResultSetNode(ctx, subq.Query)
+	np, err = er.b.buildResultSetNode(ctx, subq.Query, false)
 	if err != nil {
 		return nil, false, err
 	}
@@ -825,7 +825,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		return v, true
 	}
 	np = er.popExistsSubPlan(np)
-	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, hasRewriteHint)
 		if er.err != nil || !er.asScalar {
 			return v, true
@@ -1000,7 +1001,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
-	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
@@ -1523,7 +1524,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
 	} else {
 		// If we rewrite IN to EQ, we need to decide what's the collation EQ uses.
-		coll := er.deriveCollationForIn(l, lLen, stkLen, args)
+		coll := er.deriveCollationForIn(l, lLen, args)
 		if er.err != nil {
 			return
 		}
@@ -1553,7 +1554,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 
 // deriveCollationForIn derives collation for in expression.
 // We don't handle the cases if the element is a tuple, such as (a, b, c) in ((x1, y1, z1), (x2, y2, z2)).
-func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkLen int, args []expression.Expression) *expression.ExprCollation {
+func (er *expressionRewriter) deriveCollationForIn(colLen int, _ int, args []expression.Expression) *expression.ExprCollation {
 	if colLen == 1 {
 		// a in (x, y, z) => coll[0]
 		coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
@@ -2166,7 +2167,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		}
 		cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
 		for _, col := range tblInfo.Columns {
-			cols[col.ID] = &col.FieldType
+			cols[col.ID] = &(col.FieldType)
 		}
 		handleColIDs := make([]int64, 0, len(idxInfo.Columns))
 		for _, col := range idxInfo.Columns {
@@ -2282,7 +2283,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	return string(retStr), nil
 }
 
-func decodeTableKey(key []byte, tableID int64) (string, error) {
+func decodeTableKey(_ []byte, tableID int64) (string, error) {
 	ret := map[string]int64{"table_id": tableID}
 	retStr, err := json.Marshal(ret)
 	if err != nil {

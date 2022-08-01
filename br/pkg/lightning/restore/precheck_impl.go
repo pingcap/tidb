@@ -1142,7 +1142,6 @@ loop:
 			case <-gCtx.Done():
 				break loop
 			}
-
 		}
 	}
 	close(ch)

@@ -187,7 +187,7 @@ func (e *InsertValues) initEvalBuffer() {
 	}
 	e.evalBufferTypes = make([]*types.FieldType, numCols)
 	for i, col := range e.Table.Cols() {
-		e.evalBufferTypes[i] = &col.FieldType
+		e.evalBufferTypes[i] = &(col.FieldType)
 	}
 	if e.hasExtraHandle {
 		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)

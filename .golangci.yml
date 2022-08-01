@@ -34,6 +34,7 @@ linters-settings:
     confidence: "low"
     excludes:
       - G101
+      - G112
 issues:
   exclude-rules:
     - path: _test\.go

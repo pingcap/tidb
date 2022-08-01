@@ -25,13 +25,14 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
-	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -76,7 +77,7 @@ const (
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client
-	toolClient    SplitClient
+	toolClient    split.SplitClient
 	fileImporter  FileImporter
 	rawKVClient   *RawKVBatchClient
 	workerPool    *utils.WorkerPool
@@ -158,11 +159,15 @@ type Client struct {
 	// fullClusterRestore = true when there is no explicit filter setting, and it's full restore or point command
 	// 	with a full backup data.
 	// todo: maybe change to an enum
+	// this feature is controlled by flag with-sys-table
 	fullClusterRestore bool
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []string
 	deleteRangeQueryCh        chan string
 	deleteRangeQueryWaitGroup sync.WaitGroup
+
+	// see RestoreCommonConfig.WithSysTable
+	withSysTable bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -174,7 +179,7 @@ func NewRestoreClient(
 ) *Client {
 	return &Client{
 		pdClient:           pdClient,
-		toolClient:         NewSplitClient(pdClient, tlsConf, isRawKv),
+		toolClient:         split.NewSplitClient(pdClient, tlsConf, isRawKv),
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
@@ -335,7 +340,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 }
 
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
-	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
+	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode)
 }
@@ -350,7 +355,6 @@ func (rc *Client) InitBackupMeta(
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader) error {
-
 	if !backupMeta.IsRawKv {
 		databases, err := utils.LoadBackupTables(c, reader)
 		if err != nil {
@@ -727,22 +731,20 @@ func (rc *Client) GoCreateTables(
 	var err error
 
 	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
-
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, newTS, outCh)
 
 		if err == nil {
 			defer log.Debug("all tables are created")
 			close(outCh)
 			return outCh
-			// fall back to old create table (sequential create table)
 		} else if utils.FallBack2CreateTable(err) {
+			// fall back to old create table (sequential create table)
 			log.Info("fall back to the sequential create table")
 		} else {
 			errCh <- err
 			close(outCh)
 			return outCh
 		}
-
 	}
 
 	createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {
@@ -750,7 +752,6 @@ func (rc *Client) GoCreateTables(
 		case <-c.Done():
 			return c.Err()
 		default:
-
 		}
 		rt, err := rc.createTable(c, db, dom, t, newTS)
 		if err != nil {
@@ -894,7 +895,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableSet[table.Info.Name.L] {
+		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
@@ -989,7 +990,7 @@ func (rc *Client) ResetSpeedLimit(ctx context.Context) error {
 
 func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 	if !rc.hasSpeedLimited {
-		stores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.SkipTiFlash)
+		stores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.SkipTiFlash)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1203,7 +1204,7 @@ func (rc *Client) SwitchToNormalMode(ctx context.Context) error {
 }
 
 func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMode) error {
-	stores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.SkipTiFlash)
+	stores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1635,7 +1636,7 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	tables []*metautil.Table,
 	skipTiflash bool,
 ) error {
-	tiFlashStores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.TiFlashOnly)
+	tiFlashStores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.TiFlashOnly)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1692,8 +1693,34 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
+func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error) {
+	shiftTS := struct {
+		sync.Mutex
+		value  uint64
+		exists bool
+	}{}
+	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, m *backuppb.Metadata) error {
+		shiftTS.Lock()
+		defer shiftTS.Unlock()
+
+		ts, ok := UpdateShiftTS(m, startTS, restoreTS)
+		if ok && (!shiftTS.exists || shiftTS.value > ts) {
+			shiftTS.value = ts
+			shiftTS.exists = true
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if !shiftTS.exists {
+		return startTS, nil
+	}
+	return shiftTS.value, nil
+}
+
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
+func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) ([]*backuppb.Metadata, error) {
 	streamBackupMetaFiles := struct {
 		sync.Mutex
 		metas []*backuppb.Metadata
@@ -1702,7 +1729,9 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 
 	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
 		streamBackupMetaFiles.Lock()
-		streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		if restoreTS >= metadata.MinTs && metadata.MaxTs >= shiftedStartTS {
+			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		}
 		streamBackupMetaFiles.Unlock()
 		return nil
 	})
@@ -1743,9 +1772,8 @@ func (rc *Client) ReadStreamDataFiles(
 	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
 		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
 			return i.ResolvedTs < j.ResolvedTs
-		} else {
-			return i.MaxTs < j.MaxTs
 		}
+		return i.MaxTs < j.MaxTs
 	})
 	return dFiles, mFiles, nil
 }
@@ -2090,7 +2118,7 @@ func (rc *Client) RestoreMetaKVFile(
 			return 0, 0, errors.Trace(err)
 		}
 
-		kvCount += 1
+		kvCount++
 		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}
 
@@ -2327,6 +2355,10 @@ func (rc *Client) IsFullClusterRestore() bool {
 	return rc.fullClusterRestore
 }
 
+func (rc *Client) SetWithSysTable(withSysTable bool) {
+	rc.withSysTable = withSysTable
+}
+
 // MockClient create a fake client used to test.
 func MockClient(dbs map[string]*utils.Database) *Client {
 	return &Client{databases: dbs}
@@ -2357,5 +2389,4 @@ func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
 		}
 	}
 	return schemas
-
 }

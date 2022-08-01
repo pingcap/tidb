@@ -84,7 +84,7 @@ var allRules = append([]lint.Rule{
 	//&rule.FlagParamRule{},
 	&rule.UnnecessaryStmtRule{},
 	//&rule.StructTagRule{},
-	&rule.ModifiesValRecRule{},
+	//&rule.ModifiesValRecRule{},
 	&rule.ConstantLogicalExprRule{},
 	&rule.BoolLiteralRule{},
 	//&rule.RedefinesBuiltinIDRule{},
@@ -138,6 +138,9 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	for _, r := range allRules {
 		conf.Rules[r.Name()] = lint.RuleConfig{}
+	}
+	conf.Rules["defer"] = lint.RuleConfig{
+		Arguments: []interface{}{[]interface{}{"loop", "method-call", "immediate-recover", "return"}},
 	}
 	lintingRules, err := config.GetLintingRules(&conf, []lint.Rule{})
 	if err != nil {

@@ -42,11 +42,12 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
+func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInCompile", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInRebuildPlan", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerAfterBuildExecutor", "return"))
@@ -57,7 +58,7 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerForUpdateTSEqual", "return"))
 
-	store, do, clean := testkit.CreateMockStoreAndDomain(t)
+	store, do := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
@@ -74,7 +75,7 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	tk.MustExec("create temporary table tmp (id int)")
 	tk.MustExec("insert into tmp values(10)")
 
-	return store, do, func() {
+	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInCompile"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInRebuildPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerAfterBuildExecutor"))
@@ -88,8 +89,8 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 		tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
 		tk.Session().SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 		tk.Session().SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, nil)
-		clean()
-	}
+	})
+	return store, do
 }
 
 func checkAssertRecordExits(t *testing.T, se sessionctx.Context, name string) {
@@ -114,8 +115,7 @@ var normalPathRecords = []string{
 }
 
 func TestTxnContextForSimpleCases(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -150,8 +150,7 @@ func TestTxnContextForSimpleCases(t *testing.T) {
 }
 
 func TestTxnContextInExplicitTxn(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -217,8 +216,7 @@ func TestTxnContextInExplicitTxn(t *testing.T) {
 }
 
 func TestTxnContextBeginInUnfinishedTxn(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -252,8 +250,7 @@ func TestTxnContextBeginInUnfinishedTxn(t *testing.T) {
 }
 
 func TestTxnContextWithAutocommitFalse(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -288,8 +285,7 @@ func TestTxnContextWithAutocommitFalse(t *testing.T) {
 }
 
 func TestTxnContextInRC(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -338,8 +334,7 @@ func TestTxnContextInRC(t *testing.T) {
 }
 
 func TestTxnContextInPessimisticKeyConflict(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -363,8 +358,7 @@ func TestTxnContextInPessimisticKeyConflict(t *testing.T) {
 }
 
 func TestTxnContextInOptimisticRetry(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_disable_txn_auto_retry=0")
@@ -393,8 +387,9 @@ func TestTxnContextInOptimisticRetry(t *testing.T) {
 }
 
 func TestTxnContextForHistoricalRead(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -448,8 +443,7 @@ func TestTxnContextForHistoricalRead(t *testing.T) {
 }
 
 func TestTxnContextForStaleRead(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -522,8 +516,7 @@ func TestTxnContextForStaleRead(t *testing.T) {
 }
 
 func TestTxnContextForPrepareExecute(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -588,8 +581,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 }
 
 func TestTxnContextForStaleReadInPrepare(t *testing.T) {
-	store, _, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, _ := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -690,8 +682,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 }
 
 func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -731,8 +722,7 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 
 // See issue: https://github.com/pingcap/tidb/issues/35459
 func TestStillWriteConflictAfterRetry(t *testing.T) {
-	store, _, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, _ := setupTxnContextTest(t)
 
 	queries := []string{
 		"select * from t1 for update",
@@ -805,8 +795,7 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 }
 
 func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
-	store, _, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, _ := setupTxnContextTest(t)
 
 	queries := []string{
 		"update t1 set v=v+1",
@@ -893,8 +882,7 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
@@ -937,7 +925,6 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(99), count)
-
 }
 
 func TestTSOCmdCountForTextSql(t *testing.T) {
@@ -949,8 +936,7 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	sctx := tk.Session()
