@@ -2,7 +2,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "executor",
-    timeout = "short",
     srcs = [
         "adapter.go",
         "admin.go",
@@ -240,6 +239,7 @@ go_library(
 
 go_test(
     name = "executor_test",
+    timeout = "short",
     srcs = [
         "adapter_test.go",
         "admin_test.go",
