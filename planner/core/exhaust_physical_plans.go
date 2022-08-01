@@ -2524,6 +2524,12 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
 		taskTypes := []property.TaskType{property.CopSingleReadTaskType}
+
+		// StreamAgg can be pushed down into IndexLookup when no group-by column, issues/36769.
+		if len(childProp.SortItems) == 0 {
+			taskTypes = append(taskTypes, property.CopDoubleReadTaskType)
+		}
+
 		if la.HasDistinct() {
 			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
