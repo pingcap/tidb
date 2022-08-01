@@ -581,7 +581,6 @@ func TestValidate(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestValidateStmtSummary(t *testing.T) {
@@ -664,7 +663,6 @@ func TestConcurrencyVariables(t *testing.T) {
 	require.Equal(t, wdConcurrency, vars.WindowConcurrency())
 	require.Equal(t, mjConcurrency, vars.MergeJoinConcurrency())
 	require.Equal(t, saConcurrency, vars.StreamAggConcurrency())
-
 }
 
 func TestHelperFuncs(t *testing.T) {

@@ -233,7 +233,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 		return nil, nil
 	}
 	// refresh statsReader to get latest stats
-	h.getFreshStatsReader(readerCtx, ctx)
+	h.loadFreshStatsReader(readerCtx, ctx)
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(item, wrapper, readerCtx.reader)
@@ -257,7 +257,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	return nil, nil
 }
 
-func (h *Handle) getFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
+func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
 	if readerCtx.reader == nil || readerCtx.createdTime.Add(h.Lease()).Before(time.Now()) {
 		if readerCtx.reader != nil {
 			err := h.releaseStatsReader(readerCtx.reader, ctx)

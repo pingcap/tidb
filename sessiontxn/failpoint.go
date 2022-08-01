@@ -122,7 +122,7 @@ func TsoRequestCountInc(sctx sessionctx.Context) {
 	if !ok {
 		count = 0
 	}
-	count += 1
+	count++
 	sctx.SetValue(TsoRequestCount, count)
 }
 

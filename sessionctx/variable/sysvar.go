@@ -433,6 +433,20 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), nil
 	}},
+	{Scope: ScopeInstance, Name: TiDBEnableDDL, Value: BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), Type: TypeBool,
+		SetGlobal: func(s *SessionVars, val string) error {
+			oldVal, newVal := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load(), TiDBOptOn(val)
+			if oldVal != newVal {
+				err := switchDDL(newVal)
+				config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(newVal)
+				return err
+			}
+			return nil
+		},
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), nil
+		},
+	},
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
@@ -953,10 +967,11 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: AutoCommit, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		isAutocommit := TiDBOptOn(val)
-		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
-		if isAutocommit {
+		// Implicitly commit the possible ongoing transaction if mode is changed from off to on.
+		if !s.IsAutocommit() && isAutocommit {
 			s.SetInTxn(false)
 		}
+		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharsetDatabase, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -1388,8 +1403,7 @@ var defaultSysVars = []*SysVar{
 	}, SetSession: func(s *SessionVars, val string) error {
 		s.AllowFallbackToTiKV = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
-			switch engine {
-			case kv.TiFlash.Name():
+			if engine == kv.TiFlash.Name() {
 				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
 			}
 		}
@@ -1408,11 +1422,9 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNoopFuncs, Value: DefTiDBEnableNoopFuncs, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-
 		// The behavior is very weird if someone can turn TiDBEnableNoopFuncs OFF, but keep any of the following on:
 		// TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly, SQLAutoIsNull
 		// To prevent this strange position, prevent setting to OFF when any of these sysVars are ON of the same scope.
-
 		if normalizedValue == Off {
 			for _, potentialIncompatibleSysVar := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, ReadOnly, SQLAutoIsNull} {
 				val, _ := vars.GetSystemVar(potentialIncompatibleSysVar) // session scope
@@ -1850,6 +1862,8 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
+	// TiDBEnableDDL indicates whether the tidb-server runs DDL statements,
+	TiDBEnableDDL = "tidb_enable_ddl"
 	// Port is the name for 'port' system variable.
 	Port = "port"
 	// DataDir is the name for 'datadir' system variable.

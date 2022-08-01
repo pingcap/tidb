@@ -263,7 +263,6 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
 			if err != nil {
 				return false, false, err
-
 			}
 		}
 		if i == 0 {
@@ -766,6 +765,7 @@ type VarAssignment struct {
 
 // splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
 func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
+	//nolint: revive
 	switch v := onExpr.(type) {
 	case *ScalarFunction:
 		if v.FuncName.L == funcName {
