@@ -1884,7 +1884,8 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 
 	// If not specify the table_schema, return an error to avoid traverse all schemas and their tables.
 	if len(schemas) == 0 {
-		return errors.Errorf("Please specify the 'table_schema'")
+		return errors.Errorf("Please add where clause to filter the column TABLE_SCHEMA. " +
+			"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
 	}
 
 	// Filter the sys or memory schema.
