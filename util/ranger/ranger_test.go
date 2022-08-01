@@ -874,7 +874,7 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -900,7 +900,7 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -926,7 +926,7 @@ func TestCompIndexDNFMatch(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -955,7 +955,7 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -984,7 +984,7 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1011,7 +1011,7 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	inputLen := len(input)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -1049,7 +1049,7 @@ func TestIndexRangeForBit(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1303,7 +1303,7 @@ func TestIndexRangeForDecimal(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1336,7 +1336,7 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

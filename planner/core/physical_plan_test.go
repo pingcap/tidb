@@ -2004,7 +2004,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employee")

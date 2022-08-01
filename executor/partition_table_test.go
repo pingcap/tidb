@@ -3028,7 +3028,7 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
@@ -3055,7 +3055,7 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
@@ -3077,7 +3077,7 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
@@ -3103,7 +3103,7 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
@@ -3126,7 +3126,7 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
@@ -3153,7 +3153,7 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
