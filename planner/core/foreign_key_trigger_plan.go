@@ -165,7 +165,7 @@ func (b *PlanBuilder) BuildOnDeleteFKTriggerPlan(ctx context.Context, onModifyRe
 	fk, referredFK, childTable := onModifyReferredTable.FK, onModifyReferredTable.ReferredFK, onModifyReferredTable.ChildTable
 	switch model.ReferOptionType(fk.OnDelete) {
 	case model.ReferOptionCascade:
-		return b.buildForeignKeyCascadeDelete(ctx, referredFK)
+		return b.buildForeignKeyCascadeDelete(ctx, referredFK.ChildSchema, childTable, fk)
 	case model.ReferOptionSetNull:
 		return b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
 	case model.ReferOptionRestrict, model.ReferOptionNoOption, model.ReferOptionNoAction, model.ReferOptionSetDefault:
@@ -181,7 +181,7 @@ func (b *PlanBuilder) BuildOnInsertFKTriggerPlan(info *OnModifyChildTableFKInfo)
 	return buildFKCheckPlan(b.ctx, info.ReferTable, fk, fk.RefCols, fk.Cols, true, failedErr)
 }
 
-func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, referredFK *model.ReferredFKInfo) (FKTriggerPlan, error) {
+func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
 	b.pushSelectOffset(0)
 	b.pushTableHints(nil, 0)
 	defer func() {
@@ -193,42 +193,9 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, referred
 	b.inDeleteStmt = true
 	b.isForUpdateRead = true
 
-	tn := &ast.TableName{
-		Schema: referredFK.ChildSchema,
-		Name:   referredFK.ChildTable,
-	}
-	datasource, err := b.buildDataSource(ctx, tn, &model.CIStr{})
+	ds, tableReader, err := b.buildTableReaderForFK(ctx, dbName, tbl.Meta().Name, fk.Cols)
 	if err != nil {
 		return nil, err
-	}
-	var ds *DataSource
-	var logicalUnionScan *LogicalUnionScan
-	switch v := datasource.(type) {
-	case *DataSource:
-		ds = v
-	case *LogicalUnionScan:
-		ds = v.children[0].(*DataSource)
-		logicalUnionScan = v
-	default:
-		return nil, errors.Errorf("unknown datasource plan: %#v", datasource)
-	}
-
-	fk := model.FindFKInfoByName(ds.tableInfo.ForeignKeys, referredFK.ChildFKName.L)
-	if fk == nil || fk.Version == 0 {
-		return nil, errors.Errorf("should never happen")
-	}
-
-	tableReader, err := b.buildTableReaderForFK(ds, fk.Cols)
-	if err != nil {
-		return nil, err
-	}
-	if logicalUnionScan != nil {
-		physicalUnionScan := PhysicalUnionScan{
-			Conditions: logicalUnionScan.conditions,
-			HandleCols: logicalUnionScan.handleCols,
-		}.Init(logicalUnionScan.ctx, tableReader.statsInfo(), logicalUnionScan.blockOffset, nil)
-		physicalUnionScan.SetChildren(tableReader)
-		tableReader = physicalUnionScan
 	}
 	del := Delete{
 		SelectPlan: tableReader,
@@ -277,39 +244,10 @@ func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName m
 	b.inUpdateStmt = true
 	b.isForUpdateRead = true
 
-	tn := &ast.TableName{
-		Schema: dbName,
-		Name:   tbl.Meta().Name,
-	}
-	datasource, err := b.buildDataSource(ctx, tn, &model.CIStr{})
+	ds, tableReader, err := b.buildTableReaderForFK(ctx, dbName, tbl.Meta().Name, fk.Cols)
 	if err != nil {
 		return nil, err
 	}
-	var ds *DataSource
-	var logicalUnionScan *LogicalUnionScan
-	switch v := datasource.(type) {
-	case *DataSource:
-		ds = v
-	case *LogicalUnionScan:
-		ds = v.children[0].(*DataSource)
-		logicalUnionScan = v
-	default:
-		return nil, errors.Errorf("unknown datasource plan: %#v", datasource)
-	}
-
-	tableReader, err := b.buildTableReaderForFK(ds, fk.Cols)
-	if err != nil {
-		return nil, err
-	}
-	if logicalUnionScan != nil {
-		physicalUnionScan := PhysicalUnionScan{
-			Conditions: logicalUnionScan.conditions,
-			HandleCols: logicalUnionScan.handleCols,
-		}.Init(logicalUnionScan.ctx, tableReader.statsInfo(), logicalUnionScan.blockOffset, nil)
-		physicalUnionScan.SetChildren(tableReader)
-		tableReader = physicalUnionScan
-	}
-
 	schema := tableReader.Schema()
 	orderedList := make([]*expression.Assignment, 0, len(fk.Cols))
 	for _, col := range fk.Cols {
@@ -418,7 +356,43 @@ func buildFKCheckPlan(ctx sessionctx.Context, tbl table.Table, fk *model.FKInfo,
 	}.Init(ctx), nil
 }
 
-func (b *PlanBuilder) buildTableReaderForFK(ds *DataSource, cols []model.CIStr) (PhysicalPlan, error) {
+func (b *PlanBuilder) buildTableReaderForFK(ctx context.Context, dbName, tblName model.CIStr, cols []model.CIStr) (*DataSource, PhysicalPlan, error) {
+	tn := &ast.TableName{
+		Schema: dbName,
+		Name:   tblName,
+	}
+	datasource, err := b.buildDataSource(ctx, tn, &model.CIStr{})
+	if err != nil {
+		return nil, nil, err
+	}
+	var ds *DataSource
+	var logicalUnionScan *LogicalUnionScan
+	switch v := datasource.(type) {
+	case *DataSource:
+		ds = v
+	case *LogicalUnionScan:
+		ds = v.children[0].(*DataSource)
+		logicalUnionScan = v
+	default:
+		return nil, nil, errors.Errorf("unknown datasource plan: %#v", datasource)
+	}
+
+	tableReader, err := b.buildPhysicalTableReaderForFK(ds, cols)
+	if err != nil {
+		return nil, nil, err
+	}
+	if logicalUnionScan == nil {
+		return ds, tableReader, nil
+	}
+	physicalUnionScan := PhysicalUnionScan{
+		Conditions: logicalUnionScan.conditions,
+		HandleCols: logicalUnionScan.handleCols,
+	}.Init(logicalUnionScan.ctx, tableReader.statsInfo(), logicalUnionScan.blockOffset, nil)
+	physicalUnionScan.SetChildren(tableReader)
+	return ds, physicalUnionScan, nil
+}
+
+func (b *PlanBuilder) buildPhysicalTableReaderForFK(ds *DataSource, cols []model.CIStr) (PhysicalPlan, error) {
 	tblInfo := ds.tableInfo
 	if tblInfo.PKIsHandle && len(cols) == 1 {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)
