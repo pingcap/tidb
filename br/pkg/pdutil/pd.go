@@ -13,6 +13,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -876,4 +877,22 @@ func FetchPDVersion(ctx context.Context, tls *common.TLS, pdAddr string) (*semve
 	}
 
 	return parseVersion([]byte(rawVersion.Version)), nil
+}
+
+// FetchClusterID get Cluster ID
+func FetchClusterID(ctx context.Context, tls *common.TLS, pdAddr string) (string, error) {
+	// An example of PD Cluster ID API.
+	// curl http://pd_address/pd/api/v1/cluster
+	// {
+	//   "id": 7125154571691814555
+	// }
+	var rawClusterID struct {
+		Id int64 `json:"id"`
+	}
+	err := tls.WithHost(pdAddr).GetJSON(ctx, "/pd/api/v1/cluster", &rawClusterID)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	return strings.TrimSpace(strconv.FormatInt(rawClusterID.Id, 10)), nil
 }

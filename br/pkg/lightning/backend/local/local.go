@@ -267,9 +267,28 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
 		return err
 	}
+	pdAddr, err := FetchPDAddr(ctx, db)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := tikv.CheckTiDBDestination(ctx, g.tls, g.pdAddr, pdAddr); err != nil {
+		return err
+	}
 
 	serverInfo := version.ParseServerInfo(versionStr)
 	return checkTiFlashVersion(ctx, g.targetDBGlue, checkCtx, *serverInfo.ServerVersion)
+}
+
+// FetchPDAddr gets the pd addr from tidb server using query
+func FetchPDAddr(ctx context.Context, db utils.QueryExecutor) (string, error) {
+	var PDAddr string
+	const queryPDAddr = "select STATUS_ADDRESS from information_schema.cluster_info where type='pd' limit 1;"
+	tidbRow := db.QueryRowContext(ctx, queryPDAddr)
+	err := tidbRow.Scan(&PDAddr)
+	if err != nil {
+		return "", errors.Errorf("failed to get the target pd address using query")
+	}
+	return PDAddr, nil
 }
 
 func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
