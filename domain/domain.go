@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,11 +28,13 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -56,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -894,6 +898,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
 	}
+	if pdClient != nil {
+		do.wg.Add(1)
+		go do.closestReplicaReadCheckLoop(ctx, pdClient)
+	}
 	err = do.initLogBackup(ctx, pdClient)
 	if err != nil {
 		return err
@@ -919,6 +927,92 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		return err
 	}
 	do.wg.Run(loop)
+	return nil
+}
+
+// when tidb_replica_read = 'closest-adaptive', check tidb and tikv's zone label matches.
+// if not match, disable replica_read to avoid uneven read traffic distribution.
+func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.Client) {
+	defer util.Recover(metrics.LabelDomain, "closestReplicaReadCheckLoop", nil, false)
+
+	// trigger check once instantly.
+	if err := do.checkReplicaRead(ctx, pdClient); err != nil {
+		logutil.BgLogger().Warn("refresh replicaRead flag failed", zap.Error(err))
+	}
+
+	ticker := time.NewTicker(time.Minute)
+	defer func() {
+		ticker.Stop()
+		do.wg.Done()
+		logutil.BgLogger().Info("closestReplicaReadCheckLoop exited.")
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := do.checkReplicaRead(ctx, pdClient); err != nil {
+				logutil.BgLogger().Warn("refresh replicaRead flag failed", zap.Error(err))
+			}
+		}
+	}
+}
+
+func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) error {
+	// fast path
+	do.sysVarCache.RLock()
+	replicaRead := do.sysVarCache.global[variable.TiDBReplicaRead]
+	do.sysVarCache.RUnlock()
+
+	if !strings.EqualFold(replicaRead, "closest-adaptive") {
+		logutil.BgLogger().Info("closest replica read is not enabled, skip check!", zap.String("mode", replicaRead))
+		return nil
+	}
+	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return err
+	}
+
+	zones := make(map[string]int)
+	for _, s := range stores {
+		// skip tumbstone stores or tiflash
+		if s.NodeState == metapb.NodeState_Removing || s.NodeState == metapb.NodeState_Removed || engine.IsTiFlash(s) {
+			continue
+		}
+		for _, label := range s.Labels {
+			if label.Key == placement.DCLabelKey && label.Value != "" {
+				zones[label.Value] = 0
+				break
+			}
+		}
+	}
+
+	servers, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return err
+	}
+	matches := true
+	for _, s := range servers {
+		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
+			if _, ok := zones[v]; !ok {
+				matches = false
+				break
+			} else {
+				zones[v] += 1
+			}
+		}
+	}
+	if matches {
+		for _, count := range zones {
+			if count == 0 {
+				matches = false
+				break
+			}
+		}
+	}
+	if variable.SetEnableAdaptiveReplicaRead(matches) {
+		logutil.BgLogger().Info("tidb server adaptive closest replica read is changed", zap.Bool("enable", matches))
+	}
 	return nil
 }
 
