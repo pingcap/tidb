@@ -910,7 +910,7 @@ func TestPreparedIssue17419(t *testing.T) {
 	tk1.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
 
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(nil))
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1", "2", "3"))
 	tk1.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
