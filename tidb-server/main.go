@@ -179,13 +179,13 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
+	setupLog()
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
 		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
-	setupLog()
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
