@@ -26,8 +26,7 @@ import (
 )
 
 func TestShowPlacement(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -110,8 +109,7 @@ func TestShowPlacement(t *testing.T) {
 }
 
 func TestShowPlacementPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2,t3, db2.t1, db2.t3")
@@ -176,8 +174,7 @@ func TestShowPlacementPrivilege(t *testing.T) {
 }
 
 func TestShowPlacementForDB(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -203,8 +200,7 @@ func TestShowPlacementForDB(t *testing.T) {
 }
 
 func TestShowPlacementForTableAndPartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists p1")
@@ -283,8 +279,7 @@ func TestShowPlacementForTableAndPartition(t *testing.T) {
 }
 
 func TestShowPlacementForDBPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -365,8 +360,7 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 }
 
 func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2,t3,t4,db2.t1")

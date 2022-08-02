@@ -113,13 +113,13 @@ func clearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
 }
 
 // CreateMockStoreAndSetup return a new kv.Storage.
-func CreateMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
-	store, _, clean := CreateMockStoreAndDomainAndSetup(t, opts...)
-	return store, clean
+func CreateMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
+	store, _ := CreateMockStoreAndDomainAndSetup(t, opts...)
+	return store
 }
 
 // CreateMockStoreAndDomainAndSetup return a new kv.Storage and *domain.Domain.
-func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	// set it to 5 seconds for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff.Store(500)
@@ -150,9 +150,10 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		require.NoError(t, err)
 	}
 
-	return store, dom, func() {
+	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
 		transaction.PrewriteMaxBackoff.Store(20000)
-	}
+	})
+	return store, dom
 }

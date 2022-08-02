@@ -30,8 +30,7 @@ import (
 )
 
 func TestGrantGlobal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
@@ -70,8 +69,7 @@ func TestGrantGlobal(t *testing.T) {
 }
 
 func TestGrantDBScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
@@ -109,8 +107,7 @@ func TestGrantDBScope(t *testing.T) {
 }
 
 func TestWithGrantOption(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
@@ -133,8 +130,7 @@ func TestWithGrantOption(t *testing.T) {
 }
 
 func TestGrantTableScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
@@ -177,8 +173,7 @@ func TestGrantTableScope(t *testing.T) {
 }
 
 func TestGrantColumnScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
@@ -223,8 +218,7 @@ func TestGrantColumnScope(t *testing.T) {
 }
 
 func TestIssue2456(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
@@ -235,8 +229,7 @@ func TestIssue2456(t *testing.T) {
 }
 
 func TestNoAutoCreateUser(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
@@ -247,8 +240,7 @@ func TestNoAutoCreateUser(t *testing.T) {
 }
 
 func TestCreateUserWhenGrant(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
@@ -270,8 +262,7 @@ func TestCreateUserWhenGrant(t *testing.T) {
 }
 
 func TestCreateUserWithTooLongName(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	err := tk.ExecToErr("CREATE USER '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost'")
@@ -281,8 +272,7 @@ func TestCreateUserWithTooLongName(t *testing.T) {
 }
 
 func TestGrantPrivilegeAtomic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`drop role if exists r1, r2, r3, r4;`)
@@ -331,12 +321,10 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 
 	tk.MustExec(`drop role if exists r1, r2, r3, r4;`)
 	tk.MustExec(`drop table test.testatomic;`)
-
 }
 
 func TestIssue2654(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
@@ -347,8 +335,7 @@ func TestIssue2654(t *testing.T) {
 }
 
 func TestGrantUnderANSIQuotes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Fix a bug that the GrantExec fails in ANSI_QUOTES sql mode
@@ -361,8 +348,7 @@ func TestGrantUnderANSIQuotes(t *testing.T) {
 }
 
 func TestMaintainRequire(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -434,8 +420,7 @@ func TestMaintainRequire(t *testing.T) {
 }
 
 func TestMaintainAuthString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'maint_auth_str1'@'%' IDENTIFIED BY 'foo'`)
@@ -445,8 +430,7 @@ func TestMaintainAuthString(t *testing.T) {
 }
 
 func TestGrantOnNonExistTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user genius")
@@ -506,8 +490,7 @@ func TestGrantOnNonExistTable(t *testing.T) {
 }
 
 func TestIssue22721(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -520,8 +503,7 @@ func TestIssue22721(t *testing.T) {
 }
 
 func TestPerformanceSchemaPrivGrant(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -550,8 +532,7 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 }
 
 func TestGrantDynamicPrivs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user dyn")
@@ -584,8 +565,7 @@ func TestGrantDynamicPrivs(t *testing.T) {
 }
 
 func TestNonExistTableIllegalGrant(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user u29302")

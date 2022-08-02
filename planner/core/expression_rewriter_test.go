@@ -26,8 +26,7 @@ import (
 )
 
 func TestIfNullEliminateColName(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -51,8 +50,7 @@ func TestIfNullEliminateColName(t *testing.T) {
 }
 
 func TestBinaryOpFunction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -63,8 +61,7 @@ func TestBinaryOpFunction(t *testing.T) {
 }
 
 func TestDefaultFunction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -145,8 +142,7 @@ func TestDefaultFunction(t *testing.T) {
 }
 
 func TestCompareSubquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -243,8 +239,7 @@ func TestCompareSubquery(t *testing.T) {
 }
 
 func TestCheckFullGroupBy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -255,8 +250,7 @@ func TestCheckFullGroupBy(t *testing.T) {
 }
 
 func TestPatternLikeToExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select 0 like 'a string';").Check(testkit.Rows("0"))
 	tk.MustQuery("select 0.0 like 'a string';").Check(testkit.Rows("0"))
@@ -268,8 +262,7 @@ func TestPatternLikeToExpression(t *testing.T) {
 }
 
 func TestIssue20007(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -285,8 +278,7 @@ func TestIssue20007(t *testing.T) {
 }
 
 func TestIssue9869(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1;")
@@ -297,8 +289,7 @@ func TestIssue9869(t *testing.T) {
 }
 
 func TestIssue17652(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -308,8 +299,7 @@ func TestIssue17652(t *testing.T) {
 }
 
 func TestCompareMultiFieldsInSubquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2, t3, t4;")
@@ -336,8 +326,7 @@ func TestCompareMultiFieldsInSubquery(t *testing.T) {
 }
 
 func TestIssue22818(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -347,8 +336,7 @@ func TestIssue22818(t *testing.T) {
 }
 
 func TestIssue24705(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1,t2;")
@@ -359,8 +347,7 @@ func TestIssue24705(t *testing.T) {
 }
 
 func TestBetweenExprCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
@@ -373,8 +360,7 @@ func TestBetweenExprCollation(t *testing.T) {
 }
 
 func TestInsertOnDuplicateLazyMoreThan1Row(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE if exists t1, t2, source;")
@@ -392,8 +378,7 @@ func TestInsertOnDuplicateLazyMoreThan1Row(t *testing.T) {
 }
 
 func TestMultiColInExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2")
@@ -414,7 +399,7 @@ func TestMultiColInExpression(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
-	expressionRewriterSuiteData.GetTestCases(t, &input, &output)
+	expressionRewriterSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -427,8 +412,7 @@ func TestMultiColInExpression(t *testing.T) {
 }
 
 func TestBitFuncsReturnType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -441,7 +425,7 @@ func TestBitFuncsReturnType(t *testing.T) {
 	}
 
 	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
-	expressionRewriterSuiteData.GetTestCases(t, &input, &output)
+	expressionRewriterSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}

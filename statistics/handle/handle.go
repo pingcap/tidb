@@ -274,11 +274,11 @@ func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
 	}
 	lastIDX := len(c.bucketDelta) - 1
 	if add {
-		c.bucketDelta[idx] += 1
-		c.bucketDelta[lastIDX] += 1
+		c.bucketDelta[idx]++
+		c.bucketDelta[lastIDX]++
 	} else {
-		c.bucketDelta[idx] -= 1
-		c.bucketDelta[lastIDX] -= 1
+		c.bucketDelta[idx]--
+		c.bucketDelta[lastIDX]--
 	}
 }
 
@@ -1490,9 +1490,13 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 		} else {
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
-			// When there's new collation data, the length of bounds of histogram(the collate key) might be
-			// longer than the FieldType.flen of this column.
-			// We change it to TypeBlob to bypass the length check here.
+			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
+			// original value.
+			// But there's additional conversion logic for new collation data, and the collate key might be longer than
+			// the FieldType.flen.
+			// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
+			// or "Data too long".
+			// So we change it to TypeBlob to bypass those logics here.
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}

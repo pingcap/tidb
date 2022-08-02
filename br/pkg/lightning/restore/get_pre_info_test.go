@@ -15,12 +15,17 @@ package restore
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	mysql_sql_driver "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -494,4 +499,48 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 	require.GreaterOrEqual(t, sizeResult.SizeWithIndex, sizeResult.SizeWithoutIndex)
 	require.Equal(t, int64(len(testData)), sizeResult.SizeWithoutIndex)
 	require.False(t, sizeResult.HasUnsortedBigTables)
+}
+
+func TestGetPreInfoIsTableEmpty(t *testing.T) {
+	ctx := context.TODO()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	lnConfig := config.NewConfig()
+	lnConfig.TikvImporter.Backend = config.BackendLocal
+	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db)
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnError(&mysql_sql_driver.MySQLError{
+			Number:  errno.ErrNoSuchTable,
+			Message: "Table 'test_db.test_tbl' doesn't exist",
+		})
+	pIsEmpty, err := targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.NoError(t, err)
+	require.NotNil(t, pIsEmpty)
+	require.Equal(t, true, *pIsEmpty)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnRows(
+			sqlmock.NewRows([]string{"1"}).
+				RowError(0, sql.ErrNoRows),
+		)
+	pIsEmpty, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.NoError(t, err)
+	require.NotNil(t, pIsEmpty)
+	require.Equal(t, true, *pIsEmpty)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnRows(
+			sqlmock.NewRows([]string{"1"}).AddRow(1),
+		)
+	pIsEmpty, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.NoError(t, err)
+	require.NotNil(t, pIsEmpty)
+	require.Equal(t, false, *pIsEmpty)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnError(errors.New("some dummy error"))
+	_, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.Error(t, err)
 }

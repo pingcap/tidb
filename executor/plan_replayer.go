@@ -62,8 +62,9 @@ type tableNamePair struct {
 }
 
 type tableNameExtractor struct {
-	curDB string
-	names map[tableNamePair]struct{}
+	curDB    string
+	names    map[tableNamePair]struct{}
+	cteNames map[string]struct{}
 }
 
 func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -81,6 +82,12 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 		}
 		if _, ok := tne.names[tp]; !ok {
 			tne.names[tp] = struct{}{}
+		}
+	} else if s, ok := in.(*ast.SelectStmt); ok {
+		if s.With != nil && len(s.With.CTEs) > 0 {
+			for _, cte := range s.With.CTEs {
+				tne.cteNames[cte.Name.L] = struct{}{}
+			}
 		}
 	}
 	return in, true
@@ -385,12 +392,21 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 }
 
 func extractTableNames(ExecStmt ast.StmtNode, curDB string) (map[tableNamePair]struct{}, error) {
-	extractor := &tableNameExtractor{
-		curDB: curDB,
-		names: make(map[tableNamePair]struct{}),
+	tableExtractor := &tableNameExtractor{
+		curDB:    curDB,
+		names:    make(map[tableNamePair]struct{}),
+		cteNames: make(map[string]struct{}),
 	}
-	ExecStmt.Accept(extractor)
-	return extractor.names, nil
+	ExecStmt.Accept(tableExtractor)
+	r := make(map[tableNamePair]struct{})
+	// remove cte in table names
+	for tablePair := range tableExtractor.names {
+		_, ok := tableExtractor.cteNames[tablePair.TableName]
+		if !ok {
+			r[tablePair] = struct{}{}
+		}
+	}
+	return r, nil
 }
 
 func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable, error) {
@@ -526,7 +542,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
-			//nolint: errcheck
+			//nolint: errcheck,all_revive
 			defer v.Close()
 			_, err = toml.DecodeReader(v, &varMap)
 			if err != nil {
