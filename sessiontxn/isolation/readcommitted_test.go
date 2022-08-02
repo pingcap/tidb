@@ -17,7 +17,6 @@ package isolation_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"testing"
 	"time"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"

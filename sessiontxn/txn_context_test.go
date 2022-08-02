@@ -17,13 +17,13 @@ package sessiontxn_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"

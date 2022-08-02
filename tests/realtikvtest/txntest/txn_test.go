@@ -17,9 +17,9 @@ package txntest
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"testing"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"

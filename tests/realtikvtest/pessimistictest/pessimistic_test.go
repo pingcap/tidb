@@ -17,7 +17,6 @@ package pessimistictest
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
