@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/kv",
-        "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/verification",

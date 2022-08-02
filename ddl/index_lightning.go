@@ -138,12 +138,13 @@ func cleanUpLightningEnv(reorg *reorgInfo, isCanceled bool, indexIDs ...int64) {
 }
 
 // cleanUpLightningEngines will clean one DDL job's engines.
-func cleanUpLightningEngines(reorg *reorgInfo) {
+func cleanUpLightningEngines(reorg *reorgInfo) error {
 	if isLightningEnabled(reorg.ID) {
 		bcKey := lit.GenBackendContextKey(reorg.ID)
 		setNeedRestoreJob(reorg.ID, false)
-		lit.GlobalEnv.LitMemRoot.DeleteBackendEngines(bcKey)
+		return lit.GlobalEnv.LitMemRoot.DeleteBackendEngines(bcKey)
 	}
+	return nil
 }
 
 // Disk quota checking and ingest data.

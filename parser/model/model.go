@@ -50,6 +50,7 @@ const (
 	StateGlobalTxnOnly
 	// Below sub states are only used for add index in lightning ways,
 	// if you want to use them in other place, you have to use it carefully.
+
 	// StateBackfillSync means syncrhronize all TiDB into ready to backfill state.
 	StateBackfillSync
 	// StateBackfill means now we are in backfill stage.

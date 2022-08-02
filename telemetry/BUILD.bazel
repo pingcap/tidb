@@ -62,6 +62,7 @@ go_test(
     deps = [
         "//config",
         "//ddl",
+        "//ddl/lightning",
         "//domain",
         "//domain/infosync",
         "//kv",

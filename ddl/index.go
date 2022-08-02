@@ -767,7 +767,6 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 					return false, 0, errors.Trace(err)
 				}
 			}
-
 		}
 		return true, ver, nil
 	case model.StateMergeSync:
@@ -883,7 +882,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		return true, ver, errors.Trace(err)
 	}
 	// Cleanup lightning engines
-	cleanUpLightningEngines(reorgInfo)
+	err = cleanUpLightningEngines(reorgInfo)
 	return false, ver, errors.Trace(err)
 }
 

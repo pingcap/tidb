@@ -77,7 +77,6 @@ func init() {
 	}
 	GlobalEnv.IsInited = false
 	GlobalEnv.diskQuota = variable.DDLDiskQuota.Load()
-
 }
 
 // InitGolbalLightningBackendEnv initialize Lightning execution environment.
