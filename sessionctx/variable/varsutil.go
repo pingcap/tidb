@@ -426,6 +426,16 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	return nil
 }
 
+// switchDDL turns on/off DDL in an instance.
+func switchDDL(on bool) error {
+	if on && EnableDDL != nil {
+		return EnableDDL()
+	} else if !on && DisableDDL != nil {
+		return DisableDDL()
+	}
+	return nil
+}
+
 func collectAllowFuncName4ExpressionIndex() string {
 	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {
