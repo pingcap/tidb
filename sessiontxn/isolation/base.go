@@ -17,6 +17,7 @@ package isolation
 import (
 	"context"
 	"time"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -31,7 +32,9 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
@@ -442,8 +445,12 @@ func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string)
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		logutil.Logger(ctx).Info("TsoRequestCountInc ", zap.Uint64("sctx", uint64(uintptr(unsafe.Pointer(&sctx)))))
+	}
 
 	failpoint.Inject("requestTsoFromPD", func() {
+		// logutil.Logger(ctx).Info("==========TsoRequestCountInc========")
 		sessiontxn.TsoRequestCountInc(sctx)
 	})
 

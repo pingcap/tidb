@@ -731,6 +731,7 @@ const (
 	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
 	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
 	TiDBPointLockReadUseLastTso    = "tidb_rc_point_lock_read_use_last_tso"
+	TiDBInsertUseLastTso           = "tidb_rc_insert_use_last_tso"
 )
 
 // TiDB vars that have only global scope
@@ -1026,6 +1027,7 @@ const (
 	MinDDLReorgBatchSize           int32  = 32
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
 	DefTiDBPointLockReadUseLastTso                 = true
+	DefTiDBInsertUseLastTso                        = true
 )
 
 // Process global variables.
@@ -1073,6 +1075,7 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
 	PointLockReadUseLastTso           = atomic.NewBool(false)
+	InsertUseLastTso                  = atomic.NewBool(true)
 )
 
 var (

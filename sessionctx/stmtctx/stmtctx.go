@@ -307,6 +307,10 @@ type StatementContext struct {
 	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
 	RCCheckTS bool
 
+	// See the detail in function `NeedDisableWarmupInOptimizer`.
+	// If DisableWarmupInOptimizer is true, Optimizer doesn't call txnManger.AdviseWarmup() to warmup.
+	DisableWarmupInOptimizer bool
+
 	// IsSQLRegistered uses to indicate whether the SQL has been registered for TopSQL.
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
