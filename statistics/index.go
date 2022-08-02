@@ -65,6 +65,13 @@ func (idx *Index) dropCMS() {
 	idx.evictedStatus = onlyCmsEvicted
 }
 
+func (idx *Index) dropHist() {
+	idx.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
+	idx.Histogram.Buckets = make([]Bucket, 0)
+	idx.Histogram.scalars = make([]scalar, 0)
+	idx.evictedStatus = allEvicted
+}
+
 func (idx *Index) dropTopN() {
 	originTopNNum := int64(idx.TopN.Num())
 	idx.TopN = nil
@@ -232,7 +239,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			if fullLen {
 				// At most 1 in this case.
 				if idx.Info.Unique {
-					totalCount += 1
+					totalCount++
 					continue
 				}
 				count := idx.equalRowCount(lb, realtimeRowCount)

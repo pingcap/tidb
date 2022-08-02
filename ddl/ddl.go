@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -82,10 +83,6 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 1
-
-	// PartitionCountLimit is limit of the number of partitions in a table.
-	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
-	PartitionCountLimit = 8192
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -569,6 +566,9 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
+	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
+	variable.EnableDDL = d.EnableDDL
+	variable.DisableDDL = d.DisableDDL
 	variable.SwitchConcurrentDDL = d.SwitchConcurrentDDL
 
 	return d
@@ -642,37 +642,36 @@ func (d *ddl) prepareWorkers4legacyDDL() {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
+	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
-	// If RunWorker is true, we need campaign owner and do DDL job.
-	// Otherwise, we needn't do that.
-	if RunWorker {
-		d.ownerManager.SetBeOwnerHook(func() {
-			var err error
-			d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
-			if err != nil {
-				logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
-			}
-		})
-
-		err := d.ownerManager.CampaignOwner()
+	d.ownerManager.SetBeOwnerHook(func() {
+		var err error
+		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
 		if err != nil {
-			return errors.Trace(err)
+			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
+	})
 
-		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
-		d.prepareWorkers4ConcurrencyDDL()
-		d.prepareWorkers4legacyDDL()
+	d.prepareWorkers4ConcurrencyDDL()
+	d.prepareWorkers4legacyDDL()
 
-		go d.schemaSyncer.StartCleanWork()
-		if config.TableLockEnabled() {
-			d.wg.Add(1)
-			go d.startCleanDeadTableLock()
+	go d.schemaSyncer.StartCleanWork()
+	if config.TableLockEnabled() {
+		d.wg.Add(1)
+		go d.startCleanDeadTableLock()
+	}
+	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
+
+	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
+	// Otherwise, we needn't do that.
+	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
+		if err := d.EnableDDL(); err != nil {
+			return err
 		}
-		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 
 	variable.RegisterStatistics(d)
@@ -682,6 +681,35 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
+	return nil
+}
+
+// EnableDDL enable this node to execute ddl.
+// Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
+// we should make sure that before invoking EnableDDL(), ddl is DISABLE.
+func (d *ddl) EnableDDL() error {
+	err := d.ownerManager.CampaignOwner()
+	return errors.Trace(err)
+}
+
+// DisableDDL disable this node to execute ddl.
+// We should make sure that before invoking DisableDDL(), ddl is ENABLE.
+func (d *ddl) DisableDDL() error {
+	if d.ownerManager.IsOwner() {
+		// If there is only one node, we should NOT disable ddl.
+		serverInfo, err := infosync.GetAllServerInfo(d.ctx)
+		if err != nil {
+			logutil.BgLogger().Error("[ddl] error when GetAllServerInfo", zap.Error(err))
+			return err
+		}
+		if len(serverInfo) <= 1 {
+			return dbterror.ErrDDLSetting.GenWithStackByArgs("can not disable ddl when there is only one instance")
+		}
+		// FIXME: if possible, when this node is the only node with DDL, ths setting of DisableDDL should fail.
+	}
+
+	// disable campaign by interrupting campaignLoop
+	d.ownerManager.CampaignCancel()
 	return nil
 }
 
@@ -834,7 +862,7 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 
 func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	// If the workers don't run, we needn't notify workers.
-	if !RunWorker {
+	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		return
 	}
 	if variable.EnableConcurrentDDL.Load() {

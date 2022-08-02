@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -46,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -424,11 +425,11 @@ func TestLocalWriterWithIngestUnsort(t *testing.T) {
 }
 
 type mockSplitClient struct {
-	restore.SplitClient
+	split.SplitClient
 }
 
-func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*restore.RegionInfo, error) {
-	return &restore.RegionInfo{
+func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
+	return &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
 			Id:       1,
@@ -451,7 +452,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	region := &restore.RegionInfo{
+	region := &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
 			Id:       1,
@@ -512,6 +513,15 @@ func TestIsIngestRetryable(t *testing.T) {
 	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryNone, retryType)
 	require.EqualError(t, err, "non-retryable error: unknown error")
+
+	resp.Error = &errorpb.Error{
+		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
+			Reason: "test",
+		},
+	}
+	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryWrite, retryType)
+	require.Error(t, err)
 }
 
 type testIngester struct{}
@@ -825,7 +835,6 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 func TestMergeSSTs(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
 	for i := 0; i < 5; i++ {
-
 		var pairs []common.KvPair
 		for j := 0; j < 10; j++ {
 			var kv common.KvPair
@@ -1240,4 +1249,10 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), splitSize)
 	require.Equal(t, int64(2), splitKeys)
+}
+
+func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
+	l := local{}
+	require.True(t, l.isRetryableTiKVWriteError(io.EOF))
+	require.True(t, l.isRetryableTiKVWriteError(errors.Trace(io.EOF)))
 }

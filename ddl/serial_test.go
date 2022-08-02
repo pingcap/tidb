@@ -50,8 +50,7 @@ import (
 )
 
 func TestTruncateAllPartitions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table partition_table (v int) partition by hash (v) partitions 10")
@@ -61,8 +60,7 @@ func TestTruncateAllPartitions(t *testing.T) {
 }
 
 func TestIssue23872(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -90,8 +88,7 @@ func TestIssue23872(t *testing.T) {
 }
 
 func TestChangeMaxIndexLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	defer config.RestoreFunc()()
@@ -107,8 +104,7 @@ func TestChangeMaxIndexLength(t *testing.T) {
 }
 
 func TestCreateTableWithLike(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// for the same database
 	tk.MustExec("create database ctwl_db")
@@ -225,8 +221,7 @@ func TestCreateTableWithLike(t *testing.T) {
 }
 
 func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// Test create table like at temporary mode.
@@ -410,7 +405,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
 }
 
-func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domain, clean func()) {
+func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domain) {
 	session.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
@@ -420,17 +415,16 @@ func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domai
 	require.NoError(t, err)
 	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
-	clean = func() {
+	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
-	}
+	})
 	return
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func TestCancelAddIndexPanic(t *testing.T) {
-	store, dom, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`))
 	defer func() {
@@ -467,8 +461,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 }
 
 func TestRecoverTableByJobID(t *testing.T) {
-	store, _, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, _ := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -584,8 +577,7 @@ func TestRecoverTableByJobID(t *testing.T) {
 }
 
 func TestRecoverTableByJobIDFail(t *testing.T) {
-	store, dom, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -653,8 +645,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 }
 
 func TestRecoverTableByTableNameFail(t *testing.T) {
-	store, dom, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -713,8 +704,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 }
 
 func TestCancelJobByErrorCountLimit(t *testing.T) {
-	store, _, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, _ := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`))
 	defer func() {
@@ -734,8 +724,7 @@ func TestCancelJobByErrorCountLimit(t *testing.T) {
 }
 
 func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`))
 	tk.MustExec("use test")
@@ -756,8 +745,7 @@ func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 }
 
 func TestCanceledJobTakeTime(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_cjtt(a int)")
@@ -790,8 +778,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 }
 
 func TestTableLocksEnable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int)")
@@ -813,8 +800,7 @@ func TestTableLocksEnable(t *testing.T) {
 }
 
 func TestAutoRandomOnTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists auto_random_temporary")
@@ -825,8 +811,7 @@ func TestAutoRandomOnTemporaryTable(t *testing.T) {
 }
 
 func TestAutoRandom(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
 	tk.MustExec("use auto_random_db")
@@ -1045,8 +1030,7 @@ func TestAutoRandom(t *testing.T) {
 }
 
 func TestAutoRandomWithPreSplitRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
 	tk.MustExec("use auto_random_db")
@@ -1068,8 +1052,7 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 }
 
 func TestModifyingColumn4NewCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database dct")
 	tk.MustExec("use dct")
@@ -1103,8 +1086,7 @@ func TestModifyingColumn4NewCollations(t *testing.T) {
 }
 
 func TestForbidUnsupportedCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	mustGetUnsupportedCollation := func(sql string, coll string) {
@@ -1132,6 +1114,7 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 	tk.MustExec("create table t1(a varchar(20))")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
+	//nolint:revive,all_revive
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
 
 	// TODO(bb7133): fix the following cases by setting charset from collate firstly.
@@ -1140,8 +1123,7 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 }
 
 func TestCreateTableNoBlock(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`))
 	defer func() {
@@ -1159,8 +1141,7 @@ func TestCreateTableNoBlock(t *testing.T) {
 }
 
 func TestCheckEnumLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustGetErrCode("create table t1 (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
@@ -1186,12 +1167,11 @@ func TestCheckEnumLength(t *testing.T) {
 
 func TestGetReverseKey(t *testing.T) {
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t,
+	store, dom := testkit.CreateMockStoreAndDomain(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cluster = c
 		}))
-	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database db_get")
 	tk.MustExec("use db_get")
@@ -1249,8 +1229,7 @@ func TestGetReverseKey(t *testing.T) {
 }
 
 func TestLocalTemporaryTableBlockedDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")
