@@ -142,9 +142,8 @@ func BuildObserveDataRanges(
 ) ([]kv.KeyRange, error) {
 	if len(filterStr) == 1 && filterStr[0] == string("*.*") {
 		return buildObserverAllRange(), nil
-	} else {
-		return buildObserveTableRanges(storage, tableFilter, backupTS)
 	}
+	return buildObserveTableRanges(storage, tableFilter, backupTS)
 }
 
 // BuildObserveMetaRange specifies build key ranges to observe meta KV(contains all of metas)
@@ -182,9 +181,8 @@ func FastUnmarshalMetaData(
 			if err != nil {
 				if !strings.HasSuffix(readPath, ".meta") {
 					return nil
-				} else {
-					return err
 				}
+				return err
 			}
 			return fn(readPath, m)
 		})

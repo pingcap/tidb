@@ -75,6 +75,7 @@ const (
 	// flagEnableOpenTracing is whether to enable opentracing
 	flagEnableOpenTracing = "enable-opentracing"
 	flagSkipCheckPath     = "skip-check-path"
+	flagWithSysTable      = "with-sys-table"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
