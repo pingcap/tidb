@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"fmt"
-
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hint"
@@ -39,7 +38,8 @@ type ForeignKeyCheckExec struct {
 	toBeCheckedUniqueKeys []kv.Key
 	toBeCheckedIndexKeys  []kv.Key
 
-	checked bool
+	toBeLockedKeys []kv.Key
+	checked        bool
 }
 
 func (fkc ForeignKeyCheckExec) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -60,7 +60,19 @@ func (fkc ForeignKeyCheckExec) Next(ctx context.Context, req *chunk.Chunk) error
 	if err != nil {
 		return err
 	}
-	return fkc.checkIndexKeys(ctx, txn)
+	err = fkc.checkIndexKeys(ctx, txn)
+	if err != nil {
+		return err
+	}
+	if len(fkc.toBeLockedKeys) == 0 {
+		return nil
+	}
+	lockWaitTime := fkc.ctx.GetSessionVars().LockWaitTimeout
+	lockCtx, err := newLockCtx(fkc.ctx, lockWaitTime, len(fkc.toBeLockedKeys))
+	if err != nil {
+		return err
+	}
+	return doLockKeys(ctx, fkc.ctx, lockCtx, fkc.toBeLockedKeys...)
 }
 
 func (fkc *ForeignKeyCheckExec) checkHandleKeys(ctx context.Context, txn kv.Transaction) error {
@@ -83,6 +95,7 @@ func (fkc *ForeignKeyCheckExec) checkHandleKeys(ctx context.Context, txn kv.Tran
 			if !fkc.checkExist {
 				return fkc.failedErr
 			}
+			fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, k)
 			continue
 		}
 		if kv.IsErrNotFound(err) {
@@ -111,6 +124,7 @@ func (fkc *ForeignKeyCheckExec) checkUniqueKeys(ctx context.Context, txn kv.Tran
 			if !fkc.checkExist {
 				return fkc.failedErr
 			}
+			fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, uk)
 			continue
 		}
 		if kv.IsErrNotFound(err) {
@@ -141,30 +155,43 @@ func (fkc *ForeignKeyCheckExec) checkIndexKeys(ctx context.Context, txn kv.Trans
 		default:
 		}
 
-		exist, err := fkc.checkIndexKeyExistInReferTable(memBuffer, snap, key)
+		key, value, err := fkc.getIndexKeyExistInReferTable(memBuffer, snap, key)
 		if err != nil {
 			return err
 		}
+		exist := len(value) > 0
 		if !exist && fkc.checkExist {
 			return fkc.failedErr
 		}
-		if exist && !fkc.checkExist {
-			return fkc.failedErr
+		if exist {
+			if !fkc.checkExist {
+				return fkc.failedErr
+			}
+			if fkc.idx.Meta().Primary && fkc.tbl.Meta().IsCommonHandle {
+				fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, key)
+			} else {
+				handle, err := tablecodec.DecodeIndexHandle(key, value, len(fkc.idx.Meta().Columns))
+				if err != nil {
+					return err
+				}
+				handleKey := tablecodec.EncodeRecordKey(fkc.tbl.RecordPrefix(), handle)
+				fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, handleKey)
+			}
 		}
 	}
 	return nil
 }
 
-func (fkc *ForeignKeyCheckExec) checkIndexKeyExistInReferTable(memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (bool, error) {
+func (fkc *ForeignKeyCheckExec) getIndexKeyExistInReferTable(memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (k []byte, v []byte, _ error) {
 	memIter, err := memBuffer.Iter(key, key.PrefixNext())
 	if err != nil {
-		return false, err
+		return nil, nil, err
 	}
 	deletedKeys := set.NewStringSet()
 	defer memIter.Close()
 	for ; memIter.Valid(); err = memIter.Next() {
 		if err != nil {
-			return false, err
+			return nil, nil, err
 		}
 		k := memIter.Key()
 		// TODO: better decode to column datum and compare the datum value
@@ -173,30 +200,30 @@ func (fkc *ForeignKeyCheckExec) checkIndexKeyExistInReferTable(memBuffer kv.MemB
 		}
 		// check whether the key was been deleted.
 		if len(memIter.Value()) > 0 {
-			return true, nil
+			return k, memIter.Value(), nil
 		}
 		deletedKeys.Insert(string(k))
 	}
 
 	it, err := snap.Iter(key, key.PrefixNext())
 	if err != nil {
-		return false, err
+		return nil, nil, err
 	}
 	defer it.Close()
 	for ; it.Valid(); err = it.Next() {
 		if err != nil {
-			return false, err
+			return nil, nil, err
 		}
 		k := it.Key()
 		if !k.HasPrefix(key) {
 			break
 		}
 		// TODO: better decode to column datum and compare the datum value
-		if k.HasPrefix(key) && !deletedKeys.Exist(string(k)) {
-			return true, nil
+		if !deletedKeys.Exist(string(k)) {
+			return k, it.Value(), nil
 		}
 	}
-	return false, nil
+	return nil, nil, nil
 }
 
 type ForeignKeyTriggerExec struct {
@@ -381,7 +408,7 @@ func (fkt *ForeignKeyTriggerExec) buildExecutor(ctx context.Context) (Executor, 
 	case *plannercore.FKCheckPlan:
 		e = fkt.b.buildFKCheck(x)
 	default:
-		e = fkt.b.build(x)
+		return nil, false, fmt.Errorf("unknown foreign key trigger plan: %#v", x)
 	}
 	return e, done, fkt.b.err
 }

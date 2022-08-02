@@ -301,14 +301,6 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCTETableReader(v)
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
-	case *plannercore.FKOnDeleteCascadePlan:
-		return b.buildDelete(v.Delete)
-	case *plannercore.FKUpdateSetNullPlan:
-		return b.buildUpdate(v.Update)
-	case *plannercore.FKOnUpdateCascadePlan:
-		return b.buildUpdate(v.Update)
-	case *plannercore.FKCheckPlan:
-		return b.buildFKCheck(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
