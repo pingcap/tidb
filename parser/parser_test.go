@@ -6201,9 +6201,6 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 		if node.Kind() == test_driver.KindMysqlDecimal {
 			_ = node.GetMysqlDecimal().FromString(node.GetMysqlDecimal().ToString())
 		}
-		if node.Kind() == test_driver.KindMysqlDecimal {
-			_ = node.GetMysqlDecimal().FromString(node.GetMysqlDecimal().ToString())
-		}
 	case *ast.GrantStmt:
 		var privs []*ast.PrivElem
 		for _, v := range node.Privs {
