@@ -996,12 +996,13 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 	sqlUpdateID, _, _, _ := tk.Session().PrepareStmt("update t1 set id3 = id3 + 10 where id1 = ?")
 	sqlUpdateID2, _, _, _ := tk.Session().PrepareStmt("update t2 set id3 = id3 + 10 where id1 = ?")
 	sqlInsertID, _, _, _ := tk.Session().PrepareStmt("insert into t1 values(?, ?, ?)")
+	sqlDeleteID, _, _, _ := tk.Session().PrepareStmt("delete from t1 where id1 = ?")
 
 	res := tk.MustQuery("show variables like 'transaction_isolation'")
 	require.Equal(t, "READ-COMMITTED", res.Rows()[0][1])
 	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
-	for i := 1; i < 3; i++ {
+	for i := 1; i < 100; i++ {
 		tk.MustExec("begin pessimistic")
 
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
@@ -1018,38 +1019,48 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, []types.Datum{types.NewDatum(val), types.NewDatum(val), types.NewDatum(val)})
 		require.NoError(t, err)
 		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID, []types.Datum{types.NewDatum(val)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
 
 		tk.MustExec("commit")
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(2), count)
+	require.Equal(t, uint64(198), count)
 
-	// tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = false")
-	// tk.MustExec("delete from t1 where id1 > 1")
-	/*
-		sctx.SetValue(sessiontxn.TsoRequestCount, 0)
+	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = false")
+	tk.MustExec("set global tidb_rc_insert_use_last_tso = false")
+	tk.MustExec("delete from t1")
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t2 values (1, 1, 1)")
+	tk.MustExec("insert into t2 values (5, 5, 5)")
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
-		for i := 1; i < 100; i++ {
-			tk.MustExec("begin pessimistic")
-			stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
-			require.NoError(t, err)
-			require.NoError(t, stmt.Close())
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
-			require.NoError(t, err)
-			require.Nil(t, stmt)
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, []types.Datum{types.NewDatum(1)})
-			require.NoError(t, err)
-			require.Nil(t, stmt)
+	for i := 1; i < 100; i++ {
+		tk.MustExec("begin pessimistic")
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, []types.Datum{types.NewDatum(1)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
 
-			val := i * 10
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, []types.Datum{types.NewDatum(val), types.NewDatum(val), types.NewDatum(val)})
-			require.NoError(t, err)
-			require.Nil(t, stmt)
-			tk.MustExec("commit")
-		}
-		count = sctx.Value(sessiontxn.TsoRequestCount)
-		require.Equal(t, uint64(198), count)
-	*/
+		val := i * 10
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, []types.Datum{types.NewDatum(val), types.NewDatum(val), types.NewDatum(val)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID, []types.Datum{types.NewDatum(val)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		tk.MustExec("commit")
+	}
+	count = sctx.Value(sessiontxn.TsoRequestCount)
+	require.Equal(t, uint64(693), count)
+
 }
 
 func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
@@ -1089,6 +1100,7 @@ func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
 		tk.MustExec("update t2 set id3 = id3 + 10 where id1 > 3")
 		val := i * 10
 		tk.MustExec(fmt.Sprintf("insert into t2 values(%v, %v, %v)", val, val, val))
+		tk.MustExec(fmt.Sprintf("delete from t2 where id1 = %v", val))
 		tk.MustExec("commit")
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
@@ -1110,8 +1122,9 @@ func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
 		tk.MustExec("update t2 set id3 = id3 + 10 where id1 > 3")
 		val := i * 10
 		tk.MustExec(fmt.Sprintf("insert into t2 values(%v, %v, %v)", val, val, val))
+		tk.MustExec(fmt.Sprintf("delete from t2 where id1 = %v", val))
 		tk.MustExec("commit")
 	}
 	count = sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(693), count)
+	require.Equal(t, uint64(792), count)
 }
