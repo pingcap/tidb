@@ -17,6 +17,7 @@ package sessiontxn_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/expression"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testfork"
 	"github.com/pingcap/tidb/testkit/testsetup"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -907,18 +907,18 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 
 	for i := 1; i < 100; i++ {
 		tk.MustExec("begin pessimistic")
-		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		require.NoError(t, stmt.Close())
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
 
 		val := i * 10
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID1, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID1, expression.Args2Expressions4Test(val, val))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID2, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID2, expression.Args2Expressions4Test(val, val))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
 		tk.MustExec("commit")
