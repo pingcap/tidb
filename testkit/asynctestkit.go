@@ -159,10 +159,7 @@ func (tk *AsyncTestKit) Exec(ctx context.Context, sql string, args ...interface{
 		return nil, err
 	}
 
-	params := make([]expression.Expression, len(args))
-	for i := 0; i < len(params); i++ {
-		params[i] = expression.Value2Expression4Test(args[i])
-	}
+	params := expression.Args2Expressions4Test(args...)
 
 	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {

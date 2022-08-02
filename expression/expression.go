@@ -1435,25 +1435,24 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 	}
 }
 
-// Value2Expression4Test converts the value to an expression.
+// Args2Expressions4Test converts these values to an expression list.
 // This conversion is incomplete, so only use for test.
-func Value2Expression4Test(v interface{}) Expression {
-	d := types.NewDatum(v)
-	var ft *types.FieldType
-	switch d.Kind() {
-	case types.KindNull:
-		ft = types.NewFieldType(mysql.TypeNull)
-	case types.KindInt64:
-		ft = types.NewFieldType(mysql.TypeLong)
-	case types.KindFloat64:
-		ft = types.NewFieldType(mysql.TypeDouble)
-	case types.KindString:
-		ft = types.NewFieldType(mysql.TypeVarString)
-	default:
-		return nil
+func Args2Expressions4Test(args ...interface{}) []Expression {
+	exprs := make([]Expression, len(args))
+	for i, v := range args {
+		d := types.NewDatum(v)
+		switch d.Kind() {
+		case types.KindNull:
+			exprs[i] = &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeNull)}
+		case types.KindInt64:
+			exprs[i] = &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeLong)}
+		case types.KindFloat64:
+			exprs[i] = &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeDouble)}
+		case types.KindString:
+			exprs[i] = &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}
+		default:
+			exprs[i] = nil
+		}
 	}
-	return &Constant{
-		Value:   d,
-		RetType: ft,
-	}
+	return exprs
 }

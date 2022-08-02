@@ -256,10 +256,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	params := make([]expression.Expression, len(args))
-	for i := 0; i < len(params); i++ {
-		params[i] = expression.Value2Expression4Test(args[i])
-	}
+	params := expression.Args2Expressions4Test(args...)
 	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return rs, errors.Trace(err)
