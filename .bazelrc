@@ -15,4 +15,4 @@ test:ci --verbose_failures
 test:ci --test_env=GO_TEST_WRAP_TESTV=1 --test_verbose_timeout_warnings
 test:ci --test_env=TZ=Asia/Shanghai --test_output=errors --experimental_ui_max_stdouterr_bytes=104857600
 
-try-import /data/bazel/.ci_bazel
+try-import /data/bazel
