@@ -1589,17 +1589,18 @@ func (s *SessionVars) ContainTiFlashIsolationRead() bool {
 
 // GetIsolationReadEngines gets isolation read engines.
 func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
-	return s.isolationReadEngines
+	readEngines := make(map[kv.StoreType]struct{})
+	for isolationReadEngine := range s.isolationReadEngines {
+		readEngines[isolationReadEngine] = struct{}{}
+	}
+	return readEngines
 }
 
 // GetAvailableIsolationReadEngines4Plan gets the available read engines for the current statement.
 // For example, for write stmt, TiFlash has a different results when lock the data in point get plan.
 // So we ban the TiFlash engine in not read only stmt.
 func (s *SessionVars) GetAvailableIsolationReadEngines4Plan() map[kv.StoreType]struct{} {
-	availableReadEngines := make(map[kv.StoreType]struct{})
-	for isolationReadEngine := range s.isolationReadEngines {
-		availableReadEngines[isolationReadEngine] = struct{}{}
-	}
+	availableReadEngines := s.GetIsolationReadEngines()
 	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && (s.StmtCtx.IsReadonlyStmt || s.StmtCtx.InTiFlashFallBack2TiKV) {
 		delete(availableReadEngines, kv.TiFlash)
 	}
