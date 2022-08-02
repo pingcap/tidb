@@ -267,9 +267,28 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
 		return err
 	}
+	storeAddr, err := FetchStoreAddr(ctx, db)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := tikv.CheckTiDBDestination(ctx, g.tls, g.pdAddr, storeAddr); err != nil {
+		return err
+	}
 
 	serverInfo := version.ParseServerInfo(versionStr)
 	return checkTiFlashVersion(ctx, g.targetDBGlue, checkCtx, *serverInfo.ServerVersion)
+}
+
+// FetchStoreAddr gets the stores address info from tidb server using query
+func FetchStoreAddr(ctx context.Context, db utils.QueryExecutor) (string, error) {
+	var StoreAddr string
+	const queryStoreAddr = "select distinct INSTANCE from INFORMATION_SCHEMA.CLUSTER_INFO where TYPE='tikv' or TYPE='tiflash' limit 1;"
+	tidbRow := db.QueryRowContext(ctx, queryStoreAddr)
+	err := tidbRow.Scan(&StoreAddr)
+	if err != nil {
+		return StoreAddr, errors.Errorf("failed to get the target store address info using query")
+	}
+	return StoreAddr, nil
 }
 
 func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {

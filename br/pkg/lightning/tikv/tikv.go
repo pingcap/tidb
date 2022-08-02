@@ -227,6 +227,23 @@ func CheckPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, require
 	return version.CheckVersion("PD", *ver, requiredMinVersion, requiredMaxVersion)
 }
 
+func CheckTiDBDestination(ctx context.Context, tls *common.TLS, pdAddr string, storeAddr string) error {
+	var dstIsCorrect bool
+	stores, err := pdutil.FetchStoresAddr(ctx, tls, pdAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, addr := range stores {
+		if storeAddr == addr {
+			dstIsCorrect = true
+		}
+	}
+	if !dstIsCorrect {
+		return errors.Errorf("store address `%s` from tidb cluster_info doesn't in store addresses `%s` from pd api), please check whether pd-addr and status-port are correct", storeAddr, strings.Join(stores, ","))
+	}
+	return nil
+}
+
 func CheckTiKVVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
 	return ForAllStores(
 		ctx,
