@@ -10,6 +10,7 @@ go_library(
 
 go_test(
     name = "redact_test",
+    timeout = "short",
     srcs = ["redact_test.go"],
     flaky = True,
     deps = [
