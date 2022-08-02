@@ -1074,7 +1074,7 @@ var (
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
-	PointLockReadUseLastTso           = atomic.NewBool(false)
+	PointLockReadUseLastTso           = atomic.NewBool(true)
 	InsertUseLastTso                  = atomic.NewBool(true)
 )
 
