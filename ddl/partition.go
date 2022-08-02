@@ -660,7 +660,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 
 func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
+	if isPartExprUnsigned(ctx, tbInfo) {
 		tp.AddFlag(mysql.UnsignedFlag)
 	}
 	for _, exp := range exprs {
@@ -812,11 +812,10 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 		return nil
 	}
 
-	cols := tblInfo.Columns
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	isUnsigned := isColUnsigned(cols, pi)
+	isUnsigned := isPartExprUnsigned(ctx, tblInfo)
 	var prevRangeValue interface{}
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
@@ -879,7 +878,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	cols := make([]*model.ColumnInfo, 0, len(pi.Columns))
 	if len(pi.Columns) == 0 {
 		tp := types.NewFieldType(mysql.TypeLonglong)
-		if isColUnsigned(tblInfo.Columns, tblInfo.Partition) {
+		if isPartExprUnsigned(ctx, tblInfo) {
 			tp.AddFlag(mysql.UnsignedFlag)
 		}
 		colTps = []*types.FieldType{tp}
@@ -1983,13 +1982,13 @@ func (cns columnNameSlice) At(i int) string {
 	return cns[i].Name.L
 }
 
-// isColUnsigned returns true if the partitioning key column is unsigned.
-func isColUnsigned(cols []*model.ColumnInfo, pi *model.PartitionInfo) bool {
-	for _, col := range cols {
-		isUnsigned := mysql.HasUnsignedFlag(col.GetFlag())
-		if isUnsigned && strings.Contains(strings.ToLower(pi.Expr), col.Name.L) {
-			return true
-		}
+func isPartExprUnsigned(ctx sessionctx.Context, tbInfo *model.TableInfo) bool {
+	expr, err := expression.ParseSimpleExprWithTableInfo(ctx, tbInfo.Partition.Expr, tbInfo)
+	if err != nil {
+		return false
+	}
+	if mysql.HasUnsignedFlag(expr.GetType().GetFlag()) {
+		return true
 	}
 	return false
 }
