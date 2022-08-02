@@ -726,7 +726,7 @@ func TestSetVarHint(t *testing.T) {
 	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "ON"))
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_auto_is_null=1) */ @@sql_auto_is_null;").Check(testkit.Rows("1"))
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
-	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "OFF"))
+	require.NoError(t, tk.Session().GetSessionVars().SetSystemVarWithoutValidation("tidb_enable_noop_functions", "OFF"))
 	tk.MustQuery("SELECT @@sql_auto_is_null;").Check(testkit.Rows("0"))
 
 	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar("sort_buffer_size", "262144"))
