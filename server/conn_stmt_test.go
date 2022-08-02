@@ -226,7 +226,7 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 		[]byte{},
 		newInputDecoder("gbk"))
 	require.NoError(t, err)
-	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetValue())
+	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetString())
 }
 
 func TestParseStmtFetchCmd(t *testing.T) {
