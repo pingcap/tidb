@@ -17,7 +17,6 @@ package session_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"net"
 	"sort"
 	"strconv"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"

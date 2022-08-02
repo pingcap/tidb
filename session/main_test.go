@@ -18,12 +18,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit/testdata"
