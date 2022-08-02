@@ -765,7 +765,7 @@ const (
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
-	//TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
+	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
 	TiDBMemOOMAction = "tidb_mem_oom_action"
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
@@ -787,6 +787,9 @@ const (
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
 	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
+	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
+	// when a single SQL statement exceeds the memory quota specified by the memory quota.
+	TiDBEnableTmpStorageOnOOM = "tidb_enable_tmp_storage_on_oom"
 )
 
 // TiDB intentional limits
@@ -1000,6 +1003,7 @@ const (
 	DefTiDBGenerateBinaryPlan                      = true
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
+	DefTiDBEnableTmpStorageOnOOM                   = true
 )
 
 // Process global variables.
@@ -1010,6 +1014,7 @@ var (
 	QueryLogMaxLen              = atomic.NewInt32(DefTiDBQueryLogMaxLen)
 	EnablePProfSQLCPU           = atomic.NewBool(false)
 	EnableBatchDML              = atomic.NewBool(false)
+	EnableTmpStorageOnOOM       = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
