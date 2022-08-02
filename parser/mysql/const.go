@@ -601,9 +601,9 @@ const (
 	PartitionCountLimit = 8192
 )
 
+// This is enum_cursor_type in MySQL
 const (
-	CursorTypeNoCursor uint8 = 1 << iota
-	CursorTypeReadOnly
+	CursorTypeReadOnly = 1 << iota
 	CursorTypeForUpdate
 	CursorTypeScrollable
 )

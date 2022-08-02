@@ -140,9 +140,6 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	// The client indicates that it wants to use cursor by setting this flag.
 	// Now we only support forward-only, read-only cursor.
 	useCursor := false
-	if flag&mysql.CursorTypeNoCursor > 0 {
-		useCursor = false
-	}
 	if flag&mysql.CursorTypeReadOnly > 0 {
 		useCursor = true
 	}
