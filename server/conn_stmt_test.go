@@ -15,9 +15,9 @@
 package server
 
 import (
-	"github.com/pingcap/tidb/expression"
 	"testing"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
