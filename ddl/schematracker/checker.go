@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -33,9 +34,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 )
+
+func init() {
+	mockstore.DDLCheckerInjector = NewStorageDDLInjector
+}
 
 // Checker is used to check the result of SchemaTracker is same as real DDL.
 type Checker struct {
@@ -128,8 +134,17 @@ func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.
 	if err != nil {
 		panic(err)
 	}
-	s1 := result.String()
-	s2 := result2.String()
+
+	// SchemaTracker will always use NONCLUSTERED so it can support more types of DDL.
+	removeClusteredIndexComment := func(s string) string {
+		ret := strings.ReplaceAll(s, " /*T![clustered_index] NONCLUSTERED */", "")
+		ret = strings.ReplaceAll(ret, " /*T![clustered_index] CLUSTERED */", "")
+		return ret
+	}
+
+	s1 := removeClusteredIndexComment(result.String())
+	s2 := removeClusteredIndexComment(result2.String())
+
 	if s1 != s2 {
 		errStr := fmt.Sprintf("%s != %s", s1, s2)
 		panic(errStr)
@@ -187,12 +202,20 @@ func (d Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) 
 	if err != nil {
 		return err
 	}
+
 	// some unit test will also check warnings, we reset the warnings after SchemaTracker use session context again.
 	count := ctx.GetSessionVars().StmtCtx.WarningCount()
+	// backup old session variables because CreateTable will change them.
+	strictSQLMode := ctx.GetSessionVars().StrictSQLMode
+	enableClusteredIndex := ctx.GetSessionVars().EnableClusteredIndex
+
 	err = d.tracker.CreateTable(ctx, stmt)
 	if err != nil {
 		panic(err)
 	}
+
+	ctx.GetSessionVars().StrictSQLMode = strictSQLMode
+	ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndex
 	ctx.GetSessionVars().StmtCtx.TruncateWarnings(int(count))
 
 	d.checkTableInfo(ctx, stmt.Table.Schema, stmt.Table.Name)
@@ -250,14 +273,32 @@ func (d Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err 
 
 // CreateIndex implements the DDL interface.
 func (d Checker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.CreateIndex(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.CreateIndex(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	d.checkTableInfo(ctx, stmt.Table.Schema, stmt.Table.Name)
+	return nil
 }
 
 // DropIndex implements the DDL interface.
 func (d Checker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.DropIndex(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.DropIndex(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	d.checkTableInfo(ctx, stmt.Table.Schema, stmt.Table.Name)
+	return nil
 }
 
 // AlterTable implements the DDL interface.
@@ -266,10 +307,17 @@ func (d Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *
 	if err != nil {
 		return err
 	}
-	if d.closed {
-		return nil
+
+	// some unit test will also check warnings, we reset the warnings after SchemaTracker use session context again.
+	count := sctx.GetSessionVars().StmtCtx.WarningCount()
+	err = d.tracker.AlterTable(ctx, sctx, stmt)
+	if err != nil {
+		panic(err)
 	}
-	panic("implement me")
+	sctx.GetSessionVars().StmtCtx.TruncateWarnings(int(count))
+
+	d.checkTableInfo(sctx, stmt.Table.Schema, stmt.Table.Name)
+	return nil
 }
 
 // TruncateTable implements the DDL interface.
@@ -475,4 +523,27 @@ func (d Checker) MoveJobFromQueue2Table(bool) error {
 // MoveJobFromTable2Queue implements the DDL interface.
 func (d Checker) MoveJobFromTable2Queue() error {
 	panic("implement me")
+}
+
+// StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.
+type StorageDDLInjector struct {
+	kv.Storage
+	Injector func(ddl.DDL) *Checker
+}
+
+// NewStorageDDLInjector creates a new StorageDDLInjector to inject Checker.
+func NewStorageDDLInjector(s kv.Storage) kv.Storage {
+	return StorageDDLInjector{
+		Storage:  s,
+		Injector: NewChecker,
+	}
+}
+
+// UnwrapStorage unwraps StorageDDLInjector for one level.
+func UnwrapStorage(s kv.Storage) kv.Storage {
+	injector, ok := s.(StorageDDLInjector)
+	if !ok {
+		return s
+	}
+	return injector.Storage
 }

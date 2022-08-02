@@ -33,7 +33,7 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
 		Warning []string
 	}
 	joinReorderSuiteData := plannercore.GetJoinReorderSuiteData()
-	joinReorderSuiteData.GetTestCasesByName(name, t, &input, &output)
+	joinReorderSuiteData.LoadTestCasesByName(name, t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -47,8 +47,7 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
 }
 
 func TestStraightJoinHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -62,8 +61,7 @@ func TestStraightJoinHint(t *testing.T) {
 }
 
 func TestLeadingJoinHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -85,8 +83,7 @@ func TestLeadingJoinHint(t *testing.T) {
 }
 
 func TestJoinOrderHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -169,8 +166,7 @@ func TestJoinOrderHint(t *testing.T) {
 }
 
 func TestJoinOrderHintWithBinding(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -218,8 +214,7 @@ func TestJoinOrderHintWithBinding(t *testing.T) {
 }
 
 func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -237,8 +232,7 @@ func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
 }
 
 func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -256,8 +250,7 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 }
 
 func TestJoinOrderHint4DifferentJoinType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -276,8 +269,7 @@ func TestJoinOrderHint4DifferentJoinType(t *testing.T) {
 }
 
 func TestJoinOrderHint4TiFlash(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1, t2, t3;")
@@ -309,8 +301,7 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 }
 
 func TestJoinOrderHint4Subquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -331,8 +322,7 @@ func TestJoinOrderHint4Subquery(t *testing.T) {
 }
 
 func TestLeadingJoinHint4OuterJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

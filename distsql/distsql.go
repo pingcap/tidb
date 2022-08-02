@@ -58,7 +58,6 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 		rootPlanID: rootID,
 		storeType:  kv.TiFlash,
 	}, nil
-
 }
 
 // Select sends a DAG request, returns SelectResult.
@@ -122,7 +121,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		sqlType:            label,
 		memTracker:         kvReq.MemTracker,
 		storeType:          kvReq.StoreType,
-		paging:             kvReq.Paging,
+		paging:             kvReq.Paging.Enable,
 		distSQLConcurrency: kvReq.Concurrency,
 	}, nil
 }

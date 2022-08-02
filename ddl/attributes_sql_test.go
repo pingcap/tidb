@@ -56,8 +56,7 @@ func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
 }
 
 func TestAlterTableAttributes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -77,8 +76,7 @@ func TestAlterTableAttributes(t *testing.T) {
 }
 
 func TestAlterTablePartitionAttributes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table alter_p (c int)
@@ -139,8 +137,7 @@ PARTITION BY RANGE (c) (
 }
 
 func TestTruncateTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table truncate_t (c int)
@@ -185,8 +182,7 @@ PARTITION BY RANGE (c) (
 }
 
 func TestRenameTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table rename_t (c int)
@@ -232,8 +228,7 @@ PARTITION BY RANGE (c) (
 }
 
 func TestRecoverTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table recover_t (c int)
@@ -272,8 +267,7 @@ PARTITION BY RANGE (c) (
 }
 
 func TestFlashbackTable(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
@@ -331,8 +325,7 @@ PARTITION BY RANGE (c) (
 }
 
 func TestDropTable(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
@@ -385,8 +378,7 @@ PARTITION BY RANGE (c) (
 }
 
 func TestCreateWithSameName(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
@@ -450,8 +442,7 @@ PARTITION BY RANGE (c) (
 }
 
 func TestPartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
@@ -511,8 +502,7 @@ PARTITION BY RANGE (c) (
 }
 
 func TestDropSchema(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
@@ -538,8 +528,7 @@ PARTITION BY RANGE (c) (
 }
 
 func TestDefaultKeyword(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)

@@ -164,7 +164,6 @@ disable-timestamp = true
 enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
-
 }
 
 func TestRemovedVariableCheck(t *testing.T) {
@@ -195,9 +194,6 @@ path = "/tmp/tidb"
 
 # The socket file to use for connection.
 socket = "/tmp/tidb-{Port}.sock"
-
-# Run ddl worker on this tidb-server.
-run-ddl = true
 
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "45s"
@@ -310,6 +306,9 @@ enable-enum-length-limit = true
 
 # The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
 max_connections = 0
+
+# Run ddl worker on this tidb-server.
+tidb_enable_ddl = true
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -1023,7 +1022,10 @@ func TestConflictInstanceConfig(t *testing.T) {
 	// Just receive a warning and keep their respective values.
 	expectedConflictOptions := map[string]InstanceConfigSection{
 		"": {
-			"", map[string]string{"check-mb4-value-in-utf8": "tidb_check_mb4_value_in_utf8"},
+			"", map[string]string{
+				"check-mb4-value-in-utf8": "tidb_check_mb4_value_in_utf8",
+				"run-ddl":                 "tidb_enable_ddl",
+			},
 		},
 		"log": {
 			"log", map[string]string{"enable-slow-log": "tidb_enable_slow_log"},
@@ -1032,10 +1034,10 @@ func TestConflictInstanceConfig(t *testing.T) {
 			"performance", map[string]string{"force-priority": "tidb_force_priority"},
 		},
 	}
-	_, err = f.WriteString("check-mb4-value-in-utf8 = true \n" +
+	_, err = f.WriteString("check-mb4-value-in-utf8 = true \nrun-ddl = true \n" +
 		"[log] \nenable-slow-log = true \n" +
 		"[performance] \nforce-priority = \"NO_PRIORITY\"\n" +
-		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"")
+		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"\ntidb_enable_ddl = false")
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	err = conf.Load(configFile)
@@ -1047,6 +1049,8 @@ func TestConflictInstanceConfig(t *testing.T) {
 	require.Equal(t, false, conf.Instance.EnableSlowLog.Load())
 	require.Equal(t, "NO_PRIORITY", conf.Performance.ForcePriority)
 	require.Equal(t, "LOW_PRIORITY", conf.Instance.ForcePriority)
+	require.Equal(t, true, conf.RunDDL)
+	require.Equal(t, false, conf.Instance.TiDBEnableDDL.Load())
 	require.Equal(t, 0, len(DeprecatedOptions))
 	for _, conflictOption := range ConflictOptions {
 		expectedConflictOption, ok := expectedConflictOptions[conflictOption.SectionName]
@@ -1076,6 +1080,7 @@ func TestDeprecatedConfig(t *testing.T) {
 		"": {
 			"", map[string]string{
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
+				"run-ddl":                       "tidb_enable_ddl",
 			},
 		},
 		"log": {
@@ -1091,7 +1096,7 @@ func TestDeprecatedConfig(t *testing.T) {
 			},
 		},
 	}
-	_, err = f.WriteString("enable-collect-execution-info = false \n" +
+	_, err = f.WriteString("enable-collect-execution-info = false \nrun-ddl = false \n" +
 		"[plugin] \ndir=\"/plugin-path\" \nload=\"audit-1,whitelist-1\" \n" +
 		"[log] \nslow-threshold = 100 \n" +
 		"[performance] \nmemory-usage-alarm-ratio = 0.5")
