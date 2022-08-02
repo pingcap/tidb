@@ -41,6 +41,7 @@ go_library(
 
 go_test(
     name = "stream_test",
+    timeout = "short",
     srcs = [
         "decode_kv_test.go",
         "meta_kv_test.go",
