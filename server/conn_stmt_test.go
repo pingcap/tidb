@@ -200,7 +200,9 @@ func TestParseExecArgs(t *testing.T) {
 	for _, tt := range tests {
 		err := parseExecArgs(&stmtctx.StatementContext{}, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues, nil)
 		require.Truef(t, terror.ErrorEqual(err, tt.err), "err %v", err)
-		require.Equal(t, tt.expect, tt.args.args[0].(*expression.Constant).Value.GetValue())
+		if err == nil {
+			require.Equal(t, tt.expect, tt.args.args[0].(*expression.Constant).Value.GetValue())
+		}
 	}
 }
 
