@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -83,12 +83,7 @@ func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *
 }
 
 func TestCreateTableWithPartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -341,12 +336,7 @@ partition by range (a)
 }
 
 func TestCreateTableWithHashPartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -405,12 +395,7 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -667,8 +652,7 @@ create table log_message_1 (
 }
 
 func TestPartitionRangeColumnsCollate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create schema PartitionRangeColumnsCollate")
 	tk.MustExec("use PartitionRangeColumnsCollate")
@@ -775,8 +759,7 @@ func TestPartitionRangeColumnsCollate(t *testing.T) {
 }
 
 func TestDisableTablePartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	for _, v := range []string{"'AUTO'", "'OFF'", "0", "'ON'"} {
@@ -809,12 +792,7 @@ func generatePartitionTableByNum(num int) string {
 }
 
 func TestCreateTableWithListPartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -961,12 +939,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 }
 
 func TestCreateTableWithListColumnsPartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -1173,8 +1146,7 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 }
 
 func TestAlterTableAddPartitionByList(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1290,8 +1262,7 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 }
 
 func TestAlterTableAddPartitionByListColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1359,8 +1330,7 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 }
 
 func TestAlterTableDropPartitionByList(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1396,8 +1366,7 @@ func TestAlterTableDropPartitionByList(t *testing.T) {
 }
 
 func TestAlterTableDropPartitionByListColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1435,8 +1404,7 @@ func TestAlterTableDropPartitionByListColumns(t *testing.T) {
 }
 
 func TestAlterTableTruncatePartitionByList(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1468,8 +1436,7 @@ func TestAlterTableTruncatePartitionByList(t *testing.T) {
 }
 
 func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1501,12 +1468,7 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 }
 
 func TestCreateTableWithKeyPartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -1522,8 +1484,7 @@ func TestCreateTableWithKeyPartition(t *testing.T) {
 }
 
 func TestAlterTableAddPartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists employees;")
@@ -1670,8 +1631,7 @@ func TestAlterTableAddPartition(t *testing.T) {
 }
 
 func TestAlterTableDropPartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employees")
@@ -1812,8 +1772,7 @@ func TestAlterTableDropPartition(t *testing.T) {
 }
 
 func TestMultiPartitionDropAndTruncate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employees")
@@ -1841,8 +1800,7 @@ func TestMultiPartitionDropAndTruncate(t *testing.T) {
 func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
@@ -1881,8 +1839,7 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestAlterTableExchangePartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists e")
@@ -2149,8 +2106,7 @@ func TestAlterTableExchangePartition(t *testing.T) {
 }
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	type testCase struct {
 		ptSQL       string
 		ntSQL       string
@@ -2386,8 +2342,7 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 }
 
 func TestExchangePartitionHook(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	// why use tkCancel, not tk.
 	tkCancel := testkit.NewTestKit(t, store)
@@ -2433,8 +2388,7 @@ func TestExchangePartitionExpressIndex(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Experimental.AllowsExpressionIndex = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
@@ -2467,8 +2421,7 @@ func TestExchangePartitionExpressIndex(t *testing.T) {
 }
 
 func TestAddPartitionTooManyPartitions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	count := mysql.PartitionCountLimit
@@ -2551,8 +2504,7 @@ func checkPartitionDelRangeDone(t *testing.T, tk *testkit.TestKit, store kv.Stor
 }
 
 func TestTruncatePartitionAndDropTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	// Test truncate common table.
@@ -2704,8 +2656,7 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 }
 
 func TestPartitionUniqueKeyNeedAllFieldsInPf(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists part1;")
@@ -2958,8 +2909,7 @@ func TestPartitionUniqueKeyNeedAllFieldsInPf(t *testing.T) {
 }
 
 func TestPartitionDropPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	idxName := "primary"
 	addIdxSQL := "alter table partition_drop_idx add primary key idx1 (c1);"
 	dropIdxSQL := "alter table partition_drop_idx drop primary key;"
@@ -2967,8 +2917,7 @@ func TestPartitionDropPrimaryKey(t *testing.T) {
 }
 
 func TestPartitionDropIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	idxName := "idx1"
 	addIdxSQL := "alter table partition_drop_idx add index idx1 (c1);"
 	dropIdxSQL := "alter table partition_drop_idx drop index idx1;"
@@ -3025,15 +2974,13 @@ LOOP:
 }
 
 func TestPartitionAddPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	testPartitionAddIndexOrPK(t, tk, "primary key")
 }
 
 func TestPartitionAddIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	testPartitionAddIndexOrPK(t, tk, "index")
 }
@@ -3130,8 +3077,7 @@ func testPartitionAddIndex(tk *testkit.TestKit, t *testing.T, key string) {
 }
 
 func TestDropSchemaWithPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_db_with_partition")
 	tk.MustExec("create database test_db_with_partition")
@@ -3209,8 +3155,7 @@ func getPartitionTableRecordsNum(t *testing.T, ctx sessionctx.Context, tbl table
 }
 
 func TestPartitionErrorCode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// add partition
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
@@ -3274,8 +3219,7 @@ func TestPartitionErrorCode(t *testing.T) {
 }
 
 func TestConstAndTimezoneDepent(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// add partition
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
@@ -3364,8 +3308,7 @@ func TestConstAndTimezoneDepent(t *testing.T) {
 }
 
 func TestConstAndTimezoneDepent2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// add partition
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
@@ -3396,8 +3339,7 @@ func TestConstAndTimezoneDepent2(t *testing.T) {
 }
 
 func TestUnsupportedPartitionManagementDDLs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists test_1465;")
@@ -3423,8 +3365,7 @@ func TestCommitWhenSchemaChange(t *testing.T) {
 		conf.Instance.SlowThreshold = 10000
 		conf.Experimental.AllowsExpressionIndex = true
 	})
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 4096")
 	tk.MustExec("use test")
@@ -3490,8 +3431,7 @@ func TestCommitWhenSchemaChange(t *testing.T) {
 }
 
 func TestCreatePartitionTableWithWrongType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -3527,8 +3467,7 @@ func TestCreatePartitionTableWithWrongType(t *testing.T) {
 }
 
 func TestAddPartitionForTableWithWrongType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t_int, t_char, t_date")
@@ -3557,8 +3496,7 @@ func TestAddPartitionForTableWithWrongType(t *testing.T) {
 }
 
 func TestPartitionListWithTimeType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3568,8 +3506,7 @@ func TestPartitionListWithTimeType(t *testing.T) {
 }
 
 func TestPartitionListWithNewCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -3585,8 +3522,7 @@ func TestPartitionListWithNewCollation(t *testing.T) {
 }
 
 func TestAddTableWithPartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// for global temporary table
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -3641,8 +3577,7 @@ func TestAddTableWithPartition(t *testing.T) {
 }
 
 func TestTruncatePartitionMultipleTimes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop table if exists test.t;")
 	tk.MustExec(`create table test.t (a int primary key) partition by range (a) (
@@ -3676,8 +3611,7 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 }
 
 func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_partition2")
 	tk.MustExec("use test_partition2")
@@ -3720,8 +3654,7 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 }
 
 func TestDuplicatePartitionNames(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create database DuplicatePartitionNames")
@@ -4306,8 +4239,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 }
 
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database partitionWithAnsiQuotes")
 	defer tk.MustExec("drop database partitionWithAnsiQuotes")

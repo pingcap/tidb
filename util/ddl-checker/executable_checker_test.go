@@ -69,8 +69,7 @@ func TestParse(t *testing.T) {
 }
 
 func TestExecute(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	testData := setUpTestData()
 	tk.MustExec("use test;")
