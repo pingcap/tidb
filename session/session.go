@@ -35,7 +35,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
@@ -1976,9 +1975,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	if !s.GetSessionVars().InRestrictedSQL {
-		logutil.Logger(ctx).Info("ExecuteStmt", zap.String("SQL", stmtNode.Text()))
-	}
 	if err := s.PrepareTxnCtx(ctx); err != nil {
 		return nil, err
 	}
@@ -2087,8 +2083,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 }
 
 func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.StmtNode) error {
-	// logutil.BgLogger().Debug("(s *session) onTxnManagerStmtStartOrRetry")
-
 	if s.sessionVars.RetryInfo.Retrying {
 		return sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
 	}
@@ -2368,10 +2362,6 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	stmt, err := compiler.Compile(ctx, execStmt)
 	if err == nil {
 		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
-	}
-	if !s.GetSessionVars().InRestrictedSQL {
-		query := st.OriginText()
-		logutil.Logger(ctx).Info("SQL", zap.String("query", query))
 	}
 	if err != nil {
 		return nil, err
@@ -3107,11 +3097,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	if s.txn.validOrPending() {
 		return nil
 	}
-	// logutil.BgLogger().Info("(s *session) PrepareTxnCtx")
-	if !s.GetSessionVars().InRestrictedSQL {
-		logutil.Logger(ctx).Info("(s *session) PrepareTxnCtx", zap.Uint64("sctx", uint64(uintptr(unsafe.Pointer(&s)))))
-	}
-
 	txnMode := ast.Optimistic
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying ||
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {

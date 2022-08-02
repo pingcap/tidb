@@ -16,7 +16,6 @@ package isolation
 
 import (
 	"context"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -159,14 +158,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 
 func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	if p.stmtTSFuture != nil {
-		if !p.sctx.GetSessionVars().InRestrictedSQL {
-			logutil.Logger(p.ctx).Info("prepareStmtTS stmtTSFuture is not nil ====", zap.Uint64("sctx", uint64(uintptr(unsafe.Pointer(&p.sctx)))))
-		}
-
 		return
-	}
-	if !p.sctx.GetSessionVars().InRestrictedSQL {
-		logutil.Logger(p.ctx).Info("prepareStmtTS stmtTSFuture is nil ====", zap.Uint64("sctx", uint64(uintptr(unsafe.Pointer(&p.sctx)))))
 	}
 	sessVars := p.sctx.GetSessionVars()
 	var stmtTSFuture oracle.Future
@@ -198,9 +190,6 @@ func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 }
 
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
-	if !p.sctx.GetSessionVars().InRestrictedSQL {
-		logutil.Logger(p.ctx).Info("(p *PessimisticRCTxnContextProvider) getStmtTS()")
-	}
 	if p.stmtTS != 0 {
 		return p.stmtTS, nil
 	}
@@ -261,10 +250,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 
 // AdviseWarmup provides warmup for inner state
 func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
-	if !p.sctx.GetSessionVars().InRestrictedSQL {
-		logutil.Logger(p.ctx).Info("(p *PessimisticRCTxnContextProvider) AdviseWarmup()")
-	}
-
 	if err := p.prepareTxn(); err != nil {
 		return err
 	}
@@ -274,10 +259,6 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 	}
 
 	return nil
-}
-
-func isPointLockReadUseLastTso() bool {
-	return true
 }
 
 // AdviseOptimizeWithPlan in RC covers much fewer cases compared with pessimistic repeatable read.
@@ -295,10 +276,6 @@ func isPointLockReadUseLastTso() bool {
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
-	}
-	if !p.sctx.GetSessionVars().InRestrictedSQL {
-		logutil.Logger(p.ctx).Info("AdviseOptimizeWithPlan",
-			zap.Bool("stmtUseStartTS", p.stmtUseStartTS), zap.Bool("latestOracleTSValid", p.latestOracleTSValid))
 	}
 	if p.stmtUseStartTS || !p.latestOracleTSValid {
 		return nil
