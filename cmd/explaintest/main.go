@@ -362,14 +362,9 @@ func (t *tester) execute(query query) error {
 			}
 		}
 
-		skipCheckErrMsg := false
 		if err != nil && len(t.expectedErrs) > 0 {
 			for _, expectErr := range t.expectedErrs {
 				if strings.Contains(err.Error(), expectErr) {
-					// output expected err
-					if expectErr == "1105" {
-						skipCheckErrMsg = true
-					}
 					t.buf.WriteString(fmt.Sprintf("%s\n", err))
 					err = nil
 					break
@@ -392,7 +387,7 @@ func (t *tester) execute(query query) error {
 			if _, err = t.resultFD.ReadAt(buf, int64(offset)); !(err == nil || err == io.EOF) {
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", qText, query.Line, gotBuf, err))
 			}
-			if !skipCheckErrMsg && !bytes.Equal(gotBuf, buf) {
+			if !bytes.Equal(gotBuf, buf) {
 				//nolint: all_revive,revive
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", qText, query.Line, buf, gotBuf))
 			}
@@ -765,9 +760,12 @@ func main() {
 			continue
 		}
 		tr := newTester(t)
+		start := time.Now()
 		if err = tr.Run(); err != nil {
 			log.Fatal("run test", zap.String("test", t), zap.Error(err))
 		}
+		// Use error so that we can know the spend time in CI.
+		log.Error("run test ", zap.String("name", tr.name), zap.String("time", time.Since(start).String()))
 		log.Info("run test ok", zap.String("test", t))
 	}
 
