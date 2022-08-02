@@ -39,9 +39,10 @@ import (
 )
 
 func TestOptimisticTxnContextProviderTS(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
 
@@ -130,8 +131,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 }
 
 func TestOptimisticHandleError(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -211,8 +211,9 @@ func TestOptimisticHandleError(t *testing.T) {
 }
 
 func TestOptimisticProviderInitialize(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	testfork.RunTest(t, func(t *testfork.T) {
 		clearScopeSettings := forkScopeSettings(t, store)
 		defer clearScopeSettings()
@@ -288,9 +289,10 @@ func TestOptimisticProviderInitialize(t *testing.T) {
 }
 
 func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
 

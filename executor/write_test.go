@@ -43,8 +43,7 @@ import (
 )
 
 func TestInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -326,8 +325,7 @@ func TestInsert(t *testing.T) {
 }
 
 func TestMultiBatch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t0")
@@ -340,8 +338,7 @@ func TestMultiBatch(t *testing.T) {
 }
 
 func TestInsertAutoInc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
@@ -475,8 +472,7 @@ func TestInsertAutoInc(t *testing.T) {
 }
 
 func TestInsertIgnore(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(t, kv.NewInjectedStore(store, &cfg))
 	tk.MustExec("use test")
@@ -595,8 +591,7 @@ commit;`
 }
 
 func TestInsertOnDup(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(t, kv.NewInjectedStore(store, &cfg))
 	tk.MustExec("use test")
@@ -762,8 +757,7 @@ commit;`
 }
 
 func TestInsertIgnoreOnDup(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists t;
@@ -816,8 +810,7 @@ func TestInsertIgnoreOnDup(t *testing.T) {
 }
 
 func TestInsertSetWithDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Assign `DEFAULT` in `INSERT ... SET ...` statement
@@ -902,8 +895,7 @@ func TestInsertSetWithDefault(t *testing.T) {
 }
 
 func TestInsertOnDupUpdateDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Assign `DEFAULT` in `INSERT ... ON DUPLICATE KEY UPDATE ...` statement
@@ -955,8 +947,7 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 }
 
 func TestReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -1138,8 +1129,7 @@ func TestReplace(t *testing.T) {
 }
 
 func TestReplaceWithCICollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1150,8 +1140,7 @@ func TestReplaceWithCICollation(t *testing.T) {
 }
 
 func TestGeneratedColumnForInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1201,8 +1190,7 @@ func TestGeneratedColumnForInsert(t *testing.T) {
 }
 
 func TestPartitionedTableReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -1342,8 +1330,7 @@ func TestPartitionedTableReplace(t *testing.T) {
 }
 
 func TestHashPartitionedTableReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
@@ -1461,8 +1448,7 @@ func TestHashPartitionedTableReplace(t *testing.T) {
 }
 
 func TestPartitionedTableUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1570,8 +1556,7 @@ func TestPartitionedTableUpdate(t *testing.T) {
 
 // TestUpdateCastOnlyModifiedValues for issue #4514.
 func TestUpdateCastOnlyModifiedValues(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table update_modified (col_1 int, col_2 enum('a', 'b'))")
@@ -1618,8 +1603,7 @@ func fillMultiTableForUpdate(tk *testkit.TestKit) {
 }
 
 func TestMultipleTableUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	fillMultiTableForUpdate(tk)
@@ -1685,8 +1669,7 @@ func TestMultipleTableUpdate(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	fillData(tk, "delete_test")
 
@@ -1742,8 +1725,7 @@ func TestPartitionedTableDelete(t *testing.T) {
 			  PARTITION p2 VALUES LESS THAN (16),
 			  PARTITION p3 VALUES LESS THAN (21))`
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1807,8 +1789,7 @@ func fillDataMultiTable(tk *testkit.TestKit) {
 }
 
 func TestMultiTableDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	fillDataMultiTable(tk)
 
@@ -1821,8 +1802,7 @@ func TestMultiTableDelete(t *testing.T) {
 }
 
 func TestQualifiedDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1900,8 +1880,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *t
 }
 
 func TestLoadDataMissingColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createSQL := `create table load_data_missing (id int, t timestamp not null)`
@@ -1941,8 +1920,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 }
 
 func TestIssue18681(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
@@ -1974,10 +1952,45 @@ func TestIssue18681(t *testing.T) {
 	require.Equal(t, uint16(0), sc.WarningCount())
 }
 
+func TestIssue33298(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test")
+	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
+
+	// According to https://dev.mysql.com/doc/refman/8.0/en/load-data.html , fixed-row format should be used when fields
+	// terminated by '' and enclosed by ''. However, tidb doesn't support it yet and empty terminator leads to infinite
+	// loop in `indexOfTerminator` (see https://github.com/pingcap/tidb/issues/33298).
+	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''"))
+	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"))
+}
+
+func TestIssue34358(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test")
+	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
+
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ( @v1, @v2 ) set a = @v1, b = @v2")
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	require.True(t, ok)
+	require.NotNil(t, ld)
+	checkCases([]testCase{
+		{nil, []byte("\\N\n"), []string{"<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
+}
+
 func TestLoadData(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
@@ -2173,8 +2186,7 @@ func TestLoadData(t *testing.T) {
 
 func TestLoadDataEscape(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
@@ -2207,8 +2219,7 @@ func TestLoadDataEscape(t *testing.T) {
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
 func TestLoadDataSpecifiedColumns(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
@@ -2235,8 +2246,7 @@ func TestLoadDataSpecifiedColumns(t *testing.T) {
 }
 
 func TestLoadDataIgnoreLines(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
@@ -2256,8 +2266,7 @@ func TestLoadDataIgnoreLines(t *testing.T) {
 }
 
 func TestLoadDataReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
 	tk.MustExec("CREATE TABLE load_data_replace (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
@@ -2279,8 +2288,7 @@ func TestLoadDataReplace(t *testing.T) {
 
 // TestLoadDataOverflowBigintUnsigned related to issue 6360
 func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
@@ -2300,8 +2308,7 @@ func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
 }
 
 func TestLoadDataIntoPartitionedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table range_t (a int, b int) partition by range (a) ( " +
@@ -2327,8 +2334,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 }
 
 func TestNullDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists test_null_default;")
 	tk.MustExec("set timestamp = 1234")
@@ -2341,8 +2347,7 @@ func TestNullDefault(t *testing.T) {
 }
 
 func TestNotNullDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists t1,t2;")
 	defer tk.MustExec("drop table t1,t2")
@@ -2366,6 +2371,8 @@ func TestLatch(t *testing.T) {
 	require.Nil(t, err1)
 	defer dom.Close()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("drop table if exists t")
@@ -2411,8 +2418,7 @@ func TestLatch(t *testing.T) {
 
 // TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
 func TestIssue4067(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -2427,8 +2433,7 @@ func TestIssue4067(t *testing.T) {
 }
 
 func TestInsertCalculatedValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2550,8 +2555,7 @@ func TestInsertCalculatedValue(t *testing.T) {
 }
 
 func TestDataTooLongErrMsg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(2));")
@@ -2565,8 +2569,7 @@ func TestDataTooLongErrMsg(t *testing.T) {
 }
 
 func TestUpdateSelect(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table msg (id varchar(8), b int, status int, primary key (id, b))")
@@ -2579,8 +2582,7 @@ func TestUpdateSelect(t *testing.T) {
 }
 
 func TestUpdateDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE ttt (id bigint(20) NOT NULL, host varchar(30) NOT NULL, PRIMARY KEY (id), UNIQUE KEY i_host (host));")
@@ -2601,8 +2603,7 @@ func TestUpdateDelete(t *testing.T) {
 }
 
 func TestUpdateAffectRowCnt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table a(id int auto_increment, a int default null, primary key(id))")
@@ -2622,8 +2623,7 @@ func TestUpdateAffectRowCnt(t *testing.T) {
 }
 
 func TestReplaceLog(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table testLog (a int not null primary key, b int unique key);`)
@@ -2657,8 +2657,7 @@ func TestReplaceLog(t *testing.T) {
 // There is no need to do the rebase when updating a record if the auto-increment ID not changed.
 // This could make the auto ID increasing speed slower.
 func TestRebaseIfNeeded(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int not null primary key auto_increment, b int unique key);`)
@@ -2691,8 +2690,7 @@ func TestRebaseIfNeeded(t *testing.T) {
 }
 
 func TestDeferConstraintCheckForDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tidb_constraint_check_in_place = 0")
 	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
@@ -2741,8 +2739,9 @@ func TestDeferConstraintCheckForDelete(t *testing.T) {
 }
 
 func TestDeferConstraintCheckForInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 
@@ -2867,8 +2866,7 @@ func TestDeferConstraintCheckForInsert(t *testing.T) {
 }
 
 func TestPessimisticDeleteYourWrites(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	session1 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test")
@@ -2896,8 +2894,7 @@ func TestPessimisticDeleteYourWrites(t *testing.T) {
 }
 
 func TestDefEnumInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
@@ -2906,8 +2903,7 @@ func TestDefEnumInsert(t *testing.T) {
 }
 
 func TestIssue11059(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (pk int primary key, uk int unique, v int)")
@@ -2918,8 +2914,7 @@ func TestIssue11059(t *testing.T) {
 }
 
 func TestSetWithRefGenCol(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (i int, j int as (i+1) not null);`)
@@ -2963,8 +2958,7 @@ func TestSetWithRefGenCol(t *testing.T) {
 }
 
 func TestSetWithCurrentTimestampAndNow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists tbl;`)
@@ -2977,8 +2971,7 @@ func TestSetWithCurrentTimestampAndNow(t *testing.T) {
 }
 
 func TestApplyWithPointAndBatchPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
@@ -3020,8 +3013,7 @@ from t order by c_str;`).Check(testkit.Rows("10"))
 }
 
 func TestWriteListPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3068,8 +3060,7 @@ func TestWriteListPartitionTable(t *testing.T) {
 }
 
 func TestWriteListColumnsPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3119,8 +3110,7 @@ func TestWriteListColumnsPartitionTable(t *testing.T) {
 
 // TestWriteListPartitionTable1 test for write list partition when the partition expression is simple.
 func TestWriteListPartitionTable1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3246,8 +3236,7 @@ func TestWriteListPartitionTable1(t *testing.T) {
 
 // TestWriteListPartitionTable2 test for write list partition when the partition expression is complicated and contain generated column.
 func TestWriteListPartitionTable2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3369,8 +3358,7 @@ func TestWriteListPartitionTable2(t *testing.T) {
 }
 
 func TestWriteListColumnsPartitionTable1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3490,8 +3478,7 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 
 // TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
 func TestWriteListColumnsPartitionTable2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3632,8 +3619,7 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 
 // TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
 func TestWriteListPartitionTableIssue21437(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3644,8 +3630,7 @@ func TestWriteListPartitionTableIssue21437(t *testing.T) {
 }
 
 func TestListPartitionWithAutoRandom(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3669,8 +3654,7 @@ func TestListPartitionWithAutoRandom(t *testing.T) {
 }
 
 func TestListPartitionWithAutoIncrement(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3694,8 +3678,7 @@ func TestListPartitionWithAutoIncrement(t *testing.T) {
 }
 
 func TestListPartitionWithGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3741,8 +3724,7 @@ func TestListPartitionWithGeneratedColumn(t *testing.T) {
 }
 
 func TestListPartitionWithGeneratedColumn1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3808,8 +3790,7 @@ func TestListPartitionWithGeneratedColumn1(t *testing.T) {
 }
 
 func TestListPartitionWithGeneratedColumn2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3852,8 +3833,7 @@ func TestListPartitionWithGeneratedColumn2(t *testing.T) {
 }
 
 func TestListColumnsPartitionWithGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3878,8 +3858,7 @@ func TestListColumnsPartitionWithGeneratedColumn(t *testing.T) {
 }
 
 func TestIssue22496(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t12")
@@ -3921,8 +3900,7 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 }
 
 func TestIssue21232(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -3951,8 +3929,7 @@ func testEqualDatumsAsBinary(t *testing.T, a []interface{}, b []interface{}, sam
 }
 
 func TestUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	fillData(tk, "update_test")
@@ -4222,8 +4199,7 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -4267,8 +4243,7 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestIssue20724(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -4280,8 +4255,7 @@ func TestIssue20724(t *testing.T) {
 }
 
 func TestIssue20840(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -4294,8 +4268,7 @@ func TestIssue20840(t *testing.T) {
 }
 
 func TestIssueInsertPrefixIndexForNonUTF8Collation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")

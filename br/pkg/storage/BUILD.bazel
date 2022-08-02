@@ -52,6 +52,7 @@ go_library(
 
 go_test(
     name = "storage_test",
+    timeout = "short",
     srcs = [
         "azblob_test.go",
         "compress_test.go",

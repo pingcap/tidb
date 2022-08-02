@@ -149,13 +149,13 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 	}
 	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
 	if err != nil {
-		return errors.New(fmt.Sprintf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String()))
+		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String())
 	}
 	if percent <= 0 || percent > 100 || isNull {
 		if isNull {
 			return errors.New("APPROX_PERCENTILE: Percentage value cannot be NULL")
 		}
-		return errors.New(fmt.Sprintf("Percentage value %d is out of range [1, 100]", percent))
+		return fmt.Errorf("Percentage value %d is out of range [1, 100]", percent)
 	}
 
 	switch a.Args[0].GetType().GetType() {
@@ -255,7 +255,6 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
 		}
 	}
-
 }
 
 func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
@@ -423,28 +422,6 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		}
 		tpOld := a.Args[i].GetType().GetType()
 		a.Args[i] = castFunc(ctx, a.Args[i])
-		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
-			continue
-		}
-		// After wrapping cast on the argument, flen etc. may not the same
-		// as the type of the aggregation function. The following part set
-		// the type of the argument exactly as the type of the aggregation
-		// function.
-		// Note: If the `tp` of argument is the same as the `tp` of the
-		// aggregation function, it will not wrap cast function on it
-		// internally. The reason of the special handling for `Column` is
-		// that the `RetType` of `Column` refers to the `infoschema`, so we
-		// need to set a new variable for it to avoid modifying the
-		// definition in `infoschema`.
-		if col, ok := a.Args[i].(*expression.Column); ok {
-			col.RetType = types.NewFieldType(col.RetType.GetType())
-		}
-		// originTp is used when the `tp` of column is TypeFloat32 while
-		// the type of the aggregation function is TypeFloat64.
-		originTp := a.Args[i].GetType().GetType()
-		*(a.Args[i].GetType()) = *(a.RetTp)
-		a.Args[i].GetType().SetType(originTp)
-
 		// refine each mysql integer type to the needed decimal precision for sum
 		if a.Name == ast.AggFuncSum {
 			adjustDecimalLenForSumInteger(a.Args[i].GetType(), tpOld)

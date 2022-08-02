@@ -24,6 +24,7 @@ go_library(
 
 go_test(
     name = "glue_test",
+    timeout = "short",
     srcs = ["console_glue_test.go"],
     flaky = True,
     deps = [

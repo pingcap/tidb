@@ -158,7 +158,6 @@ func (p *printByTable) addCheckpoints(task *TaskStatus, table *glue.Table, forma
 			}
 		}
 	}
-
 }
 
 func (p *printByTable) PrintTasks() {
