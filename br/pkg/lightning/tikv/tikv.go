@@ -236,6 +236,7 @@ func CheckTiDBDestination(ctx context.Context, tls *common.TLS, pdAddr string, s
 	for _, addr := range stores {
 		if storeAddr == addr {
 			dstIsCorrect = true
+			break
 		}
 	}
 	if !dstIsCorrect {
