@@ -792,11 +792,11 @@ func upgrade(s Session) {
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
 	if ver < version92 {
-		same, err := checkOwner(context.Background(), domain.GetDomain(s))
+		useConcurrentDDL, err := checkOwner(context.Background(), domain.GetDomain(s))
 		if err != nil {
 			logutil.BgLogger().Fatal("[Upgrade] upgrade failed", zap.Error(err))
 		}
-		if !same {
+		if !useConcurrentDDL {
 			// use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
 			// overwrite variable EnableConcurrentDDL.
 			variable.DDLForce2Queue.Store(true)
