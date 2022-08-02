@@ -211,7 +211,7 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		onExist = ddl.OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist, nil)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
 }
 
 // CreateTableWithInfo implements the DDL interface.
@@ -220,7 +220,6 @@ func (d SchemaTracker) CreateTableWithInfo(
 	dbName model.CIStr,
 	info *model.TableInfo,
 	onExist ddl.OnExist,
-	stmt *ast.CreateTableStmt,
 ) error {
 	schema := d.SchemaByName(dbName)
 	if schema == nil {
@@ -270,7 +269,7 @@ func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt)
 		onExist = ddl.OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist, nil)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
 }
 
 // DropTable implements the DDL interface.
@@ -1112,7 +1111,7 @@ func (SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.Alte
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
 func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, onExist ddl.OnExist) error {
 	for _, tableInfo := range info {
-		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, onExist, nil); err != nil {
+		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, onExist); err != nil {
 			return err
 		}
 	}

@@ -418,7 +418,7 @@ func (d Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInfo
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (d Checker) CreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info *model.TableInfo, onExist ddl.OnExist, stmt *ast.CreateTableStmt) error {
+func (d Checker) CreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info *model.TableInfo, onExist ddl.OnExist) error {
 	//TODO implement me
 	panic("implement me")
 }

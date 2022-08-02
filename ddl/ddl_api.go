@@ -2261,7 +2261,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist, s)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
 }
 
 func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
@@ -2393,7 +2393,6 @@ func (d *ddl) CreateTableWithInfo(
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
 	onExist OnExist,
-	stmt *ast.CreateTableStmt,
 ) (err error) {
 	job, err := d.createTableWithInfoJob(ctx, dbName, tbInfo, onExist, false)
 	if err != nil {
@@ -2403,22 +2402,6 @@ func (d *ddl) CreateTableWithInfo(
 		return nil
 	}
 
-	if stmt != nil && stmt.Partition != nil && stmt.Partition.Interval != nil {
-		// Syntactic sugar for INTERVAL partitioning
-		// Generate the resulting CREATE TABLE as the query string
-		query, ok := ctx.Value(sessionctx.QueryString).(string)
-		if ok {
-			sqlMode := ctx.GetSessionVars().SQLMode
-			var buf bytes.Buffer
-			AppendPartitionDefs(tbInfo.Partition, &buf, sqlMode)
-
-			syntacticSugar := stmt.Partition.Interval.OriginalText()
-			syntacticStart := stmt.Partition.Interval.OriginTextPosition()
-			newQuery := query[:syntacticStart] + "(" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
-			defer ctx.SetValue(sessionctx.QueryString, query)
-			ctx.SetValue(sessionctx.QueryString, newQuery)
-		}
-	}
 	err = d.DoDDLJob(ctx, job)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
@@ -2676,7 +2659,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		onExist = OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist, nil)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
 }
 
 // BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.
@@ -6739,7 +6722,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist, nil)
+	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist)
 }
 
 func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {

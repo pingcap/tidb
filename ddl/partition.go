@@ -485,6 +485,22 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	tbInfo.Partition.Definitions = defs
+
+	if s.Interval != nil {
+		// Syntactic sugar for INTERVAL partitioning
+		// Generate the resulting CREATE TABLE as the query string
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			sqlMode := ctx.GetSessionVars().SQLMode
+			var buf bytes.Buffer
+			AppendPartitionDefs(tbInfo.Partition, &buf, sqlMode)
+
+			syntacticSugar := s.Interval.OriginalText()
+			syntacticStart := s.Interval.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "(" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
 	return nil
 }
 
