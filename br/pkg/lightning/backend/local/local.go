@@ -1685,9 +1685,9 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 				}
 				if terror.ErrorEqual(err, types.ErrBadNumber) {
 					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-					return errors.New(fmt.Sprintf(`delete duplicate rows encounter error: %s;
+					return fmt.Errorf(`delete duplicate rows encounter error: %s;
 RawCause: table schema has changed, expected decimal, received non-decimal type; 
-Workaround: please check whether table schemas in downstream are correct.`, err.Error()))
+Workaround: please check whether table schemas in downstream are correct.`, err.Error())
 				}
 				if log.IsContextCanceledError(err) {
 					return err
