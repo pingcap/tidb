@@ -150,13 +150,6 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcac
 		}
 		cachedVals := cacheValue.([]*PlanCacheValue)
 		for _, cachedVal := range cachedVals {
-			//if cachedVal.BindSQL != bindSQL {
-			//	// When BindSQL does not match, it means that we have added a new binding,
-			//	// and the original cached plan will be invalid,
-			//	// so the original cached plan can be cleared directly
-			//	sctx.PreparedPlanCache().Delete(cacheKey)
-			//	break
-			//}
 			if !cachedVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
 				continue
 			}
