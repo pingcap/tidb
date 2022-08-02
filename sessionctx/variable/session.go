@@ -1600,7 +1600,7 @@ func (s *SessionVars) GetAvailableIsolationReadEngines4Plan() map[kv.StoreType]s
 	for isolationReadEngine := range s.isolationReadEngines {
 		availableReadEngines[isolationReadEngine] = struct{}{}
 	}
-	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && s.StmtCtx.IsReadonlyStmt {
+	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && (s.StmtCtx.IsReadonlyStmt || s.StmtCtx.InTiFlashFallBack2TiKV) {
 		delete(availableReadEngines, kv.TiFlash)
 	}
 	return availableReadEngines
