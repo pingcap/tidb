@@ -570,7 +570,7 @@ func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Schema) {
 	childMaxOneRow := make([]bool, len(p.children))
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
@@ -655,10 +655,10 @@ func (p *basePlan) OutputNames() types.NameSlice {
 	return nil
 }
 
-func (p *basePlan) SetOutputNames(names types.NameSlice) {
+func (p *basePlan) SetOutputNames(_ types.NameSlice) {
 }
 
-func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *basePlan) replaceExprColumns(_ map[string]*expression.Column) {
 }
 
 // ID implements Plan ID interface.
@@ -754,7 +754,7 @@ func (p *basePlan) SCtx() sessionctx.Context {
 
 // buildPlanTrace implements Plan
 func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.Cost()}
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.self.Cost()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
 	}

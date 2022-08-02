@@ -18,11 +18,13 @@ go_library(
 
 go_test(
     name = "summary_test",
+    timeout = "short",
     srcs = [
         "collector_test.go",
         "main_test.go",
     ],
     embed = [":summary"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

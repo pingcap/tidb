@@ -325,6 +325,9 @@ func reCalcCapacity(c *Chunk, maxChunkSize int) int {
 
 // Capacity returns the capacity of the Chunk.
 func (c *Chunk) Capacity() int {
+	if c == nil {
+		return 0
+	}
 	return c.capacity
 }
 

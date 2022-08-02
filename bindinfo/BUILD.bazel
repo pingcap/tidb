@@ -44,6 +44,7 @@ go_library(
 
 go_test(
     name = "bindinfo_test",
+    timeout = "short",
     srcs = [
         "bind_cache_test.go",
         "bind_test.go",
@@ -55,6 +56,7 @@ go_test(
         "temptable_test.go",
     ],
     embed = [":bindinfo"],
+    flaky = True,
     deps = [
         "//config",
         "//domain",

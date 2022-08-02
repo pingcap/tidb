@@ -16,11 +16,13 @@ go_library(
 
 go_test(
     name = "lockwaiter_test",
+    timeout = "short",
     srcs = [
         "lockwaiter_test.go",
         "main_test.go",
     ],
     embed = [":lockwaiter"],
+    flaky = True,
     deps = [
         "//store/mockstore/unistore/config",
         "//testkit/testsetup",

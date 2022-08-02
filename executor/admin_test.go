@@ -48,8 +48,7 @@ import (
 )
 
 func TestAdminCheckIndexRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -68,8 +67,7 @@ func TestAdminCheckIndexRange(t *testing.T) {
 }
 
 func TestAdminCheckIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -97,8 +95,7 @@ func TestAdminCheckIndex(t *testing.T) {
 }
 
 func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -129,8 +126,7 @@ func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
 }
 
 func TestAdminCheckIndexInLocalTemporaryMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -153,8 +149,7 @@ func TestAdminCheckIndexInLocalTemporaryMode(t *testing.T) {
 }
 
 func TestAdminCheckIndexInCacheTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -194,8 +189,7 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 }
 
 func TestAdminRecoverIndex(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -311,8 +305,7 @@ func TestAdminRecoverIndex(t *testing.T) {
 }
 
 func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_cluster_index_admin_recover;")
@@ -357,8 +350,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 }
 
 func TestAdminRecoverPartitionTableIndex(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -430,8 +422,7 @@ func TestAdminRecoverPartitionTableIndex(t *testing.T) {
 }
 
 func TestAdminRecoverIndex1(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := mock.NewContext()
@@ -486,8 +477,7 @@ func TestAdminRecoverIndex1(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/32915.
 func TestAdminRecoverIndexEdge(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -497,8 +487,7 @@ func TestAdminRecoverIndexEdge(t *testing.T) {
 }
 
 func TestAdminCleanupIndex(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -579,8 +568,7 @@ func TestAdminCleanupIndex(t *testing.T) {
 }
 
 func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -662,8 +650,7 @@ func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
 }
 
 func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -714,8 +701,7 @@ func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
 }
 
 func TestAdminCleanupIndexMore(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -780,8 +766,7 @@ func TestAdminCleanupIndexMore(t *testing.T) {
 }
 
 func TestClusteredAdminCleanupIndex(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -859,8 +844,7 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 }
 
 func TestAdminCheckPartitionTableFailed(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1033,7 +1017,6 @@ func (l *logEntry) checkField(t *testing.T, requireFields ...zapcore.Field) {
 		}
 		require.NotNilf(t, f, "matched log fields %s:%s not found in log", rf.Key, rf)
 	}
-
 }
 
 func (l *logEntry) checkFieldNotEmpty(t *testing.T, fieldName string) {
@@ -1098,8 +1081,7 @@ func withLogHook(ctx context.Context, t *testing.T, msgFilter string) (newCtx co
 }
 
 func TestCheckFailReport(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := newInconsistencyKit(t, testkit.NewAsyncTestKit(t, store), newDefaultOpt())
 
 	// row more than unique index
@@ -1340,8 +1322,7 @@ func TestCheckFailReport(t *testing.T) {
 
 func TestAdminCheckTable(t *testing.T) {
 	// test NULL value.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_null (
@@ -1458,8 +1439,7 @@ func TestAdminCheckTable(t *testing.T) {
 }
 
 func TestAdminCheckPrimaryIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1469,8 +1449,7 @@ func TestAdminCheckPrimaryIndex(t *testing.T) {
 }
 
 func TestAdminCheckWithSnapshot(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1531,8 +1510,7 @@ func TestAdminCheckWithSnapshot(t *testing.T) {
 }
 
 func TestAdminCheckTableFailed(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

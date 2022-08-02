@@ -38,7 +38,7 @@ type aggregationPushDownSolver struct {
 // It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
 // count(distinct) is not.
 // Currently we don't support avg and concat.
-func (a *aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggFuncDesc) bool {
+func (*aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggFuncDesc) bool {
 	if len(fun.OrderByItems) > 0 {
 		return false
 	}
@@ -192,7 +192,7 @@ func (a *aggregationPushDownSolver) splitAggFuncsAndGbyCols(agg *LogicalAggregat
 }
 
 // addGbyCol adds a column to gbyCols. If a group by column has existed, it will not be added repeatedly.
-func (a *aggregationPushDownSolver) addGbyCol(ctx sessionctx.Context, gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
+func (*aggregationPushDownSolver) addGbyCol(ctx sessionctx.Context, gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
@@ -209,13 +209,13 @@ func (a *aggregationPushDownSolver) addGbyCol(ctx sessionctx.Context, gbyCols []
 }
 
 // checkValidJoin checks if this join should be pushed across.
-func (a *aggregationPushDownSolver) checkValidJoin(join *LogicalJoin) bool {
+func (*aggregationPushDownSolver) checkValidJoin(join *LogicalJoin) bool {
 	return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 }
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
 // there are no differences between partial mode and complete mode, so we can confuse them.
-func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc,
+func (*aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc,
 	schema *expression.Schema, nullGenerating bool) ([]*aggregation.AggFuncDesc, *expression.Schema) {
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
 	result := []*aggregation.AggFuncDesc{aggFunc.Clone()}
@@ -424,7 +424,7 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 	return newAgg, nil
 }
 
-func (a *aggregationPushDownSolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (a *aggregationPushDownSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return a.aggPushDown(p, opt)
 }
 
@@ -509,8 +509,8 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						p = proj
 					}
 				}
-				// push aggregation across projection
 			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
+				// push aggregation across projection
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
 				noSideEffects := true

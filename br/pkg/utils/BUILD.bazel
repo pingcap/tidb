@@ -18,6 +18,7 @@ go_library(
         "retry.go",
         "safe_point.go",
         "schema.go",
+        "sensitive.go",
         "store_manager.go",
         "worker.go",
     ],
@@ -61,6 +62,7 @@ go_library(
 
 go_test(
     name = "utils_test",
+    timeout = "short",
     srcs = [
         "backoff_test.go",
         "db_test.go",
@@ -73,8 +75,10 @@ go_test(
         "progress_test.go",
         "safe_point_test.go",
         "schema_test.go",
+        "sensitive_test.go",
     ],
     embed = [":utils"],
+    flaky = True,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",

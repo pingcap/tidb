@@ -30,6 +30,7 @@ go_test(
         "utils_test.go",
     ],
     embed = [":sqlexec"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
