@@ -37,7 +37,6 @@ type PlanReplayerHandler struct {
 	address    string
 	statusPort uint
 	scheme     string
-	tlsCfg     *tls.Config
 }
 
 func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
