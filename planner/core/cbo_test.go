@@ -57,8 +57,7 @@ func loadTableStats(fileName string, dom *domain.Domain) error {
 }
 
 func TestExplainAnalyze(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
@@ -82,8 +81,7 @@ func TestExplainAnalyze(t *testing.T) {
 
 // TestCBOWithoutAnalyze tests the plan with stats that only have count info.
 func TestCBOWithoutAnalyze(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (a int)")
@@ -113,8 +111,7 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 }
 
 func TestStraightJoin(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	h := dom.StatsHandle()
@@ -135,8 +132,7 @@ func TestStraightJoin(t *testing.T) {
 }
 
 func TestTableDual(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec(`use test`)
@@ -165,8 +161,7 @@ func TestTableDual(t *testing.T) {
 }
 
 func TestEstimation(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	statistics.RatioOfPseudoEstimate.Store(10.0)
 	defer statistics.RatioOfPseudoEstimate.Store(0.7)
@@ -213,8 +208,7 @@ func constructInsertSQL(i, n int) string {
 }
 
 func TestIndexRead(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
@@ -264,8 +258,7 @@ func TestIndexRead(t *testing.T) {
 }
 
 func TestEmptyTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
@@ -295,8 +288,7 @@ func TestEmptyTable(t *testing.T) {
 }
 
 func TestAnalyze(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1, t2, t3")
@@ -363,8 +355,7 @@ func TestAnalyze(t *testing.T) {
 }
 
 func TestOutdatedAnalyze(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int, index idx(a))")
@@ -408,8 +399,7 @@ func TestOutdatedAnalyze(t *testing.T) {
 }
 
 func TestNullCount(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -438,8 +428,7 @@ func TestNullCount(t *testing.T) {
 }
 
 func TestCorrelatedEstimation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
@@ -462,8 +451,7 @@ func TestCorrelatedEstimation(t *testing.T) {
 }
 
 func TestInconsistentEstimation(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index ab(a,b), index ac(a,c))")
@@ -495,8 +483,7 @@ func TestInconsistentEstimation(t *testing.T) {
 }
 
 func BenchmarkOptimize(b *testing.B) {
-	store, clean := testkit.CreateMockStore(b)
-	defer clean()
+	store := testkit.CreateMockStore(b)
 
 	testKit := testkit.NewTestKit(b, store)
 	testKit.MustExec("use test")
@@ -613,8 +600,7 @@ func BenchmarkOptimize(b *testing.B) {
 }
 
 func TestIssue9562(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -644,8 +630,7 @@ func TestIssue9562(t *testing.T) {
 }
 
 func TestIssue9805(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -673,8 +658,7 @@ func TestIssue9805(t *testing.T) {
 }
 
 func TestLimitCrossEstimation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
@@ -709,8 +693,7 @@ func TestLimitCrossEstimation(t *testing.T) {
 }
 
 func TestLowSelIndexGreedySearch(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
@@ -737,8 +720,7 @@ func TestLowSelIndexGreedySearch(t *testing.T) {
 }
 
 func TestUpdateProjEliminate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -747,8 +729,7 @@ func TestUpdateProjEliminate(t *testing.T) {
 }
 
 func TestTiFlashCostModel(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -781,8 +762,7 @@ func TestTiFlashCostModel(t *testing.T) {
 }
 
 func TestIndexEqualUnknown(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
@@ -806,8 +786,7 @@ func TestIndexEqualUnknown(t *testing.T) {
 }
 
 func TestLimitIndexEstimation(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -835,8 +814,7 @@ func TestLimitIndexEstimation(t *testing.T) {
 }
 
 func TestBatchPointGetTablePartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t1,t2,t3,t4,t5,t6")
@@ -1077,8 +1055,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 
 // TestAppendIntPkToIndexTailForRangeBuilding tests for issue25219 https://github.com/pingcap/tidb/issues/25219.
 func TestAppendIntPkToIndexTailForRangeBuilding(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t25219(a int primary key, col3 int, col1 int, index idx(col3))")
