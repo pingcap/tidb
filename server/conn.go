@@ -331,6 +331,10 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 }
 
 func (cc *clientConn) Close() error {
+    // connection is already closed by other thread
+    if atomic.LoadInt32(&cc.status) == connStatusShutdown {
+        return nil
+    }
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	connections := len(cc.server.clients)
