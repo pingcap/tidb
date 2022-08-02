@@ -24,22 +24,70 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
 )
 
+// withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
+	return mockstore.WithMultipleOptions(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < nodes {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+}
+
+func TestCompactUnknownTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	err := tk.ExecToErr(`alter table test compact tiflash replica;`)
+	require.Equal(t, "[planner:1046]No database selected", err.Error())
+
+	err = tk.ExecToErr(`alter table test.foo compact tiflash replica;`)
+	require.Equal(t, "[schema:1146]Table 'test.foo' doesn't exist", err.Error())
+
+	tk.MustExec("use test")
+	err = tk.ExecToErr(`alter table bar compact;`)
+	require.Equal(t, "[schema:1146]Table 'test.bar' doesn't exist", err.Error())
+}
+
 func TestCompactTableNoTiFlashReplica(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec(`alter table t compact tiflash replica;`)
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
+		`Warning 1105 compact skipped: no tiflash replica in the table`,
+	))
+
+	tk.MustExec(`alter table test.t compact;`)
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
+		`Warning 1105 compact skipped: no tiflash replica in the table`,
+	))
+
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec(`alter table test.t compact;`)
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
 		`Warning 1105 compact skipped: no tiflash replica in the table`,
 	))
@@ -53,8 +101,7 @@ func TestCompactTableTooBusy(t *testing.T) {
 		}, nil
 	})
 	defer mocker.RequireAllHandlersHit()
-	store, clean := testkit.CreateMockStore(t, withMockTiFlash(1), mocker.AsOpt())
-	defer clean()
+	store := testkit.CreateMockStore(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -74,8 +121,7 @@ func TestCompactTableInProgress(t *testing.T) {
 		}, nil
 	})
 	defer mocker.RequireAllHandlersHit()
-	store, clean := testkit.CreateMockStore(t, withMockTiFlash(1), mocker.AsOpt())
-	defer clean()
+	store := testkit.CreateMockStore(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -95,8 +141,7 @@ func TestCompactTableInternalError(t *testing.T) {
 		}, nil
 	})
 	defer mocker.RequireAllHandlersHit()
-	store, clean := testkit.CreateMockStore(t, withMockTiFlash(1), mocker.AsOpt())
-	defer clean()
+	store := testkit.CreateMockStore(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -111,9 +156,7 @@ func TestCompactTableInternalError(t *testing.T) {
 // TestCompactTableNoRemaining: Returns NoRemaining for request #1.
 func TestCompactTableNoRemaining(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
-	defer mocker.RequireAllHandlersHit()
-	store, do, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
@@ -127,20 +170,35 @@ func TestCompactTableNoRemaining(t *testing.T) {
 			CompactedEndKey:   []byte{0xFF},
 		}, nil
 	})
-
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec(`alter table t set tiflash replica 1;`)
 	tk.MustExec(`alter table t compact tiflash replica;`)
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
+	mocker.RequireAllHandlersHit()
+
+	mocker.MockFrom(`tiflash0/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableID := do.MustGetTableID(t, "test", "t")
+		require.Empty(t, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, tableID)
+		require.EqualValues(t, req.LogicalTableId, tableID)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      false,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xFF},
+		}, nil
+	})
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec(`alter table test.t compact;`)
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
+	mocker.RequireAllHandlersHit()
 }
 
 // TestCompactTableHasRemaining: Returns HasRemaining=true for request #1 and #2, returns HasRemaining=false for request #3.
 func TestCompactTableHasRemaining(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
-	store, do, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
@@ -188,8 +246,7 @@ func TestCompactTableHasRemaining(t *testing.T) {
 func TestCompactTableErrorInHalfway(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
-	store, _, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
-	defer clean()
+	store, _ := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
@@ -220,8 +277,7 @@ func TestCompactTableErrorInHalfway(t *testing.T) {
 func TestCompactTableNoRemainingMultipleTiFlash(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
-	store, do, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
@@ -260,8 +316,7 @@ func TestCompactTableNoRemainingMultipleTiFlash(t *testing.T) {
 func TestCompactTableMultipleTiFlash(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
-	store, _, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
-	defer clean()
+	store, _ := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
@@ -320,8 +375,7 @@ func TestCompactTableMultipleTiFlash(t *testing.T) {
 func TestCompactTableMultipleTiFlashWithError(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
-	store, _, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(3), mocker.AsOpt())
-	defer clean()
+	store, _ := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(3), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
@@ -392,8 +446,7 @@ func TestCompactTableMultipleTiFlashWithError(t *testing.T) {
 func TestCompactTableWithRangePartition(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
-	store, do, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
@@ -507,8 +560,7 @@ func TestCompactTableWithRangePartition(t *testing.T) {
 func TestCompactTableWithHashPartitionAndOnePartitionFailed(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
-	store, do, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
@@ -583,8 +635,7 @@ func TestCompactTableWithHashPartitionAndOnePartitionFailed(t *testing.T) {
 func TestCompactTableWithTiFlashDown(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
-	store, _, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
-	defer clean()
+	store, _ := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
@@ -633,8 +684,7 @@ func TestCompactTableWithTiFlashDown(t *testing.T) {
 func TestCompactTableWithTiFlashDownAndRestore(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
-	store, _, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
-	defer clean()
+	store, _ := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {

@@ -23,8 +23,7 @@ import (
 )
 
 func TestExportRowID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().AllowWriteRowID = true
 	defer func() {
@@ -69,8 +68,7 @@ func TestExportRowID(t *testing.T) {
 }
 
 func TestNotAllowWriteRowID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
@@ -99,8 +97,7 @@ func TestNotAllowWriteRowID(t *testing.T) {
 
 // Test for https://github.com/pingcap/tidb/issues/22029.
 func TestExplicitInsertRowID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_explicit_insert_rowid;")
 	tk.MustExec("create database test_explicit_insert_rowid;")

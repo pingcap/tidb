@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -611,7 +612,6 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 			Peers:       region.Meta.Peers,
 			RegionEpoch: region.Meta.RegionEpoch,
 		}
-
 	}
 	return regions, nil
 }
@@ -755,6 +755,34 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
+		if transactionSummaryCapacity := req.Form.Get("transaction_summary_capacity"); transactionSummaryCapacity != "" {
+			capacity, err := strconv.Atoi(transactionSummaryCapacity)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			} else if capacity < 0 || capacity > 5000 {
+				writeError(w, errors.New("transaction_summary_capacity out of range, should be in 0 to 5000"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.TrxSummary.TransactionSummaryCapacity = uint(capacity)
+			config.StoreGlobalConfig(cfg)
+			txninfo.Recorder.ResizeSummaries(uint(capacity))
+		}
+		if transactionIDDigestMinDuration := req.Form.Get("transaction_id_digest_min_duration"); transactionIDDigestMinDuration != "" {
+			duration, err := strconv.Atoi(transactionIDDigestMinDuration)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			} else if duration < 0 || duration > 2147483647 {
+				writeError(w, errors.New("transaction_id_digest_min_duration out of range, should be in 0 to 2147483647"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.TrxSummary.TransactionIDDigestMinDuration = uint(duration)
+			config.StoreGlobalConfig(cfg)
+			txninfo.Recorder.SetMinDuration(time.Duration(duration) * time.Millisecond)
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
@@ -888,8 +916,7 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	fn := func(jobs []*model.Job) (bool, error) {
 		return executor.GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
 	}
-
-	err = ddl.IterAllDDLJobs(txn, fn)
+	err = ddl.IterAllDDLJobs(s, txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,
@@ -972,7 +999,7 @@ func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, ta
 	}
 	defer s.Close()
 
-	ctx := s.(sessionctx.Context)
+	sctx := s.(sessionctx.Context)
 	condition := make([]string, 0)
 	params := make([]interface{}, 0)
 
@@ -987,17 +1014,19 @@ func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, ta
 
 	sql := `select TABLE_SCHEMA,TABLE_NAME,TABLE_ROWS,AVG_ROW_LENGTH,DATA_LENGTH,MAX_DATA_LENGTH,INDEX_LENGTH,DATA_FREE from INFORMATION_SCHEMA.TABLES`
 	if len(condition) > 0 {
+		//nolint: gosec
 		sql += ` WHERE ` + strings.Join(condition, ` AND `)
 	}
 	var results sqlexec.RecordSet
-	if results, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, params...); err != nil {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	if results, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, params...); err != nil {
 		logutil.BgLogger().Error(`ExecuteInternal`, zap.Error(err))
 	} else if results != nil {
 		messages = make([]*schemaTableStorage, 0)
 		defer terror.Call(results.Close)
 		for {
 			req := results.NewChunk(nil)
-			if err = results.Next(context.TODO(), req); err != nil {
+			if err = results.Next(ctx, req); err != nil {
 				break
 			}
 
@@ -1265,7 +1294,7 @@ func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
 	}
 	txnMeta := meta.NewMeta(txn)
 
-	jobs, err := txnMeta.GetAllHistoryDDLJobs()
+	jobs, err := ddl.GetAllHistoryDDLJobs(txnMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1792,7 +1821,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	}
 	colMap := make(map[int64]*types.FieldType, 3)
 	for _, col := range tb.Meta().Columns {
-		colMap[col.ID] = &col.FieldType
+		colMap[col.ID] = &(col.FieldType)
 	}
 
 	respValue := resp.Value

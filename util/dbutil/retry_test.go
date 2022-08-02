@@ -120,6 +120,10 @@ func TestIsRetryableError(t *testing.T) {
 			err:       newMysqlErr(errno.ErrTxnRetryable, "KV error safe to retry Txn(Mvcc(TxnLockNotFound { start_ts: TimeStamp(425904341916582174), commit_ts: TimeStamp(425904342991372376)"),
 			retryable: true,
 		},
+		{
+			err:       newMysqlErr(errno.ErrColumnInChange, "column c1 id 123 does not exist, this column may have been updated by other DDL ran in parallel"),
+			retryable: true,
+		},
 	}
 
 	for _, cs := range cases {

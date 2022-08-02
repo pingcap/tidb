@@ -273,6 +273,175 @@ func TestJobCodec(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isDependent)
 
+	// Test IsDependentOn for exchange partition with table.
+	// test ActionCreateSchema and ActionExchangeTablePartition is dependent.
+	job3 := &Job{
+		ID:         4,
+		TableID:    4,
+		SchemaID:   4,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{int64(6), int64(3), int64(5), "pt", true},
+	}
+	job3.RawArgs, err = json.Marshal(job3.Args)
+	require.NoError(t, err)
+	isDependent, err = job3.IsDependentOn(job2)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	// test random and ActionExchangeTablePartition is dependent because TableID is same.
+	job4 := &Job{
+		ID:         5,
+		TableID:    5,
+		SchemaID:   3,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{6, 4, 2, "pt", true},
+	}
+	job4.RawArgs, err = json.Marshal(job4.Args)
+	require.NoError(t, err)
+	isDependent, err = job4.IsDependentOn(job)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	// test ActionExchangeTablePartition and ActionExchangeTablePartition is dependent.
+	job5 := &Job{
+		ID:         6,
+		TableID:    6,
+		SchemaID:   6,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{2, 6, 5, "pt", true},
+	}
+	job5.RawArgs, err = json.Marshal(job5.Args)
+	require.NoError(t, err)
+	isDependent, err = job5.IsDependentOn(job4)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	job6 := &Job{
+		ID:         7,
+		TableID:    7,
+		SchemaID:   7,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{6, 4, 2, "pt", true},
+	}
+	job6.RawArgs, err = json.Marshal(job6.Args)
+	require.NoError(t, err)
+	isDependent, err = job6.IsDependentOn(job5)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	job7 := &Job{
+		ID:         8,
+		TableID:    8,
+		SchemaID:   8,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{8, 4, 6, "pt", true},
+	}
+	job7.RawArgs, err = json.Marshal(job7.Args)
+	require.NoError(t, err)
+	isDependent, err = job7.IsDependentOn(job6)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	job8 := &Job{
+		ID:         9,
+		TableID:    9,
+		SchemaID:   9,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{8, 9, 9, "pt", true},
+	}
+	job8.RawArgs, err = json.Marshal(job8.Args)
+	require.NoError(t, err)
+	isDependent, err = job8.IsDependentOn(job7)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	job9 := &Job{
+		ID:         10,
+		TableID:    10,
+		SchemaID:   10,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{10, 10, 8, "pt", true},
+	}
+	job9.RawArgs, err = json.Marshal(job9.Args)
+	require.NoError(t, err)
+	isDependent, err = job9.IsDependentOn(job8)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	// test ActionDropSchema and ActionExchangeTablePartition is dependent.
+	job10 := &Job{
+		ID:         11,
+		TableID:    11,
+		SchemaID:   11,
+		Type:       ActionDropSchema,
+		BinlogInfo: &HistoryInfo{},
+	}
+	job10.RawArgs, err = json.Marshal(job10.Args)
+	require.NoError(t, err)
+
+	job11 := &Job{
+		ID:         12,
+		TableID:    12,
+		SchemaID:   11,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{10, 10, 8, "pt", true},
+	}
+	job11.RawArgs, err = json.Marshal(job11.Args)
+	require.NoError(t, err)
+	isDependent, err = job11.IsDependentOn(job10)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	// test ActionDropTable and ActionExchangeTablePartition is dependent.
+	job12 := &Job{
+		ID:         13,
+		TableID:    13,
+		SchemaID:   11,
+		Type:       ActionDropTable,
+		BinlogInfo: &HistoryInfo{},
+	}
+	job12.RawArgs, err = json.Marshal(job12.Args)
+	require.NoError(t, err)
+	isDependent, err = job11.IsDependentOn(job12)
+	require.NoError(t, err)
+	require.False(t, isDependent)
+
+	job13 := &Job{
+		ID:         14,
+		TableID:    12,
+		SchemaID:   14,
+		Type:       ActionDropTable,
+		BinlogInfo: &HistoryInfo{},
+	}
+	job13.RawArgs, err = json.Marshal(job13.Args)
+	require.NoError(t, err)
+	isDependent, err = job11.IsDependentOn(job13)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	// test ActionDropTable and ActionExchangeTablePartition is dependent.
+	job14 := &Job{
+		ID:         15,
+		TableID:    15,
+		SchemaID:   15,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{16, 17, 12, "pt", true},
+	}
+	job14.RawArgs, err = json.Marshal(job14.Args)
+	require.NoError(t, err)
+	isDependent, err = job13.IsDependentOn(job14)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
 	require.NoError(t, err)
@@ -375,11 +544,8 @@ func TestString(t *testing.T) {
 		{ActionAddIndex, "add index"},
 		{ActionDropIndex, "drop index"},
 		{ActionAddColumn, "add column"},
-		{ActionAddColumns, "add multi-columns"},
 		{ActionDropColumn, "drop column"},
-		{ActionDropColumns, "drop multi-columns"},
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
-		{ActionDropIndexes, "drop multi-indexes"},
 		{ActionAlterTablePlacement, "alter table placement"},
 		{ActionAlterTablePartitionPlacement, "alter table partition placement"},
 		{ActionAlterNoCacheTable, "alter table nocache"},

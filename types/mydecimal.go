@@ -15,6 +15,7 @@
 package types
 
 import (
+	"encoding/json"
 	"math"
 	"strconv"
 	"strings"
@@ -123,19 +124,20 @@ func zeroMyDecimalWithFrac(frac int8) MyDecimal {
 }
 
 // add adds a and b and carry, returns the sum and new carry.
-func add(a, b, carry int32) (int32, int32) {
-	sum := a + b + carry
+func add(a, b, carry int32) (sum int32, newCarry int32) {
+	sum = a + b + carry
 	if sum >= wordBase {
-		carry = 1
+		newCarry = 1
 		sum -= wordBase
 	} else {
-		carry = 0
+		newCarry = 0
 	}
-	return sum, carry
+	return sum, newCarry
 }
 
 // add2 adds a and b and carry, returns the sum and new carry.
 // It is only used in DecimalMul.
+//nolint: revive
 func add2(a, b, carry int32) (int32, int32) {
 	sum := int64(a) + int64(b) + int64(carry)
 	if sum >= wordBase {
@@ -153,32 +155,32 @@ func add2(a, b, carry int32) (int32, int32) {
 }
 
 // sub subtracts b and carry from a, returns the diff and new carry.
-func sub(a, b, carry int32) (int32, int32) {
-	diff := a - b - carry
+func sub(a, b, carry int32) (diff int32, newCarry int32) {
+	diff = a - b - carry
 	if diff < 0 {
-		carry = 1
+		newCarry = 1
 		diff += wordBase
 	} else {
-		carry = 0
+		newCarry = 0
 	}
-	return diff, carry
+	return diff, newCarry
 }
 
 // sub2 subtracts b and carry from a, returns the diff and new carry.
 // the new carry may be 2.
-func sub2(a, b, carry int32) (int32, int32) {
-	diff := a - b - carry
+func sub2(a, b, carry int32) (diff int32, newCarray int32) {
+	diff = a - b - carry
 	if diff < 0 {
-		carry = 1
+		newCarray = 1
 		diff += wordBase
 	} else {
-		carry = 0
+		newCarray = 0
 	}
 	if diff < 0 {
 		diff += wordBase
-		carry++
+		newCarray++
 	}
-	return diff, carry
+	return diff, newCarray
 }
 
 // fixWordCntError limits word count in wordBufLen, and returns overflow or truncate error.
@@ -402,7 +404,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if len(str) == 0 {
 		*d = zeroMyDecimal
-		return ErrBadNumber
+		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
 	}
 	switch str[0] {
 	case '-':
@@ -430,7 +432,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if digitsInt+digitsFrac == 0 {
 		*d = zeroMyDecimal
-		return ErrBadNumber
+		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
 	}
 	wordsInt := digitsToWords(digitsInt)
 	wordsFrac := digitsToWords(digitsFrac)
@@ -1538,6 +1540,41 @@ func (d *MyDecimal) Compare(to *MyDecimal) int {
 	return 1
 }
 
+// None of ToBin, ToFloat64, or ToString can encode MyDecimal without loss.
+// So we still need a MarshalJSON/UnmarshalJSON function.
+type jsonMyDecimal struct {
+	DigitsInt  int8
+	DigitsFrac int8
+	ResultFrac int8
+	Negative   bool
+	WordBuf    [maxWordBufLen]int32
+}
+
+// MarshalJSON implements Marshaler.MarshalJSON interface.
+func (d *MyDecimal) MarshalJSON() ([]byte, error) {
+	var r jsonMyDecimal
+	r.DigitsInt = d.digitsInt
+	r.DigitsFrac = d.digitsFrac
+	r.ResultFrac = d.resultFrac
+	r.Negative = d.negative
+	r.WordBuf = d.wordBuf
+	return json.Marshal(r)
+}
+
+// UnmarshalJSON implements Unmarshaler.UnmarshalJSON interface.
+func (d *MyDecimal) UnmarshalJSON(data []byte) error {
+	var r jsonMyDecimal
+	err := json.Unmarshal(data, &r)
+	if err == nil {
+		d.digitsInt = r.DigitsInt
+		d.digitsFrac = r.DigitsFrac
+		d.resultFrac = r.ResultFrac
+		d.negative = r.Negative
+		d.wordBuf = r.WordBuf
+	}
+	return err
+}
+
 // DecimalNeg reverses decimal's sign.
 func DecimalNeg(from *MyDecimal) *MyDecimal {
 	to := *from
@@ -1649,15 +1686,14 @@ func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
 				carry = 0
 			}
 		} else {
-			if idx2 <= end2 {
-				carry = 1
-			} else {
+			if idx2 > end2 {
 				if to == nil {
 					return 0, nil
 				}
 				*to = zeroMyDecimalWithFrac(to.resultFrac)
 				return 0, nil
 			}
+			carry = 1
 		}
 	}
 

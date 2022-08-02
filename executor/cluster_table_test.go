@@ -63,8 +63,7 @@ func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 }
 
 func TestClusterTableSlowQuery(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
@@ -172,8 +171,7 @@ select 7;`
 }
 
 func TestIssue20236(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
@@ -272,8 +270,7 @@ select 10;`
 }
 
 func TestSQLDigestTextRetriever(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
@@ -304,8 +301,7 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 }
 
 func TestFunctionDecodeSQLDigests(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
@@ -365,8 +361,7 @@ func TestFunctionDecodeSQLDigests(t *testing.T) {
 }
 
 func TestFunctionDecodeSQLDigestsPrivilege(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 

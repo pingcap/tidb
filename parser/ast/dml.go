@@ -542,7 +542,6 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 			if err := tn.AsOf.Restore(ctx); err != nil {
 				return errors.Annotate(err, "An error occurred while restore TableSource.AsOf")
 			}
-
 		}
 		if err := tn.restoreIndexHints(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore TableSource.Source.(*TableName).IndexHints")
@@ -979,7 +978,6 @@ func (s *TableSample) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" PERCENT")
 	case SampleClauseUnitTypeRow:
 		ctx.WriteKeyWord(" ROWS")
-
 	}
 	ctx.WritePlain(")")
 	if s.RepeatableSeed != nil {
@@ -1181,7 +1179,7 @@ func (n *WithClause) Accept(v Visitor) (Node, bool) {
 // Restore implements Node interface.
 func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.WithBeforeBraces {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1194,7 +1192,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 		}()
 	}
 	if !n.WithBeforeBraces && n.With != nil {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1530,7 +1528,7 @@ type SetOprSelectList struct {
 // Restore implements Node interface.
 func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
 		}
@@ -1631,7 +1629,7 @@ func (*SetOprStmt) resultSet() {}
 // Restore implements Node interface.
 func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore UnionStmt.With")
 		}
@@ -2213,7 +2211,7 @@ type DeleteStmt struct {
 // Restore implements Node interface.
 func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -2438,7 +2436,7 @@ type UpdateStmt struct {
 // Restore implements Node interface.
 func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -2674,6 +2672,7 @@ const (
 	ShowPlacementForTable
 	ShowPlacementForPartition
 	ShowPlacementLabels
+	ShowSessionStates
 )
 
 const (
@@ -2706,6 +2705,8 @@ type ShowStmt struct {
 	Roles       []*auth.RoleIdentity // Used for show grants .. using
 	IfNotExists bool                 // Used for `show create database if not exists`
 	Extended    bool                 // Used for `show extended columns from ...`
+
+	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	// GlobalScope is used by `show variables` and `show bindings`
 	GlobalScope bool
@@ -3023,6 +3024,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("PLACEMENT")
 		case ShowPlacementLabels:
 			ctx.WriteKeyWord("PLACEMENT LABELS")
+		case ShowSessionStates:
+			ctx.WriteKeyWord("SESSION_STATES")
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}
@@ -3413,7 +3416,6 @@ func (n *SplitRegionStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		if n.SplitSyntaxOpt.HasPartition {
 			ctx.WriteKeyWord("PARTITION ")
-
 		}
 	}
 	ctx.WriteKeyWord("TABLE ")

@@ -112,7 +112,7 @@ func (r *Rule) Valid() error {
 	if r.Expression == PartitionID {
 		switch len(r.Arguments) {
 		case 3, 4:
-			break
+			return nil
 		default:
 			return errors.NotValidf("arguments %v for patition id", r.Arguments)
 		}
@@ -130,7 +130,7 @@ func (r *Rule) Adjust() {
 }
 
 // check source and target position
-func (r *Rule) adjustColumnPosition(source, target int) (int, int, error) {
+func (r *Rule) adjustColumnPosition(source, target int) (src int, targ int, err error) {
 	// if not found target, ignore it
 	if target == -1 {
 		return source, target, errors.NotFoundf("target column %s", r.TargetColumn)

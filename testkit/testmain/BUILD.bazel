@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testmain",
+    srcs = [
+        "bench.go",
+        "wrapper.go",
+    ],
+    importpath = "github.com/pingcap/tidb/testkit/testmain",
+    visibility = ["//visibility:public"],
+    deps = ["@org_uber_go_goleak//:goleak"],
+)

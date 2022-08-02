@@ -94,6 +94,10 @@ type HashJoinExec struct {
 	finished            atomic.Value
 
 	stats *hashJoinRuntimeStats
+
+	// We pre-alloc and reuse the Rows and RowPtrs for each probe goroutine, to avoid allocation frequently
+	buildSideRows    [][]chunk.Row
+	buildSideRowPtrs [][]chunk.RowPtr
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -148,7 +152,8 @@ func (e *HashJoinExec) Close() error {
 		terror.Call(e.rowContainer.Close)
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
-
+	e.buildSideRows = nil
+	e.buildSideRowPtrs = nil
 	if e.stats != nil && e.rowContainer != nil {
 		e.stats.hashStat = *e.rowContainer.stat
 	}
@@ -328,6 +333,9 @@ func (e *HashJoinExec) initializeForProbe() {
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
+
+	e.buildSideRows = make([][]chunk.Row, e.concurrency)
+	e.buildSideRowPtrs = make([][]chunk.RowPtr, e.concurrency)
 }
 
 func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
@@ -487,7 +495,9 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 }
 
 func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext, rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	buildSideRows, rowsPtrs, err := rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx)
+	var err error
+	e.buildSideRows[workerID], e.buildSideRowPtrs[workerID], err = rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID], e.buildSideRowPtrs[workerID])
+	buildSideRows, rowsPtrs := e.buildSideRows[workerID], e.buildSideRowPtrs[workerID]
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -497,6 +507,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 	}
 
 	iter := chunk.NewIterator4Slice(buildSideRows)
+	defer chunk.FreeIterator(iter)
 	var outerMatchStatus []outerRowStatusFlag
 	rowIdx, ok := 0, false
 	for iter.Begin(); iter.Current() != iter.End(); {
@@ -523,7 +534,9 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 }
 func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	buildSideRows, _, err := rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx)
+	var err error
+	e.buildSideRows[workerID], e.buildSideRowPtrs[workerID], err = rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID], e.buildSideRowPtrs[workerID])
+	buildSideRows := e.buildSideRows[workerID]
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -533,6 +546,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 		return true, joinResult
 	}
 	iter := chunk.NewIterator4Slice(buildSideRows)
+	defer chunk.FreeIterator(iter)
 	hasMatch, hasNull, ok := false, false, false
 	for iter.Begin(); iter.Current() != iter.End(); {
 		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter, joinResult.chk)

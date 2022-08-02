@@ -24,6 +24,7 @@ var retryableServerError = []string{
 	"error during dispatch",
 	"put object timeout",
 	"internalerror",
+	"not read from or written to within the timeout period",
 }
 
 // RetryableFunc presents a retryable operation.

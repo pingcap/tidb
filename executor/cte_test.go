@@ -17,7 +17,6 @@ package executor_test
 import (
 	"fmt"
 	"math/rand"
-	"sort"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -26,11 +25,11 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestBasicCTE(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -78,8 +77,7 @@ func TestBasicCTE(t *testing.T) {
 }
 
 func TestUnionDistinct(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -105,8 +103,7 @@ func TestUnionDistinct(t *testing.T) {
 }
 
 func TestCTEMaxRecursionDepth(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -146,8 +143,7 @@ func TestCTEMaxRecursionDepth(t *testing.T) {
 }
 
 func TestCTEWithLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -359,8 +355,7 @@ func TestSpillToDisk(t *testing.T) {
 		conf.OOMUseTmpStorage = true
 	})
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -403,7 +398,7 @@ func TestSpillToDisk(t *testing.T) {
 	require.Greater(t, memTracker.MaxConsumed(), int64(0))
 	require.Greater(t, diskTracker.MaxConsumed(), int64(0))
 
-	sort.Ints(vals)
+	slices.Sort(vals)
 	resRows := make([]string, 0, rowNum)
 	for i := vals[0]; i <= rowNum; i++ {
 		resRows = append(resRows, fmt.Sprintf("%d", i))
@@ -412,8 +407,7 @@ func TestSpillToDisk(t *testing.T) {
 }
 
 func TestCTEExecError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -443,8 +437,7 @@ func TestCTEExecError(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/33965.
 func TestCTEsInView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 

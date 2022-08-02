@@ -72,6 +72,8 @@ type ResultSet interface {
 	StoreFetchedRows(rows []chunk.Row)
 	GetFetchedRows() []chunk.Row
 	Close() error
+	// IsClosed checks whether the result set is closed.
+	IsClosed() bool
 }
 
 // fetchNotifier represents notifier will be called in COM_FETCH.

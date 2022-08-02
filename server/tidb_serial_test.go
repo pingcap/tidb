@@ -37,17 +37,16 @@ import (
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
 func TestLoadData1(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
+	ts.runTestLoadDataWithColumnList(t, ts.server)
 	ts.runTestLoadData(t, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(t, ts.server)
 	ts.runTestLoadDataForSlowLog(t, ts.server)
 }
 
 func TestConfigDefaultValue(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestsOnNewDB(t, nil, "config", func(dbt *testkit.DBTestKit) {
 		rows := dbt.MustQuery("select @@tidb_slow_log_threshold;")
@@ -58,36 +57,31 @@ func TestConfigDefaultValue(t *testing.T) {
 // Fix issue#22540. Change tidb_dml_batch_size,
 // then check if load data into table with auto random column works properly.
 func TestLoadDataAutoRandom(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataAutoRandom(t)
 }
 
 func TestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataAutoRandomWithSpecialTerm(t)
 }
 
 func TestExplainFor(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestExplainForConn(t)
 }
 
 func TestStmtCount(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestStmtCount(t)
 }
 
 func TestLoadDataListPartition(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataForListPartition(t)
 	ts.runTestLoadDataForListPartition2(t)
@@ -96,8 +90,7 @@ func TestLoadDataListPartition(t *testing.T) {
 }
 
 func TestInvalidTLS(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	cfg := newTestConfig()
 	cfg.Port = 0
@@ -112,8 +105,7 @@ func TestInvalidTLS(t *testing.T) {
 }
 
 func TestTLSAuto(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	// Start the server without TLS configure, letting the server create these as AutoTLS is enabled
 	connOverrider := func(config *mysql.Config) {
@@ -142,8 +134,7 @@ func TestTLSAuto(t *testing.T) {
 }
 
 func TestTLSBasic(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	dir := t.TempDir()
 
@@ -207,8 +198,7 @@ func TestTLSBasic(t *testing.T) {
 }
 
 func TestTLSVerify(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	dir := t.TempDir()
 
@@ -300,8 +290,7 @@ func TestTLSVerify(t *testing.T) {
 }
 
 func TestErrorNoRollback(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key-rollback.pem", "/tmp/ca-cert-rollback.pem")
@@ -368,8 +357,7 @@ func TestErrorNoRollback(t *testing.T) {
 }
 
 func TestPrepareCount(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	require.NoError(t, err)
@@ -392,8 +380,7 @@ func TestPrepareCount(t *testing.T) {
 }
 
 func TestPrepareExecute(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	require.NoError(t, err)
@@ -433,8 +420,7 @@ func TestPrepareExecute(t *testing.T) {
 }
 
 func TestDefaultCharacterAndCollation(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	// issue #21194
 	// 255 is the collation id of mysql client 8 default collation_connection
@@ -457,8 +443,7 @@ func TestDefaultCharacterAndCollation(t *testing.T) {
 }
 
 func TestReloadTLS(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key-reload.pem", "/tmp/ca-cert-reload.pem")

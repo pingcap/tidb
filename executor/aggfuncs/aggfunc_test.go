@@ -165,13 +165,10 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 		switch dataType.GetType() {
 		case mysql.TypeLonglong:
 			val = strconv.FormatInt(row.GetInt64(0), 10)
-			memDelta = aggfuncs.DefInt64Size
 		case mysql.TypeFloat:
 			val = strconv.FormatFloat(float64(row.GetFloat32(0)), 'f', 6, 64)
-			memDelta = aggfuncs.DefFloat64Size
 		case mysql.TypeDouble:
 			val = strconv.FormatFloat(row.GetFloat64(0), 'f', 6, 64)
-			memDelta = aggfuncs.DefFloat64Size
 		case mysql.TypeNewDecimal:
 			decimal := row.GetMyDecimal(0)
 			hash, err := decimal.ToHashKey()
@@ -190,7 +187,6 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			memDelta = 16
 		case mysql.TypeDuration:
 			val = strconv.FormatInt(row.GetInt64(0), 10)
-			memDelta = aggfuncs.DefInt64Size
 		case mysql.TypeJSON:
 			jsonVal := row.GetJSON(0)
 			bytes := make([]byte, 0)

@@ -16,9 +16,8 @@ package cli
 import (
 	"fmt"
 
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/dumpling/log"
+	"go.uber.org/zap"
 )
 
 var (

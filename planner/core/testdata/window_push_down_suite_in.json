@@ -46,7 +46,8 @@
       "explain select count(distinct empid) from (select *, row_number() over () from employee) t",
       "explain select count(distinct empid) from (select *, row_number() over (partition by deptid) from employee) t",
       "explain select count(empid) from (select *, row_number() over () a from employee) t group by a",
-      "explain select count(empid) from (select *, row_number() over (partition by deptid) a from employee) t group by a"
+      "explain select count(empid) from (select *, row_number() over (partition by deptid) a from employee) t group by a",
+      "explain select row_number() over w2, row_number() over w1 from employee window w2 as (order by deptid), w1 as (partition by deptid);"
     ]
   }
 ]
