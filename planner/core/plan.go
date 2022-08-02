@@ -754,7 +754,7 @@ func (p *basePlan) SCtx() sessionctx.Context {
 
 // buildPlanTrace implements Plan
 func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.Cost()}
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.self.Cost()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
 	}
