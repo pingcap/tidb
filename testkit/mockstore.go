@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -59,7 +60,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
-	return store, bootstrap(t, store, 0)
+	return schematracker.UnwrapStorage(store), bootstrap(t, store, 0)
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
@@ -81,12 +82,12 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 // CreateMockStoreWithSchemaLease return a new mock kv.Storage.
 func CreateMockStoreWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
 	store, _ := CreateMockStoreAndDomainWithSchemaLease(t, lease, opts...)
-	return store
+	return schematracker.UnwrapStorage(store)
 }
 
 // CreateMockStoreAndDomainWithSchemaLease return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
-	return store, bootstrap(t, store, lease)
+	return schematracker.UnwrapStorage(store), bootstrap(t, store, lease)
 }
