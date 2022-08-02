@@ -38,6 +38,7 @@ go_library(
 
 go_test(
     name = "schematracker_test",
+    timeout = "short",
     srcs = [
         "dm_tracker_test.go",
         "info_store_test.go",
