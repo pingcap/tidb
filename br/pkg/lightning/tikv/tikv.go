@@ -240,7 +240,7 @@ func CheckTiDBDestination(ctx context.Context, tls *common.TLS, pdAddr string, s
 		}
 	}
 	if !dstIsCorrect {
-		return errors.Errorf("store address `%s` from tidb cluster_info doesn't in store addresses `%s` from pd api), please check whether pd-addr and status-port are correct", storeAddr, strings.Join(stores, ","))
+		return errors.Errorf("store address `%s` from PD API is not in store addresses `%s` from tidb cluster_info, please check whether pd-addr and status-port are correct", storeAddr, strings.Join(stores, ","))
 	}
 	return nil
 }
