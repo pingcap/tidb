@@ -738,6 +738,29 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	return false
 }
 
+func PlanSkipGetTsoFromPD(plan Plan) bool {
+	useLastOracleTS := false
+	switch v := plan.(type) {
+	case *PointGetPlan:
+		if v.Lock && variable.PointLockReadUseLastTso.Load() {
+			useLastOracleTS = true
+		}
+	case *Insert:
+		if v.SelectPlan == nil && variable.InsertUseLastTso.Load() {
+			useLastOracleTS = true
+		}
+	case *Update:
+		if _, Ok := v.SelectPlan.(*PointGetPlan); Ok && variable.PointLockReadUseLastTso.Load() {
+			useLastOracleTS = true
+		}
+	case *Delete:
+		if _, ok := v.SelectPlan.(*PointGetPlan); ok && variable.PointLockReadUseLastTso.Load() {
+			useLastOracleTS = true
+		}
+	}
+	return useLastOracleTS
+}
+
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
 var DefaultDisabledLogicalRulesList *atomic.Value
 

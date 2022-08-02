@@ -974,55 +974,55 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
-	// ctx := context.Background()
+	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = true")
+	tk.MustExec("set global tidb_rc_insert_use_last_tso = true")
 	tk.RefreshSession()
 	sctx := tk.Session()
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
-
 	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
 	tk.MustExec("create table t2(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
-	/*
-		sqlSelectID, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id1 = ? for update")
-		sqlUpdateID, _, _, _ := tk.Session().PrepareStmt("update t1 set id3 = id3 + 10 where id1 = ?")
-		sqlUpdateID2, _, _, _ := tk.Session().PrepareStmt("update t2 set id3 = id3 + 10 where id1 = ?")
-		sqlInsertID, _, _, _ := tk.Session().PrepareStmt("insert into t1 values(?, ?, ?)")
-	*/
 	tk.MustExec("insert into t1 values (1, 1, 1)")
 	tk.MustExec("insert into t2 values (1, 1, 1)")
+
+	sqlSelectID, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id1 = ? for update")
+	sqlUpdateID, _, _, _ := tk.Session().PrepareStmt("update t1 set id3 = id3 + 10 where id1 = ?")
+	sqlUpdateID2, _, _, _ := tk.Session().PrepareStmt("update t2 set id3 = id3 + 10 where id1 = ?")
+	sqlInsertID, _, _, _ := tk.Session().PrepareStmt("insert into t1 values(?, ?, ?)")
 
 	res := tk.MustQuery("show variables like 'transaction_isolation'")
 	require.Equal(t, "READ-COMMITTED", res.Rows()[0][1])
 	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
-	for i := 1; i < 2; i++ {
+	for i := 1; i < 3; i++ {
 		tk.MustExec("begin pessimistic")
-		/*
-			stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
-			require.NoError(t, err)
-			require.NoError(t, stmt.Close())
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
-			require.NoError(t, err)
-			require.Nil(t, stmt)
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, []types.Datum{types.NewDatum(1)})
-			require.NoError(t, err)
-			require.Nil(t, stmt)
 
-			val := i * 10
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, []types.Datum{types.NewDatum(val), types.NewDatum(val), types.NewDatum(val)})
-			require.NoError(t, err)
-			require.Nil(t, stmt)
-		*/
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, []types.Datum{types.NewDatum(1)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+
+		val := i * 10
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, []types.Datum{types.NewDatum(val), types.NewDatum(val), types.NewDatum(val)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+
 		tk.MustExec("commit")
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, int(1), count)
+	require.Equal(t, uint64(2), count)
 
 	// tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = false")
 	// tk.MustExec("delete from t1 where id1 > 1")
@@ -1053,10 +1053,6 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 }
 
 func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
-	// This is a mock workload mocks one which discovers that the tso request count is abnormal.
-	// After the bug fix, the tso request count recovers, so we use this workload to record the current tso request count
-	// to reject future works that accidentally causes tso request increasing.
-	// Note, we do not record all tso requests but some typical requests.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
@@ -1075,53 +1071,47 @@ func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
-
 	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
 	tk.MustExec("create table t2(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
-
 	tk.MustExec("insert into t1 values (1, 1, 1)")
 	tk.MustExec("insert into t2 values (1, 1, 1)")
+	tk.MustExec("insert into t2 values (5, 5, 5)")
 
 	res := tk.MustQuery("show variables like 'transaction_isolation'")
 	require.Equal(t, "READ-COMMITTED", res.Rows()[0][1])
 	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
-	for i := 1; i < 2; i++ {
+	for i := 1; i < 100; i++ {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("select * from t1 where id1 = 1 for update")
 		tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
 		tk.MustExec("update t2 set id3 = id3 + 10 where id1 = 1")
+		tk.MustExec("update t2 set id3 = id3 + 10 where id1 > 3")
 		val := i * 10
 		tk.MustExec(fmt.Sprintf("insert into t2 values(%v, %v, %v)", val, val, val))
 		tk.MustExec("commit")
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, int(3), count)
+	require.Equal(t, uint64(297), count)
 
-	// tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = false")
-	// tk.MustExec("delete from t1 where id1 > 1")
-	/*
-		sctx.SetValue(sessiontxn.TsoRequestCount, 0)
-
-		for i := 1; i < 100; i++ {
-			tk.MustExec("begin pessimistic")
-			stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
-			require.NoError(t, err)
-			require.NoError(t, stmt.Close())
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
-			require.NoError(t, err)
-			require.Nil(t, stmt)
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, []types.Datum{types.NewDatum(1)})
-			require.NoError(t, err)
-			require.Nil(t, stmt)
-
-			val := i * 10
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, []types.Datum{types.NewDatum(val), types.NewDatum(val), types.NewDatum(val)})
-			require.NoError(t, err)
-			require.Nil(t, stmt)
-			tk.MustExec("commit")
-		}
-		count = sctx.Value(sessiontxn.TsoRequestCount)
-		require.Equal(t, uint64(198), count)
-	*/
+	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = false")
+	tk.MustExec("set global tidb_rc_insert_use_last_tso = false")
+	tk.MustExec("delete from t1")
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t2 values (1, 1, 1)")
+	tk.MustExec("insert into t2 values (5, 5, 5)")
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
+	for i := 1; i < 100; i++ {
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("select * from t1 where id1 = 1 for update")
+		tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
+		tk.MustExec("update t2 set id3 = id3 + 10 where id1 = 1")
+		tk.MustExec("update t2 set id3 = id3 + 10 where id1 > 3")
+		val := i * 10
+		tk.MustExec(fmt.Sprintf("insert into t2 values(%v, %v, %v)", val, val, val))
+		tk.MustExec("commit")
+	}
+	count = sctx.Value(sessiontxn.TsoRequestCount)
+	require.Equal(t, uint64(693), count)
 }

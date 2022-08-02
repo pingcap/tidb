@@ -111,21 +111,29 @@ func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 
 // NeedDisableWarmupInOptimizer checks whether optimizer calls `txnManger.AdviseWarmup()` to warmup in RC isolation.
 // txnManger.AdviseWarmup makes all write statement get tso from PD. But for insert, it may not be necessary
-// to do that and it makes higher performance. In fact, txnManger.AdviseWarmup makes read tatement get tso
+// to do that and it makes higher performance. In fact, txnManger.AdviseWarmup makes read statement get tso
 // from PD too, except that it's a "RcReadCheckTS" statement, please reffer to tidb_rc_read_check_ts variable.
-// The necessary condition not performing warmup is as followers:
+// The necessary condition not performing warmup is as followers.
 // 1. RC isolation 2. not internal sqls 3. tidb_rc_insert_use_last_tso is true
-// 4. In transaction 5. Insert without select
+// 4. In transaction 5. Insert without select || execute statement of prepare object
+// In fact, we skip getting tso from PD for insert, point update, point delete, lock point read(SELECT ... FOR UPDATE),
+// but we don't know the final plan, mark the `DisableWarmupInOptimizer` flag here only for insert statement of
+// text protocol, the func `(p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan` explains how to optimize
+// other cases for text protocol. For binary protocol(prepare obj), we marks `DisableWarmupInOptimizer` flag here
+// simply, and the Optimizer skip calling `txnManger.AdviseWarmup()` at first, if the final plan is not satified the rules,
+// call `txnManger.AdviseWarmup()` at later.
 func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := sctx.GetSessionVars()
 	if sessionVars.ConnectionID > 0 &&
 		variable.InsertUseLastTso.Load() &&
 		sessionVars.InTxn() {
+		if _, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+			return true
+		}
 		if insert, ok := node.(*ast.InsertStmt); ok && insert.Select == nil {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -305,25 +313,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	useLastOracleTS := false
-	switch v := plan.(type) {
-	case *plannercore.PointGetPlan:
-		if v.Lock && variable.PointLockReadUseLastTso.Load() {
-			useLastOracleTS = true
-		}
-	case *plannercore.Insert:
-		if v.SelectPlan == nil {
-			useLastOracleTS = true
-		}
-	case *plannercore.Update:
-		if _, Ok := v.SelectPlan.(*plannercore.PointGetPlan); Ok && variable.PointLockReadUseLastTso.Load() {
-			useLastOracleTS = true
-		}
-	case *plannercore.Delete:
-		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok && variable.PointLockReadUseLastTso.Load() {
-			useLastOracleTS = true
-		}
-	}
+	useLastOracleTS := plannercore.PlanSkipGetTsoFromPD(plan)
 
 	if useLastOracleTS {
 		p.stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)

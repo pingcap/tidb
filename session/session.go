@@ -2369,6 +2369,10 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	if err == nil {
 		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
 	}
+	if !s.GetSessionVars().InRestrictedSQL {
+		query := st.OriginText()
+		logutil.Logger(ctx).Info("SQL", zap.String("query", query))
+	}
 	if err != nil {
 		return nil, err
 	}
