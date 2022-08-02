@@ -44,15 +44,15 @@ import (
 )
 
 type domainMap struct {
-	sync.Mutex
+	mu      sync.Mutex
 	domains map[string]*domain.Domain
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	key := store.UUID()
 
-	dm.Lock()
-	defer dm.Unlock()
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
 
 	d = dm.domains[key]
 	if d != nil {
@@ -94,9 +94,9 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 }
 
 func (dm *domainMap) Delete(store kv.Storage) {
-	dm.Lock()
+	dm.mu.Lock()
 	delete(dm.domains, store.UUID())
-	dm.Unlock()
+	dm.mu.Unlock()
 }
 
 var (
