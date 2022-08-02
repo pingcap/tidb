@@ -519,6 +519,7 @@ func isPartExprUnsigned(ctx sessionctx.Context, tbInfo *model.TableInfo) bool {
 }
 
 // getPartitionIntervalFromTable checks if a partitioned table matches a generated INTERVAL partitioned scheme
+// will return nil if error occurs, i.e. not an INTERVAL partitioned table
 func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableInfo) *ast.PartitionInterval {
 	if tbInfo.Partition == nil ||
 		tbInfo.Partition.Type != model.PartitionTypeRange {
@@ -529,15 +530,16 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 		return nil
 	}
 	if len(tbInfo.Partition.Definitions) < 2 {
+		// Must have at least two partitions to calculate an INTERVAL
 		return nil
 	}
 
 	var (
-		interval ast.PartitionInterval
-		startIdx int            = 0
-		endIdx   int            = len(tbInfo.Partition.Definitions) - 1
-		colType  types.EvalType = types.ETInt
-		minVal   string         = "0"
+		interval  ast.PartitionInterval
+		startIdx  int    = 0
+		endIdx    int    = len(tbInfo.Partition.Definitions) - 1
+		isIntType bool   = true
+		minVal    string = "0"
 	)
 	if len(tbInfo.Partition.Columns) > 0 {
 		partCol := findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
@@ -545,11 +547,12 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 			min := getLowerBoundInt(partCol)
 			minVal = strconv.FormatInt(min, 10)
 		} else if partCol.FieldType.EvalType() == types.ETDatetime {
+			isIntType = false
 			minVal = "0000-01-01"
 		} else {
+			// Only INT and Datetime columns are supported for INTERVAL partitioning
 			return nil
 		}
-		colType = partCol.FieldType.EvalType()
 	} else {
 		if !isPartExprUnsigned(ctx, tbInfo) {
 			minVal = "-9223372036854775808"
@@ -572,10 +575,11 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 	}
 	// Guess the interval
 	if startIdx >= endIdx {
+		// Must have at least two partitions to calculate an INTERVAL
 		return nil
 	}
 	var firstExpr, lastExpr ast.ExprNode
-	if colType == types.ETInt {
+	if isIntType {
 		exprStr := fmt.Sprintf("((%s) - (%s)) DIV %d", lastPartLessThan, firstPartLessThan, endIdx-startIdx)
 		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
 		if err != nil {
@@ -583,6 +587,7 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 		}
 		val, isNull, err := exprs[0].EvalInt(ctx, chunk.Row{})
 		if isNull || err != nil || val < 1 {
+			// If NULL, error or interval < 1 then cannot be an INTERVAL partitioned table
 			return nil
 		}
 		interval.IntervalExpr.Expr = ast.NewValueExpr(val, "", "")
@@ -597,7 +602,7 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 			return nil
 		}
 		interval.LastRangeEnd = &lastExpr
-	} else if colType == types.ETDatetime {
+	} else { // types.ETDatetime
 		exprStr := fmt.Sprintf("TIMESTAMPDIFF(SECOND, '%s', '%s')", firstPartLessThan, lastPartLessThan)
 		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
 		if err != nil {
@@ -605,6 +610,7 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 		}
 		val, isNull, err := exprs[0].EvalInt(ctx, chunk.Row{})
 		if isNull || err != nil || val < 1 {
+			// If NULL, error or interval < 1 then cannot be an INTERVAL partitioned table
 			return nil
 		}
 
@@ -633,8 +639,6 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 		lastExpr = ast.NewValueExpr(lastPartLessThan, "", "")
 		interval.FirstRangeEnd = &firstExpr
 		interval.LastRangeEnd = &lastExpr
-	} else {
-		return nil
 	}
 
 	partitionMethod := ast.PartitionMethod{
