@@ -81,6 +81,7 @@ go_library(
 
 go_test(
     name = "local_test",
+    timeout = "short",
     srcs = [
         "engine_test.go",
         "iterator_test.go",
