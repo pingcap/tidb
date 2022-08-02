@@ -16,12 +16,12 @@ package txntest
 
 import (
 	"context"
-	"github.com/pingcap/tidb/expression"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"

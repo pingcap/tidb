@@ -18,12 +18,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"math"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
