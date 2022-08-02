@@ -293,9 +293,7 @@ function run_explain_test()
 
 function check_data_race() {
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/tidb-server
-    else
-        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
+        return
     fi
     race=`grep 'DATA RACE' $explain_test_log || true`
     if [ ! -z "$race" ]; then
