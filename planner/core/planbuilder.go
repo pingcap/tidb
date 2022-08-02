@@ -1180,7 +1180,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		}
 	}
 
-	isolationReadEnginesHasTiKV := ctx.GetSessionVars().ContainTiKVIsolationRead()
+	isolationReadEnginesHasTiKV := ctx.GetSessionVars().ContainSpecialIsolationRead(kv.TiKV)
 	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue

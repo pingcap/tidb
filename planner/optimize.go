@@ -103,7 +103,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	txnManger := sessiontxn.GetTxnManager(sctx)
-	if sessVars.ContainTiKVIsolationRead() {
+	if sessVars.ContainSpecialIsolationRead(kv.TiKV) {
 		var fp core.Plan
 		if fpv, ok := sctx.Value(core.PointPlanKey).(core.PointPlanVal); ok {
 			// point plan is already tried in a multi-statement query.

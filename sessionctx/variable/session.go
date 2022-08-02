@@ -1575,19 +1575,14 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
 }
 
-// ContainTiKVIsolationRead checks whether we can access the TiKV read engines.
-func (s *SessionVars) ContainTiKVIsolationRead() bool {
-	_, ok := s.isolationReadEngines[kv.TiKV]
-	return ok
-}
-
-// ContainTiFlashIsolationRead checks whether we can access the TiFlash read engines.
-func (s *SessionVars) ContainTiFlashIsolationRead() bool {
-	_, ok := s.isolationReadEngines[kv.TiFlash]
+// ContainSpecialIsolationRead checks whether we can access the special read engines.
+func (s *SessionVars) ContainSpecialIsolationRead(engineType kv.StoreType) bool {
+	_, ok := s.isolationReadEngines[engineType]
 	return ok
 }
 
 // GetIsolationReadEngines gets isolation read engines.
+// The return value is read-only.
 func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
 	readEngines := make(map[kv.StoreType]struct{})
 	for isolationReadEngine := range s.isolationReadEngines {

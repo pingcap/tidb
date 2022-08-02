@@ -149,7 +149,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
 		sqlMode:                  sessionVars.SQLMode,
 		timezoneOffset:           timezoneOffset,
-		isolationReadEngines:     sessionVars.GetIsolationReadEngines(),
+		isolationReadEngines:     sessionVars.GetAvailableIsolationReadEngines4Plan(),
 		selectLimit:              sessionVars.SelectLimit,
 		bindSQL:                  bindSQL,
 	}
