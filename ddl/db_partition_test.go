@@ -3709,8 +3709,7 @@ func checkCreateSyntax(t *testing.T, tk *testkit.TestKit, ok bool, sql, showCrea
 }
 
 func TestCreateIntervalPartitionSyntax(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create database IntervalPartitionSyntax")
@@ -3845,8 +3844,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 }
 
 func TestCreateAndAlterIntervalPartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create database IntervalPartition")
