@@ -198,7 +198,7 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcac
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
-	ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64, isBinProtocol bool, varsNum int, binVarTypes []byte,
+	ignorePlanCache bool, cacheKey kvcache.Key, isBinProtocol bool, varsNum int, binVarTypes []byte,
 	txtVarTypes []*types.FieldType) (Plan, []*types.FieldName, error) {
 	prepared := preparedStmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
