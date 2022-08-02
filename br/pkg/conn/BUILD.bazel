@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/conn",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/glue",
         "//br/pkg/logutil",
@@ -14,7 +15,6 @@ go_library(
         "//br/pkg/version",
         "//domain",
         "//kv",
-        "//util/engine",
         "@com_github_docker_go_units//:go-units",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
@@ -44,6 +44,7 @@ go_test(
     embed = [":conn"],
     flaky = True,
     deps = [
+        "//br/pkg/conn/util",
         "//br/pkg/pdutil",
         "//br/pkg/utils",
         "//testkit/testsetup",

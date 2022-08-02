@@ -44,8 +44,7 @@ import (
 )
 
 func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -81,8 +80,7 @@ func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
 }
 
 func TestPreparePointGetWithDML(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -114,8 +112,7 @@ func TestPreparePointGetWithDML(t *testing.T) {
 }
 
 func TestPrepareIgnoreCloseStmtCmd(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -155,8 +152,7 @@ func TestPrepareIgnoreCloseStmtCmd(t *testing.T) {
 }
 
 func TestRandomFlushPlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -245,8 +241,7 @@ func TestRandomFlushPlanCache(t *testing.T) {
 }
 
 func TestFlushPlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -339,8 +334,7 @@ func TestFlushPlanCache(t *testing.T) {
 }
 
 func TestFlushPlanCacheWithoutPCEnable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(false)
@@ -435,8 +429,7 @@ func TestFlushPlanCacheWithoutPCEnable(t *testing.T) {
 }
 
 func TestPrepareCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -516,8 +509,7 @@ func TestPrepareCache(t *testing.T) {
 }
 
 func TestPrepareCacheIndexScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -621,8 +613,7 @@ func randValue(tk *testkit.TestKit, tbl, col, dtype, rtype string) string {
 }
 
 func TestPrepareCacheChangingParamType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -686,8 +677,7 @@ func TestPrepareCacheChangingParamType(t *testing.T) {
 }
 
 func TestPrepareCacheChangeCharsetCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -727,8 +717,7 @@ func TestPrepareCacheChangeCharsetCollation(t *testing.T) {
 }
 
 func TestPrepareCacheDeferredFunction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -780,8 +769,7 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 }
 
 func TestPrepareCacheNow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -804,8 +792,7 @@ func TestPrepareCacheNow(t *testing.T) {
 
 func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210705")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -848,8 +835,7 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 // unit test for issue https://github.com/pingcap/tidb/issues/8518
 func TestPrepareTableAsNameOnGroupByWithCache(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210702")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -882,8 +868,7 @@ func TestPrepareTableAsNameOnGroupByWithCache(t *testing.T) {
 }
 
 func TestPrepareCachePointGetInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -918,8 +903,7 @@ func TestPrepareCachePointGetInsert(t *testing.T) {
 }
 
 func TestIssue31280(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -960,8 +944,7 @@ func TestIssue31280(t *testing.T) {
 }
 
 func TestIssue31375(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1011,8 +994,7 @@ func readGaugeInt(g prometheus.Gauge) int {
 
 // unit test for issue https://github.com/pingcap/tidb/issues/9478
 func TestPrepareWithWindowFunction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_window_function = 1")
 	defer tk.MustExec("set @@tidb_enable_window_function = 0")
@@ -1029,8 +1011,7 @@ func TestPrepareWithWindowFunction(t *testing.T) {
 }
 
 func TestPrepareWindowFunctionWithoutParamsCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(false)
@@ -1061,8 +1042,7 @@ func TestPrepareWindowFunctionWithoutParamsCheck(t *testing.T) {
 }
 
 func TestPrepareWithSnapshot(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	safePointName := "tikv_gc_safe_point"
 	safePointValue := "20060102-15:04:05 -0700"
@@ -1088,8 +1068,7 @@ func TestPrepareWithSnapshot(t *testing.T) {
 }
 
 func TestPrepareForGroupByItems(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1108,8 +1087,7 @@ func TestPrepareForGroupByItems(t *testing.T) {
 }
 
 func TestPrepareCacheForClusteredIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(k varchar(100) primary key clustered, v1 int, v2 int)")
@@ -1122,8 +1100,7 @@ func TestPrepareCacheForClusteredIndex(t *testing.T) {
 }
 
 func TestPrepareCacheForPartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1249,8 +1226,6 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		if pruneMode == string(variable.Dynamic) {
 			// When the temporary disabling of prepared plan cache for dynamic partition prune mode is disabled, change this to 1!
 			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-		} else {
-			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 		}
 	}
 }
@@ -1269,8 +1244,7 @@ func mustExec(t *testing.T, se session.Session, sql string) {
 }
 
 func TestConstPropAndPPDWithCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1369,8 +1343,7 @@ func TestConstPropAndPPDWithCache(t *testing.T) {
 }
 
 func TestPlanCacheUnionScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1468,8 +1441,7 @@ func TestPlanCacheUnionScan(t *testing.T) {
 }
 
 func TestPlanCacheSwitchDB(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1523,8 +1495,7 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 
 func TestPlanCacheHitInfo(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210705")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1559,8 +1530,7 @@ func TestPlanCacheHitInfo(t *testing.T) {
 }
 
 func TestIssue29303(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1587,8 +1557,7 @@ func TestIssue29303(t *testing.T) {
 }
 
 func TestIssue34725(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1613,8 +1582,7 @@ func TestIssue34725(t *testing.T) {
 }
 
 func TestIssue33628(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(false)
@@ -1634,8 +1602,7 @@ func TestIssue33628(t *testing.T) {
 }
 
 func TestIssue28942(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1662,8 +1629,7 @@ func TestIssue28942(t *testing.T) {
 }
 
 func TestPlanCacheUnsignedHandleOverflow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1689,8 +1655,7 @@ func TestPlanCacheUnsignedHandleOverflow(t *testing.T) {
 }
 
 func TestIssue28254(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1716,8 +1681,7 @@ func TestIssue28254(t *testing.T) {
 }
 
 func TestIssue33067(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1740,8 +1704,7 @@ func TestIssue33067(t *testing.T) {
 }
 
 func TestIssue29486(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1771,8 +1734,7 @@ func TestIssue29486(t *testing.T) {
 }
 
 func TestIssue28867(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1814,8 +1776,7 @@ func TestIssue28867(t *testing.T) {
 }
 
 func TestParamMarker4FastPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1926,8 +1887,7 @@ func TestParamMarker4FastPlan(t *testing.T) {
 }
 
 func TestIssue29565(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1949,8 +1909,7 @@ func TestIssue29565(t *testing.T) {
 }
 
 func TestIssue31730(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -1966,8 +1925,7 @@ func TestIssue31730(t *testing.T) {
 }
 
 func TestIssue28828(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2006,8 +1964,7 @@ func TestIssue28828(t *testing.T) {
 }
 
 func TestIssue28920(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2036,8 +1993,7 @@ func TestIssue28920(t *testing.T) {
 }
 
 func TestIssue18066(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2067,8 +2023,7 @@ func TestIssue18066(t *testing.T) {
 }
 
 func TestPrepareForGroupByMultiItems(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -2092,8 +2047,7 @@ func TestPrepareForGroupByMultiItems(t *testing.T) {
 }
 
 func TestInvisibleIndexPrepare(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -2121,8 +2075,7 @@ func TestInvisibleIndexPrepare(t *testing.T) {
 
 // Test for issue https://github.com/pingcap/tidb/issues/22167
 func TestPrepareCacheWithJoinTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2144,8 +2097,7 @@ func TestPrepareCacheWithJoinTable(t *testing.T) {
 }
 
 func TestPlanCacheSnapshot(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2190,8 +2142,7 @@ func TestPlanCacheSnapshot(t *testing.T) {
 }
 
 func TestPlanCachePointGetAndTableDual(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2270,8 +2221,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 }
 
 func TestIssue26873(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2294,8 +2244,7 @@ func TestIssue26873(t *testing.T) {
 }
 
 func TestIssue29511(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2316,8 +2265,7 @@ func TestIssue29511(t *testing.T) {
 }
 
 func TestIssue23671(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2341,8 +2289,7 @@ func TestIssue23671(t *testing.T) {
 }
 
 func TestIssue29296(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2374,8 +2321,7 @@ func TestIssue29296(t *testing.T) {
 }
 
 func TestIssue28246(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2402,8 +2348,7 @@ func TestIssue28246(t *testing.T) {
 }
 
 func TestIssue29805(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2431,8 +2376,7 @@ func TestIssue29805(t *testing.T) {
 }
 
 func TestIssue29993(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2502,8 +2446,7 @@ func TestIssue29993(t *testing.T) {
 }
 
 func TestIssue30100(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2530,8 +2473,7 @@ func TestIssue30100(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2664,8 +2606,7 @@ func TestPartitionTable(t *testing.T) {
 }
 
 func TestPartitionWithVariedDataSources(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2820,8 +2761,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 }
 
 func TestCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(true)
@@ -2893,8 +2833,7 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	core.SetPreparedPlanCache(true)
 
 	ctx := context.Background()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -2934,8 +2873,7 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 
 func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 	ctx := context.Background()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -2979,7 +2917,6 @@ func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 	// After beginning a new txn, the infoSchema should be the latest
 	tk1.MustExec("begin pessimistic")
 	tk1.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "3"))
-
 }
 
 func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *testkit.TestKit, stmtID uint32) {
@@ -3014,8 +2951,7 @@ func TestCacheHitInRc(t *testing.T) {
 	core.SetPreparedPlanCache(true)
 
 	ctx := context.Background()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -3047,8 +2983,7 @@ func TestCacheHitInForUpdateRead(t *testing.T) {
 	core.SetPreparedPlanCache(true)
 
 	ctx := context.Background()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -3076,8 +3011,7 @@ func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
 	core.SetPreparedPlanCache(true)
 
 	ctx := context.Background()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -3112,4 +3046,21 @@ func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
 	require.Nil(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestPreparedShowStatements(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`prepare p1 from 'show variables like "tidb_snapshot"';`)
+	tk.MustQuery(`execute p1;`).Check(testkit.Rows("tidb_snapshot "))
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec(`prepare p2 from "show columns from t where field = 'a'";`) // Only column `a` is selected.
+	tk.MustQuery(`execute p2;`).Check(testkit.Rows("a int(11) YES  <nil> "))
+
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec(`prepare p3 from "show tables where tables_in_test = 't1'";`) // Only table `t1` is selected.
+	tk.MustQuery("execute p3;").Check(testkit.Rows("t1"))
 }

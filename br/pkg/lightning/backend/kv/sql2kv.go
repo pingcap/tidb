@@ -325,25 +325,25 @@ func KvPairsFromRows(rows Rows) []common.KvPair {
 	return rows.(*KvPairs).pairs
 }
 
-// KvPairsFromRow converts a Rows instance constructed from MakeRowsFromKvPair
-// back into a slice of KvPair. This method panics if the Rows is not
+// KvPairsFromRow converts a Row instance constructed from MakeRowFromKvPairs
+// back into a slice of KvPair. This method panics if the Row is not
 // constructed in such way.
 // nolint:golint // kv.KvPairsFromRow sounds good.
 func KvPairsFromRow(row Row) []common.KvPair {
 	return row.(*KvPairs).pairs
 }
 
-func evaluateGeneratedColumns(se *session, record []types.Datum, cols []*table.Column, genCols []genCol) (err error, errCol *model.ColumnInfo) {
+func evaluateGeneratedColumns(se *session, record []types.Datum, cols []*table.Column, genCols []genCol) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.index].ToInfo()
 		evaluated, err := gc.expr.Eval(mutRow.ToRow())
 		if err != nil {
-			return err, col
+			return col, err
 		}
 		value, err := table.CastValue(se, evaluated, col, false, false)
 		if err != nil {
-			return err, col
+			return col, err
 		}
 		mutRow.SetDatum(gc.index, value)
 		record[gc.index] = value
@@ -426,7 +426,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 
 	if len(kvcodec.genCols) > 0 {
-		if err, errCol := evaluateGeneratedColumns(kvcodec.se, record, cols, kvcodec.genCols); err != nil {
+		if errCol, err := evaluateGeneratedColumns(kvcodec.se, record, cols, kvcodec.genCols); err != nil {
 			return nil, logEvalGenExprFailed(logger, row, errCol, err)
 		}
 	}
@@ -460,8 +460,8 @@ func isPKCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasPriKeyFlag(colInfo.GetFlag())
 }
 
-// GetEncoderAutoIDFn return Auto increment id.
-func GetEncoderAutoIDFn(encoder Encoder, id int64) int64 {
+// GetEncoderIncrementalID return Auto increment id.
+func GetEncoderIncrementalID(encoder Encoder, id int64) int64 {
 	return encoder.(*tableKVEncoder).autoIDFn(id)
 }
 

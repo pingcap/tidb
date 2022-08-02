@@ -399,7 +399,7 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		}, nil, log.L())
 		require.NoError(t, err)
 
-		realRowID := lkv.GetEncoderAutoIDFn(encoder, rowID)
+		realRowID := lkv.GetEncoderIncrementalID(encoder, rowID)
 
 		var nullDatum types.Datum
 		nullDatum.SetNull()
@@ -431,7 +431,6 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		require.NoError(t, err)
 		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
 		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder)).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
-
 	}
 }
 

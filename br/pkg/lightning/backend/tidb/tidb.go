@@ -227,7 +227,6 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 					}
 				}
 			}
-
 		}
 		return nil
 	})

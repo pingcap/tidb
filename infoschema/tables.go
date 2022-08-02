@@ -927,6 +927,14 @@ var TableTiDBHotRegionsHistoryCols = []columnInfo{
 	{name: "QUERY_RATE", tp: mysql.TypeDouble, size: 22},
 }
 
+// GetTableTiDBHotRegionsHistoryCols is to get TableTiDBHotRegionsHistoryCols.
+// It is an optimization because Go does’t support const arrays. The solution  is to use initialization functions.
+// It is useful in the BCE optimization.
+// https://go101.org/article/bounds-check-elimination.html
+func GetTableTiDBHotRegionsHistoryCols() []columnInfo {
+	return TableTiDBHotRegionsHistoryCols
+}
+
 // TableTiKVStoreStatusCols is TiDB kv store status columns.
 var TableTiKVStoreStatusCols = []columnInfo{
 	{name: "STORE_ID", tp: mysql.TypeLonglong, size: 21},
@@ -994,6 +1002,14 @@ var TableTiKVRegionPeersCols = []columnInfo{
 	{name: "IS_LEADER", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "STATUS", tp: mysql.TypeVarchar, size: 10, deflt: 0},
 	{name: "DOWN_SECONDS", tp: mysql.TypeLonglong, size: 21, deflt: 0},
+}
+
+// GetTableTiKVRegionPeersCols is to get TableTiKVRegionPeersCols.
+// It is an optimization because Go does’t support const arrays. The solution  is to use initialization functions.
+// It is useful in the BCE optimization.
+// https://go101.org/article/bounds-check-elimination.html
+func GetTableTiKVRegionPeersCols() []columnInfo {
+	return TableTiKVRegionPeersCols
 }
 
 var tableTiDBServersInfoCols = []columnInfo{
@@ -1494,7 +1510,7 @@ var tablePlacementPoliciesCols = []columnInfo{
 
 var tableVariablesInfoCols = []columnInfo{
 	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "VARIABLES_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "VARIABLE_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "DEFAULT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "CURRENT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 64},

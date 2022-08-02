@@ -49,7 +49,7 @@ func assertRegions(t *testing.T, regions []*split.RegionInfo, keys ...string) {
 
 func TestScanSuccess(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(1, 0, 0)
 	ctx := context.Background()
 
@@ -89,7 +89,7 @@ func TestScanSuccess(t *testing.T) {
 
 func TestNotLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(1, 0, 0)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
@@ -145,13 +145,13 @@ func printPDRegion(name string, infos []*pdtypes.Region) {
 
 func TestEpochNotMatch(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
-	regions, err := restore.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
+	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
 	require.NoError(t, err)
 	require.Len(t, regions, 2)
 	left, right := regions[0], regions[1]
@@ -204,13 +204,13 @@ func TestEpochNotMatch(t *testing.T) {
 
 func TestRegionSplit(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
-	regions, err := restore.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("aazz"), 1)
+	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("aazz"), 1)
 	require.NoError(t, err)
 	require.Len(t, regions, 1)
 	target := regions[0]
@@ -280,13 +280,13 @@ func TestRegionSplit(t *testing.T) {
 
 func TestRetryBackoff(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
-	regions, err := restore.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
+	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
 	require.NoError(t, err)
 	require.Len(t, regions, 2)
 	left := regions[0]
@@ -331,7 +331,7 @@ func envInt(name string, def int) int {
 
 func TestPaginateScanLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
 	ctl := restore.OverRegionsInRange([]byte("aa"), []byte("aaz"), cli, &rs)
 	ctx := context.Background()

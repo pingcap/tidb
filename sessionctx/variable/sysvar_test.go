@@ -394,7 +394,6 @@ func TestTimeZone(t *testing.T) {
 	tz, err := parseTimeZone("UTC")
 	require.NoError(t, err)
 	require.Equal(t, tz, vars.TimeZone)
-
 }
 
 func TestForeignKeyChecks(t *testing.T) {
@@ -407,7 +406,6 @@ func TestForeignKeyChecks(t *testing.T) {
 
 	warn := vars.StmtCtx.GetWarnings()[0].Err
 	require.Equal(t, "[variable:8047]variable 'foreign_key_checks' does not yet support value: on", warn.Error())
-
 }
 
 func TestTxnIsolation(t *testing.T) {

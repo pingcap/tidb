@@ -48,10 +48,9 @@ go_test(
         "session_test.go",
         "sql2kv_test.go",
     ],
-    embed = [":kv"],
     flaky = True,
     deps = [
-        "//br/pkg/lightning/backend/kv",
+        ":kv",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/verification",

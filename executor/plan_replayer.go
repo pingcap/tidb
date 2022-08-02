@@ -62,8 +62,9 @@ type tableNamePair struct {
 }
 
 type tableNameExtractor struct {
-	curDB string
-	names map[tableNamePair]struct{}
+	curDB    string
+	names    map[tableNamePair]struct{}
+	cteNames map[string]struct{}
 }
 
 func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -81,6 +82,12 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 		}
 		if _, ok := tne.names[tp]; !ok {
 			tne.names[tp] = struct{}{}
+		}
+	} else if s, ok := in.(*ast.SelectStmt); ok {
+		if s.With != nil && len(s.With.CTEs) > 0 {
+			for _, cte := range s.With.CTEs {
+				tne.cteNames[cte.Name.L] = struct{}{}
+			}
 		}
 	}
 	return in, true
@@ -172,7 +179,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err e
 	// Retrieve all tables
 	pairs, err := extractTableNames(e.ExecStmt, dbName.L)
 	if err != nil {
-		return "", errors.AddStack(errors.New(fmt.Sprintf("plan replayer: invalid SQL text, err: %v", err)))
+		return "", errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
 	}
 
 	// Dump Schema
@@ -385,12 +392,21 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 }
 
 func extractTableNames(ExecStmt ast.StmtNode, curDB string) (map[tableNamePair]struct{}, error) {
-	extractor := &tableNameExtractor{
-		curDB: curDB,
-		names: make(map[tableNamePair]struct{}),
+	tableExtractor := &tableNameExtractor{
+		curDB:    curDB,
+		names:    make(map[tableNamePair]struct{}),
+		cteNames: make(map[string]struct{}),
 	}
-	ExecStmt.Accept(extractor)
-	return extractor.names, nil
+	ExecStmt.Accept(tableExtractor)
+	r := make(map[tableNamePair]struct{})
+	// remove cte in table names
+	for tablePair := range tableExtractor.names {
+		_, ok := tableExtractor.cteNames[tablePair.TableName]
+		if !ok {
+			r[tablePair] = struct{}{}
+		}
+	}
+	return r, nil
 }
 
 func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable, error) {
@@ -418,7 +434,7 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 		return errors.AddStack(err)
 	}
 	if len(sRows) == 0 || len(sRows[0]) != 2 {
-		return errors.New(fmt.Sprintf("plan replayer: get create table %v.%v failed", pair.DBName, pair.TableName))
+		return fmt.Errorf("plan replayer: get create table %v.%v failed", pair.DBName, pair.TableName)
 	}
 	fmt.Fprintf(fw, "create database `%v`; use `%v`;", pair.DBName, pair.DBName)
 	fmt.Fprintf(fw, "%s", sRows[0][1])
@@ -526,7 +542,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
-			//nolint: errcheck
+			//nolint: errcheck,all_revive
 			defer v.Close()
 			_, err = toml.DecodeReader(v, &varMap)
 			if err != nil {

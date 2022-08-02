@@ -965,8 +965,8 @@ func getRangeValue(ctx sessionctx.Context, str string, unsigned bool) (interface
 	return 0, false, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
 }
 
-// checkDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
-func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) error {
+// CheckDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
+func CheckDropTablePartition(meta *model.TableInfo, partLowerNames []string) error {
 	pi := meta.Partition
 	if pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList {
 		return dbterror.ErrOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
@@ -1125,7 +1125,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	switch job.SchemaState {
 	case model.StatePublic:
 		// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
-		err = checkDropTablePartition(tblInfo, partNames)
+		err = CheckDropTablePartition(tblInfo, partNames)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -1749,7 +1749,7 @@ func getInValues(pi *model.PartitionInfo, index int) []string {
 }
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
-	if piDefs > uint64(PartitionCountLimit) {
+	if piDefs > uint64(mysql.PartitionCountLimit) {
 		return errors.Trace(dbterror.ErrTooManyPartitions)
 	}
 	return nil
@@ -1870,7 +1870,7 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 	} else {
 		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
 		for _, col := range pi.Columns {
-			colInfo := getColumnInfoByName(tblInfo, col.L)
+			colInfo := tblInfo.FindPublicColumnByName(col.L)
 			if colInfo == nil {
 				return false, infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
 			}
@@ -1948,7 +1948,7 @@ type stringSlice interface {
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
-		idxCol := findColumnInIndexCols(partCol, idxCols)
+		_, idxCol := model.FindIndexColumnByName(idxCols, partCol)
 		if idxCol == nil {
 			// Partition column is not found in the index columns.
 			return false

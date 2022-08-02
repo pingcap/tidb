@@ -1459,7 +1459,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 		return nil, err
 	}
 	if key == nil {
-		return nil, errors.New("all ssts are empty!")
+		return nil, errors.New("all ssts are empty")
 	}
 	newMeta.minKey = append(newMeta.minKey[:0], key...)
 	lastKey := make([]byte, 0)

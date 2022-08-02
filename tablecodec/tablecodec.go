@@ -923,19 +923,6 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	return nil, errors.Errorf("no handle in index key: %v, value: %v", key, value)
 }
 
-// IndexKVIsUnique uses to judge if an index is unique, it can handle the KV committed by txn already, it doesn't consider the untouch flag.
-func IndexKVIsUnique(value []byte) bool {
-	if len(value) <= MaxOldEncodeValueLen {
-		return len(value) == 8
-	}
-	if getIndexVersion(value) == 1 {
-		segs := SplitIndexValueForClusteredIndexVersion1(value)
-		return segs.CommonHandle != nil
-	}
-	segs := SplitIndexValue(value)
-	return segs.IntHandle != nil || segs.CommonHandle != nil
-}
-
 func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	remain, d, err := codec.DecodeOne(keySuffix)
 	if err != nil {
@@ -1610,4 +1597,17 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		resultValues = append(resultValues, pidBytes)
 	}
 	return resultValues, nil
+}
+
+// IndexKVIsUnique uses to judge if an index is unique, it can handle the KV committed by txn already, it doesn't consider the untouched flag.
+func IndexKVIsUnique(value []byte) bool {
+	if len(value) <= MaxOldEncodeValueLen {
+		return len(value) == 8
+	}
+	if getIndexVersion(value) == 1 {
+		segs := SplitIndexValueForClusteredIndexVersion1(value)
+		return segs.CommonHandle != nil
+	}
+	segs := SplitIndexValue(value)
+	return segs.IntHandle != nil || segs.CommonHandle != nil
 }
