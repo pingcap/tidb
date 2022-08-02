@@ -84,6 +84,7 @@ go_library(
 
 go_test(
     name = "restore_test",
+    timeout = "short",
     srcs = [
         "check_info_test.go",
         "checksum_test.go",

@@ -37,8 +37,7 @@ import (
 )
 
 func TestGrammar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show session_states").Rows()
 	require.Len(t, rows, 1)
@@ -47,8 +46,7 @@ func TestGrammar(t *testing.T) {
 }
 
 func TestUserVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(" +
 		"j json, b blob, s varchar(255), st set('red', 'green', 'blue'), en enum('red', 'green', 'blue'))")
@@ -93,8 +91,7 @@ func TestUserVars(t *testing.T) {
 }
 
 func TestSystemVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tests := []struct {
 		stmts           []string
@@ -219,8 +216,7 @@ func TestSystemVars(t *testing.T) {
 }
 
 func TestSessionCtx(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(id int)")
 
@@ -455,8 +451,7 @@ func TestSessionCtx(t *testing.T) {
 }
 
 func TestStatementCtx(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(id int auto_increment primary key, str char(1))")
 
@@ -574,8 +569,7 @@ func TestStatementCtx(t *testing.T) {
 }
 
 func TestPreparedStatements(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
 
@@ -1015,8 +1009,7 @@ func TestPreparedStatements(t *testing.T) {
 }
 
 func TestSQLBinding(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
 
@@ -1189,8 +1182,7 @@ func TestSQLBinding(t *testing.T) {
 }
 
 func TestShowStateFail(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
 

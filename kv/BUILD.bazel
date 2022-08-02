@@ -54,6 +54,7 @@ go_library(
 
 go_test(
     name = "kv_test",
+    timeout = "short",
     srcs = [
         "checker_test.go",
         "error_test.go",

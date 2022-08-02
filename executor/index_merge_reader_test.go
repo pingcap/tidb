@@ -30,8 +30,7 @@ import (
 )
 
 func TestSingleTableRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -52,8 +51,7 @@ func TestSingleTableRead(t *testing.T) {
 }
 
 func TestJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -69,8 +67,7 @@ func TestJoin(t *testing.T) {
 }
 
 func TestIndexMergeReaderAndGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -83,8 +80,7 @@ func TestIndexMergeReaderAndGeneratedColumn(t *testing.T) {
 
 // issue 25045
 func TestIndexMergeReaderIssue25045(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -100,8 +96,7 @@ func TestIndexMergeReaderIssue25045(t *testing.T) {
 }
 
 func TestIssue16910(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("use test;")
@@ -120,8 +115,7 @@ func TestIssue16910(t *testing.T) {
 }
 
 func TestIndexMergeCausePanic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_index_merge = 1;")
@@ -130,8 +124,7 @@ func TestIndexMergeCausePanic(t *testing.T) {
 }
 
 func TestPartitionTableRandomIndexMerge(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_index_merge=1")
@@ -191,8 +184,7 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 }
 
 func TestIndexMergeWithPreparedStmt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer core.SetPreparedPlanCache(orgEnable)
 	core.SetPreparedPlanCache(false)
@@ -228,8 +220,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 }
 
 func TestIndexMergeInTransaction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -375,8 +366,7 @@ func TestIndexMergeInTransaction(t *testing.T) {
 }
 
 func TestIndexMergeReaderInTransIssue30685(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -448,8 +438,7 @@ func TestIndexMergeReaderInTransIssue30685(t *testing.T) {
 }
 
 func TestIndexMergeReaderMemTracker(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2), key(c3));")
@@ -485,8 +474,7 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 }
 
 func TestIndexMergeSplitTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("DROP TABLE IF EXISTS tab2;")
@@ -508,8 +496,7 @@ func TestIndexMergeSplitTable(t *testing.T) {
 
 func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	// Same purpose with TestPessimisticLockOnPartition, but test IndexMergeReader.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 

@@ -105,7 +105,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	warns = warns[:0]
 	for name, val := range originStmtHints.SetVars {
-		err := variable.SetStmtVar(sessVars, name, val)
+		err := sessVars.SetStmtVar(name, val)
 		if err != nil {
 			sessVars.StmtCtx.AppendWarning(err)
 		}

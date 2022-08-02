@@ -78,8 +78,7 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -267,8 +266,7 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int, c int, d int)`)
@@ -455,8 +453,7 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -943,8 +940,7 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 }
 
 func TestTrueCardCost(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -970,8 +966,7 @@ func TestTrueCardCost(t *testing.T) {
 }
 
 func TestIssue36243(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -1006,8 +1001,7 @@ func TestIssue36243(t *testing.T) {
 }
 
 func TestScanOnSmallTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int)`)

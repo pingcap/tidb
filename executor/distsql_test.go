@@ -61,11 +61,10 @@ func checkGoroutineExists(keyword string) bool {
 func TestCopClientSend(t *testing.T) {
 	t.Skip("not stable")
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 	if _, ok := store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
 		return
@@ -155,8 +154,7 @@ func TestGetLackHandles(t *testing.T) {
 }
 
 func TestBigIntPK(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -166,8 +164,7 @@ func TestBigIntPK(t *testing.T) {
 }
 
 func TestCorColToRanges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -185,8 +182,7 @@ func TestCorColToRanges(t *testing.T) {
 }
 
 func TestUniqueKeyNullValueSelect(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -214,8 +210,7 @@ func TestUniqueKeyNullValueSelect(t *testing.T) {
 
 // TestIssue10178 contains tests for https://github.com/pingcap/tidb/issues/10178 .
 func TestIssue10178(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -228,8 +223,7 @@ func TestIssue10178(t *testing.T) {
 }
 
 func TestInconsistentIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -280,8 +274,7 @@ func TestInconsistentIndex(t *testing.T) {
 }
 
 func TestPushLimitDownIndexLookUpReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -298,8 +291,7 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 }
 
 func TestPartitionTableIndexLookUpReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -328,8 +320,7 @@ func TestPartitionTableIndexLookUpReader(t *testing.T) {
 }
 
 func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -380,8 +371,7 @@ func TestIndexLookUpStats(t *testing.T) {
 }
 
 func TestIndexLookUpGetResultChunk(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -395,8 +385,7 @@ func TestIndexLookUpGetResultChunk(t *testing.T) {
 }
 
 func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -427,8 +416,7 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 }
 
 func TestCoprocessorPagingSize(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -483,8 +471,7 @@ func TestCoprocessorPagingSize(t *testing.T) {
 }
 
 func TestAdaptiveClosestRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -584,8 +571,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 }
 
 func TestCoprocessorPagingReqKeyRangeSorted(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/checkKeyRangeSortedForPaging", "return"))

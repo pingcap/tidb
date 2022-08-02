@@ -228,25 +228,25 @@ var initialSavepointStmtCounter int64
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableAsyncCommit); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableAsyncCommit); err == nil {
 		asyncCommitUsed = val == variable.On
 	}
 	onePCUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnable1PC); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnable1PC); err == nil {
 		onePCUsed = val == variable.On
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
 	mutationCheckerUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableMutationChecker); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableMutationChecker); err == nil {
 		mutationCheckerUsed = val == variable.On
 	}
 	assertionUsed := ""
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBTxnAssertionLevel); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBTxnAssertionLevel); err == nil {
 		assertionUsed = val
 	}
 	rcCheckTSUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBRCReadCheckTS); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCReadCheckTS); err == nil {
 		rcCheckTSUsed = val == variable.On
 	}
 	currSavepointCount := m.GetSavepointStmtCounter()
@@ -296,7 +296,7 @@ func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
 
 // getAutoCaptureUsageInfo gets the 'Auto Capture' usage
 func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBCapturePlanBaseline); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBCapturePlanBaseline); err == nil {
 		return val == variable.On
 	}
 	return false
