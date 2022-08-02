@@ -58,6 +58,7 @@ go_library(
 
 go_test(
     name = "copr_test",
+    timeout = "short",
     srcs = [
         "batch_coprocessor_test.go",
         "coprocessor_cache_test.go",
