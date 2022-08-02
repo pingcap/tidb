@@ -96,8 +96,9 @@ type HashJoinExec struct {
 	stats *hashJoinRuntimeStats
 
 	// We pre-alloc and reuse the Rows and RowPtrs for each probe goroutine, to avoid allocation frequently
-	buildSideRows    [][]chunk.Row
-	buildSideRowPtrs [][]chunk.RowPtr
+	buildSideRows      [][]chunk.Row
+	buildSideRowPtrs   [][]chunk.RowPtr
+	iter4BuildSideRows []chunk.Iterator
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -336,6 +337,7 @@ func (e *HashJoinExec) initializeForProbe() {
 
 	e.buildSideRows = make([][]chunk.Row, e.concurrency)
 	e.buildSideRowPtrs = make([][]chunk.RowPtr, e.concurrency)
+	e.iter4BuildSideRows = make([]chunk.Iterator, e.concurrency)
 }
 
 func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
@@ -506,12 +508,17 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		return true, joinResult
 	}
 
-	iter := chunk.NewIterator4Slice(buildSideRows)
-	defer chunk.FreeIterator(iter)
+	if e.iter4BuildSideRows[workerID] == nil {
+		e.iter4BuildSideRows[workerID] = chunk.NewIterator4Slice(buildSideRows)
+	} else {
+		e.iter4BuildSideRows[workerID] = chunk.ReuseIterator4Slice(e.iter4BuildSideRows[workerID], buildSideRows)
+	}
+
+	defer chunk.FreeIterator(e.iter4BuildSideRows[workerID])
 	var outerMatchStatus []outerRowStatusFlag
 	rowIdx, ok := 0, false
-	for iter.Begin(); iter.Current() != iter.End(); {
-		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
+	for e.iter4BuildSideRows[workerID].Begin(); e.iter4BuildSideRows[workerID].Current() != e.iter4BuildSideRows[workerID].End(); {
+		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(e.iter4BuildSideRows[workerID], probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -545,11 +552,15 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	iter := chunk.NewIterator4Slice(buildSideRows)
-	defer chunk.FreeIterator(iter)
+	if e.iter4BuildSideRows[workerID] == nil {
+		e.iter4BuildSideRows[workerID] = chunk.NewIterator4Slice(buildSideRows)
+	} else {
+		e.iter4BuildSideRows[workerID] = chunk.ReuseIterator4Slice(e.iter4BuildSideRows[workerID], buildSideRows)
+	}
+	defer chunk.FreeIterator(e.iter4BuildSideRows[workerID])
 	hasMatch, hasNull, ok := false, false, false
-	for iter.Begin(); iter.Current() != iter.End(); {
-		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter, joinResult.chk)
+	for e.iter4BuildSideRows[workerID].Begin(); e.iter4BuildSideRows[workerID].Current() != e.iter4BuildSideRows[workerID].End(); {
+		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, e.iter4BuildSideRows[workerID], joinResult.chk)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
