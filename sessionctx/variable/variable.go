@@ -517,11 +517,6 @@ func (sv *SysVar) SkipInit() bool {
 	if sv.skipInit || sv.IsNoop {
 		return true
 	}
-	// These a special "Global-only" sysvars that for backward compatibility
-	// are currently cached in the session. Please don't add to this list.
-	if sv.Name == TiDBRowFormatVersion {
-		return false
-	}
 	return !sv.HasSessionScope()
 }
 

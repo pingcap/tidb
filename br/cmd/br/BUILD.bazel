@@ -53,6 +53,7 @@ go_binary(
 
 go_test(
     name = "br_test",
+    timeout = "short",
     srcs = ["main_test.go"],
     embed = [":br_lib"],
     flaky = True,
