@@ -28,11 +28,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -219,26 +217,6 @@ func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 	return false
 }
 
-func datum2Expression4Test(d types.Datum) (expression.Expression, error) {
-	var ft *types.FieldType
-	switch d.Kind() {
-	case types.KindNull:
-		ft = types.NewFieldType(mysql.TypeNull)
-	case types.KindInt64:
-		ft = types.NewFieldType(mysql.TypeLong)
-	case types.KindFloat64:
-		ft = types.NewFieldType(mysql.TypeDouble)
-	case types.KindString:
-		ft = types.NewFieldType(mysql.TypeVarString)
-	default:
-		return nil, fmt.Errorf("unsupport datum type %v", d.Kind())
-	}
-	return &expression.Constant{
-		Value:   d,
-		RetType: ft,
-	}, nil
-}
-
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
@@ -280,10 +258,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	}
 	params := make([]expression.Expression, len(args))
 	for i := 0; i < len(params); i++ {
-		params[i], err = datum2Expression4Test(types.NewDatum(args[i]))
-		if err != nil {
-			return nil, err
-		}
+		params[i] = expression.Value2Expression4Test(args[i])
 	}
 	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {

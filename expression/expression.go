@@ -1434,3 +1434,26 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 		}
 	}
 }
+
+// Value2Expression4Test converts the value to an expression.
+// This conversion is incomplete, so only use for test.
+func Value2Expression4Test(v interface{}) Expression {
+	d := types.NewDatum(v)
+	var ft *types.FieldType
+	switch d.Kind() {
+	case types.KindNull:
+		ft = types.NewFieldType(mysql.TypeNull)
+	case types.KindInt64:
+		ft = types.NewFieldType(mysql.TypeLong)
+	case types.KindFloat64:
+		ft = types.NewFieldType(mysql.TypeDouble)
+	case types.KindString:
+		ft = types.NewFieldType(mysql.TypeVarString)
+	default:
+		return nil
+	}
+	return &Constant{
+		Value:   d,
+		RetType: ft,
+	}
+}
