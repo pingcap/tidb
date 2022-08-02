@@ -648,7 +648,7 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery("select ord('123'), ord(123), ord(''), ord('你好'), ord(NULL), ord('👍')")
 	result.Check(testkit.Rows("49 49 0 14990752 <nil> 4036989325"))
 	result = tk.MustQuery("select ord(X''), ord(X'6161'), ord(X'e4bd'), ord(X'e4bda0'), ord(_ascii'你'), ord(_latin1'你')")
-	result.Check(testkit.Rows("0 97 228 228 228 14990752"))
+	result.Check(testkit.Rows("0 97 228 228 228 228"))
 
 	// for space
 	result = tk.MustQuery(`select space(0), space(2), space(-1), space(1.1), space(1.9)`)
@@ -3686,6 +3686,43 @@ func TestIssue16973(t *testing.T) {
 	require.Equal(t, "table:t2", fmt.Sprintf("%v", rows[9][3]))
 	tk.MustQuery("SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) " +
 		"AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;").Check(testkit.Rows("1"))
+}
+
+func TestShardIndexOnTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key clustered, a int, b int, unique key uk_expr((tidb_shard(a)),a))")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
+	rows := tk.MustQuery("explain select max(b) from t").Rows()
+	for _, row := range rows {
+		line := fmt.Sprintf("%v", row)
+		require.NotContains(t, line, "tiflash")
+	}
+	tk.MustExec("set @@session.tidb_enforce_mpp = 0")
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	rows = tk.MustQuery("explain select max(b) from t").Rows()
+	for _, row := range rows {
+		line := fmt.Sprintf("%v", row)
+		require.NotContains(t, line, "tiflash")
+	}
 }
 
 func TestExprPushdownBlacklist(t *testing.T) {

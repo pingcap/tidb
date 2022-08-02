@@ -1801,12 +1801,19 @@ func (rc *Client) RestoreMetaKVFiles(
 ) error {
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
-	// The k-v envets in default CF should be restored firstly. The reason is that:
+	// The k-v events in default CF should be restored firstly. The reason is that:
 	// The error of transactions of meta will happen,
 	// if restore default CF events successfully, but failed to restore write CF events.
 	for _, f := range files {
 		if f.Cf == stream.WriteCF {
 			filesInWriteCF = append(filesInWriteCF, f)
+			continue
+		}
+
+		if f.Type == backuppb.FileType_Delete {
+			// this should happen abnormally.
+			// only do some preventive checks here.
+			log.Warn("detected delete file of meta key, skip it", zap.Any("file", f))
 			continue
 		}
 
@@ -1875,7 +1882,14 @@ func (rc *Client) RestoreMetaKVFile(
 		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
 			continue
 		}
-
+		if len(txnEntry.Value) == 0 {
+			// we might record duplicated prewrite keys in some conor cases.
+			// the first prewrite key has the value but the second don't.
+			// so we can ignore the empty value key.
+			// see details at https://github.com/pingcap/tiflow/issues/5468.
+			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.ByteString("tnxKey", txnEntry.Key))
+			continue
+		}
 		log.Debug("txn entry", zap.Uint64("key-ts", ts), zap.Int("txnKey-len", len(txnEntry.Key)),
 			zap.Int("txnValue-len", len(txnEntry.Value)), zap.ByteString("txnKey", txnEntry.Key))
 		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)

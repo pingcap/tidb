@@ -1851,7 +1851,7 @@ func upgradeToVer90(s Session, ver int64) {
 	importConfigOption(s, "enable-batch-dml", variable.TiDBEnableBatchDML, valStr)
 	valStr = fmt.Sprint(config.GetGlobalConfig().MemQuotaQuery)
 	importConfigOption(s, "mem-quota-query", variable.TiDBMemQuotaQuery, valStr)
-	valStr = fmt.Sprint((config.GetGlobalConfig().Log.QueryLogMaxLen), 10)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Log.QueryLogMaxLen)
 	importConfigOption(s, "query-log-max-len", variable.TiDBQueryLogMaxLen, valStr)
 	valStr = fmt.Sprint(config.GetGlobalConfig().Performance.CommitterConcurrency)
 	importConfigOption(s, "committer-concurrency", variable.TiDBCommitterConcurrency, valStr)

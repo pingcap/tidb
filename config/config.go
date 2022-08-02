@@ -115,8 +115,6 @@ var (
 			map[string]string{
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
-				"plugin.load":                   "plugin_load",
-				"plugin.dir":                    "plugin_dir",
 			},
 		},
 		{
@@ -132,6 +130,13 @@ var (
 			map[string]string{
 				"force-priority":           "tidb_force_priority",
 				"memory-usage-alarm-ratio": "tidb_memory_usage_alarm_ratio",
+			},
+		},
+		{
+			"plugin",
+			map[string]string{
+				"load": "plugin_load",
+				"dir":  "plugin_dir",
 			},
 		},
 	}
@@ -761,6 +766,8 @@ var defaultConf = Config{
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
+	MemQuotaQuery:                1 << 30,
+	OOMAction:                    "cancel",
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
@@ -791,6 +798,7 @@ var defaultConf = Config{
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
+		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
@@ -839,6 +847,7 @@ var defaultConf = Config{
 		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
 		ProjectionPushDown:    false,
+		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease:      "0s",
@@ -848,14 +857,15 @@ var defaultConf = Config{
 		StatsLoadConcurrency:     5,
 		StatsLoadQueueSize:       1000,
 		EnableStatsCacheMemQuota: false,
+		RunAutoAnalyze:           true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          false,
-		Capacity:         1000,
+		Enabled:          true,
+		Capacity:         100,
 		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{

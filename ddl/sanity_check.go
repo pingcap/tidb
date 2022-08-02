@@ -92,7 +92,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 		var physicalTableIDs []int64
 		var ruleIDs []string
 		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
-			panic("should not happened")
+			panic("Error in drop/truncate table, please report a bug with this stack trace and how it happened")
 		}
 		checkRangeCntByTableIDs(physicalTableIDs, cnt)
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:

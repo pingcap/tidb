@@ -3156,17 +3156,19 @@ func TestIssues24401(t *testing.T) {
 	testKit.MustExec("create table tp(a int, index(a)) partition by hash(a) partitions 3")
 	testKit.MustExec("insert into tp values (1), (2), (3)")
 	testKit.MustExec("analyze table tp")
-	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	require.Equal(t, 6, len(rows))
 
 	// normal table with dynamic prune mode
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
 	testKit.MustExec("analyze table t")
-	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	require.Equal(t, 6, len(rows))
 
 	// partition table with dynamic prune mode
 	testKit.MustExec("analyze table tp")
-	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
 	lenRows := len(rows)
 	require.Equal(t, 6, lenRows)
 

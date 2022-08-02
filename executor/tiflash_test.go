@@ -1199,3 +1199,30 @@ func TestTiflashPartitionTableScan(t *testing.T) {
 	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
 	wg.Wait()
 }
+
+func TestAggPushDownCountStar(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists c")
+	tk.MustExec("drop table if exists o")
+	tk.MustExec("create table c(c_id bigint primary key)")
+	tk.MustExec("create table o(o_id bigint primary key, c_id bigint not null)")
+	tk.MustExec("alter table c set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "c")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("alter table o set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "o")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into c values(1),(2),(3),(4),(5)")
+	tk.MustExec("insert into o values(1,1),(2,1),(3,2),(4,2),(5,2)")
+
+	tk.MustExec("set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1")
+
+	tk.MustQuery("select count(*) from c, o where c.c_id=o.c_id").Check(testkit.Rows("5"))
+}
