@@ -7827,3 +7827,22 @@ func TestForeignKeyCascadeReferenceCascadeUpdateAndCascadeDelete(t *testing.T) {
 	tk.MustQuery("select * from t1 order by name").Check(testkit.Rows())
 	tk.MustExec("admin check table t1,t2,t3,t4")
 }
+
+func TestForeignKeyLockInTxn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=1")
+
+	tk.MustExec("create table t1 (id int key, name varchar(10))")
+	tk.MustExec("create table t2 (a int, name varchar(10), index (a), foreign key fk(a) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE)")
+	tk.MustExec("insert into t1 values (1, 'a');")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t2 values (1, 'a');")
+	tk2.MustExec("delete from t1 where id = 1")
+	err := tk.ExecToErr("commit")
+	require.Error(t, err)
+}
