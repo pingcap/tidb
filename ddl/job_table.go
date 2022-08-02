@@ -459,8 +459,8 @@ func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
 				return errors.Trace(err)
 			}
 			for _, job := range jobs {
+				// In bootstrap, we can ignore the internal DDL.
 				if inBootstrap && job.SchemaID == systemDBID {
-					// In bootstrap, we can ignore the internal DDL.
 					continue
 				}
 				err = insertDDLJobs2Table(se, false, job)
@@ -468,7 +468,7 @@ func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
 					return errors.Trace(err)
 				}
 				if tp == generalWorker {
-					// general job do not have reorg info.
+					// General job do not have reorg info.
 					continue
 				}
 				element, start, end, pid, err := t.GetDDLReorgHandle(job)
