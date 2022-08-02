@@ -115,24 +115,23 @@ func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr) ([]chunk.Row, []chunk.RowPtr, error) {
-	var err error
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
 	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
-		return nil, nil, err
+		return
 	}
-	matched = matched[:0]
+	matched = make([]chunk.Row, 0, len(innerPtrs))
 	var matchedRow chunk.Row
-	matchedPtrs = matchedPtrs[:0]
+	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
 		matchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(ptr, c.chkBuf)
 		if err != nil {
-			return nil, nil, err
+			return
 		}
 		var ok bool
 		ok, err = c.matchJoinKey(matchedRow, probeRow, hCtx)
 		if err != nil {
-			return nil, nil, err
+			return
 		}
 		if !ok {
 			atomic.AddInt64(&c.stat.probeCollision, 1)
@@ -141,7 +140,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 		matched = append(matched, matchedRow)
 		matchedPtrs = append(matchedPtrs, ptr)
 	}
-	return matched, matchedPtrs, err
+	return
 }
 
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
