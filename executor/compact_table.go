@@ -158,8 +158,7 @@ func (task *storeCompactTask) work() error {
 				// Stop remaining partitions when error happens.
 				break
 			}
-		}
-		// For partition table, there must be no data in task.parentExec.tableInfo.ID. So no need to compact it.
+		} // For partition table, there must be no data in task.parentExec.tableInfo.ID. So no need to compact it.
 	} else {
 		task.allPhysicalTables = 1
 		task.compactedPhysicalTables = 0

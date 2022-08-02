@@ -51,6 +51,7 @@ import (
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -622,11 +623,13 @@ const (
 	version91 = 91
 	// version92 for concurrent ddl.
 	version92 = 92
+	// version93 converts oom-use-tmp-storage to a sysvar
+	version93 = 93
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version92
+var currentBootstrapVersion int64 = version93
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -721,6 +724,7 @@ var (
 		upgradeToVer89,
 		upgradeToVer90,
 		upgradeToVer91,
+		upgradeToVer93,
 	}
 )
 
@@ -790,6 +794,9 @@ func upgrade(s Session) {
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
 	if ver < version92 && !domain.GetDomain(s).DDL().OwnerManager().IsOwner() {
+		if err := waitOwner(context.Background(), domain.GetDomain(s)); err != nil {
+			logutil.BgLogger().Fatal("[Upgrade] upgrade failed", zap.Error(err))
+		}
 		// use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
 		// overwrite variable EnableConcurrentDDL.
 		variable.DDLForce2Queue.Store(true)
@@ -827,6 +834,25 @@ func upgrade(s Session) {
 			zap.Int64("from", ver),
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
+	}
+}
+
+// waitOwner is used to wait the DDL owner to be elected in the cluster.
+func waitOwner(ctx context.Context, dom *domain.Domain) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	logutil.BgLogger().Info("Waiting for the DDL owner to be elected in the cluster")
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			_, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
+			if err == concurrency.ErrElectionNoLeader {
+				continue
+			}
+			return err
+		}
 	}
 }
 
@@ -1897,6 +1923,14 @@ func upgradeToVer91(s Session, ver int64) {
 
 	valStr = strconv.FormatFloat(config.GetGlobalConfig().PreparedPlanCache.MemoryGuardRatio, 'f', -1, 64)
 	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", variable.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
+}
+
+func upgradeToVer93(s Session, ver int64) {
+	if ver >= version93 {
+		return
+	}
+	valStr := variable.BoolToOnOff(config.GetGlobalConfig().OOMUseTmpStorage)
+	importConfigOption(s, "oom-use-tmp-storage", variable.TiDBEnableTmpStorageOnOOM, valStr)
 }
 
 func writeOOMAction(s Session) {
