@@ -1441,18 +1441,24 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 	exprs := make([]Expression, len(args))
 	for i, v := range args {
 		d := types.NewDatum(v)
+		var ft *types.FieldType
 		switch d.Kind() {
 		case types.KindNull:
-			exprs[i] = &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeNull)}
+			ft = types.NewFieldType(mysql.TypeNull)
 		case types.KindInt64:
-			exprs[i] = &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeLong)}
+			ft = types.NewFieldType(mysql.TypeLong)
+		case types.KindUint64:
+			ft = types.NewFieldType(mysql.TypeLong)
+			ft.AddFlag(mysql.UnsignedFlag)
 		case types.KindFloat64:
-			exprs[i] = &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeDouble)}
+			ft = types.NewFieldType(mysql.TypeDouble)
 		case types.KindString:
-			exprs[i] = &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}
+			ft = types.NewFieldType(mysql.TypeVarString)
 		default:
 			exprs[i] = nil
+			continue
 		}
+		exprs[i] = &Constant{Value: d, RetType: ft}
 	}
 	return exprs
 }
