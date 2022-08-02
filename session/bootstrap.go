@@ -630,6 +630,9 @@ const (
 // please make sure this is the largest version
 var currentBootstrapVersion int64 = version92
 
+// DDL owner key's expired time is 60 seconds, we should wait the time and give more time to have a chance to finish it.
+const internalSQLTimeout = 75 * time.Second
+
 var (
 	bootstrapVersion = []func(Session, int64){
 		upgradeToVer2,
@@ -946,7 +949,7 @@ func upgradeToVer9(s Session, ver int64) {
 }
 
 func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), internalSQLTimeout)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql)
 	defer cancel()
@@ -2110,7 +2113,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string, args ...interface{}) {
-	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), internalSQLTimeout)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql, args...)
 	defer cancel()
