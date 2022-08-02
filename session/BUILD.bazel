@@ -19,6 +19,7 @@ go_library(
         "//config",
         "//ddl",
         "//ddl/placement",
+        "//ddl/schematracker",
         "//domain",
         "//errno",
         "//executor",
