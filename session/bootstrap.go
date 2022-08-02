@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -630,8 +631,8 @@ const (
 // please make sure this is the largest version
 var currentBootstrapVersion int64 = version92
 
-// DDL owner key's expired time is 60 seconds, we should wait the time and give more time to have a chance to finish it.
-const internalSQLTimeout = 75 * time.Second
+// DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
+var internalSQLTimeout = owner.ManagerSessionTTL + 15
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -949,7 +950,7 @@ func upgradeToVer9(s Session, ver int64) {
 }
 
 func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
-	ctx, cancel := context.WithTimeout(context.Background(), internalSQLTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql)
 	defer cancel()
@@ -2113,7 +2114,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string, args ...interface{}) {
-	ctx, cancel := context.WithTimeout(context.Background(), internalSQLTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql, args...)
 	defer cancel()
