@@ -623,11 +623,13 @@ const (
 	version91 = 91
 	// version92 for concurrent ddl.
 	version92 = 92
+	// version93 converts oom-use-tmp-storage to a sysvar
+	version93 = 93
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version92
+var currentBootstrapVersion int64 = version93
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -722,6 +724,7 @@ var (
 		upgradeToVer89,
 		upgradeToVer90,
 		upgradeToVer91,
+		upgradeToVer93,
 	}
 )
 
@@ -1920,6 +1923,14 @@ func upgradeToVer91(s Session, ver int64) {
 
 	valStr = strconv.FormatFloat(config.GetGlobalConfig().PreparedPlanCache.MemoryGuardRatio, 'f', -1, 64)
 	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", variable.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
+}
+
+func upgradeToVer93(s Session, ver int64) {
+	if ver >= version93 {
+		return
+	}
+	valStr := variable.BoolToOnOff(config.GetGlobalConfig().OOMUseTmpStorage)
+	importConfigOption(s, "oom-use-tmp-storage", variable.TiDBEnableTmpStorageOnOOM, valStr)
 }
 
 func writeOOMAction(s Session) {
