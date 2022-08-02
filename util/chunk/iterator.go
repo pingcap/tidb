@@ -14,8 +14,6 @@
 
 package chunk
 
-import "sync"
-
 var (
 	_ Iterator = (*Iterator4Chunk)(nil)
 	_ Iterator = (*iterator4RowPtr)(nil)
@@ -26,7 +24,7 @@ var (
 )
 
 // FreeIterator try to free and reuse the iterator.
-func FreeIterator(it any) {
+func FreeIterator(it Iterator) {
 	switch it := it.(type) {
 	case *iterator4Slice:
 		it.rows = nil
