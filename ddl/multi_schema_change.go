@@ -247,6 +247,9 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 	case model.ActionSetDefaultValue:
 		col := job.Args[0].(*table.Column)
 		info.ModifyColumns = append(info.ModifyColumns, col.Name)
+	case model.ActionAddForeignKey:
+		fkInfo := job.Args[0].(*model.FKInfo)
+		info.ForeignKeys = append(info.ForeignKeys, fkInfo.Name)
 	default:
 		return dbterror.ErrRunMultiSchemaChanges
 	}
