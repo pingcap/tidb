@@ -18,11 +18,11 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/paging"
 )
@@ -890,7 +890,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 		build = p.children[1]
 	}
 	sessVars := p.ctx.GetSessionVars()
-	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
+	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
 	rowSize := getAvgRowSize(build.statsInfo(), build.Schema())
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota) && p.storeTp != kv.TiFlash
@@ -1087,7 +1087,7 @@ func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64
 	cpuCost := count * math.Log2(count) * sessVars.GetCPUFactor()
 	memoryCost := count * sessVars.GetMemoryFactor()
 
-	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
+	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
 	rowSize := getAvgRowSize(p.statsInfo(), schema)
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*count > float64(memQuota)
