@@ -1216,7 +1216,6 @@ func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.C
 	// No 'copy on write' for the expression here, this is a dangerous operation.
 	args[0] = con
 	return partFn
-
 }
 
 // opposite turns > to <, >= to <= and so on.
@@ -1421,7 +1420,6 @@ func (s *partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet s
 }
 
 func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR, opt *logicalOptimizeOp) (LogicalPlan, error) {
-
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	partitionNameSet := make(set.StringSet)
 	usedDefinition := make(map[int64]model.PartitionDefinition)

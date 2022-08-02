@@ -388,9 +388,8 @@ func getDatumLen(v reflect.Value) int {
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
 			return 0
-		} else {
-			return getDatumLen(v.Elem())
 		}
+		return getDatumLen(v.Elem())
 	}
 	if v.Kind() == reflect.String {
 		return len(v.String())

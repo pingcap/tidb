@@ -31,8 +31,7 @@ import (
 )
 
 func TestMultiSchemaChangeAddColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -133,8 +132,7 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	originHook := dom.DDL().GetHook()
@@ -154,8 +152,7 @@ func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAddColumnsParallel(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int default 1);")
@@ -177,8 +174,7 @@ func TestMultiSchemaChangeAddColumnsParallel(t *testing.T) {
 }
 
 func TestMultiSchemaChangeDropColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -214,8 +210,7 @@ func TestMultiSchemaChangeDropColumns(t *testing.T) {
 }
 
 func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	originHook := dom.DDL().GetHook()
@@ -249,8 +244,7 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	originHook := dom.DDL().GetHook()
@@ -271,8 +265,7 @@ func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeDropColumnsParallel(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, c int);")
@@ -290,8 +283,7 @@ func TestMultiSchemaChangeDropColumnsParallel(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAddDropColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -316,9 +308,8 @@ func TestMultiSchemaChangeAddDropColumns(t *testing.T) {
 }
 
 func TestMultiSchemaChangeRenameColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	originHook := dom.DDL().GetHook()
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -391,9 +382,8 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	originHook := dom.DDL().GetHook()
-	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -457,9 +447,8 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 }
 
 func TestMultiSchemaChangeChangeColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	originHook := dom.DDL().GetHook()
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -510,8 +499,7 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAddIndexes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -548,8 +536,7 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	originHook := dom.DDL().GetHook()
@@ -590,8 +577,7 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeDropIndexes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -619,8 +605,7 @@ func TestMultiSchemaChangeDropIndexes(t *testing.T) {
 }
 
 func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	originHook := dom.DDL().GetHook()
@@ -654,8 +639,7 @@ func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeDropIndexesParallel(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, c int, index(a), index(b), index(c));")
@@ -673,8 +657,7 @@ func TestMultiSchemaChangeDropIndexesParallel(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -700,8 +683,7 @@ func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
 }
 
 func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	originHook := dom.DDL().GetHook()
@@ -749,8 +731,7 @@ func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
 }
 
 func TestMultiSchemaChangeModifyColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -878,8 +859,7 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 }
 
 func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	originHook := dom.DDL().GetHook()
@@ -903,8 +883,7 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -961,8 +940,7 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 }
 
 func TestMultiSchemaChangeMix(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -978,8 +956,7 @@ func TestMultiSchemaChangeMix(t *testing.T) {
 }
 
 func TestMultiSchemaChangeMixCancelled(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -1004,8 +981,7 @@ func TestMultiSchemaChangeMixCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1039,8 +1015,7 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 }
 
 func TestMultiSchemaChangeTableOption(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -1065,8 +1040,7 @@ func TestMultiSchemaChangeTableOption(t *testing.T) {
 }
 
 func TestMultiSchemaChangeNonPublicDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a tinyint);")
@@ -1076,8 +1050,7 @@ func TestMultiSchemaChangeNonPublicDefaultValue(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterIndexVisibility(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int, b int, index idx(b));")
@@ -1088,8 +1061,7 @@ func TestMultiSchemaChangeAlterIndexVisibility(t *testing.T) {
 }
 
 func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int, b int);")
@@ -1131,8 +1103,7 @@ func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 }
 
 func TestMultiSchemaChangeNoSubJobs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -1145,8 +1116,7 @@ func TestMultiSchemaChangeNoSubJobs(t *testing.T) {
 }
 
 func TestMultiSchemaChangeUnsupportedType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -1156,8 +1126,7 @@ func TestMultiSchemaChangeUnsupportedType(t *testing.T) {
 }
 
 func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (c_1 int, c_2 char(20), c_pos_1 int, c_idx_visible int, c_3 decimal(5, 3), " +

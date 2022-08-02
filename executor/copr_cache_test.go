@@ -41,13 +41,12 @@ func TestIntegrationCopCache(t *testing.T) {
 		return cli
 	}
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t,
+	store, dom := testkit.CreateMockStoreAndDomain(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cluster = c
 		}),
 		mockstore.WithClientHijacker(hijackClient))
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

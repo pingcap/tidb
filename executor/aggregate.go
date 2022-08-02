@@ -699,7 +699,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 	}
 }
 
-func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
+func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	waitStart := time.Now()
 	result, finished := w.receiveFinalResultHolder()
 	if w.stats != nil {
@@ -763,7 +763,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	if err := w.consumeIntermData(ctx); err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
 	}
-	w.getFinalResult(ctx)
+	w.loadFinalResult(ctx)
 }
 
 // Next implements the Executor Next interface.

@@ -30,8 +30,7 @@ import (
 )
 
 func TestConcurrentLoadHist(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -75,8 +74,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 }
 
 func TestConcurrentLoadHistTimeout(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -137,8 +135,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	newConfig.Performance.StatsLoadConcurrency = 0 // no worker to consume channel
 	config.StoreGlobalConfig(newConfig)
 	defer config.StoreGlobalConfig(originConfig)
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
