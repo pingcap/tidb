@@ -333,17 +333,17 @@ func KvPairsFromRow(row Row) []common.KvPair {
 	return row.(*KvPairs).pairs
 }
 
-func evaluateGeneratedColumns(se *session, record []types.Datum, cols []*table.Column, genCols []genCol) (err error, errCol *model.ColumnInfo) {
+func evaluateGeneratedColumns(se *session, record []types.Datum, cols []*table.Column, genCols []genCol) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.index].ToInfo()
 		evaluated, err := gc.expr.Eval(mutRow.ToRow())
 		if err != nil {
-			return err, col
+			return col, err
 		}
 		value, err := table.CastValue(se, evaluated, col, false, false)
 		if err != nil {
-			return err, col
+			return col, err
 		}
 		mutRow.SetDatum(gc.index, value)
 		record[gc.index] = value
@@ -426,7 +426,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 
 	if len(kvcodec.genCols) > 0 {
-		if err, errCol := evaluateGeneratedColumns(kvcodec.se, record, cols, kvcodec.genCols); err != nil {
+		if errCol, err := evaluateGeneratedColumns(kvcodec.se, record, cols, kvcodec.genCols); err != nil {
 			return nil, logEvalGenExprFailed(logger, row, errCol, err)
 		}
 	}

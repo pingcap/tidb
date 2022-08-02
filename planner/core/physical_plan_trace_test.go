@@ -16,7 +16,6 @@ package core_test
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"testing"
 
@@ -32,13 +31,13 @@ import (
 
 func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	p := parser.New()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, primary key (a))")
+	tk.MustExec("create table t(a int primary key, b int, c int,d int,key ib (b),key ic (c))")
+	tk.MustExec("SET session tidb_enable_index_merge = ON;")
 	testcases := []struct {
 		sql          string
 		physicalList []string
@@ -46,13 +45,43 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		{
 			sql: "select * from t",
 			physicalList: []string{
-				"Projection_3", "TableFullScan_4", "TableReader_5",
+				"TableFullScan_4", "TableReader_5", "Projection_3",
 			},
 		},
 		{
 			sql: "select * from t where a = 1",
 			physicalList: []string{
 				"Point_Get_5", "Projection_4",
+			},
+		},
+		{
+			sql: "select max(b) from t",
+			physicalList: []string{
+				"IndexFullScan_19",
+				"Limit_20",
+				"IndexReader_21",
+				"Limit_14",
+				"StreamAgg_10",
+				"Projection_8",
+			},
+		},
+		{
+			sql: "select * from t where c = 3",
+			physicalList: []string{
+				"IndexRangeScan_8",
+				"TableRowIDScan_9",
+				"IndexLookUp_10",
+				"Projection_4",
+			},
+		},
+		{
+			sql: "SELECT * FROM t WHERE b = 1 OR c = 1;",
+			physicalList: []string{
+				"TableRowIDScan_10",
+				"IndexRangeScan_8",
+				"IndexRangeScan_9",
+				"IndexMerge_11",
+				"Projection_4",
 			},
 		},
 	}
@@ -91,18 +120,16 @@ func checkList(d []string, s []string) bool {
 }
 
 func getList(otrace *tracing.PhysicalOptimizeTracer) (pl []string) {
-	for _, v := range otrace.Candidates {
+	for _, v := range otrace.Final {
 		pl = append(pl, tracing.CodecPlanName(v.TP, v.ID))
 	}
-	sort.Strings(pl)
 	return pl
 }
 
 // assert the case in https://github.com/pingcap/tidb/issues/34863
 func TestPhysicalOptimizerTrace(t *testing.T) {
 	p := parser.New()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
