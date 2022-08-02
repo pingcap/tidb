@@ -386,6 +386,11 @@ error = '''
 not leader
 '''
 
+["Lightning:KV:ReadIndexNotReady"]
+error = '''
+read index not ready
+'''
+
 ["Lightning:KV:RegionNotFound"]
 error = '''
 region not found
@@ -1254,6 +1259,11 @@ error = '''
 ["ddl:8245"]
 error = '''
 column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
+'''
+
+["ddl:8246"]
+error = '''
+Error happened when enable/disable DDL: %s
 '''
 
 ["domain:8027"]

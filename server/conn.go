@@ -153,6 +153,11 @@ var (
 
 	connIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
 	connIdleDurationHistogramInTxn    = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
+
+	affectedRowsCounterInsert  = metrics.AffectedRowsCounter.WithLabelValues("Insert")
+	affectedRowsCounterUpdate  = metrics.AffectedRowsCounter.WithLabelValues("Update")
+	affectedRowsCounterDelete  = metrics.AffectedRowsCounter.WithLabelValues("Delete")
+	affectedRowsCounterReplace = metrics.AffectedRowsCounter.WithLabelValues("Replace")
 )
 
 // newClientConn creates a *clientConn object.
@@ -397,7 +402,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 			return err
 		}
 	}
-	defAuthPlugin, err := variable.GetGlobalSystemVar(cc.ctx.GetSessionVars(), variable.DefaultAuthPlugin)
+	defAuthPlugin, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(variable.DefaultAuthPlugin)
 	if err != nil {
 		return err
 	}
@@ -777,7 +782,6 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 
 // authSha implements the caching_sha2_password specific part of the protocol.
 func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
-
 	const (
 		ShaCommand       = 1
 		RequestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
@@ -1004,7 +1008,7 @@ func (cc *clientConn) skipInitConnect() bool {
 
 // initResultEncoder initialize the result encoder for current connection.
 func (cc *clientConn) initResultEncoder(ctx context.Context) {
-	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetResults)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetResults)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
@@ -1013,7 +1017,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
-	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetClient)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetClient)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
@@ -1074,7 +1078,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("err", fmt.Sprintf("%v", r)),
 				zap.Stack("stack"),
 			)
-			err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
+			err := cc.writeError(ctx, fmt.Errorf("%v", r))
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
@@ -1243,7 +1247,8 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 
 	cost := time.Since(startTime)
 	sessionVar := cc.ctx.GetSessionVars()
-	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, cc.ctx.AffectedRows(), sessionVar.InTxn())
+	affectedRows := cc.ctx.AffectedRows()
+	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, affectedRows, sessionVar.InTxn())
 
 	switch sqlType {
 	case "Use":
@@ -1258,12 +1263,16 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		queryDurationHistogramRollback.Observe(cost.Seconds())
 	case "Insert":
 		queryDurationHistogramInsert.Observe(cost.Seconds())
+		affectedRowsCounterInsert.Add(float64(affectedRows))
 	case "Replace":
 		queryDurationHistogramReplace.Observe(cost.Seconds())
+		affectedRowsCounterReplace.Add(float64(affectedRows))
 	case "Delete":
 		queryDurationHistogramDelete.Observe(cost.Seconds())
+		affectedRowsCounterDelete.Add(float64(affectedRows))
 	case "Update":
 		queryDurationHistogramUpdate.Observe(cost.Seconds())
+		affectedRowsCounterUpdate.Add(float64(affectedRows))
 	case "Select":
 		queryDurationHistogramSelect.Observe(cost.Seconds())
 	case "Execute":
@@ -1465,7 +1474,18 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 }
 
 func (cc *clientConn) flush(ctx context.Context) error {
+	var (
+		stmtDetail *execdetails.StmtExecDetails
+		startTime  time.Time
+	)
+	if stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey); stmtDetailRaw != nil {
+		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
+		startTime = time.Now()
+	}
 	defer func() {
+		if stmtDetail != nil {
+			stmtDetail.WriteSQLRespDuration += time.Since(startTime)
+		}
 		trace.StartRegion(ctx, "FlushClientConn").End()
 		if ctx := cc.getCtx(); ctx != nil && ctx.WarningCount() > 0 {
 			for _, err := range ctx.GetWarnings() {
@@ -1852,7 +1872,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 
 	var pointPlans []plannercore.Plan
 	if len(stmts) > 1 {
-
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
 		// by early terminating the first statement, and then running an entirely
@@ -2208,6 +2227,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	req := rs.NewChunk(cc.chunkAlloc)
 	gotColumnInfo := false
 	firstNext := true
+	var start time.Time
 	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -2234,8 +2254,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
+			if stmtDetail != nil {
+				start = time.Now()
+			}
 			if err = cc.writeColumnInfo(columns, serverStatus); err != nil {
 				return false, err
+			}
+			if stmtDetail != nil {
+				stmtDetail.WriteSQLRespDuration += time.Since(start)
 			}
 			gotColumnInfo = true
 		}
@@ -2244,7 +2270,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			break
 		}
 		reg := trace.StartRegion(ctx, "WriteClientConn")
-		start := time.Now()
+		if stmtDetail != nil {
+			start = time.Now()
+		}
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
@@ -2266,7 +2294,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
-	return false, cc.writeEOF(serverStatus)
+	if stmtDetail != nil {
+		start = time.Now()
+	}
+	err := cc.writeEOF(serverStatus)
+	if stmtDetail != nil {
+		stmtDetail.WriteSQLRespDuration += time.Since(start)
+	}
+	return false, err
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
@@ -2323,8 +2358,13 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	if stmtDetailRaw != nil {
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-	start := time.Now()
-	var err error
+	var (
+		err   error
+		start time.Time
+	)
+	if stmtDetail != nil {
+		start = time.Now()
+	}
 	for _, row := range curRows {
 		data = data[0:4]
 		data, err = dumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
@@ -2341,7 +2381,14 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
-	return cc.writeEOF(serverStatus)
+	if stmtDetail != nil {
+		start = time.Now()
+	}
+	err = cc.writeEOF(serverStatus)
+	if stmtDetail != nil {
+		stmtDetail.WriteSQLRespDuration += time.Since(start)
+	}
+	return err
 }
 
 func (cc *clientConn) setConn(conn net.Conn) {

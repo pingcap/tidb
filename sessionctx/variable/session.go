@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -169,8 +168,9 @@ type TxnCtxNoNeedToRestore struct {
 	currentShard int64
 	shardRand    *rand.Rand
 
-	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
-	unchangedRowKeys map[string]struct{}
+	// unchangedLockKeys is used to store the unchanged keys that needs to lock for pessimistic transaction, including
+	// row keys and unique keys.
+	unchangedLockKeys map[string]struct{}
 
 	PessimisticCacheHit int
 
@@ -239,20 +239,20 @@ func (tc *TransactionContext) updateShard() {
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
-// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
-func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
-	if tc.unchangedRowKeys == nil {
-		tc.unchangedRowKeys = map[string]struct{}{}
+// AddUnchangedLockKey adds an unchanged key in update statement for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedLockKey(key []byte) {
+	if tc.unchangedLockKeys == nil {
+		tc.unchangedLockKeys = map[string]struct{}{}
 	}
-	tc.unchangedRowKeys[string(key)] = struct{}{}
+	tc.unchangedLockKeys[string(key)] = struct{}{}
 }
 
-// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
-func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
-	for key := range tc.unchangedRowKeys {
+// CollectUnchangedLockKeys collects unchanged keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedLockKeys(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedLockKeys {
 		buf = append(buf, kv.Key(key))
 	}
-	tc.unchangedRowKeys = nil
+	tc.unchangedLockKeys = nil
 	return buf
 }
 
@@ -1182,6 +1182,11 @@ type SessionVars struct {
 	// When it is false, ANALYZE reads the latest data.
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
+
+	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
+	// when > 0: it's the selectivity for the expression.
+	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
+	DefaultStrMatchSelectivity float64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1464,6 +1469,7 @@ func NewSessionVars() *SessionVars {
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
 		MinPagingSize:      DefMinPagingSize,
+		MaxPagingSize:      DefMaxPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
@@ -1473,11 +1479,6 @@ func NewSessionVars() *SessionVars {
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
-	enableChunkRPC := "0"
-	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
-		enableChunkRPC = "1"
-	}
-	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
 		case kv.TiFlash.Name():
@@ -1608,7 +1609,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 // GetParseParams gets the parse parameters from session variables.
 func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	chs, coll := s.GetCharsetInfo()
-	cli, err := GetSessionOrGlobalSystemVar(s, CharacterSetClient)
+	cli, err := s.GetSessionOrGlobalSystemVar(CharacterSetClient)
 	if err != nil {
 		cli = ""
 	}
@@ -1630,6 +1631,13 @@ func (s *SessionVars) SetUserVar(varName string, svalue string, collation string
 	}
 }
 
+// UnsetUserVar unset an user defined variable by name.
+func (s *SessionVars) UnsetUserVar(varName string) {
+	varName = strings.ToLower(varName)
+	delete(s.Users, varName)
+	delete(s.UserVarTypes, varName)
+}
+
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
@@ -1637,7 +1645,7 @@ func (s *SessionVars) SetLastInsertID(insertID uint64) {
 }
 
 // SetStatusFlag sets the session server status variable.
-// If on is ture sets the flag in session status,
+// If on is true sets the flag in session status,
 // otherwise removes the flag.
 func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	if on {
@@ -1811,7 +1819,7 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 }
 
 // SetStmtVar sets the value of a system variable temporarily
-func (s *SessionVars) SetStmtVar(name string, val string) error {
+func (s *SessionVars) setStmtVar(name string, val string) error {
 	s.stmtVars[name] = val
 	return nil
 }
@@ -1821,12 +1829,107 @@ func (s *SessionVars) ClearStmtVars() {
 	s.stmtVars = make(map[string]string)
 }
 
+// GetSessionOrGlobalSystemVar gets a system variable.
+// If it is a session only variable, use the default value defined in code.
+// Returns error if there is no such variable.
+func (s *SessionVars) GetSessionOrGlobalSystemVar(name string) (string, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if sv.HasNoneScope() {
+		return sv.Value, nil
+	}
+	if sv.HasSessionScope() {
+		// Populate the value to s.systems if it is not there already.
+		// in future should be already loaded on session init
+		if sv.GetSession != nil {
+			// shortcut to the getter, we won't use the value
+			return sv.GetSessionFromHook(s)
+		}
+		if _, ok := s.systems[sv.Name]; !ok {
+			if sv.HasGlobalScope() {
+				if val, err := s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name); err == nil {
+					s.systems[sv.Name] = val
+				}
+			} else {
+				s.systems[sv.Name] = sv.Value // no global scope, use default
+			}
+		}
+		return sv.GetSessionFromHook(s)
+	}
+	return sv.GetGlobalFromHook(s)
+}
+
+// GetSessionStatesSystemVar gets the session variable value for session states.
+// It's only used for encoding session states when migrating a session.
+// The returned boolean indicates whether to keep this value in the session states.
+func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	// Call GetStateValue first if it exists. Otherwise, call GetSession.
+	if sv.GetStateValue != nil {
+		return sv.GetStateValue(s)
+	}
+	if sv.GetSession != nil {
+		val, err := sv.GetSessionFromHook(s)
+		return val, err == nil, err
+	}
+	// Only get the cached value. No need to check the global or default value.
+	if val, ok := s.systems[sv.Name]; ok {
+		return val, true, nil
+	}
+	return "", false, nil
+}
+
+// GetGlobalSystemVar gets a global system variable.
+func (s *SessionVars) GetGlobalSystemVar(name string) (string, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	return sv.GetGlobalFromHook(s)
+}
+
+// SetStmtVar sets system variable and updates SessionVars states.
+func (s *SessionVars) SetStmtVar(name string, value string) error {
+	name = strings.ToLower(name)
+	sysVar := GetSysVar(name)
+	if sysVar == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	sVal, err := sysVar.Validate(s, value, ScopeSession)
+	if err != nil {
+		return err
+	}
+	return s.setStmtVar(name, sVal)
+}
+
 // SetSystemVar sets the value of a system variable for session scope.
-// Validation is expected to be performed before calling this function,
-// and the values should been normalized.
-// i.e. oN / on / 1 => ON
+// Values are automatically normalized (i.e. oN / on / 1 => ON)
+// and the validation function is run. To set with less validation, see
+// SetSystemVarWithRelaxedValidation.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	sv := GetSysVar(name)
+	if sv == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	val, err := sv.Validate(s, val, ScopeSession)
+	if err != nil {
+		return err
+	}
+	return sv.SetSessionFromHook(s, val)
+}
+
+// SetSystemVarWithoutValidation sets the value of a system variable for session scope.
+// Deprecated: Values are NOT normalized or Validated.
+func (s *SessionVars) SetSystemVarWithoutValidation(name string, val string) error {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
 	return sv.SetSessionFromHook(s, val)
 }
 
@@ -2207,6 +2310,9 @@ type BatchSize struct {
 
 	// MinPagingSize defines the min size used by the coprocessor paging protocol.
 	MinPagingSize int
+
+	// MinPagingSize defines the max size used by the coprocessor paging protocol.
+	MaxPagingSize int
 }
 
 const (
@@ -2723,4 +2829,31 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		return s.seekFactorV2
 	}
 	return s.seekFactor
+}
+
+// EnableEvalTopNEstimationForStrMatch means if we need to evaluate expression with TopN to improve estimation.
+// Currently, it's only for string matching functions (like and regexp).
+func (s *SessionVars) EnableEvalTopNEstimationForStrMatch() bool {
+	return s.DefaultStrMatchSelectivity == 0
+}
+
+// GetStrMatchDefaultSelectivity means the default selectivity for like and regexp.
+// Note: 0 is a special value, which means the default selectivity is 0.1 and TopN assisted estimation is enabled.
+func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == 0 {
+		return 0.1
+	}
+	return s.DefaultStrMatchSelectivity
+}
+
+// GetNegateStrMatchDefaultSelectivity means the default selectivity for not like and not regexp.
+// Note:
+//     0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
+//     0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
+//   keep the default selectivity of like/regexp and not like/regexp all 0.8.
+func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
+		return DefTiDBDefaultStrMatchSelectivity
+	}
+	return 1 - s.GetStrMatchDefaultSelectivity()
 }

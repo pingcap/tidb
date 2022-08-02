@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/redact"
@@ -36,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -473,7 +474,7 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 }
 
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
-func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, se sessionctx.Context, store kv.Storage, lastBackupTS, backupTS uint64) error {
+func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.Storage, lastBackupTS, backupTS uint64, needDomain bool) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
@@ -492,11 +493,19 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, se sessionctx.Context, 
 		return errors.Trace(err)
 	}
 	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
-	allJobs, err := ddl.GetAllDDLJobs(se, newestMeta)
+	allJobs := make([]*model.Job, 0)
+	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
+		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx(), newestMeta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
+		return nil
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
+
 	historyJobs, err := ddl.GetAllHistoryDDLJobs(newestMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -572,9 +581,8 @@ func (bc *Client) BackupRanges(
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
 					return errors.SuspendStack(err)
-				} else {
-					return errors.Trace(err)
 				}
+				return errors.Trace(err)
 			}
 			return nil
 		})
@@ -607,7 +615,7 @@ func (bc *Client) BackupRange(
 		zap.Uint32("concurrency", req.Concurrency))
 
 	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), conn.SkipTiFlash)
+	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), connutil.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -668,9 +676,7 @@ func (bc *Client) BackupRange(
 func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
-	if !isRawKv {
-		key = codec.EncodeBytes([]byte{}, key)
-	}
+	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
 	for i := 0; i < 5; i++ {
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
@@ -1065,10 +1071,9 @@ func SendBackup(
 			}
 			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID), zap.Int("retry", retry))
 			return berrors.ErrFailedToConnect.Wrap(errBackup).GenWithStack("failed to create backup stream to store %d", storeID)
-		} else {
-			// finish backup
-			break
 		}
+		// finish backup
+		break
 	}
 	return nil
 }

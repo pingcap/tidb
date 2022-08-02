@@ -28,8 +28,7 @@ import (
 )
 
 func TestCacheable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -244,5 +243,4 @@ func TestCacheable(t *testing.T) {
 		},
 	}
 	require.True(t, core.Cacheable(stmt, is))
-
 }

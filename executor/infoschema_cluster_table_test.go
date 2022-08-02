@@ -45,7 +45,6 @@ import (
 type infosSchemaClusterTableSuite struct {
 	store      kv.Storage
 	dom        *domain.Domain
-	clean      func()
 	rpcServer  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
@@ -54,19 +53,19 @@ type infosSchemaClusterTableSuite struct {
 }
 
 func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSuite {
-	var clean func()
-
 	s := new(infosSchemaClusterTableSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
 	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
-	s.clean = func() {
-		s.rpcServer.Stop()
-		s.httpServer.Close()
-		clean()
-	}
-
+	t.Cleanup(func() {
+		if s.rpcServer != nil {
+			s.rpcServer.Stop()
+		}
+		if s.httpServer != nil {
+			s.httpServer.Close()
+		}
+	})
 	return s
 }
 
@@ -225,7 +224,6 @@ func (s *mockStore) Describe() string             { return "" }
 
 func TestTiDBClusterInfo(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
-	defer s.clean()
 
 	mockAddr := s.mockAddr
 	store := &mockStore{
@@ -298,7 +296,6 @@ func TestTiDBClusterInfo(t *testing.T) {
 
 func TestTableStorageStats(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
-	defer s.clean()
 
 	tk := testkit.NewTestKit(t, s.store)
 	err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test'")
@@ -312,9 +309,10 @@ func TestTableStorageStats(t *testing.T) {
 	// Test information_schema.TABLE_STORAGE_STATS.
 	tk = testkit.NewTestKit(t, store)
 
-	// Test not set the schema.
+	// Test table_schema is not specified.
 	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS")
-	require.EqualError(t, err, "Please specify the 'table_schema'")
+	require.EqualError(t, err, "Please add where clause to filter the column TABLE_SCHEMA. "+
+		"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
 
 	// Test it would get null set when get the sys schema.
 	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]interface{}{})

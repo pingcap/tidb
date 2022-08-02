@@ -241,7 +241,16 @@
       "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3",
       "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a cross join t3",
       "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a cross join t3",
-      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a cross join t3"
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a cross join t3",
+
+      // outer join + outer join types
+      "select /*+ leading(t2, t1) */ * from t1 left join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t2, t1) */ * from t1 right join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t3, t1) */ * from t1 right join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ leading(t1) */ * from t1 left join t2 on t1.a=t2.a straight_join t3",
+      "select /*+ leading(t1) */ * from t1 right join t2 on t1.a=t2.a straight_join t3",
+      "select /*+ leading(t1) */ * from t1 left join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t1) */ * from t1 right join t2 on t1.a=t2.a cross join t3"
     ]
   },
   {

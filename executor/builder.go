@@ -221,6 +221,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildShowDDLJobs(v)
 	case *plannercore.ShowDDLJobQueries:
 		return b.buildShowDDLJobQueries(v)
+	case *plannercore.ShowDDLJobQueriesWithRange:
+		return b.buildShowDDLJobQueriesWithRange(v)
 	case *plannercore.ShowSlow:
 		return b.buildShowSlow(v)
 	case *plannercore.PhysicalShow:
@@ -390,6 +392,15 @@ func (b *executorBuilder) buildShowDDLJobQueries(v *plannercore.ShowDDLJobQuerie
 	return e
 }
 
+func (b *executorBuilder) buildShowDDLJobQueriesWithRange(v *plannercore.ShowDDLJobQueriesWithRange) Executor {
+	e := &ShowDDLJobQueriesWithRangeExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		offset:       v.Offset,
+		limit:        v.Limit,
+	}
+	return e
+}
+
 func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) Executor {
 	e := &ShowSlowExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -418,7 +429,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	tps := make([]*types.FieldType, 0, fullColLen)
 	for _, col := range is.Columns {
-		tps = append(tps, &col.FieldType)
+		tps = append(tps, &(col.FieldType))
 	}
 
 	if !e.isCommonHandle() {
@@ -990,7 +1001,46 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 		if len(v.Statement.(*ast.AlterTableStmt).Specs) > 1 && b.Ti != nil {
 			b.Ti.UseMultiSchemaChange = true
 		}
+	case *ast.CreateTableStmt:
+		stmt := v.Statement.(*ast.CreateTableStmt)
+		if stmt != nil && stmt.Partition != nil {
+			if strings.EqualFold(b.ctx.GetSessionVars().EnableTablePartition, "OFF") {
+				break
+			}
+
+			s := stmt.Partition
+			if b.Ti.PartitionTelemetry == nil {
+				b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+			}
+			b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = mathutil.Max(s.Num, uint64(len(s.Definitions)))
+			b.Ti.PartitionTelemetry.UseTablePartition = true
+
+			switch s.Tp {
+			case model.PartitionTypeRange:
+				if s.Sub == nil {
+					if len(s.ColumnNames) > 0 {
+						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
+					} else {
+						b.Ti.PartitionTelemetry.UseTablePartitionRange = true
+					}
+				}
+			case model.PartitionTypeHash:
+				if !s.Linear && s.Sub == nil {
+					b.Ti.PartitionTelemetry.UseTablePartitionHash = true
+				}
+			case model.PartitionTypeList:
+				enable := b.ctx.GetSessionVars().EnableListTablePartition
+				if s.Sub == nil && enable {
+					if len(s.ColumnNames) > 0 {
+						b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true
+					} else {
+						b.Ti.PartitionTelemetry.UseTablePartitionList = true
+					}
+				}
+			}
+		}
 	}
+
 	e := &DDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
@@ -2764,7 +2814,6 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
 	execPB, err := p.ToPB(sctx, kv.TiFlash)
 	return []*tipb.Executor{execPB}, err
-
 }
 
 func constructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, storeType kv.StoreType) (dagReq *tipb.DAGRequest, err error) {

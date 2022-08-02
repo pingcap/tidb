@@ -802,7 +802,7 @@ func GetTS() (int64, int64) {
 	tsMu.Lock()
 	defer tsMu.Unlock()
 
-	ts := time.Now().UnixNano() / int64(time.Millisecond)
+	ts := time.Now().UnixMilli()
 	if tsMu.physicalTS >= ts {
 		tsMu.logicalTS++
 	} else {

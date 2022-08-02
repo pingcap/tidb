@@ -71,8 +71,7 @@ func testWithData(t *testing.T, tk *testkit.TestKit, input Input, output Output)
 
 // Test WindowFuncDesc.CanPushDownToTiFlash
 func TestWindowFunctionDescCanPushDown(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	dom := domain.GetDomain(tk.Session())
 
@@ -84,13 +83,12 @@ func TestWindowFunctionDescCanPushDown(t *testing.T) {
 	var input Input
 	var output Output
 	suiteData := plannercore.GetWindowPushDownSuiteData()
-	suiteData.GetTestCases(t, &input, &output)
+	suiteData.LoadTestCases(t, &input, &output)
 	testWithData(t, tk, input, output)
 }
 
 func TestWindowPushDownPlans(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	dom := domain.GetDomain(tk.Session())
 
@@ -102,13 +100,12 @@ func TestWindowPushDownPlans(t *testing.T) {
 	var input Input
 	var output Output
 	suiteData := plannercore.GetWindowPushDownSuiteData()
-	suiteData.GetTestCases(t, &input, &output)
+	suiteData.LoadTestCases(t, &input, &output)
 	testWithData(t, tk, input, output)
 }
 
 func TestWindowPlanWithOtherOperators(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	dom := domain.GetDomain(tk.Session())
 
@@ -120,13 +117,12 @@ func TestWindowPlanWithOtherOperators(t *testing.T) {
 	var input Input
 	var output Output
 	suiteData := plannercore.GetWindowPushDownSuiteData()
-	suiteData.GetTestCases(t, &input, &output)
+	suiteData.LoadTestCases(t, &input, &output)
 	testWithData(t, tk, input, output)
 }
 
 func TestIssue34765(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	dom := domain.GetDomain(tk.Session())
 

@@ -16,6 +16,7 @@ go_library(
         "//br/pkg/backup",
         "//br/pkg/checksum",
         "//br/pkg/conn",
+        "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/glue",
         "//br/pkg/httputil",
@@ -34,7 +35,6 @@ go_library(
         "//config",
         "//kv",
         "//parser/mysql",
-        "//sessionctx",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//statistics/handle",
@@ -70,6 +70,7 @@ go_library(
 
 go_test(
     name = "task_test",
+    timeout = "short",
     srcs = [
         "backup_test.go",
         "common_test.go",
@@ -77,6 +78,7 @@ go_test(
         "stream_test.go",
     ],
     embed = [":task"],
+    flaky = True,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/metautil",

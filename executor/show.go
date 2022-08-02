@@ -587,7 +587,6 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 			continue
 		}
 		e.result.AppendRow(row)
-
 	}
 	return nil
 }
@@ -843,7 +842,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 				if e.sysVarHiddenForSem(v.Name) {
 					continue
 				}
-				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
+				value, err = sessionVars.GetGlobalSystemVar(v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -868,7 +867,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		if e.sysVarHiddenForSem(v.Name) {
 			continue
 		}
-		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
+		value, err = sessionVars.GetSessionOrGlobalSystemVar(v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1415,7 +1414,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	sqlMode := ctx.GetSessionVars().SQLMode
 	var ifNotExistsStr string
 	if ifNotExists {
-		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
+		ifNotExistsStr = "IF NOT EXISTS "
 	}
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
 	if dbInfo.Charset != "" {
@@ -2062,7 +2061,8 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.
 	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
-		planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
+		planBuilder, _ := plannercore.NewPlanBuilder(
+			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
 			viewOutputNames := viewLogicalPlan.OutputNames()

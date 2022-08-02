@@ -74,8 +74,7 @@ func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
 }
 
 func TestConversion(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -124,8 +123,7 @@ func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handl
 }
 
 func TestDumpGlobalStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 2")
@@ -151,8 +149,7 @@ func TestDumpGlobalStats(t *testing.T) {
 }
 
 func TestLoadGlobalStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 2")
@@ -178,8 +175,7 @@ func TestLoadGlobalStats(t *testing.T) {
 }
 
 func TestDumpPartitions(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -224,8 +220,7 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestDumpAlteredTable(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -244,8 +239,7 @@ func TestDumpAlteredTable(t *testing.T) {
 
 func TestDumpCMSketchWithTopN(t *testing.T) {
 	// Just test if we can store and recover the Top N elements stored in database.
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int)")
@@ -286,8 +280,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 }
 
 func TestDumpPseudoColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, index idx(a))")
@@ -304,8 +297,7 @@ func TestDumpPseudoColumns(t *testing.T) {
 }
 
 func TestDumpExtendedStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -340,8 +332,7 @@ func TestDumpExtendedStats(t *testing.T) {
 }
 
 func TestDumpVer2Stats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
@@ -393,14 +384,13 @@ func TestDumpVer2Stats(t *testing.T) {
 
 func TestLoadStatsForNewCollation(t *testing.T) {
 	// This test is almost the same as TestDumpVer2Stats, except that: b varchar(10) => b varchar(3) collate utf8mb4_unicode_ci
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(3) collate utf8mb4_unicode_ci)")
-	tk.MustExec("insert into t value(1, 'aaa'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc')")
+	tk.MustExec("insert into t value(1, 'aaa'), (1, 'aaa'), (3, 'aab'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc'), (7, 'Ste')")
 	// mark column stats as needed
 	tk.MustExec("select * from t where a = 3")
 	tk.MustExec("select * from t where b = 'bbb'")
@@ -445,8 +435,7 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 }
 
 func TestJSONTableToBlocks(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
