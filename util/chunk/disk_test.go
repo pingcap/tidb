@@ -80,7 +80,7 @@ func TestListInDisk(t *testing.T) {
 		err := l.Add(chk)
 		assert.NoError(t, err)
 	}
-	require.True(t, strings.HasPrefix(l.dataFile.disk.Name(), filepath.Join(os.TempDir(), "oom-use-tmp-storage")))
+	require.True(t, strings.HasPrefix(l.dataFile.disk.Name(), filepath.Join(os.TempDir(), "tidb_enable_tmp_storage_on_oom")))
 	assert.Equal(t, numChk, l.NumChunks())
 	assert.Greater(t, l.GetDiskTracker().BytesConsumed(), int64(0))
 
