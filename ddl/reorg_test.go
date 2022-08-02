@@ -30,8 +30,7 @@ import (
 )
 
 func TestReorgOwner(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	d1 := domain.DDL()
 

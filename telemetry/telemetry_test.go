@@ -58,8 +58,7 @@ func TestPreview(t *testing.T) {
 
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
@@ -112,8 +111,7 @@ func TestReport(t *testing.T) {
 
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()

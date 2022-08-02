@@ -87,7 +87,6 @@ func (c *TestClient) ScatterRegions(ctx context.Context, regionInfo []*split.Reg
 				delete(regions, id)
 			}
 			err = multierr.Append(err, splitErr)
-
 		}
 	}
 	return nil
@@ -315,7 +314,6 @@ func TestScatterFinishInTime(t *testing.T) {
 	regionSplitter.ScatterRegionsWithBackoffer(ctx,
 		regionInfos,
 		assertRetryLessThan(t, 40))
-
 }
 
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )

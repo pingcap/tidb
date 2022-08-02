@@ -978,7 +978,7 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
-		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
+		t := time.UnixMilli(oracle.ExtractPhysical(tbl.Version))
 		dur := time.Since(t)
 		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %v", dur)
 	}
