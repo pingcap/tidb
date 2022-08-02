@@ -113,8 +113,8 @@ func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 // to do that and it makes higher performance. In fact, txnManger.AdviseWarmup makes read statement get tso
 // from PD too, except that it's a "RcReadCheckTS" statement, please reffer to tidb_rc_read_check_ts variable.
 // The necessary condition not performing warmup is as followers.
-// 1. RC isolation 2. not internal sqls 3. tidb_rc_insert_use_last_tso is true
-// 4. In transaction 5. Insert without select || execute statement of prepare object
+// 1. RC isolation 2. not internal sqls 3. In transaction
+// 4. Insert without select || execute statement of prepare object
 // In fact, we skip getting tso from PD for insert, point update, point delete, lock point read(SELECT ... FOR UPDATE),
 // but we don't know the final plan, mark the `DisableWarmupInOptimizer` flag here only for insert statement of
 // text protocol, the func `(p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan` explains how to optimize
@@ -124,12 +124,13 @@ func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := sctx.GetSessionVars()
 	if sessionVars.ConnectionID > 0 &&
-		variable.InsertUseLastTso.Load() &&
 		sessionVars.InTxn() {
-		if _, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+		if _, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt &&
+			(variable.InsertUseLastTso.Load() || variable.PointLockReadUseLastTso.Load()) {
 			return true
 		}
-		if insert, ok := node.(*ast.InsertStmt); ok && insert.Select == nil {
+		if insert, ok := node.(*ast.InsertStmt); ok && insert.Select == nil &&
+			variable.InsertUseLastTso.Load() {
 			return true
 		}
 	}
