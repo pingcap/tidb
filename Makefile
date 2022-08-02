@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: check-parallel lint tidy testSuite check-static errdoc
+check: check-parallel lint testSuite check-static errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -413,7 +413,7 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
-bazel_build: bazel_ci_prepare
+bazel_build: tidy bazel_ci_prepare
 	mkdir -p bin
 	bazel --output_user_root=/home/jenkins/.tidb/tmp build -k --config=ci //... --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
