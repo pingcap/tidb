@@ -70,6 +70,7 @@ go_library(
 
 go_test(
     name = "domain_test",
+    timeout = "short",
     srcs = [
         "db_test.go",
         "domain_test.go",
