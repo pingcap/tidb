@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/expression"
 	"testing"
 	"time"
 
@@ -116,10 +117,7 @@ func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error
 	if err != nil {
 		return nil, err
 	}
-	params := make([]types.Datum, len(args))
-	for i := 0; i < len(params); i++ {
-		params[i] = types.NewDatum(args[i])
-	}
+	params := expression.Args2Expressions4Test(args...)
 	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, err
