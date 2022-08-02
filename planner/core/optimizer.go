@@ -52,8 +52,6 @@ var AllowCartesianProduct = atomic.NewBool(true)
 // IsReadOnly check whether the ast.Node is a read only statement.
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
-var GetAvailableIsolationReadEngines4Plan func(vars *variable.SessionVars) map[kv.StoreType]struct{}
-
 const (
 	flagGcSubstitute uint64 = 1 << iota
 	flagPrunColumns
