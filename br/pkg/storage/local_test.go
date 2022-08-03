@@ -88,4 +88,15 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 2, i)
+
+	names = []string{name2}
+	i = 0
+	err = store.WalkDir(context.TODO(), &WalkOption{ObjPrefix: "test.warehouse.1"}, func(path string, size int64) error {
+		require.Equal(t, names[i], path)
+		require.Equal(t, int64(len(data)), size)
+		i++
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, i)
 }

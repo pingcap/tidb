@@ -24,8 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/tidb-binlog/node"
-	binlog "github.com/pingcap/tipb/go-binlog"
-	pb "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -36,7 +35,7 @@ var (
 )
 
 type testCase struct {
-	binlogs     []*pb.Binlog
+	binlogs     []*binlog.Binlog
 	choosePumps []*PumpStatus
 	setAvliable []bool
 	setNodeID   []string
@@ -61,7 +60,7 @@ func testSelector(t *testing.T, strategy string) {
 		pump.NodeID = fmt.Sprintf("pump%d", i)
 		pump.State = node.Offline
 		// set pump client to avoid create grpc client.
-		pump.Client = pb.NewPumpClient(nil)
+		pump.Client = binlog.NewPumpClient(nil)
 	}
 
 	for _, pump := range pumps {
@@ -71,26 +70,26 @@ func testSelector(t *testing.T, strategy string) {
 
 	tCase := &testCase{}
 
-	tCase.binlogs = []*pb.Binlog{
+	tCase.binlogs = []*binlog.Binlog{
 		{
-			Tp:      pb.BinlogType_Prewrite,
+			Tp:      binlog.BinlogType_Prewrite,
 			StartTs: 1,
 		}, {
-			Tp:       pb.BinlogType_Commit,
+			Tp:       binlog.BinlogType_Commit,
 			StartTs:  1,
 			CommitTs: 2,
 		}, {
-			Tp:      pb.BinlogType_Prewrite,
+			Tp:      binlog.BinlogType_Prewrite,
 			StartTs: 3,
 		}, {
-			Tp:       pb.BinlogType_Commit,
+			Tp:       binlog.BinlogType_Commit,
 			StartTs:  3,
 			CommitTs: 4,
 		}, {
-			Tp:      pb.BinlogType_Prewrite,
+			Tp:      binlog.BinlogType_Prewrite,
 			StartTs: 5,
 		}, {
-			Tp:       pb.BinlogType_Commit,
+			Tp:       binlog.BinlogType_Commit,
 			StartTs:  5,
 			CommitTs: 6,
 		},
@@ -111,12 +110,12 @@ func testSelector(t *testing.T, strategy string) {
 	}
 
 	for j := 0; j < 10; j++ {
-		prewriteBinlog := &pb.Binlog{
-			Tp:      pb.BinlogType_Prewrite,
+		prewriteBinlog := &binlog.Binlog{
+			Tp:      binlog.BinlogType_Prewrite,
 			StartTs: int64(j),
 		}
-		commitBinlog := &pb.Binlog{
-			Tp:      pb.BinlogType_Commit,
+		commitBinlog := &binlog.Binlog{
+			Tp:      binlog.BinlogType_Commit,
 			StartTs: int64(j),
 		}
 
@@ -180,20 +179,20 @@ func TestWriteBinlog(t *testing.T) {
 		clientCon, err := grpc.Dial(cfg.addr, opt, grpc.WithInsecure())
 		require.NoError(t, err)
 		require.NotNil(t, clientCon)
-		pumpClient := mockPumpsClient(pb.NewPumpClient(clientCon), true)
+		pumpClient := mockPumpsClient(binlog.NewPumpClient(clientCon), true)
 
 		// test binlog size bigger than grpc's MaxRecvMsgSize
-		blog := &pb.Binlog{
-			Tp:            pb.BinlogType_Prewrite,
+		blog := &binlog.Binlog{
+			Tp:            binlog.BinlogType_Prewrite,
 			PrewriteValue: make([]byte, testMaxRecvMsgSize+1),
 		}
 		err = pumpClient.WriteBinlog(blog)
 		require.Error(t, err)
 
 		for i := 0; i < 10; i++ {
-			// test binlog size small than grpc's MaxRecvMsgSize
-			blog = &pb.Binlog{
-				Tp:            pb.BinlogType_Prewrite,
+			// test binlog size smaller than grpc's MaxRecvMsgSize
+			blog = &binlog.Binlog{
+				Tp:            binlog.BinlogType_Prewrite,
 				PrewriteValue: make([]byte, 1),
 			}
 			err = pumpClient.WriteBinlog(blog)
@@ -204,13 +203,13 @@ func TestWriteBinlog(t *testing.T) {
 		require.Len(t, pumpClient.Pumps.UnAvaliablePumps, 1)
 
 		// test write commit binlog, will not return error although write binlog failed.
-		preWriteBinlog := &pb.Binlog{
-			Tp:            pb.BinlogType_Prewrite,
+		preWriteBinlog := &binlog.Binlog{
+			Tp:            binlog.BinlogType_Prewrite,
 			StartTs:       123,
 			PrewriteValue: make([]byte, 1),
 		}
-		commitBinlog := &pb.Binlog{
-			Tp:            pb.BinlogType_Commit,
+		commitBinlog := &binlog.Binlog{
+			Tp:            binlog.BinlogType_Commit,
 			StartTs:       123,
 			CommitTs:      123,
 			PrewriteValue: make([]byte, 1),
@@ -284,14 +283,14 @@ func createMockPumpServer(addr string, mode string, withError bool) (*mockPumpSe
 		server:    serv,
 		withError: withError,
 	}
-	pb.RegisterPumpServer(serv, pump)
+	binlog.RegisterPumpServer(serv, pump)
 	go serv.Serve(l)
 
 	return pump, nil
 }
 
 // mockPumpsClient creates a PumpsClient, used for test.
-func mockPumpsClient(client pb.PumpClient, withBadPump bool) *PumpsClient {
+func mockPumpsClient(client binlog.PumpClient, withBadPump bool) *PumpsClient {
 	// add a available pump
 	nodeID1 := "pump-1"
 	pump1 := &PumpStatus{

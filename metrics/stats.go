@@ -143,4 +143,11 @@ var (
 		Name:      "stats_cache_lru_val",
 		Help:      "gauge of stats cache lru value",
 	}, []string{LblType})
+
+	StatsHealthyGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "statistics",
+		Name:      "stats_healthy",
+		Help:      "Gauge of stats healthy",
+	}, []string{LblType})
 )

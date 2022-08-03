@@ -55,7 +55,7 @@ var (
 const (
 	idLen     = 8
 	prefixLen = 1 + idLen /*tableID*/ + 2
-	// RecordRowKeyLen is public for calculating avgerage row size.
+	// RecordRowKeyLen is public for calculating average row size.
 	RecordRowKeyLen       = prefixLen + idLen /*handle*/
 	tablePrefixLength     = 1
 	recordPrefixSepLength = 2
@@ -80,6 +80,11 @@ const TableSplitKeyLen = 1 + idLen
 // TablePrefix returns table's prefix 't'.
 func TablePrefix() []byte {
 	return tablePrefix
+}
+
+// MetaPrefix returns meta prefix 'm'.
+func MetaPrefix() []byte {
+	return metaPrefix
 }
 
 // EncodeRowKey encodes the table id and record handle into a kv.Key
@@ -192,6 +197,16 @@ func DecodeValuesBytesToStrings(b []byte) ([]string, error) {
 		b = remain
 	}
 	return datumValues, nil
+}
+
+// EncodeMetaKey encodes the key and field into meta key.
+func EncodeMetaKey(key []byte, field []byte) kv.Key {
+	ek := make([]byte, 0, len(metaPrefix)+codec.EncodedBytesLength(len(key))+8+codec.EncodedBytesLength(len(field)))
+	ek = append(ek, metaPrefix...)
+	ek = codec.EncodeBytes(ek, key)
+	ek = codec.EncodeUint(ek, uint64(structure.HashData))
+	ek = codec.EncodeBytes(ek, field)
+	return ek
 }
 
 // DecodeMetaKey decodes the key and get the meta key and meta field.
@@ -948,12 +963,28 @@ func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
 	return key
 }
 
-// EncodeTablePrefix encodes table prefix with table ID.
+// EncodeTablePrefix encodes the table prefix to generate a key
 func EncodeTablePrefix(tableID int64) kv.Key {
-	var key kv.Key
+	key := make([]byte, 0, tablePrefixLength+idLen)
 	key = append(key, tablePrefix...)
 	key = codec.EncodeInt(key, tableID)
 	return key
+}
+
+// EncodeTablePrefixSeekKey encodes the table prefix and encodecValue into a kv.Key.
+// It used for seek justly.
+func EncodeTablePrefixSeekKey(tableID int64, encodecValue []byte) kv.Key {
+	key := make([]byte, 0, tablePrefixLength+idLen+len(encodecValue))
+	key = appendTablePrefix(key, tableID)
+	key = append(key, encodecValue...)
+	return key
+}
+
+// appendTablePrefix appends table prefix "t[tableID]" into buf.
+func appendTablePrefix(buf []byte, tableID int64) []byte {
+	buf = append(buf, tablePrefix...)
+	buf = codec.EncodeInt(buf, tableID)
+	return buf
 }
 
 // appendTableRecordPrefix appends table record prefix  "t[tableID]_r".
@@ -1172,7 +1203,7 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 }
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
-func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
+func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
 	idxVal := make([]byte, 0)
 	idxVal = append(idxVal, 0)
 	tailLen := 0
@@ -1186,7 +1217,7 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 	if idxInfo.Global {
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
-	if IdxValNeedRestoredData || len(handleRestoredData) > 0 {
+	if idxValNeedRestoredData || len(handleRestoredData) > 0 {
 		colIds := make([]int64, 0, len(idxInfo.Columns))
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
@@ -1230,7 +1261,7 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 }
 
 // genIndexValueVersion0 create index value for both local and global index.
-func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
+func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
 	idxVal := make([]byte, 0)
 	idxVal = append(idxVal, 0)
 	newEncode := false
@@ -1243,7 +1274,7 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 		idxVal = encodePartitionID(idxVal, partitionID)
 		newEncode = true
 	}
-	if IdxValNeedRestoredData {
+	if idxValNeedRestoredData {
 		colIds := make([]int64, len(idxInfo.Columns))
 		for i, col := range idxInfo.Columns {
 			colIds[i] = tblInfo.Columns[col.Offset].ID
@@ -1272,7 +1303,7 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
 			// then should also write the untouched index key/value to mem-buffer to make sure the data
 			// is consistent with the index in txn mem-buffer.
-			tailLen += 1
+			tailLen++
 			idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
 		}
 		idxVal[0] = byte(tailLen)
@@ -1548,4 +1579,17 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		resultValues = append(resultValues, pidBytes)
 	}
 	return resultValues, nil
+}
+
+// IndexKVIsUnique uses to judge if an index is unique, it can handle the KV committed by txn already, it doesn't consider the untouched flag.
+func IndexKVIsUnique(value []byte) bool {
+	if len(value) <= MaxOldEncodeValueLen {
+		return len(value) == 8
+	}
+	if getIndexVersion(value) == 1 {
+		segs := SplitIndexValueForClusteredIndexVersion1(value)
+		return segs.CommonHandle != nil
+	}
+	segs := SplitIndexValue(value)
+	return segs.IntHandle != nil || segs.CommonHandle != nil
 }

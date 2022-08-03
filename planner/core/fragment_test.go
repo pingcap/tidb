@@ -15,10 +15,10 @@
 package core
 
 import (
+	"testing"
+
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
-
-	"testing"
 )
 
 func TestFragmentInitSingleton(t *testing.T) {

@@ -21,16 +21,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
@@ -42,7 +41,7 @@ var testDataMap = make(testdata.BookKeeper, 1)
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
 
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
@@ -66,6 +65,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
@@ -74,10 +74,6 @@ func TestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func TestT(t *testing.T) {
-	check.TestingT(t)
 }
 
 func GetClusteredIndexSuiteData() testdata.TestData {

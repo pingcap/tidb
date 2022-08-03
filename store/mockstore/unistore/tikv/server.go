@@ -571,6 +571,11 @@ func (svr *Server) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv_Coprocess
 	return nil
 }
 
+// GetLockWaitHistory implements the tikvpb.TikvServer interface.
+func (svr *Server) GetLockWaitHistory(context.Context, *kvrpcpb.GetLockWaitHistoryRequest) (*kvrpcpb.GetLockWaitHistoryResponse, error) {
+	return &kvrpcpb.GetLockWaitHistoryResponse{}, nil
+}
+
 // RegionError represents a region error
 type RegionError struct {
 	err *errorpb.Error
@@ -862,6 +867,11 @@ func (svr *Server) SplitRegion(ctx context.Context, req *kvrpcpb.SplitRegionRequ
 	}
 	defer reqCtx.finish()
 	return svr.regionManager.SplitRegion(req), nil
+}
+
+// Compact implements the tikvpb.TikvServer interface.
+func (svr *Server) Compact(ctx context.Context, req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+	panic("unimplemented")
 }
 
 // ReadIndex implements implements the tikvpb.TikvServer interface.

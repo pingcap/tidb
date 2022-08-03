@@ -189,6 +189,7 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 			continue
 		}
 		memDelta += p.valSet.Insert(decStr)
+		memDelta += int64(len(decStr))
 	}
 
 	return memDelta, nil
@@ -286,6 +287,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 		}
 		input = stringutil.Copy(input)
 		memDelta += p.valSet.Insert(input)
+		memDelta += int64(len(input))
 	}
 
 	return memDelta, nil
@@ -348,6 +350,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 			continue
 		}
 		memDelta += p.valSet.Insert(encodedString)
+		memDelta += int64(len(encodedString))
 	}
 
 	return memDelta, nil

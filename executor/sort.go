@@ -18,17 +18,17 @@ import (
 	"container/heap"
 	"context"
 	"errors"
-	"sort"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"golang.org/x/exp/slices"
 )
 
 // SortExec represents sorting executor.
@@ -181,7 +181,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
-	if config.GetGlobalConfig().OOMUseTmpStorage {
+	if variable.EnableTmpStorageOnOOM.Load() {
 		e.spillAction = e.rowChunks.ActionSpill()
 		failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
 			if val.(bool) {
@@ -362,9 +362,9 @@ func (h *topNChunkHeap) Swap(i, j int) {
 }
 
 // keyColumnsLess is the less function for key columns.
-func (e *TopNExec) keyColumnsLess(i, j int) bool {
-	rowI := e.rowChunks.GetRow(e.rowPtrs[i])
-	rowJ := e.rowChunks.GetRow(e.rowPtrs[j])
+func (e *TopNExec) keyColumnsLess(i, j chunk.RowPtr) bool {
+	rowI := e.rowChunks.GetRow(i)
+	rowJ := e.rowChunks.GetRow(j)
 	return e.lessRow(rowI, rowJ)
 }
 
@@ -473,7 +473,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 			}
 		}
 	}
-	sort.Slice(e.rowPtrs, e.keyColumnsLess)
+	slices.SortFunc(e.rowPtrs, e.keyColumnsLess)
 	return nil
 }
 

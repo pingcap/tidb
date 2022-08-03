@@ -180,13 +180,21 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 	eqConds = append(eqConds, expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[2].Schema().Columns[0], joinGroups[4].Schema().Columns[0]))
 	eqConds = append(eqConds, expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[3].Schema().Columns[0], joinGroups[4].Schema().Columns[0]))
 	eqConds = append(eqConds, expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[4].Schema().Columns[0], joinGroups[5].Schema().Columns[0]))
-	solver := &joinReorderDPSolver{
-		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
-			ctx: ctx,
-		},
-		newJoin: newMockJoin(ctx, statsMap),
+	eqEdges := make([]*expression.ScalarFunction, 0, len(eqConds))
+	for _, cond := range eqConds {
+		sf, isSF := cond.(*expression.ScalarFunction)
+		require.True(t, isSF)
+		eqEdges = append(eqEdges, sf)
 	}
-	result, err := solver.solve(joinGroups, eqConds, nil)
+	baseGroupSolver := &baseSingleGroupJoinOrderSolver{
+		ctx:     ctx,
+		eqEdges: eqEdges,
+	}
+	solver := &joinReorderDPSolver{
+		baseSingleGroupJoinOrderSolver: baseGroupSolver,
+		newJoin:                        newMockJoin(ctx, statsMap),
+	}
+	result, err := solver.solve(joinGroups, nil)
 	require.NoError(t, err)
 
 	expected := "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}"
@@ -210,7 +218,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 		},
 		newJoin: newMockJoin(ctx, statsMap),
 	}
-	result, err := solver.solve(joinGroup, nil, nil)
+	result, err := solver.solve(joinGroup, nil)
 	require.NoError(t, err)
 
 	expected := "MockJoin{MockJoin{a, b}, MockJoin{c, d}}"

@@ -41,7 +41,7 @@ func runTestCasesCSV(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int
 	for _, tc := range cases {
 		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
 		assert.NoError(t, err)
-		parser, err := mydump.NewCSVParser(&cfg.CSV, mydump.NewStringReader(tc.input), blockBufSize, ioWorkers, false, charsetConvertor)
+		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(tc.input), blockBufSize, ioWorkers, false, charsetConvertor)
 		assert.NoError(t, err)
 		for i, row := range tc.expected {
 			comment := fmt.Sprintf("input = %q, row = %d", tc.input, i+1)
@@ -58,7 +58,7 @@ func runFailingTestCasesCSV(t *testing.T, cfg *config.MydumperRuntime, blockBufS
 	for _, tc := range cases {
 		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
 		assert.NoError(t, err)
-		parser, err := mydump.NewCSVParser(&cfg.CSV, mydump.NewStringReader(tc), blockBufSize, ioWorkers, false, charsetConvertor)
+		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(tc), blockBufSize, ioWorkers, false, charsetConvertor)
 		require.NoError(t, err)
 		e := parser.ReadRow()
 		assert.Regexpf(t, "syntax error.*", e.Error(), "input = %q / %s", tc, errors.ErrorStack(e))
@@ -137,7 +137,7 @@ func TestTPCH(t *testing.T) {
 		TrimLastSep: true,
 	}
 
-	parser, err := mydump.NewCSVParser(&cfg, reader, int64(config.ReadBlockSize), ioWorkers, false, nil)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, reader, int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 	require.Nil(t, parser.ReadRow())
 	require.Equal(t, mydump.Row{
@@ -215,7 +215,7 @@ func TestTPCHMultiBytes(t *testing.T) {
 		}
 
 		reader := mydump.NewStringReader(inputStr)
-		parser, err := mydump.NewCSVParser(&cfg, reader, int64(config.ReadBlockSize), ioWorkers, false, nil)
+		parser, err := mydump.NewCSVParser(context.Background(), &cfg, reader, int64(config.ReadBlockSize), ioWorkers, false, nil)
 		require.NoError(t, err)
 
 		for i, expectedParserPos := range allExpectedParserPos {
@@ -237,7 +237,7 @@ func TestRFC4180(t *testing.T) {
 
 	// example 1, trailing new lines
 
-	parser, err := mydump.NewCSVParser(&cfg, mydump.NewStringReader("aaa,bbb,ccc\nzzz,yyy,xxx\n"), int64(config.ReadBlockSize), ioWorkers, false, nil)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader("aaa,bbb,ccc\nzzz,yyy,xxx\n"), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
@@ -268,7 +268,7 @@ func TestRFC4180(t *testing.T) {
 
 	// example 2, no trailing new lines
 
-	parser, err = mydump.NewCSVParser(&cfg, mydump.NewStringReader("aaa,bbb,ccc\nzzz,yyy,xxx"), int64(config.ReadBlockSize), ioWorkers, false, nil)
+	parser, err = mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader("aaa,bbb,ccc\nzzz,yyy,xxx"), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
@@ -299,7 +299,7 @@ func TestRFC4180(t *testing.T) {
 
 	// example 5, quoted fields
 
-	parser, err = mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"aaa","bbb","ccc"`+"\nzzz,yyy,xxx"), int64(config.ReadBlockSize), ioWorkers, false, nil)
+	parser, err = mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`"aaa","bbb","ccc"`+"\nzzz,yyy,xxx"), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
@@ -330,7 +330,7 @@ func TestRFC4180(t *testing.T) {
 
 	// example 6, line breaks within fields
 
-	parser, err = mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"aaa","b
+	parser, err = mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`"aaa","b
 bb","ccc"
 zzz,yyy,xxx`), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
@@ -363,7 +363,7 @@ zzz,yyy,xxx`), int64(config.ReadBlockSize), ioWorkers, false, nil)
 
 	// example 7, quote escaping
 
-	parser, err = mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"aaa","b""bb","ccc"`), int64(config.ReadBlockSize), ioWorkers, false, nil)
+	parser, err = mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`"aaa","b""bb","ccc"`), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
@@ -390,7 +390,7 @@ func TestMySQL(t *testing.T) {
 		Null:            `\N`,
 	}
 
-	parser, err := mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"\"","\\","\?"
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`"\"","\\","\?"
 "\
 ",\N,\\N`), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
@@ -459,7 +459,7 @@ func TestTSV(t *testing.T) {
 		Header:          true,
 	}
 
-	parser, err := mydump.NewCSVParser(&cfg, mydump.NewStringReader(`a	b	c	d	e	f
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`a	b	c	d	e	f
 0				foo	0000-00-00
 0				foo	0000-00-00
 0	abc	def	ghi	bar	1999-12-31`), int64(config.ReadBlockSize), ioWorkers, true, nil)
@@ -520,7 +520,7 @@ func TestCsvWithWhiteSpaceLine(t *testing.T) {
 		Delimiter: `"`,
 	}
 	data := " \r\n\r\n0,,abc\r\n \r\n123,1999-12-31,test\r\n"
-	parser, err := mydump.NewCSVParser(&cfg, mydump.NewStringReader(data), int64(config.ReadBlockSize), ioWorkers, false, nil)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(data), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 	require.Nil(t, parser.ReadRow())
 	require.Equal(t, mydump.Row{
@@ -548,7 +548,7 @@ func TestCsvWithWhiteSpaceLine(t *testing.T) {
 
 	cfg.Header = true
 	data = " \r\na,b,c\r\n0,,abc\r\n"
-	parser, err = mydump.NewCSVParser(&cfg, mydump.NewStringReader(data), int64(config.ReadBlockSize), ioWorkers, true, nil)
+	parser, err = mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(data), int64(config.ReadBlockSize), ioWorkers, true, nil)
 	require.NoError(t, err)
 	require.Nil(t, parser.ReadRow())
 	require.Equal(t, []string{"a", "b", "c"}, parser.Columns())
@@ -572,7 +572,7 @@ func TestEmpty(t *testing.T) {
 		Delimiter: `"`,
 	}
 
-	parser, err := mydump.NewCSVParser(&cfg, mydump.NewStringReader(""), int64(config.ReadBlockSize), ioWorkers, false, nil)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(""), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
 
@@ -580,11 +580,11 @@ func TestEmpty(t *testing.T) {
 
 	cfg.Header = true
 
-	parser, err = mydump.NewCSVParser(&cfg, mydump.NewStringReader(""), int64(config.ReadBlockSize), ioWorkers, true, nil)
+	parser, err = mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(""), int64(config.ReadBlockSize), ioWorkers, true, nil)
 	require.NoError(t, err)
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
 
-	parser, err = mydump.NewCSVParser(&cfg, mydump.NewStringReader("h\n"), int64(config.ReadBlockSize), ioWorkers, true, nil)
+	parser, err = mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader("h\n"), int64(config.ReadBlockSize), ioWorkers, true, nil)
 	require.NoError(t, err)
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
 }
@@ -594,7 +594,7 @@ func TestCRLF(t *testing.T) {
 		Separator: ",",
 		Delimiter: `"`,
 	}
-	parser, err := mydump.NewCSVParser(&cfg, mydump.NewStringReader("a\rb\r\nc\n\n\n\nd"), int64(config.ReadBlockSize), ioWorkers, false, nil)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader("a\rb\r\nc\n\n\n\nd"), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
@@ -634,7 +634,7 @@ func TestQuotedSeparator(t *testing.T) {
 		Delimiter: `"`,
 	}
 
-	parser, err := mydump.NewCSVParser(&cfg, mydump.NewStringReader(`",",','`), int64(config.ReadBlockSize), ioWorkers, false, nil)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`",",','`), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 	require.Nil(t, parser.ReadRow())
 	require.Equal(t, mydump.Row{
@@ -823,7 +823,7 @@ func TestReadError(t *testing.T) {
 		Delimiter: `"`,
 	}
 
-	parser, err := mydump.NewCSVParser(&cfg, &errorReader{}, int64(config.ReadBlockSize), ioWorkers, false, nil)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, &errorReader{}, int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 	require.Regexp(t, "fake read error", parser.ReadRow().Error())
 }
@@ -838,7 +838,7 @@ func TestSyntaxErrorLog(t *testing.T) {
 	}
 
 	tc := mydump.NewStringReader("x'" + strings.Repeat("y", 50000))
-	parser, err := mydump.NewCSVParser(&cfg.CSV, tc, 50000, ioWorkers, false, nil)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, tc, 50000, ioWorkers, false, nil)
 	require.NoError(t, err)
 	logger, buffer := log.MakeTestLogger()
 	parser.SetLogger(logger)
@@ -861,6 +861,7 @@ func TestTrimLastSep(t *testing.T) {
 		},
 	}
 	parser, err := mydump.NewCSVParser(
+		context.Background(),
 		&cfg.CSV,
 		mydump.NewStringReader("123,456,789,\r\na,b,,\r\n,,,\r\n\"a\",\"\",\"\",\r\n"),
 		int64(config.ReadBlockSize),
@@ -982,7 +983,7 @@ func BenchmarkReadRowUsingMydumpCSVParser(b *testing.B) {
 	}()
 
 	cfg := config.CSVConfig{Separator: ","}
-	parser, err := mydump.NewCSVParser(&cfg, file, 65536, ioWorkers, false, nil)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, file, 65536, ioWorkers, false, nil)
 	require.NoError(b, err)
 	parser.SetLogger(log.Logger{Logger: zap.NewNop()})
 

@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
@@ -87,11 +88,12 @@ func (do *Domain) GetGlobalVar(name string) (string, error) {
 	return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 }
 
-func (do *Domain) fetchTableValues(ctx sessionctx.Context) (map[string]string, error) {
+func (do *Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, error) {
 	tableContents := make(map[string]string)
 	// Copy all variables from the table to tableContents
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
 	if err != nil {
 		return nil, err
 	}
@@ -148,9 +150,6 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 				err = sv.SetGlobal(ctx.GetSessionVars(), sVal)
 				if err != nil {
 					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
-				}
-				if sv.Name == variable.TiDBStatsCacheMemQuota {
-					do.SetStatsCacheCapacity(variable.StatsCacheMemQuota.Load())
 				}
 			}
 		}

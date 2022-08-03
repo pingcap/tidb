@@ -24,15 +24,16 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -186,7 +187,7 @@ func (e *InsertValues) initEvalBuffer() {
 	}
 	e.evalBufferTypes = make([]*types.FieldType, numCols)
 	for i, col := range e.Table.Cols() {
-		e.evalBufferTypes[i] = &col.FieldType
+		e.evalBufferTypes[i] = &(col.FieldType)
 	}
 	if e.hasExtraHandle {
 		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
@@ -232,7 +233,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 
 	e.lazyFillAutoID = true
 	evalRowFunc := e.fastEvalRow
@@ -435,7 +436,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 	memUsageOfRows := int64(0)
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
@@ -561,6 +562,16 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
 	error) {
 	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
+		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
+			vars := e.ctx.GetSessionVars()
+			sc := vars.StmtCtx
+			if !vars.StrictSQLMode {
+				sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
+			} else {
+				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
+			}
+		}
+
 		if e.lazyFillAutoID {
 			// Handle hasValue info in autoIncrement column previously for lazy handle.
 			if !hasValue {
@@ -630,6 +641,23 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 					return nil, err
 				}
 			}
+		}
+	}
+	tbl := e.Table.Meta()
+	// Handle exchange partition
+	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+		is := e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		if !tableFound {
+			return nil, errors.Errorf("exchange partition process table by id failed")
+		}
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return nil, errors.Errorf("exchange partition process assert table partition failed")
+		}
+		err := p.CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionInfo.ExchangePartitionDefID)
+		if err != nil {
+			return nil, err
 		}
 	}
 	for i, gCol := range gCols {

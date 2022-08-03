@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "errno",
+    srcs = [
+        "errcode.go",
+        "errname.go",
+        "infoschema.go",
+    ],
+    importpath = "github.com/pingcap/tidb/errno",
+    visibility = ["//visibility:public"],
+    deps = ["//parser/mysql"],
+)
+
+go_test(
+    name = "errno_test",
+    timeout = "short",
+    srcs = [
+        "infoschema_test.go",
+        "main_test.go",
+    ],
+    embed = [":errno"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//assert",
+    ],
+)

@@ -24,8 +24,8 @@ import (
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -39,8 +39,7 @@ import (
 )
 
 func TestPrepared(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -157,9 +156,10 @@ func TestPrepared(t *testing.T) {
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 
+		execStmt := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: []types.Datum{types.NewDatum(1)}}
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), stmtID,
-			tk.Session().GetInfoSchema().(infoschema.InfoSchema), 0, kv.GlobalReplicaScope, []types.Datum{types.NewDatum(1)})
+		stmt, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), execStmt,
+			tk.Session().GetInfoSchema().(infoschema.InfoSchema))
 		require.NoError(t, err)
 		require.Equal(t, query, stmt.OriginText())
 
@@ -292,8 +292,7 @@ func TestPrepared(t *testing.T) {
 }
 
 func TestPreparedLimitOffset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -328,14 +327,14 @@ func TestPreparedLimitOffset(t *testing.T) {
 
 		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
 		require.NoError(t, err)
-		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+		rs, err := tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
+		rs.Close()
 	}
 }
 
 func TestPreparedNullParam(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -376,8 +375,7 @@ func TestPreparedNullParam(t *testing.T) {
 }
 
 func TestPrepareWithAggregation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -409,8 +407,7 @@ func TestPrepareWithAggregation(t *testing.T) {
 }
 
 func TestPreparedIssue7579(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -458,8 +455,7 @@ func TestPreparedIssue7579(t *testing.T) {
 }
 
 func TestPreparedInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -545,8 +541,7 @@ func TestPreparedInsert(t *testing.T) {
 }
 
 func TestPreparedUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -606,8 +601,7 @@ func TestPreparedUpdate(t *testing.T) {
 }
 
 func TestIssue21884(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -632,8 +626,7 @@ func TestIssue21884(t *testing.T) {
 }
 
 func TestPreparedDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -693,8 +686,7 @@ func TestPreparedDelete(t *testing.T) {
 }
 
 func TestPrepareDealloc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -747,8 +739,7 @@ func TestPrepareDealloc(t *testing.T) {
 }
 
 func TestPreparedIssue8153(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -803,8 +794,7 @@ func TestPreparedIssue8153(t *testing.T) {
 }
 
 func TestPreparedIssue8644(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -899,8 +889,7 @@ func (msm *mockSessionManager1) GetInternalSessionStartTSList() []uint64 {
 }
 
 func TestPreparedIssue17419(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
 

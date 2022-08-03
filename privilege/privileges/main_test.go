@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 	}
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()

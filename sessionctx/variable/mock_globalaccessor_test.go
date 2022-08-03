@@ -45,5 +45,4 @@ func TestMockAPI(t *testing.T) {
 	require.NoError(t, err)
 	err = mock.SetGlobalSysVarOnly(DefaultAuthPlugin, "mysql_native_password")
 	require.NoError(t, err)
-
 }

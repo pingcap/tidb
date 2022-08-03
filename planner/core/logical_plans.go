@@ -117,6 +117,7 @@ const (
 	preferHashJoin
 	preferMergeJoin
 	preferBCJoin
+	preferRewriteSemiJoin
 	preferHashAgg
 	preferStreamAgg
 )
@@ -136,8 +137,9 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo       *tableHintInfo
-	preferJoinType uint
+	hintInfo        *tableHintInfo
+	preferJoinType  uint
+	preferJoinOrder bool
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
@@ -1196,7 +1198,7 @@ type LogicalIndexScan struct {
 
 // MatchIndexProp checks if the indexScan can match the required property.
 func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
-	if prop.IsEmpty() {
+	if prop.IsSortItemEmpty() {
 		return true
 	}
 	if all, _ := prop.AllSameOrder(); !all {
@@ -1467,7 +1469,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
 // conds is the conditions used to generate the DetachRangeResult for path.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
-func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) {
+func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression.Expression, isIm bool) {
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
@@ -1622,6 +1624,17 @@ type WindowFrame struct {
 	End   *FrameBound
 }
 
+// Clone copies a window frame totally.
+func (wf *WindowFrame) Clone() *WindowFrame {
+	cloned := new(WindowFrame)
+	*cloned = *wf
+
+	cloned.Start = wf.Start.Clone()
+	cloned.End = wf.End.Clone()
+
+	return cloned
+}
+
 // FrameBound is the boundary of a frame.
 type FrameBound struct {
 	Type      ast.BoundType
@@ -1635,6 +1648,20 @@ type FrameBound struct {
 	CmpFuncs []expression.CompareFunc
 }
 
+// Clone copies a frame bound totally.
+func (fb *FrameBound) Clone() *FrameBound {
+	cloned := new(FrameBound)
+	*cloned = *fb
+
+	cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
+	for _, it := range fb.CalcFuncs {
+		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
+	}
+	cloned.CmpFuncs = fb.CmpFuncs
+
+	return cloned
+}
+
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
 	logicalSchemaProducer
@@ -1646,7 +1673,7 @@ type LogicalWindow struct {
 }
 
 // EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
-func (p *LogicalWindow) EqualPartitionBy(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualPartitionBy(_ sessionctx.Context, newWindow *LogicalWindow) bool {
 	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
 		return false
 	}
@@ -1799,6 +1826,8 @@ type ShowContents struct {
 	User      *auth.UserIdentity   // Used for show grants.
 	Roles     []*auth.RoleIdentity // Used for show grants.
 
+	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
+
 	Full        bool
 	IfNotExists bool // Used for `show create database if not exists`.
 	GlobalScope bool // Used by show variables.
@@ -1852,6 +1881,7 @@ type LogicalCTE struct {
 	cteAsName      model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
+	MergeHints     MergeHintInfo
 }
 
 // LogicalCTETable is for CTE table
