@@ -323,7 +323,7 @@ func buildFKCheckPlan(ctx sessionctx.Context, tbl table.Table, fk *model.FKInfo,
 		}
 	}
 
-	referTbIdxInfo := model.FindIndexByColumns(tblInfo.Indices, cols...)
+	referTbIdxInfo := model.FindIndexByColumns(tblInfo, cols...)
 	if referTbIdxInfo == nil {
 		return nil, failedErr
 	}
@@ -400,7 +400,7 @@ func (b *PlanBuilder) buildPhysicalTableReaderForFK(ds *DataSource, cols []model
 			return b.buildPhysicalTableReader(ds)
 		}
 	}
-	idx := model.FindIndexByColumns(tblInfo.Indices, cols...)
+	idx := model.FindIndexByColumns(tblInfo, cols...)
 	if idx == nil {
 		return nil, errors.Errorf("foreign key doesn't have related index to use, should never happen")
 	}

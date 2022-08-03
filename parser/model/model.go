@@ -321,14 +321,20 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
-func FindIndexByColumns(indices []*IndexInfo, cols ...CIStr) *IndexInfo {
-	for _, index := range indices {
+func FindIndexByColumns(tbInfo *TableInfo, cols ...CIStr) *IndexInfo {
+	for _, index := range tbInfo.Indices {
 		if len(index.Columns) < len(cols) {
 			continue
 		}
 		contain := true
 		for i := range cols {
-			if cols[i].L != index.Columns[i].Name.L {
+			if cols[i].L != index.Columns[i].Name.L ||
+				index.Columns[i].Offset >= len(tbInfo.Columns) {
+				contain = false
+				break
+			}
+			colInfo := tbInfo.Columns[index.Columns[i].Offset]
+			if index.Columns[i].Length != types.UnspecifiedLength && index.Columns[i].Length < colInfo.GetFlen() {
 				contain = false
 				break
 			}

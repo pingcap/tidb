@@ -947,7 +947,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrSpatialFunctionalIndex:                                Message("Spatial functional index is not supported", nil),
 	ErrWrongKeyColumnFunctionalIndex:                         Message("The used storage engine cannot index the expression '%s'", nil),
 	ErrFunctionalIndexOnField:                                Message("Functional index on a column is not supported. Consider using a regular index instead", nil),
-	ErrFKIncompatibleColumns:                                 Message("Referencing column '%s' in foreign key constraint '%s' are incompatible", nil),
+	ErrFKIncompatibleColumns:                                 Message("Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible", nil),
 	ErrFunctionalIndexRowValueIsNotAllowed:                   Message("Expression of functional index '%s' cannot refer to a row value", nil),
 	ErrDependentByFunctionalIndex:                            Message("Column '%s' has a functional index dependency and cannot be dropped or renamed", nil),
 	ErrInvalidJsonValueForFuncIndex:                          Message("Invalid JSON value for CAST for functional index '%s'", nil),

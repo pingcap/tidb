@@ -1919,7 +1919,7 @@ func addIndexForFk(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 				continue
 			}
 		}
-		if model.FindIndexByColumns(tbInfo.Indices, fk.Cols...) != nil {
+		if model.FindIndexByColumns(tbInfo, fk.Cols...) != nil {
 			continue
 		}
 
@@ -2296,6 +2296,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+		return err
+	}
+	if err = checkTableForeignKeysValid(is, tbInfo); err != nil {
 		return err
 	}
 
@@ -4410,11 +4413,11 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
 	// Check the column with foreign key, waiting for the default flen and decimal.
-	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
+	if fkInfo, refCol := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
 		// For now we strongly ban the all column type change for column with foreign key.
 		// Actually MySQL support change column with foreign key from varchar(m) -> varchar(m+t) and t > 0.
 		if newCol.GetType() != col.GetType() || newCol.GetFlen() != col.GetFlen() || newCol.GetDecimal() != col.GetDecimal() {
-			return nil, dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(originalColName, fkInfo.Name)
+			return nil, dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(originalColName, refCol, fkInfo.Name)
 		}
 	}
 
@@ -4700,8 +4703,8 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 	}
 
-	if fkInfo := getColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
+	if fkInfo, refCol := getColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
+		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, refCol, fkInfo.Name)
 	}
 
 	// Check generated expression.
@@ -6047,6 +6050,55 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 	return fkInfo, nil
 }
 
+func checkTableForeignKeysValid(is infoschema.InfoSchema, tbInfo *model.TableInfo) error {
+	for _, fk := range tbInfo.ForeignKeys {
+		err := checkTableForeignKeyValid(is, tbInfo, fk)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkTableForeignKeyValid(is infoschema.InfoSchema, tbInfo *model.TableInfo, fk *model.FKInfo) error {
+	referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+	if err != nil {
+		return err
+	}
+	return checkTableForeignKey(referTable.Meta(), tbInfo, fk)
+}
+
+func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.FKInfo) error {
+	// check refer columns in paren table.
+	for i := range fkInfo.RefCols {
+		refCol := model.FindColumnInfo(referTblInfo.Columns, fkInfo.RefCols[i].L)
+		if refCol == nil {
+			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(fkInfo.RefCols[i].O)
+		}
+		if refCol.IsGenerated() && !refCol.GeneratedStored {
+			return infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name.O, fkInfo.RefCols[i].O)
+		}
+		col := model.FindColumnInfo(tblInfo.Columns, fkInfo.Cols[i].L)
+		if col == nil {
+			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(fkInfo.Cols[i].O)
+		}
+		if col.GetType() != refCol.GetType() ||
+			mysql.HasUnsignedFlag(col.GetFlag()) != mysql.HasUnsignedFlag(refCol.GetFlag()) ||
+			col.GetCharset() != refCol.GetCharset() ||
+			col.GetCollate() != refCol.GetCollate() {
+			return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(col.Name, refCol.Name, fkInfo.Name)
+		}
+		if len(fkInfo.RefCols) == 1 && mysql.HasPriKeyFlag(refCol.GetFlag()) && referTblInfo.PKIsHandle {
+			return nil
+		}
+	}
+	// check refer columns should have index.
+	if model.FindIndexByColumns(referTblInfo, fkInfo.RefCols...) == nil {
+		return infoschema.ErrFkNoIndexParent.GenWithStackByArgs(fkInfo.Name.O, fkInfo.RefTable.O)
+	}
+	return nil
+}
+
 func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
@@ -6073,7 +6125,10 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if model.FindIndexByColumns(t.Meta().Indices, fkInfo.Cols...) == nil {
+	if err = checkTableForeignKeyValid(is, t.Meta(), fkInfo); err != nil {
+		return err
+	}
+	if model.FindIndexByColumns(t.Meta(), fkInfo.Cols...) == nil {
 		// should add index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
@@ -6242,7 +6297,7 @@ func isDroppableColumn(multiSchemaChange bool, tblInfo *model.TableInfo, colName
 		return err
 	}
 	// Check the column with foreign key.
-	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
+	if fkInfo, _ := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
 		return dbterror.ErrFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
 	}
 	return nil

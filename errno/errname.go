@@ -897,7 +897,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrSpatialFunctionalIndex:                                mysql.Message("Spatial expression index is not supported", nil),
 	ErrWrongKeyColumnFunctionalIndex:                         mysql.Message("The used storage engine cannot index the expression '%s'", nil),
 	ErrFunctionalIndexOnField:                                mysql.Message("Expression index on a column is not supported. Consider using a regular index instead", nil),
-	ErrFKIncompatibleColumns:                                 mysql.Message("Referencing column '%s' in foreign key constraint '%s' are incompatible", nil),
+	ErrFKIncompatibleColumns:                                 mysql.Message("Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible", nil),
 	ErrFunctionalIndexRowValueIsNotAllowed:                   mysql.Message("Expression of expression index '%s' cannot refer to a row value", nil),
 	ErrDependentByFunctionalIndex:                            mysql.Message("Column '%s' has an expression index dependency and cannot be dropped or renamed", nil),
 	ErrCannotConvertString:                                   mysql.Message("Cannot convert string '%.64s' from %s to %s", nil),

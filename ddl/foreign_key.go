@@ -35,25 +35,69 @@ func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ e
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	fkInfo.ID = allocateIndexID(tblInfo)
-	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
-
-	originalState := fkInfo.State
-	switch fkInfo.State {
+	fkc := ForeignKeyChecker{
+		schemaID: job.SchemaID,
+		tbInfo:   tblInfo,
+	}
+	switch job.SchemaState {
 	case model.StateNone:
-		// We just support record the foreign key, so we just make it public.
-		// none -> public
-		fkInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != fkInfo.State)
+		// none -> write-only
+		_, referTableInfo, err := fkc.getParentTableFromStorage(d, &fkInfo, t)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		err = checkTableForeignKey(referTableInfo, tblInfo, &fkInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		fkInfo.ID = allocateIndexID(tblInfo)
+		tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
+		fkInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
+		return ver, nil
+	case model.StateWriteOnly:
+		// write-only -> write-reorg
+		// check foreign constrain
+		// todo: execute internal sql:
+
+		// update parent table info.
+		referDBInfo, referTableInfo, err := fkc.getParentTableFromStorage(d, &fkInfo, t)
+		if err != nil {
+			return ver, err
+		}
+		referTableInfo.ReferredForeignKeys = append(referTableInfo.ReferredForeignKeys, &model.ReferredFKInfo{
+			ChildSchema: model.NewCIStr(job.SchemaName),
+			ChildTable:  tblInfo.Name,
+			ChildFKName: fkInfo.Name,
+			Cols:        fkInfo.RefCols,
+		})
+		originalSchemaID, originalTableID := job.SchemaID, job.TableID
+		job.SchemaID, job.TableID = referDBInfo.ID, referTableInfo.ID
+		ver, err = updateVersionAndTableInfo(d, t, job, referTableInfo, true)
+		job.SchemaID, job.TableID = originalSchemaID, originalTableID
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteReorganization
+	case model.StateWriteReorganization:
+		// write-reorg -> public
+		tblInfo.ForeignKeys[len(tblInfo.ForeignKeys)-1].State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		return ver, nil
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStack("foreign key", fkInfo.State)
 	}
+	return ver, nil
 }
 
 func onDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

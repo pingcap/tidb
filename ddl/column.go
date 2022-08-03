@@ -1586,15 +1586,15 @@ func listIndicesWithColumn(colName string, indices []*model.IndexInfo) []*model.
 	return ret
 }
 
-func getColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) *model.FKInfo {
+func getColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) (*model.FKInfo, string) {
 	for _, fkInfo := range fkInfos {
-		for _, col := range fkInfo.Cols {
+		for i, col := range fkInfo.Cols {
 			if col.L == colName {
-				return fkInfo
+				return fkInfo, fkInfo.RefCols[i].O
 			}
 		}
 	}
-	return nil
+	return nil, ""
 }
 
 func allocateColumnID(tblInfo *model.TableInfo) int64 {

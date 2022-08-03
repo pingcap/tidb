@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	field_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -185,7 +184,7 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 					return ver, err
 				}
 			}
-			err = fkc.checkTableForeignKey(referTableInfo, fkInfo)
+			err = checkTableForeignKey(referTableInfo, tbInfo, fkInfo)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, err
@@ -263,27 +262,6 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 type ForeignKeyChecker struct {
 	schemaID int64
 	tbInfo   *model.TableInfo
-}
-
-func (c ForeignKeyChecker) checkTableForeignKey(referTableInfo *model.TableInfo, fkInfo *model.FKInfo) error {
-	// check refer columns in paren table.
-	for i := range fkInfo.RefCols {
-		refCol := model.FindColumnInfo(referTableInfo.Columns, fkInfo.RefCols[i].L)
-		if refCol == nil {
-			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(fkInfo.RefCols[i].O)
-		}
-		if refCol.IsGenerated() && !refCol.GeneratedStored {
-			return infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name.O, fkInfo.RefCols[i].O)
-		}
-		if len(fkInfo.RefCols) == 1 && mysql.HasPriKeyFlag(refCol.GetFlag()) && referTableInfo.PKIsHandle {
-			return nil
-		}
-	}
-	// check refer columns should have index.
-	if model.FindIndexByColumns(referTableInfo.Indices, fkInfo.RefCols...) == nil {
-		return infoschema.ErrFkNoIndexParent.GenWithStackByArgs(fkInfo.Name.O, fkInfo.RefTable.O)
-	}
-	return nil
 }
 
 func (c ForeignKeyChecker) getParentTableFromStorage(d *ddlCtx, fkInfo *model.FKInfo, t *meta.Meta) (*model.DBInfo, *model.TableInfo, error) {
