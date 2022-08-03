@@ -16,7 +16,6 @@ package collate
 
 import (
 	"fmt"
-	"sort"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
