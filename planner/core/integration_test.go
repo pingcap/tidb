@@ -6979,8 +6979,7 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 }
 
 func TestLeftShiftPushDownToTiFlash(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
