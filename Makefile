@@ -405,8 +405,8 @@ bazel_test: failpoint-enable bazel_ci_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 
-bazel_coverage_test: bazel_all_build failpoint-enable bazel_ci_prepare
-  bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci  //:gazelle
+bazel_coverage_test: bazel_all_build failpoint-enable
+  	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci  //:gazelle
 	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
