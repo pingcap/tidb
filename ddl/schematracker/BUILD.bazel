@@ -25,6 +25,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//statistics/handle",
+        "//store/mockstore",
         "//table",
         "//table/tables",
         "//tidb-binlog/pump_client",
