@@ -724,6 +724,7 @@ func TestUpdateErrorRate(t *testing.T) {
 	// TODO(tiancaiamao): query feedback is broken when paging is on.
 	testKit.MustExec("set @@tidb_enable_paging = off")
 
+	testKit.MustExec("set @@session.tidb_enable_pseudo_for_outdated_stats = 1")
 	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
