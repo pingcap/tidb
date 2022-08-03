@@ -995,6 +995,7 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 	sqlSelectID, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id1 = ? for update")
 	sqlUpdateID, _, _, _ := tk.Session().PrepareStmt("update t1 set id3 = id3 + 10 where id1 = ?")
 	sqlUpdateID2, _, _, _ := tk.Session().PrepareStmt("update t2 set id3 = id3 + 10 where id1 = ?")
+	sqlSelectID2, _, _, _ := tk.Session().PrepareStmt("select id1+id2 as x from t1 where id1 = ? for update")
 	sqlInsertID, _, _, _ := tk.Session().PrepareStmt("insert into t1 values(?, ?, ?)")
 	sqlDeleteID, _, _, _ := tk.Session().PrepareStmt("delete from t1 where id1 = ?")
 
@@ -1014,6 +1015,9 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
 		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlSelectID2, []types.Datum{types.NewDatum(9)})
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
 
 		val := i * 10
 		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, []types.Datum{types.NewDatum(val), types.NewDatum(val), types.NewDatum(val)})

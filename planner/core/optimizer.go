@@ -739,33 +739,9 @@ func existsCartesianProduct(p LogicalPlan) bool {
 }
 
 func PlanSkipGetTsoFromPD(plan Plan, inLockOrWriteStmt bool) bool {
-	/*
-		useLastOracleTS := false
-		switch v := plan.(type) {
-		case *PointGetPlan:
-			if v.Lock && variable.PointLockReadUseLastTso.Load() {
-				useLastOracleTS = true
-			}
-		case *Insert:
-			if v.SelectPlan == nil && variable.InsertUseLastTso.Load() {
-				useLastOracleTS = true
-			}
-		case *Update:
-			if _, Ok := v.SelectPlan.(*PointGetPlan); Ok && variable.PointLockReadUseLastTso.Load() {
-				useLastOracleTS = true
-			}
-		case *Delete:
-			if _, ok := v.SelectPlan.(*PointGetPlan); ok && variable.PointLockReadUseLastTso.Load() {
-				useLastOracleTS = true
-			}
-		}
-		return useLastOracleTS
-	*/
 	switch v := plan.(type) {
 	case *PointGetPlan:
-
-		return v.Lock || inLockOrWriteStmt
-
+		return variable.PointLockReadUseLastTso.Load() && (v.Lock || inLockOrWriteStmt)
 	case PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false
@@ -778,11 +754,11 @@ func PlanSkipGetTsoFromPD(plan Plan, inLockOrWriteStmt bool) bool {
 		}
 		return true
 	case *Update:
-		return PlanSkipGetTsoFromPD(v.SelectPlan, true)
+		return variable.PointLockReadUseLastTso.Load() && PlanSkipGetTsoFromPD(v.SelectPlan, true)
 	case *Delete:
-		return PlanSkipGetTsoFromPD(v.SelectPlan, true)
+		return variable.PointLockReadUseLastTso.Load() && PlanSkipGetTsoFromPD(v.SelectPlan, true)
 	case *Insert:
-		return v.SelectPlan == nil
+		return v.SelectPlan == nil && variable.InsertUseLastTso.Load()
 	}
 	return false
 }
