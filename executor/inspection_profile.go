@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -167,7 +168,8 @@ func (n *metricNode) getLabelValue(label string) *metricValue {
 
 func (n *metricNode) queryRowsByLabel(pb *profileBuilder, query string, handleRowFn func(label string, v float64)) error {
 	exec := pb.sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, query)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, query)
 	if err != nil {
 		return err
 	}

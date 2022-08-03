@@ -60,36 +60,36 @@ func newSlowQueryLogConfig(cfg *LogConfig) *log.Config {
 
 type slowLogEncoder struct{}
 
-func (e *slowLogEncoder) EncodeEntry(entry zapcore.Entry, _ []zapcore.Field) (*buffer.Buffer, error) {
+func (*slowLogEncoder) EncodeEntry(entry zapcore.Entry, _ []zapcore.Field) (*buffer.Buffer, error) {
 	b := _pool.Get()
 	fmt.Fprintf(b, "# Time: %s\n", entry.Time.Format(SlowLogTimeFormat))
 	fmt.Fprintf(b, "%s\n", entry.Message)
 	return b, nil
 }
 
-func (e *slowLogEncoder) Clone() zapcore.Encoder                          { return e }
-func (e *slowLogEncoder) AddArray(string, zapcore.ArrayMarshaler) error   { return nil }
-func (e *slowLogEncoder) AddObject(string, zapcore.ObjectMarshaler) error { return nil }
-func (e *slowLogEncoder) AddBinary(string, []byte)                        {}
-func (e *slowLogEncoder) AddByteString(string, []byte)                    {}
-func (e *slowLogEncoder) AddBool(string, bool)                            {}
-func (e *slowLogEncoder) AddComplex128(string, complex128)                {}
-func (e *slowLogEncoder) AddComplex64(string, complex64)                  {}
-func (e *slowLogEncoder) AddDuration(string, time.Duration)               {}
-func (e *slowLogEncoder) AddFloat64(string, float64)                      {}
-func (e *slowLogEncoder) AddFloat32(string, float32)                      {}
-func (e *slowLogEncoder) AddInt(string, int)                              {}
-func (e *slowLogEncoder) AddInt64(string, int64)                          {}
-func (e *slowLogEncoder) AddInt32(string, int32)                          {}
-func (e *slowLogEncoder) AddInt16(string, int16)                          {}
-func (e *slowLogEncoder) AddInt8(string, int8)                            {}
-func (e *slowLogEncoder) AddString(string, string)                        {}
-func (e *slowLogEncoder) AddTime(string, time.Time)                       {}
-func (e *slowLogEncoder) AddUint(string, uint)                            {}
-func (e *slowLogEncoder) AddUint64(string, uint64)                        {}
-func (e *slowLogEncoder) AddUint32(string, uint32)                        {}
-func (e *slowLogEncoder) AddUint16(string, uint16)                        {}
-func (e *slowLogEncoder) AddUint8(string, uint8)                          {}
-func (e *slowLogEncoder) AddUintptr(string, uintptr)                      {}
-func (e *slowLogEncoder) AddReflected(string, interface{}) error          { return nil }
-func (e *slowLogEncoder) OpenNamespace(string)                            {}
+func (e *slowLogEncoder) Clone() zapcore.Encoder                        { return e }
+func (*slowLogEncoder) AddArray(string, zapcore.ArrayMarshaler) error   { return nil }
+func (*slowLogEncoder) AddObject(string, zapcore.ObjectMarshaler) error { return nil }
+func (*slowLogEncoder) AddBinary(string, []byte)                        {}
+func (*slowLogEncoder) AddByteString(string, []byte)                    {}
+func (*slowLogEncoder) AddBool(string, bool)                            {}
+func (*slowLogEncoder) AddComplex128(string, complex128)                {}
+func (*slowLogEncoder) AddComplex64(string, complex64)                  {}
+func (*slowLogEncoder) AddDuration(string, time.Duration)               {}
+func (*slowLogEncoder) AddFloat64(string, float64)                      {}
+func (*slowLogEncoder) AddFloat32(string, float32)                      {}
+func (*slowLogEncoder) AddInt(string, int)                              {}
+func (*slowLogEncoder) AddInt64(string, int64)                          {}
+func (*slowLogEncoder) AddInt32(string, int32)                          {}
+func (*slowLogEncoder) AddInt16(string, int16)                          {}
+func (*slowLogEncoder) AddInt8(string, int8)                            {}
+func (*slowLogEncoder) AddString(string, string)                        {}
+func (*slowLogEncoder) AddTime(string, time.Time)                       {}
+func (*slowLogEncoder) AddUint(string, uint)                            {}
+func (*slowLogEncoder) AddUint64(string, uint64)                        {}
+func (*slowLogEncoder) AddUint32(string, uint32)                        {}
+func (*slowLogEncoder) AddUint16(string, uint16)                        {}
+func (*slowLogEncoder) AddUint8(string, uint8)                          {}
+func (*slowLogEncoder) AddUintptr(string, uintptr)                      {}
+func (*slowLogEncoder) AddReflected(string, interface{}) error          { return nil }
+func (*slowLogEncoder) OpenNamespace(string)                            {}

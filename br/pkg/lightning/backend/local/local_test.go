@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -41,18 +42,19 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/version"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -331,6 +333,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
 		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
 	}
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
@@ -422,11 +425,11 @@ func TestLocalWriterWithIngestUnsort(t *testing.T) {
 }
 
 type mockSplitClient struct {
-	restore.SplitClient
+	split.SplitClient
 }
 
-func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*restore.RegionInfo, error) {
-	return &restore.RegionInfo{
+func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
+	return &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
 			Id:       1,
@@ -438,6 +441,7 @@ func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*restore.R
 func TestIsIngestRetryable(t *testing.T) {
 	local := &local{
 		splitCli: &mockSplitClient{},
+		logger:   log.L(),
 	}
 
 	resp := &sst.IngestResponse{
@@ -448,7 +452,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	region := &restore.RegionInfo{
+	region := &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
 			Id:       1,
@@ -509,6 +513,15 @@ func TestIsIngestRetryable(t *testing.T) {
 	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryNone, retryType)
 	require.EqualError(t, err, "non-retryable error: unknown error")
+
+	resp.Error = &errorpb.Error{
+		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
+			Reason: "test",
+		},
+	}
+	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryWrite, retryType)
+	require.Error(t, err)
 }
 
 type testIngester struct{}
@@ -567,6 +580,7 @@ func TestLocalIngestLoop(t *testing.T) {
 			CompactThreshold:   100,
 			CompactConcurrency: 4,
 		},
+		logger: log.L(),
 	}
 	f.sstIngester = testIngester{}
 	f.wg.Add(1)
@@ -784,6 +798,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 			CompactThreshold:   100,
 			CompactConcurrency: 4,
 		},
+		logger: log.L(),
 	}
 
 	createSSTWriter := func() (*sstWriter, error) {
@@ -820,7 +835,6 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 func TestMergeSSTs(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
 	for i := 0; i < 5; i++ {
-
 		var pairs []common.KvPair
 		for j := 0; j < 10; j++ {
 			var kv common.KvPair
@@ -1017,7 +1031,7 @@ func TestMultiIngest(t *testing.T) {
 				return store.State == metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
-				return !version.IsTiFlash(s)
+				return !engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1030,7 +1044,7 @@ func TestMultiIngest(t *testing.T) {
 				return store.State == metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
-				return version.IsTiFlash(s)
+				return engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1066,10 +1080,10 @@ func TestMultiIngest(t *testing.T) {
 		// test all non-tiflash stores that support multi ingests
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store)
+				return !engine.IsTiFlash(store)
 			},
 			func(s *metapb.Store) bool {
-				return !version.IsTiFlash(s)
+				return !engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1105,7 +1119,7 @@ func TestMultiIngest(t *testing.T) {
 		// test grpc return error but no tiflash
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store)
+				return !engine.IsTiFlash(store)
 			},
 			func(s *metapb.Store) bool {
 				return true
@@ -1118,7 +1132,7 @@ func TestMultiIngest(t *testing.T) {
 		// test grpc return error and contains offline tiflash
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store) || store.State != metapb.StoreState_Up
+				return !engine.IsTiFlash(store) || store.State != metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
 				return true
@@ -1182,6 +1196,7 @@ func TestMultiIngest(t *testing.T) {
 					return importCli
 				},
 			},
+			logger: log.L(),
 		}
 		err := local.checkMultiIngestSupport(context.Background())
 		if err != nil {
@@ -1234,4 +1249,10 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), splitSize)
 	require.Equal(t, int64(2), splitKeys)
+}
+
+func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
+	l := local{}
+	require.True(t, l.isRetryableTiKVWriteError(io.EOF))
+	require.True(t, l.isRetryableTiKVWriteError(errors.Trace(io.EOF)))
 }

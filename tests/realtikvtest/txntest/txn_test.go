@@ -19,16 +19,15 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInTxnPSProtoPointGet(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -42,7 +41,7 @@ func TestInTxnPSProtoPointGet(t *testing.T) {
 	require.NoError(t, err)
 	idForUpdate, _, _, err := tk.Session().PrepareStmt("select c1, c2 from t1 where c1 = ? for update")
 	require.NoError(t, err)
-	params := []types.Datum{types.NewDatum(1)}
+	params := expression.Args2Expressions4Test(1)
 	rs, err := tk.Session().ExecutePreparedStmt(ctx, id, params)
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -89,8 +88,7 @@ func TestInTxnPSProtoPointGet(t *testing.T) {
 }
 
 func TestTxnGoString(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -115,8 +113,7 @@ func TestTxnGoString(t *testing.T) {
 }
 
 func TestSetTransactionIsolationOneSho(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -134,15 +131,17 @@ func TestSetTransactionIsolationOneSho(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		require.Equal(t, kv.SI, req.IsolationLevel)
 	})
-	_, err := tk.Session().Execute(ctx, "select * from t where k = 1")
+	rs, err := tk.Session().Execute(ctx, "select * from t where k = 1")
 	require.NoError(t, err)
+	rs[0].Close()
 
 	// Check it just take effect for one time.
 	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		require.Equal(t, kv.SI, req.IsolationLevel)
 	})
-	_, err = tk.Session().Execute(ctx, "select * from t where k = 1")
+	rs, err = tk.Session().Execute(ctx, "select * from t where k = 1")
 	require.NoError(t, err)
+	rs[0].Close()
 
 	// Can't change isolation level when it's inside a transaction.
 	tk.MustExec("begin")
@@ -151,8 +150,7 @@ func TestSetTransactionIsolationOneSho(t *testing.T) {
 }
 
 func TestStatementErrorInTransaction(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

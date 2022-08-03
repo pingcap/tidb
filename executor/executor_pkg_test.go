@@ -24,7 +24,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -400,7 +399,9 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 	vars := variable.NewSessionVars()
 	const tableID int64 = 3
 	vars.TxnCtx = &variable.TransactionContext{
-		TemporaryTables: map[int64]tableutil.TempTable{tableID: nil},
+		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+			TemporaryTables: map[int64]tableutil.TempTable{tableID: nil},
+		},
 	}
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})
@@ -435,10 +436,6 @@ func TestLoadDataWithDifferentEscapeChar(t *testing.T) {
 }
 
 func TestSortSpillDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))

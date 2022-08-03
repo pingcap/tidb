@@ -22,11 +22,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pingcap/tidb/sessionctx"
-
-	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -36,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"golang.org/x/exp/slices"
 )
 
 // topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.
@@ -170,26 +169,11 @@ func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount u
 // data are not tracked because size of CMSketch.topN take little influence
 // We ignore the size of other metadata in CMSketch.
 func (c *CMSketch) MemoryUsage() (sum int64) {
+	if c == nil {
+		return
+	}
 	sum = int64(c.depth * c.width * 4)
 	return
-}
-
-// queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
-// If such elements does not in topn elements, nothing will happen and false will be returned.
-func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
-	if c == nil || c.TopN == nil {
-		return false
-	}
-	idx := c.findTopN(d)
-	if idx >= 0 {
-		if increase {
-			c.TopN[idx].Count += delta
-		} else {
-			c.TopN[idx].Count -= delta
-		}
-		return true
-	}
-	return false
 }
 
 // InsertBytes inserts the bytes value into the CM Sketch.
@@ -295,7 +279,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 			vals[i] = c.table[i][j] - uint32(noise) + temp
 		}
 	}
-	sort.Sort(sortutil.Uint32Slice(vals))
+	slices.Sort(vals)
 	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
 	if res > min+temp {
 		res = min + temp
@@ -460,6 +444,9 @@ func DecodeCMSketchAndTopN(data []byte, topNRows []chunk.Row) (*CMSketch, *TopN,
 
 // TotalCount returns the total count in the sketch, it is only used for test.
 func (c *CMSketch) TotalCount() uint64 {
+	if c == nil {
+		return 0
+	}
 	return c.count
 }
 
@@ -481,11 +468,6 @@ func (c *CMSketch) Copy() *CMSketch {
 	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, defaultValue: c.defaultValue}
 }
 
-// AppendTopN appends a topn into the TopN struct.
-func (c *TopN) AppendTopN(data []byte, count uint64) {
-	c.TopN = append(c.TopN, TopNMeta{data, count})
-}
-
 // GetWidthAndDepth returns the width and depth of CM Sketch.
 func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
 	return c.width, c.depth
@@ -500,6 +482,14 @@ func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
+}
+
+// AppendTopN appends a topn into the TopN struct.
+func (c *TopN) AppendTopN(data []byte, count uint64) {
+	if c == nil {
+		return
+	}
+	c.TopN = append(c.TopN, TopNMeta{data, count})
 }
 
 func (c *TopN) String() string {
@@ -531,6 +521,9 @@ func (c *TopN) Num() int {
 
 // DecodedString returns the value with decoded result.
 func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, error) {
+	if c == nil {
+		return "", nil
+	}
 	builder := &strings.Builder{}
 	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
 	fmt.Fprint(builder, "[")
@@ -638,8 +631,8 @@ func (c *TopN) Sort() {
 	if c == nil {
 		return
 	}
-	sort.Slice(c.TopN, func(i, j int) bool {
-		return bytes.Compare(c.TopN[i].Encoded, c.TopN[j].Encoded) < 0
+	slices.SortFunc(c.TopN, func(i, j TopNMeta) bool {
+		return bytes.Compare(i.Encoded, j.Encoded) < 0
 	})
 }
 
@@ -698,6 +691,24 @@ func (c *TopN) MemoryUsage() (sum int64) {
 		sum += 32 + int64(cap(meta.Encoded)) // 32 is size of byte array (24) + size of uint64 (8)
 	}
 	return
+}
+
+// queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
+// If such elements does not in topn elements, nothing will happen and false will be returned.
+func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
+	if c == nil || c.TopN == nil {
+		return false
+	}
+	idx := c.findTopN(d)
+	if idx >= 0 {
+		if increase {
+			c.TopN[idx].Count += delta
+		} else {
+			c.TopN[idx].Count -= delta
+		}
+		return true
+	}
+	return false
 }
 
 // NewTopN creates the new TopN struct by the given size.
@@ -767,6 +778,8 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 						if types.IsTypeTime(hists[0].Tp.GetType()) {
 							// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
 							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
+						} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
+							_, d, err = codec.DecodeAsFloat32(val.Encoded, hists[0].Tp.GetType())
 						} else {
 							_, d, err = codec.DecodeOne(val.Encoded)
 						}
@@ -791,8 +804,8 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 	for i := 0; i < partNum; i++ {
 		if len(removeVals[i]) > 0 {
 			tmp := removeVals[i]
-			sort.Slice(tmp, func(i, j int) bool {
-				cmpResult := bytes.Compare(tmp[i].Encoded, tmp[j].Encoded)
+			slices.SortFunc(tmp, func(i, j TopNMeta) bool {
+				cmpResult := bytes.Compare(i.Encoded, j.Encoded)
 				return cmpResult < 0
 			})
 			hists[i].RemoveVals(tmp)
@@ -850,11 +863,11 @@ func checkEmptyTopNs(topNs []*TopN) bool {
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Count != sorted[j].Count {
-			return sorted[i].Count > sorted[j].Count
+	slices.SortFunc(sorted, func(i, j TopNMeta) bool {
+		if i.Count != j.Count {
+			return i.Count > j.Count
 		}
-		return bytes.Compare(sorted[i].Encoded, sorted[j].Encoded) < 0
+		return bytes.Compare(i.Encoded, j.Encoded) < 0
 	})
 	n = mathutil.Min(uint32(len(sorted)), n)
 

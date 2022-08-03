@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -165,7 +164,6 @@ disable-timestamp = true
 enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
-
 }
 
 func TestRemovedVariableCheck(t *testing.T) {
@@ -197,9 +195,6 @@ path = "/tmp/tidb"
 # The socket file to use for connection.
 socket = "/tmp/tidb-{Port}.sock"
 
-# Run ddl worker on this tidb-server.
-run-ddl = true
-
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "45s"
 
@@ -213,14 +208,11 @@ token-limit = 1000
 # The maximum memory available for a single SQL statement. Default: 1GB
 mem-quota-query = 1073741824
 
-# Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
-oom-use-tmp-storage = true
-
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 # <snip>
 # tmp-storage-path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
 
-# Specifies the maximum use of temporary storage (bytes) for all active queries when oom-use-tmp-storage is enabled.
+# Specifies the maximum use of temporary storage (bytes) for all active queries when tidb_enable_tmp_storage_on_oom is enabled.
 # If the tmp-storage-quota exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
 # The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
 tmp-storage-quota = -1
@@ -264,7 +256,7 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
-# alter-primary-key is used to control whether the primary keys are clustered. 
+# alter-primary-key is used to control whether the primary keys are clustered.
 # Note that this config is deprecated. Only valid when @@global.tidb_enable_clustered_index = 'int_only'.
 # Default is false, only the integer primary keys are clustered.
 # If it is true, all types of primary keys are nonclustered.
@@ -282,9 +274,6 @@ repair-mode = false
 # Repair table list is used to list the tables in repair mode with the format like ["db.table",].
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
-
-# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
-max-server-connections = 0
 
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = true
@@ -309,6 +298,14 @@ deprecate-integer-display-length = false
 # where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
 # See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
 enable-enum-length-limit = true
+
+[instance]
+
+# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
+max_connections = 0
+
+# Run ddl worker on this tidb-server.
+tidb_enable_ddl = true
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -649,7 +646,7 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
-		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: enable-batch-dml, log.query-log-max-len, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
+		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, log.enable-slow-log, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.feedback-probability, performance.force-priority, performance.memory-usage-alarm-ratio, performance.query-feedback-limit, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
 	}
 
 	for _, test := range configTest {
@@ -708,7 +705,7 @@ unrecognized-option-test = true
 	match, err := regexp.Match("(?:.|\n)*invalid configuration option(?:.|\n)*", []byte(err.Error()))
 	require.NoError(t, err)
 	require.True(t, match)
-	require.Equal(t, uint32(0), conf.MaxServerConnections)
+	require.Equal(t, uint32(0), conf.Instance.MaxConnections)
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
@@ -723,7 +720,6 @@ delay-clean-table-lock = 5
 split-region-max-num=10000
 server-version = "test_version"
 repair-mode = true
-max-server-connections = 200
 max-index-length = 3080
 index-limit = 70
 table-column-count-limit = 4000
@@ -736,6 +732,7 @@ enable-global-kill = true
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
+enable-load-fmsketch = true
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -768,6 +765,8 @@ grpc-keepalive-timeout = 10
 grpc-concurrent-streams = 2048
 grpc-initial-window-size = 10240
 grpc-max-send-msg-size = 40960
+[instance]
+max_connections = 200
 `)
 
 	require.NoError(t, err)
@@ -797,7 +796,7 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
-	require.Equal(t, uint32(200), conf.MaxServerConnections)
+	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)
@@ -822,6 +821,7 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
+	require.True(t, conf.Performance.EnableLoadFMSketch)
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
@@ -1019,7 +1019,10 @@ func TestConflictInstanceConfig(t *testing.T) {
 	// Just receive a warning and keep their respective values.
 	expectedConflictOptions := map[string]InstanceConfigSection{
 		"": {
-			"", map[string]string{"check-mb4-value-in-utf8": "tidb_check_mb4_value_in_utf8"},
+			"", map[string]string{
+				"check-mb4-value-in-utf8": "tidb_check_mb4_value_in_utf8",
+				"run-ddl":                 "tidb_enable_ddl",
+			},
 		},
 		"log": {
 			"log", map[string]string{"enable-slow-log": "tidb_enable_slow_log"},
@@ -1028,10 +1031,10 @@ func TestConflictInstanceConfig(t *testing.T) {
 			"performance", map[string]string{"force-priority": "tidb_force_priority"},
 		},
 	}
-	_, err = f.WriteString("check-mb4-value-in-utf8 = true \n" +
+	_, err = f.WriteString("check-mb4-value-in-utf8 = true \nrun-ddl = true \n" +
 		"[log] \nenable-slow-log = true \n" +
 		"[performance] \nforce-priority = \"NO_PRIORITY\"\n" +
-		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"")
+		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"\ntidb_enable_ddl = false")
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	err = conf.Load(configFile)
@@ -1043,6 +1046,8 @@ func TestConflictInstanceConfig(t *testing.T) {
 	require.Equal(t, false, conf.Instance.EnableSlowLog.Load())
 	require.Equal(t, "NO_PRIORITY", conf.Performance.ForcePriority)
 	require.Equal(t, "LOW_PRIORITY", conf.Instance.ForcePriority)
+	require.Equal(t, true, conf.RunDDL)
+	require.Equal(t, false, conf.Instance.TiDBEnableDDL.Load())
 	require.Equal(t, 0, len(DeprecatedOptions))
 	for _, conflictOption := range ConflictOptions {
 		expectedConflictOption, ok := expectedConflictOptions[conflictOption.SectionName]
@@ -1059,8 +1064,6 @@ func TestDeprecatedConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
 	configFile := "config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
@@ -1074,6 +1077,7 @@ func TestDeprecatedConfig(t *testing.T) {
 		"": {
 			"", map[string]string{
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
+				"run-ddl":                       "tidb_enable_ddl",
 			},
 		},
 		"log": {
@@ -1089,7 +1093,7 @@ func TestDeprecatedConfig(t *testing.T) {
 			},
 		},
 	}
-	_, err = f.WriteString("enable-collect-execution-info = false \n" +
+	_, err = f.WriteString("enable-collect-execution-info = false \nrun-ddl = false \n" +
 		"[plugin] \ndir=\"/plugin-path\" \nload=\"audit-1,whitelist-1\" \n" +
 		"[log] \nslow-threshold = 100 \n" +
 		"[performance] \nmemory-usage-alarm-ratio = 0.5")
@@ -1242,8 +1246,6 @@ func TestGetJSONConfig(t *testing.T) {
 	require.NotContains(t, conf, "query-log-max-len")
 	require.NotContains(t, conf, "oom-action")
 
-	require.Contains(t, conf, "query-feedback-limit")
-	require.Contains(t, conf, "feedback-probability")
 	require.Contains(t, conf, "stmt-count-limit")
 	require.Contains(t, conf, "rpc-metrics")
 }
