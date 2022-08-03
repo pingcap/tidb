@@ -594,6 +594,57 @@ func BenchmarkEncodePlan(b *testing.B) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func BenchmarkEncodeFlatPlan(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists th")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
+	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
+	tk.MustExec("set @@tidb_slow_log_threshold=200000")
+
+	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
+	tk.Session().GetSessionVars().PlanID = 0
+	tk.MustExec(query)
+	info := tk.Session().ShowProcess()
+	require.NotNil(b, info)
+	p, ok := info.Plan.(core.PhysicalPlan)
+	require.True(b, ok)
+	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		flat := core.FlattenPhysicalPlan(p, false)
+		core.EncodeFlatPlan(flat)
+	}
+}
+
+func TestIssue35090(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists p, t;")
+	tk.MustExec("create table p (id int, c int, key i_id(id), key i_c(c));")
+	tk.MustExec("create table t (id int);")
+	tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9);")
+	tk.MustExec("insert into t values (4), (9);")
+	tk.MustExec("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;")
+	rows := [][]interface{}{
+		{"IndexJoin"},
+		{"├─TableReader(Build)"},
+		{"│ └─Selection"},
+		{"│   └─TableFullScan"},
+		{"└─IndexLookUp(Probe)"},
+		{"  ├─Selection(Build)"},
+		{"  │ └─IndexRangeScan"},
+		{"  └─TableRowIDScan(Probe)"},
+	}
+	tk.MustQuery("explain analyze format='brief' select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;").CheckAt([]int{0}, rows)
+}
+
+>>>>>>> 894591b84... planner: fix explain analyze format="brief" fails (#36815)
 // Close issue 25729
 func TestIssue25729(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
