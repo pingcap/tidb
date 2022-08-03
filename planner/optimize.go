@@ -306,31 +306,17 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	})
 
 	// build logical plan
-	sctx.GetSessionVars().PlanID = 0
-	sctx.GetSessionVars().PlanColumnID = 0
-	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
-	node.Accept(hintProcessor)
-
-	failpoint.Inject("mockRandomPlanID", func() {
-		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
-	})
 
 	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
-
 	builder.Init(sctx, is, hintProcessor)
 
-	// reset fields about rewrite
-	sctx.GetSessionVars().RewritePhaseInfo.Reset()
-	beginRewrite := time.Now()
-	p, err := builder.Build(ctx, node)
+	p, err := buildLogicalPlan(ctx, sctx, node, hintProcessor, builder)
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
 
-	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles
 	// Check privilege. Maybe it's better to move this to the Preprocess, but
 	// we need the table information to check privilege, which is collected
@@ -377,38 +363,42 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
-
 	builder.Init(sctx, is, nil)
-	p, err := builder.Build(ctx, execAst)
+
+	p, err := buildLogicalPlan(ctx, sctx, execAst, nil, builder)
 	if err != nil {
 		return nil, nil, err
 	}
 	if execPlan, ok := p.(*plannercore.Execute); ok {
-		sessVars := sctx.GetSessionVars()
-
-		if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
-			allowed, err := allowInReadOnlyMode(sctx, execAst)
-			if err != nil {
-				return nil, nil, err
-			}
-			if !allowed {
-				return nil, nil, errors.Trace(core.ErrSQLInReadOnlyMode)
-			}
-		}
-
-		// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
-		// engine in not read only stmt.
-		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(execAst, sessVars) {
-			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			defer func() {
-				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-			}()
-		}
 		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
 		return execPlan, execPlan.OutputNames(), err
 	}
 	err = errors.Errorf("invalid result plan type, should be Execute")
 	return nil, nil, err
+}
+
+func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, hintProcessor *hint.BlockHintProcessor, builder *plannercore.PlanBuilder) (plannercore.Plan, error) {
+	sctx.GetSessionVars().PlanID = 0
+	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
+	if hintProcessor != nil {
+		node.Accept(hintProcessor)
+	}
+
+	failpoint.Inject("mockRandomPlanID", func() {
+		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
+	})
+
+	// reset fields about rewrite
+	sctx.GetSessionVars().RewritePhaseInfo.Reset()
+	beginRewrite := time.Now()
+	p, err := builder.Build(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
+	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
+	return p, nil
 }
 
 // ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
