@@ -31,6 +31,7 @@ go_library(
 
 go_test(
     name = "cascades_test",
+    timeout = "short",
     srcs = [
         "enforcer_rules_test.go",
         "integration_test.go",
