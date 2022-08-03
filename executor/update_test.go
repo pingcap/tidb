@@ -26,8 +26,7 @@ import (
 )
 
 func TestUpdateGenColInTxn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t(a bigint, b bigint as (a+1));`)
@@ -41,8 +40,7 @@ func TestUpdateGenColInTxn(t *testing.T) {
 }
 
 func TestUpdateWithAutoidSchema(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1(id int primary key auto_increment, n int);`)
@@ -168,8 +166,7 @@ func TestUpdateWithAutoidSchema(t *testing.T) {
 }
 
 func TestUpdateSchemaChange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t(a bigint, b bigint as (a+1));`)
@@ -183,8 +180,7 @@ func TestUpdateSchemaChange(t *testing.T) {
 }
 
 func TestUpdateMultiDatabaseTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop database if exists test2")
@@ -195,8 +191,7 @@ func TestUpdateMultiDatabaseTable(t *testing.T) {
 }
 
 func TestUpdateSwapColumnValues(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -233,8 +228,7 @@ func TestUpdateSwapColumnValues(t *testing.T) {
 }
 
 func TestMultiUpdateOnSameTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -292,8 +286,7 @@ func TestMultiUpdateOnSameTable(t *testing.T) {
 }
 
 func TestUpdateClusterIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -347,8 +340,7 @@ func TestUpdateClusterIndex(t *testing.T) {
 }
 
 func TestDeleteClusterIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -385,8 +377,7 @@ func TestDeleteClusterIndex(t *testing.T) {
 }
 
 func TestReplaceClusterIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -415,8 +406,7 @@ func TestReplaceClusterIndex(t *testing.T) {
 }
 
 func TestPessimisticUpdatePKLazyCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -458,8 +448,7 @@ func getPresumeExistsCount(t *testing.T, se session.Session) int {
 }
 
 func TestOutOfRangeWithUnsigned(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -470,8 +459,7 @@ func TestOutOfRangeWithUnsigned(t *testing.T) {
 }
 
 func TestIssue21447(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -497,8 +485,7 @@ func TestIssue21447(t *testing.T) {
 }
 
 func TestIssue23553(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists tt`)

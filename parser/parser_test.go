@@ -398,7 +398,6 @@ func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFun
 			restoreSQLs += "; "
 		}
 		restoreSQLs += restoreSQL
-
 	}
 	require.Equalf(t, expectSQLs, restoreSQLs, "restore %v; expect %v", restoreSQLs, expectSQLs)
 }
@@ -5891,7 +5890,6 @@ func TestVisitFrameBound(t *testing.T) {
 		require.Equal(t, tbl.exprRc, checker.exprRc)
 		require.Equal(t, tbl.unit, checker.unit)
 	}
-
 }
 
 func TestFieldText(t *testing.T) {
@@ -6156,7 +6154,7 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 			col.Tp.SetCollate(strings.ToUpper(col.Tp.GetCollate()))
 
 			for i, option := range col.Options {
-				if option.Tp == 0 && option.Expr == nil && option.Stored == false && option.Refer == nil {
+				if option.Tp == 0 && option.Expr == nil && !option.Stored && option.Refer == nil {
 					col.Options = append(col.Options[:i], col.Options[i+1:]...)
 				}
 			}

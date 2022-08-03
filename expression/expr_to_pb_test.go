@@ -1650,7 +1650,6 @@ func TestPushDownSwitcher(t *testing.T) {
 }
 
 func TestPanicIfPbCodeUnspecified(t *testing.T) {
-
 	args := []Expression{genColumn(mysql.TypeLong, 1), genColumn(mysql.TypeLong, 2)}
 	fc, err := NewFunction(
 		mock.NewContext(),

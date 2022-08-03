@@ -37,8 +37,7 @@ func lastReadFromCache(tk *testkit.TestKit) bool {
 }
 
 func TestCacheTableBasicScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp1")
@@ -132,8 +131,7 @@ func TestCacheTableBasicScan(t *testing.T) {
 }
 
 func TestCacheCondition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t2")
@@ -189,8 +187,7 @@ func TestCacheCondition(t *testing.T) {
 }
 
 func TestCacheTableBasicReadAndWrite(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -240,8 +237,7 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 }
 
 func TestCacheTableComplexRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -283,8 +279,7 @@ func TestBeginSleepABA(t *testing.T) {
 	// cache1 and cache2 may be not the same anymore
 	// A transaction should not only check the cache exists, but also check the cache unchanged.
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -337,8 +332,7 @@ func TestBeginSleepABA(t *testing.T) {
 }
 
 func TestCacheTablePointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table cache_point (id int primary key auto_increment, u int unique, v int)")
@@ -373,8 +367,7 @@ func TestCacheTablePointGet(t *testing.T) {
 }
 
 func TestCacheTableBatchPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create  table bp_cache_tmp1 (id int primary key auto_increment, u int unique, v int)")
@@ -416,8 +409,7 @@ func TestCacheTableBatchPointGet(t *testing.T) {
 
 func TestRenewLease(t *testing.T) {
 	// Test RenewLeaseForRead
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -456,8 +448,7 @@ func TestRenewLease(t *testing.T) {
 }
 
 func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
@@ -487,8 +478,7 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 }
 
 func TestTableCacheLeaseVariable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -533,8 +523,7 @@ func TestTableCacheLeaseVariable(t *testing.T) {
 }
 
 func TestMetrics(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -592,8 +581,7 @@ func TestMetrics(t *testing.T) {
 }
 
 func TestRenewLeaseABAFailPoint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tables.TestMockRenewLeaseABA2 = make(chan struct{})
 
