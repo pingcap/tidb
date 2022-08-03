@@ -282,7 +282,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		prepared.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
-	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, nil, e.Parameters)
+	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.Parameters)
 	if err != nil {
 		return err
 	}

@@ -15,7 +15,6 @@
 package core
 
 import (
-	"bytes"
 	"math"
 	"strconv"
 	"time"
@@ -206,36 +205,28 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	TxtVarTypes       FieldSlice // variable types under text protocol
-	BinVarTypes       []byte     // variable types under binary protocol
-	IsBinProto        bool       // whether this plan is under binary protocol
+	VarTypes          FieldSlice
 }
 
-func (v *PlanCacheValue) varTypesUnchanged(binVarTps []byte, txtVarTps []*types.FieldType) bool {
-	if v.IsBinProto {
-		return bytes.Equal(v.BinVarTypes, binVarTps)
-	}
-	return v.TxtVarTypes.CheckTypesCompatibility4PC(txtVarTps)
+func (v *PlanCacheValue) varTypesUnchanged(varTypes []*types.FieldType) bool {
+	return v.VarTypes.CheckTypesCompatibility4PC(varTypes)
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	isBinProto bool, binVarTypes []byte, txtVarTps []*types.FieldType) *PlanCacheValue {
+func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, varTypes []*types.FieldType) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userVarTypes := make([]types.FieldType, len(txtVarTps))
-	for i, tp := range txtVarTps {
+	userVarTypes := make([]types.FieldType, len(varTypes))
+	for i, tp := range varTypes {
 		userVarTypes[i] = *tp
 	}
 	return &PlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
-		TxtVarTypes:       userVarTypes,
-		BinVarTypes:       binVarTypes,
-		IsBinProto:        isBinProto,
+		VarTypes:          userVarTypes,
 	}
 }
 
