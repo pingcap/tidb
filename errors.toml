@@ -1261,6 +1261,11 @@ error = '''
 column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
 '''
 
+["ddl:8246"]
+error = '''
+Error happened when enable/disable DDL: %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -2249,6 +2254,11 @@ User %s does not exist.
 ["schema:3163"]
 error = '''
 User %s already exists.
+'''
+
+["schema:3750"]
+error = '''
+Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.
 '''
 
 ["schema:4139"]

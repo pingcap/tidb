@@ -44,8 +44,7 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 	var done sync.WaitGroup
 	defer done.Wait()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	// Test that table reader/index reader/index lookup on the temporary table do not need to visit TiKV.
 	tk := testkit.NewTestKit(t, store)

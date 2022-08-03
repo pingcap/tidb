@@ -29,8 +29,7 @@ import (
 )
 
 func TestDirtyTransaction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
@@ -159,8 +158,7 @@ func TestDirtyTransaction(t *testing.T) {
 }
 
 func TestUnionScanWithCastCondition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table ta (a varchar(20))")
@@ -174,8 +172,7 @@ func TestUnionScanWithCastCondition(t *testing.T) {
 }
 
 func TestUnionScanForMemBufferReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -312,8 +309,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 }
 
 func TestForUpdateUntouchedIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -352,8 +348,7 @@ func TestForUpdateUntouchedIndex(t *testing.T) {
 }
 
 func TestUpdateScanningHandles(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -386,8 +381,7 @@ func TestUpdateScanningHandles(t *testing.T) {
 
 // See https://github.com/pingcap/tidb/issues/19136
 func TestForApplyAndUnionScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -424,8 +418,7 @@ func TestForApplyAndUnionScan(t *testing.T) {
 }
 
 func TestIssue28073(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -483,8 +476,7 @@ func TestIssue28073(t *testing.T) {
 }
 
 func TestIssue32422(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -545,8 +537,7 @@ func TestIssue32422(t *testing.T) {
 }
 
 func BenchmarkUnionScanRead(b *testing.B) {
-	store, clean := testkit.CreateMockStore(b)
-	defer clean()
+	store := testkit.CreateMockStore(b)
 
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")

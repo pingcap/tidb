@@ -1150,7 +1150,11 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in updateColumnWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			taskDone = recordKey.Cmp(taskRange.endKey) > 0
+			if taskRange.endInclude {
+				taskDone = recordKey.Cmp(taskRange.endKey) > 0
+			} else {
+				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
+			}
 
 			if taskDone || len(w.rowRecords) >= w.batchCnt {
 				return false, nil
@@ -1161,7 +1165,6 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 			}
 			lastAccessedHandle = recordKey
 			if recordKey.Cmp(taskRange.endKey) == 0 {
-				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle.
 				taskDone = true
 				return false, nil
 			}

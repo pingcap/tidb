@@ -402,7 +402,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 			return err
 		}
 	}
-	defAuthPlugin, err := variable.GetGlobalSystemVar(cc.ctx.GetSessionVars(), variable.DefaultAuthPlugin)
+	defAuthPlugin, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(variable.DefaultAuthPlugin)
 	if err != nil {
 		return err
 	}
@@ -1008,7 +1008,7 @@ func (cc *clientConn) skipInitConnect() bool {
 
 // initResultEncoder initialize the result encoder for current connection.
 func (cc *clientConn) initResultEncoder(ctx context.Context) {
-	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetResults)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetResults)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
@@ -1017,7 +1017,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
-	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetClient)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetClient)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
