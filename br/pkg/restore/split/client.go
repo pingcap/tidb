@@ -1,6 +1,6 @@
-// Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package split
 
 import (
 	"bytes"
@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -300,7 +300,7 @@ func (c *pdClient) sendSplitRegionRequest(
 ) (*kvrpcpb.SplitRegionResponse, error) {
 	var splitErrors error
 	for i := 0; i < splitRegionMaxRetryTime; i++ {
-		retry, result, err := sendSplitRegionRequest(c, ctx, regionInfo, keys, &splitErrors, i)
+		retry, result, err := sendSplitRegionRequest(ctx, c, regionInfo, keys, &splitErrors, i)
 		if retry {
 			continue
 		}
@@ -315,7 +315,7 @@ func (c *pdClient) sendSplitRegionRequest(
 	return nil, errors.Trace(splitErrors)
 }
 
-func sendSplitRegionRequest(c *pdClient, ctx context.Context, regionInfo *RegionInfo, keys [][]byte, splitErrors *error, retry int) (bool, *kvrpcpb.SplitRegionResponse, error) {
+func sendSplitRegionRequest(ctx context.Context, c *pdClient, regionInfo *RegionInfo, keys [][]byte, splitErrors *error, retry int) (bool, *kvrpcpb.SplitRegionResponse, error) {
 	var peer *metapb.Peer
 	// scanRegions may return empty Leader in https://github.com/tikv/pd/blob/v4.0.8/server/grpc_service.go#L524
 	// so wee also need check Leader.Id != 0
@@ -361,7 +361,7 @@ func sendSplitRegionRequest(c *pdClient, ctx context.Context, regionInfo *Region
 				if findLeaderErr != nil {
 					return false, nil, findLeaderErr
 				}
-				if !checkRegionEpoch(newRegionInfo, regionInfo) {
+				if !CheckRegionEpoch(newRegionInfo, regionInfo) {
 					return false, nil, berrors.ErrKVEpochNotMatch
 				}
 				log.Info("find new leader", zap.Uint64("new leader", newRegionInfo.Leader.Id))
@@ -439,7 +439,7 @@ func (c *pdClient) BatchSplitRegions(
 }
 
 func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
-	stores, err := conn.GetAllTiKVStores(ctx, c.client, conn.SkipTiFlash)
+	stores, err := util.GetAllTiKVStores(ctx, c.client, util.SkipTiFlash)
 	if err != nil {
 		return 0, err
 	}
@@ -620,31 +620,33 @@ func (c *pdClient) getPDAPIAddr() string {
 	return strings.TrimRight(addr, "/")
 }
 
-func checkRegionEpoch(_new, _old *RegionInfo) bool {
+// CheckRegionEpoch check region epoch.
+func CheckRegionEpoch(_new, _old *RegionInfo) bool {
 	return _new.Region.GetId() == _old.Region.GetId() &&
 		_new.Region.GetRegionEpoch().GetVersion() == _old.Region.GetRegionEpoch().GetVersion() &&
 		_new.Region.GetRegionEpoch().GetConfVer() == _old.Region.GetRegionEpoch().GetConfVer()
 }
 
-// exponentialBackoffer trivially retry any errors it meets.
+// ExponentialBackoffer trivially retry any errors it meets.
 // It's useful when the caller has handled the errors but
 // only want to a more semantic backoff implementation.
-type exponentialBackoffer struct {
-	attempt     int
-	baseBackoff time.Duration
+type ExponentialBackoffer struct {
+	Attempts    int
+	BaseBackoff time.Duration
 }
 
-func (b *exponentialBackoffer) exponentialBackoff() time.Duration {
-	bo := b.baseBackoff
-	b.attempt--
-	if b.attempt == 0 {
+func (b *ExponentialBackoffer) exponentialBackoff() time.Duration {
+	bo := b.BaseBackoff
+	b.Attempts--
+	if b.Attempts == 0 {
 		return 0
 	}
-	b.baseBackoff *= 2
+	b.BaseBackoff *= 2
 	return bo
 }
 
-func pdErrorCanRetry(err error) bool {
+// PdErrorCanRetry when pd error retry.
+func PdErrorCanRetry(err error) bool {
 	// There are 3 type of reason that PD would reject a `scatter` request:
 	// (1) region %d has no leader
 	// (2) region %d is hot
@@ -661,12 +663,12 @@ func pdErrorCanRetry(err error) bool {
 }
 
 // NextBackoff returns a duration to wait before retrying again.
-func (b *exponentialBackoffer) NextBackoff(error) time.Duration {
+func (b *ExponentialBackoffer) NextBackoff(error) time.Duration {
 	// trivially exponential back off, because we have handled the error at upper level.
 	return b.exponentialBackoff()
 }
 
 // Attempt returns the remain attempt times
-func (b *exponentialBackoffer) Attempt() int {
-	return b.attempt
+func (b *ExponentialBackoffer) Attempt() int {
+	return b.Attempts
 }

@@ -71,8 +71,7 @@ func (c *Issue33699CheckType) toGetSessionVar() string {
 }
 
 func TestIssue33699(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
@@ -307,8 +306,7 @@ func TestAuthSwitchRequest(t *testing.T) {
 }
 
 func TestInitialHandshake(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
@@ -599,8 +597,7 @@ func TestDispatchClientProtocol41(t *testing.T) {
 }
 
 func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -652,8 +649,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 }
 
 func TestGetSessionVarsWaitTimeout(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -686,8 +682,7 @@ func mapBelong(m1, m2 map[string]string) bool {
 }
 
 func TestConnExecutionTimeout(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	// There is no underlying netCon, use failpoint to avoid panic
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"))
@@ -749,8 +744,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 }
 
 func TestShutDown(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	cc := &clientConn{}
 	se, err := session.CreateSession4Test(store)
@@ -765,8 +759,7 @@ func TestShutDown(t *testing.T) {
 }
 
 func TestShutdownOrNotify(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	tc := &TiDBContext{
@@ -795,8 +788,7 @@ type snapshotCache interface {
 }
 
 func TestPrefetchPointKeys(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
@@ -846,7 +838,7 @@ func TestPrefetchPointKeys(t *testing.T) {
 }
 
 func TestTiFlashFallback(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t,
+	store := testkit.CreateMockStore(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
@@ -857,7 +849,6 @@ func TestTiFlashFallback(t *testing.T) {
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
-	defer clean()
 
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
@@ -976,8 +967,7 @@ func testFallbackWork(t *testing.T, tk *testkit.TestKit, cc *clientConn, sql str
 
 // For issue https://github.com/pingcap/tidb/issues/25069
 func TestShowErrors(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
@@ -1002,8 +992,7 @@ func TestShowErrors(t *testing.T) {
 }
 
 func TestHandleAuthPlugin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	cfg := newTestConfig()
 	cfg.Port = 0
@@ -1221,8 +1210,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 }
 
 func TestAuthPlugin2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	cfg := newTestConfig()
 	cfg.Port = 0
@@ -1260,12 +1248,10 @@ func TestAuthPlugin2(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 	require.Equal(t, respAuthSwitch, []byte(mysql.AuthNativePassword))
 	require.NoError(t, err)
-
 }
 
 func TestAuthTokenPlugin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	cfg := newTestConfig()
 	cfg.Port = 0

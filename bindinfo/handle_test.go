@@ -44,8 +44,7 @@ func utilNormalizeWithDefaultDB(t *testing.T, sql, db string) (string, string) {
 }
 
 func TestBindingCache(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -69,8 +68,7 @@ func TestBindingCache(t *testing.T) {
 }
 
 func TestBindingLastUpdateTime(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -100,8 +98,7 @@ func TestBindingLastUpdateTime(t *testing.T) {
 }
 
 func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -125,8 +122,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 }
 
 func TestBindParse(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -215,8 +211,7 @@ func TestEvolveInvalidBindings(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -250,8 +245,7 @@ func TestEvolveInvalidBindings(t *testing.T) {
 }
 
 func TestSetBindingStatus(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -313,8 +307,7 @@ func TestSetBindingStatus(t *testing.T) {
 }
 
 func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -474,8 +467,7 @@ var testSQLs = []struct {
 }
 
 func TestGlobalBinding(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -588,8 +580,7 @@ func TestGlobalBinding(t *testing.T) {
 }
 
 func TestOutdatedInfoSchema(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -603,8 +594,7 @@ func TestOutdatedInfoSchema(t *testing.T) {
 }
 
 func TestReloadBindings(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 

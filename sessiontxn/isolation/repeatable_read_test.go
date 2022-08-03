@@ -46,8 +46,7 @@ func newDeadLockError(isRetryable bool) error {
 }
 
 func TestPessimisticRRErrorHandle(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
 	se := tk.Session()
@@ -137,8 +136,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 }
 
 func TestRepeatableReadProviderTS(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
 	se := tk.Session()
@@ -192,8 +190,7 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 }
 
 func TestRepeatableReadProviderInitialize(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testfork.RunTest(t, func(t *testfork.T) {
 		clearScopeSettings := forkScopeSettings(t, store)
@@ -259,8 +256,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 }
 
 func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -347,8 +343,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 }
 
 func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, v int)")
@@ -477,8 +472,7 @@ var errorsInInsert = []string{
 
 func TestConflictErrorInInsertInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -507,8 +501,7 @@ func TestConflictErrorInInsertInRR(t *testing.T) {
 
 func TestConflictErrorInPointGetForUpdateInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -547,8 +540,7 @@ func TestConflictErrorInPointGetForUpdateInRR(t *testing.T) {
 // Delete should get the latest ts and thus does not incur write conflict
 func TestConflictErrorInDeleteInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -587,8 +579,7 @@ func TestConflictErrorInDeleteInRR(t *testing.T) {
 
 func TestConflictErrorInUpdateInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -625,8 +616,7 @@ func TestConflictErrorInUpdateInRR(t *testing.T) {
 
 func TestConflictErrorInOtherQueryContainingPointGet(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")

@@ -153,6 +153,11 @@ var (
 
 	connIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
 	connIdleDurationHistogramInTxn    = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
+
+	affectedRowsCounterInsert  = metrics.AffectedRowsCounter.WithLabelValues("Insert")
+	affectedRowsCounterUpdate  = metrics.AffectedRowsCounter.WithLabelValues("Update")
+	affectedRowsCounterDelete  = metrics.AffectedRowsCounter.WithLabelValues("Delete")
+	affectedRowsCounterReplace = metrics.AffectedRowsCounter.WithLabelValues("Replace")
 )
 
 // newClientConn creates a *clientConn object.
@@ -397,7 +402,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 			return err
 		}
 	}
-	defAuthPlugin, err := variable.GetGlobalSystemVar(cc.ctx.GetSessionVars(), variable.DefaultAuthPlugin)
+	defAuthPlugin, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(variable.DefaultAuthPlugin)
 	if err != nil {
 		return err
 	}
@@ -777,7 +782,6 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 
 // authSha implements the caching_sha2_password specific part of the protocol.
 func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
-
 	const (
 		ShaCommand       = 1
 		RequestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
@@ -1004,7 +1008,7 @@ func (cc *clientConn) skipInitConnect() bool {
 
 // initResultEncoder initialize the result encoder for current connection.
 func (cc *clientConn) initResultEncoder(ctx context.Context) {
-	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetResults)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetResults)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
@@ -1013,7 +1017,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
-	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetClient)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetClient)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
@@ -1074,7 +1078,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("err", fmt.Sprintf("%v", r)),
 				zap.Stack("stack"),
 			)
-			err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
+			err := cc.writeError(ctx, fmt.Errorf("%v", r))
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
@@ -1243,7 +1247,8 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 
 	cost := time.Since(startTime)
 	sessionVar := cc.ctx.GetSessionVars()
-	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, cc.ctx.AffectedRows(), sessionVar.InTxn())
+	affectedRows := cc.ctx.AffectedRows()
+	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, affectedRows, sessionVar.InTxn())
 
 	switch sqlType {
 	case "Use":
@@ -1258,12 +1263,16 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		queryDurationHistogramRollback.Observe(cost.Seconds())
 	case "Insert":
 		queryDurationHistogramInsert.Observe(cost.Seconds())
+		affectedRowsCounterInsert.Add(float64(affectedRows))
 	case "Replace":
 		queryDurationHistogramReplace.Observe(cost.Seconds())
+		affectedRowsCounterReplace.Add(float64(affectedRows))
 	case "Delete":
 		queryDurationHistogramDelete.Observe(cost.Seconds())
+		affectedRowsCounterDelete.Add(float64(affectedRows))
 	case "Update":
 		queryDurationHistogramUpdate.Observe(cost.Seconds())
+		affectedRowsCounterUpdate.Add(float64(affectedRows))
 	case "Select":
 		queryDurationHistogramSelect.Observe(cost.Seconds())
 	case "Execute":
@@ -1863,7 +1872,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 
 	var pointPlans []plannercore.Plan
 	if len(stmts) > 1 {
-
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
 		// by early terminating the first statement, and then running an entirely

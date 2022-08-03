@@ -39,8 +39,7 @@ func testGetIS(t *testing.T, ctx sessionctx.Context) infoschema.InfoSchema {
 }
 
 func TestFDSet_ExtractFD(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 
@@ -236,8 +235,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 }
 
 func TestFDSet_ExtractFDForApply(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 
@@ -335,8 +333,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 }
 
 func TestFDSet_MakeOuterJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 

@@ -54,13 +54,14 @@ HashJoin	4166.67	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
 explain format = 'brief' update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─Point_Get	1.00	root	table:t1	handle:1
+└─Point_Get	1.00	root	table:t1	handle:1, lock
 explain format = 'brief' delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─IndexLookUp	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─SelectLock	10.00	root		for update 0
+  └─IndexLookUp	10.00	root		
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection	9990.00	root		Column#7
@@ -705,7 +706,7 @@ explain format = 'brief' update t set j = -j where i = 1 and j = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
 └─Selection	1.00	root		eq(test.t.j, 1)
-  └─Point_Get	1.00	root	table:t	handle:1
+  └─Point_Get	1.00	root	table:t	handle:1, lock
 rollback;
 drop table if exists t;
 create table t(a int);
@@ -762,7 +763,7 @@ explain format = 'brief' select a, b from (select a, b, avg(b) over (partition b
 id	estRows	task	access object	operator info
 Projection	2666.67	root		test.t.a, test.t.b
 └─Selection	2666.67	root		gt(cast(test.t.a, decimal(20,0) BINARY), Column#5), lt(test.t.b, 10)
-  └─Window	3333.33	root		avg(cast(test.t.b, decimal(15,4) BINARY))->Column#5 over(partition by test.t.a)
+  └─Window	3333.33	root		avg(cast(test.t.b, decimal(20,0) BINARY))->Column#5 over(partition by test.t.a)
     └─Sort	3333.33	root		test.t.a
       └─TableReader	3333.33	root		data:Selection
         └─Selection	3333.33	cop[tikv]		gt(test.t.a, 10)
@@ -798,9 +799,10 @@ IndexLookUp	0.10	root
 explain format = 'brief' update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─IndexLookUp	0.10	root		
-  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:[0xFA34E1093CB428485734E3917F000000 "xb",0xFA34E1093CB428485734E3917F000000 "xb"], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─SelectLock	0.10	root		for update 0
+  └─IndexLookUp	0.10	root		
+    ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:[0xFA34E1093CB428485734E3917F000000 "xb",0xFA34E1093CB428485734E3917F000000 "xb"], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 explain format = 'brief' select (select count(n.a) from t) from t n;
@@ -923,7 +925,7 @@ StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
 explain format = 'brief' select avg(t1.a) from t t1 join t t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
-└─Projection	12487.50	root		cast(test.t.a, decimal(8,4) BINARY)->Column#14
+└─Projection	12487.50	root		cast(test.t.a, decimal(20,0) BINARY)->Column#14
   └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.a, test.t.a)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.a))
@@ -934,7 +936,7 @@ StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 explain format = 'brief' select avg(t1.b) from t t1 join t t2 on t1.b=t2.b;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
-└─Projection	12487.50	root		cast(test.t.b, decimal(10,4) BINARY)->Column#14
+└─Projection	12487.50	root		cast(test.t.b, decimal(20,0) BINARY)->Column#14
   └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.b, test.t.b)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.b))
@@ -945,7 +947,7 @@ StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 explain format = 'brief' select avg(t1.c) from t t1 join t t2 on t1.c=t2.c;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
-└─Projection	12487.50	root		cast(test.t.c, decimal(13,4) BINARY)->Column#14
+└─Projection	12487.50	root		cast(test.t.c, decimal(20,0) BINARY)->Column#14
   └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.c, test.t.c)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.c))
@@ -956,7 +958,7 @@ StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 explain format = 'brief' select avg(t1.d) from t t1 join t t2 on t1.d=t2.d;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
-└─Projection	12487.50	root		cast(test.t.d, decimal(15,4) BINARY)->Column#14
+└─Projection	12487.50	root		cast(test.t.d, decimal(20,0) BINARY)->Column#14
   └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.d, test.t.d)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.d))
@@ -967,7 +969,7 @@ StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 explain format = 'brief' select avg(t1.e) from t t1 join t t2 on t1.e=t2.e;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
-└─Projection	12487.50	root		cast(test.t.e, decimal(24,4) BINARY)->Column#14
+└─Projection	12487.50	root		cast(test.t.e, decimal(20,0) BINARY)->Column#14
   └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.e, test.t.e)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.e))

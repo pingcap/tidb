@@ -28,8 +28,7 @@ import (
 func TestPBMemoryLeak(t *testing.T) {
 	debug.SetGCPercent(1000)
 	defer debug.SetGCPercent(100)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_mem")
 	tk.MustExec("use test_mem")
