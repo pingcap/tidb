@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -71,6 +72,9 @@ type planCacheKey struct {
 	isolationReadEngines     map[kv.StoreType]struct{}
 	selectLimit              uint64
 	bindSQL                  string
+	inRestrictedSQL          bool
+	restrictedReadOnly       bool
+	TiDBSuperReadOnly        bool
 
 	hash []byte
 }
@@ -103,6 +107,9 @@ func (key *planCacheKey) Hash() []byte {
 		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
 		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 	}
 	return key.hash
 }
@@ -149,12 +156,12 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
 		sqlMode:                  sessionVars.SQLMode,
 		timezoneOffset:           timezoneOffset,
-		isolationReadEngines:     make(map[kv.StoreType]struct{}),
+		isolationReadEngines:     sessionVars.GetAvailableIsolationReadEngines4Plan(),
 		selectLimit:              sessionVars.SelectLimit,
 		bindSQL:                  bindSQL,
-	}
-	for k, v := range sessionVars.IsolationReadEngines {
-		key.isolationReadEngines[k] = v
+		inRestrictedSQL:          sessionVars.InRestrictedSQL,
+		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
+		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
 	}
 	return key, nil
 }
@@ -192,6 +199,9 @@ func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
+// Note: The variables' type shouldn't be put into the planCacheKey. Because for the decimal type, the different values for the decimal type may have different precise.
+// If we put it to the planCacheKey, it's hard to hit the plan cache. And if there exists lots of decimal values' statements, it will cost a lot of memory.
+// You can see the `CheckTypesCompatibility4PC` for more details about the type match.
 type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName

@@ -801,7 +801,7 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (Pla
 	}
 	exe := &Execute{Name: v.Name, TxtProtoVars: vars, ExecID: v.ExecID}
 	if v.BinaryArgs != nil {
-		exe.BinProtoVars = v.BinaryArgs.([]types.Datum)
+		exe.TxtProtoVars = v.BinaryArgs.([]expression.Expression)
 	}
 	return exe, nil
 }
@@ -1180,7 +1180,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		}
 	}
 
-	_, isolationReadEnginesHasTiKV := ctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
+	isolationReadEnginesHasTiKV := ctx.GetSessionVars().ContainSpecialIsolationRead(kv.TiKV)
 	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
@@ -1256,7 +1256,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	if dbName.L == mysql.SystemDB {
 		return paths, nil
 	}
-	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
+	isolationReadEngines := ctx.GetSessionVars().GetAvailableIsolationReadEngines4Plan()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {

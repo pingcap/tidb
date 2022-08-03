@@ -264,15 +264,15 @@ var defaultSysVars = []*SysVar{
 		}
 		return formatVal, nil
 	}, SetSession: func(s *SessionVars, val string) error {
-		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
+		s.isolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
 			switch engine {
 			case kv.TiKV.Name():
-				s.IsolationReadEngines[kv.TiKV] = struct{}{}
+				s.isolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
-				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				s.isolationReadEngines[kv.TiFlash] = struct{}{}
 			case kv.TiDB.Name():
-				s.IsolationReadEngines[kv.TiDB] = struct{}{}
+				s.isolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
 		return nil
@@ -1729,6 +1729,10 @@ var defaultSysVars = []*SysVar{
 		s.MemoryDebugModeAlarmRatio = TidbOptInt64(val, 0)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLRequirePrimaryKey, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PrimaryKeyRequired = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAnalyzeSnapshot, Value: BoolToOnOff(DefTiDBEnableAnalyzeSnapshot), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAnalyzeSnapshot = TiDBOptOn(val)
 		return nil
@@ -2050,4 +2054,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
+	//SQLRequirePrimaryKey is the name of `sql_require_primary_key` system variable.
+	SQLRequirePrimaryKey = "sql_require_primary_key"
 )
