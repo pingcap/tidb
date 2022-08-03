@@ -659,7 +659,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.prepareWorkers4ConcurrencyDDL()
 	d.prepareWorkers4legacyDDL()
 
-	go d.schemaSyncer.StartCleanWork()
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
 		go d.startCleanDeadTableLock()
