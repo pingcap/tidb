@@ -222,21 +222,14 @@ func getRowCountTables(ctx context.Context, sctx sessionctx.Context, tableIDs ..
 
 func buildInTableIDsString(tableIDs []int64) string {
 	var whereBuilder strings.Builder
-	idLen := len(tableIDs)
+	whereBuilder.WriteString("table_id in (")
 	for i, id := range tableIDs {
-		switch i {
-		case 0:
-			whereBuilder.WriteString("table_id in (")
-			whereBuilder.WriteString(strconv.FormatInt(id, 10))
-			whereBuilder.WriteString(",")
-		case idLen - 1:
-			whereBuilder.WriteString(strconv.FormatInt(id, 10))
-			whereBuilder.WriteString(")")
-		default:
-			whereBuilder.WriteString(strconv.FormatInt(id, 10))
+		whereBuilder.WriteString(strconv.FormatInt(id, 10))
+		if i != len(tableIDs)-1 {
 			whereBuilder.WriteString(",")
 		}
 	}
+	whereBuilder.WriteString(")")
 	return whereBuilder.String()
 }
 
