@@ -47,9 +47,9 @@ func testPointGetCostDetail(t *testing.T, tk *testkit.TestKit, p *parser.Parser,
 	for _, cd := range costDetails {
 		if cd.GetPlanType() == plancodec.TypePointGet {
 			assertPG = true
-			cd.Exists(core.RowSizeLbl)
-			cd.Exists(core.NetworkFactorLbl)
-			cd.Exists(core.SeekFactorLbl)
+			require.True(t, cd.Exists(core.RowSizeLbl))
+			require.True(t, cd.Exists(core.NetworkFactorLbl))
+			require.True(t, cd.Exists(core.SeekFactorLbl))
 		}
 	}
 	require.True(t, assertPG)

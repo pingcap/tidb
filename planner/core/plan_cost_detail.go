@@ -14,14 +14,18 @@
 
 package core
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/pingcap/tidb/util/tracing"
+)
 
 const (
-	// RowSizeLbl indicates for rowSize
+	// RowSizeLbl indicates rowSize
 	RowSizeLbl = "rowSize"
-	// NetworkFactorLbl indicates for networkFactor
+	// NetworkFactorLbl indicates networkFactor
 	NetworkFactorLbl = "networkFactor"
-	// SeekFactorLbl indicates for seekFactor
+	// SeekFactorLbl indicates seekFactor
 	SeekFactorLbl = "seekFactor"
 )
 
@@ -30,9 +34,10 @@ func setPointGetPlanCostDetail(p *PointGetPlan, opt *physicalOptimizeOp,
 	if opt == nil {
 		return
 	}
-	opt.appendPlanCostDetail(p).
-		appendParamCostDetail(RowSizeLbl, rowSize).
-		appendParamCostDetail(NetworkFactorLbl, networkFactor).
-		appendParamCostDetail(SeekFactorLbl, seekFactor).
-		appendCurrCostDesc(fmt.Sprintf("%s * %s + %s", RowSizeLbl, NetworkFactorLbl, SeekFactorLbl))
+	detail := tracing.NewPhysicalPlanCostDetail(p.ID(), p.TP())
+	detail.AddParam(RowSizeLbl, rowSize).
+		AddParam(NetworkFactorLbl, networkFactor).
+		AddParam(SeekFactorLbl, seekFactor).
+		SetDesc(fmt.Sprintf("%s*%s+%s", RowSizeLbl, NetworkFactorLbl, SeekFactorLbl))
+	opt.appendPlanCostDetail(detail)
 }

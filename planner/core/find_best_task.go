@@ -337,8 +337,6 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 type physicalOptimizeOp struct {
 	// tracer is goring to track optimize steps during physical optimizing
 	tracer *tracing.PhysicalOptimizeTracer
-
-	currCostDetail *tracing.PhysicalPlanCostDetail
 }
 
 func defaultPhysicalOptimizeOption() *physicalOptimizeOp {
@@ -362,32 +360,11 @@ func (op *physicalOptimizeOp) appendCandidate(lp LogicalPlan, pp PhysicalPlan, p
 	pp.appendChildCandidate(op)
 }
 
-func (op *physicalOptimizeOp) appendPlanCostDetail(pp PhysicalPlan) *physicalOptimizeOp {
+func (op *physicalOptimizeOp) appendPlanCostDetail(detail *tracing.PhysicalPlanCostDetail) {
 	if op == nil || op.tracer == nil {
-		return nil
+		return
 	}
-	if op.currCostDetail != nil {
-		op.tracer.PhysicalPlanCostDetails[pp.ID()] = op.currCostDetail
-		op.currCostDetail = nil
-	}
-	op.currCostDetail = tracing.NewPhysicalPlanCostDetail(pp.ID(), pp.TP())
-	return op
-}
-
-func (op *physicalOptimizeOp) appendParamCostDetail(k string, v interface{}) *physicalOptimizeOp {
-	if op == nil || op.tracer == nil || op.currCostDetail == nil {
-		return nil
-	}
-	op.currCostDetail.AddParam(k, v)
-	return op
-}
-
-func (op *physicalOptimizeOp) appendCurrCostDesc(desc string) *physicalOptimizeOp {
-	if op == nil || op.tracer == nil || op.currCostDetail == nil {
-		return nil
-	}
-	op.currCostDetail.SetDesc(desc)
-	return op
+	op.tracer.PhysicalPlanCostDetails[detail.GetPlanID()] = detail
 }
 
 // findBestTask implements LogicalPlan interface.
