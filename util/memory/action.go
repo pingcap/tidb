@@ -31,7 +31,7 @@ type ActionOnExceed interface {
 	// Action will be called when memory usage exceeds memory quota by the
 	// corresponding Tracker.
 	Action(t *Tracker)
-	// SetLogHook binds a log hook which will be triggered and log an detailed
+	// SetLogHook binds a log hook which will be triggered and log a detailed
 	// message for the out-of-memory sql.
 	SetLogHook(hook func(uint64))
 	// SetFallback sets a fallback action which will be triggered if itself has

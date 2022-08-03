@@ -452,8 +452,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		}
 		autoReload = true
 		tempStoragePath := config.GetGlobalConfig().Instance.TmpStoragePath
-		cert = filepath.Join(tempStoragePath, "/cert.pem")
-		key = filepath.Join(tempStoragePath, "/key.pem")
+		cert = filepath.Join(tempStoragePath, "cert.pem")
+		key = filepath.Join(tempStoragePath, "key.pem")
 		err = createTLSCertificates(cert, key, rsaKeySize)
 		if err != nil {
 			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
