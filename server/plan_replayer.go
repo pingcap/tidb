@@ -37,6 +37,7 @@ type PlanReplayerHandler struct {
 	address    string
 	statusPort uint
 	scheme     string
+	server     *Server
 }
 
 func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
@@ -45,6 +46,7 @@ func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
 		address:    cfg.AdvertiseAddress,
 		statusPort: cfg.Status.StatusPort,
 		scheme:     "http",
+		server:     s,
 	}
 	if s.dom != nil && s.dom.InfoSyncer() != nil {
 		prh.infoGetter = s.dom.InfoSyncer()
@@ -67,6 +69,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		urlPath:            fmt.Sprintf("plan_replayer/dump/%s", name),
 		downloadedFilename: "plan_replayer",
 		scheme:             prh.scheme,
+		tlsCfg:             prh.server.getTLSConfig(),
 	}
 	handleDownloadFile(handler, w, req)
 }
@@ -131,7 +134,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 		client = &http.Client{
 			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig: handler.tlsCfg,
 			},
 		}
 	}
@@ -191,6 +194,7 @@ type downloadFileHandler struct {
 	statusPort         uint
 	urlPath            string
 	downloadedFilename string
+	tlsCfg             *tls.Config
 }
 
 func isExists(path string) (bool, error) {
