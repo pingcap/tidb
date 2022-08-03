@@ -1066,7 +1066,7 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 
 // ShardIDLayout is used to calculate the bits length of different segments in auto id.
 // Generally, an auto id is consist of 3 segments: sign bit, shard bits and incremental bits.
-// Take “a BIGINT AUTO_INCREMENT PRIMARY KEY“ as an example, assume that the `shard_row_id_bits` = 5,
+// Take "a BIGINT AUTO_INCREMENT PRIMARY KEY" as an example, assume that the `shard_row_id_bits` = 5,
 // the layout is like
 //
 //	| [sign_bit] (1 bit) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
