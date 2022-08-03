@@ -191,7 +191,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_8 with children[TableScan_5,TableScan_7]",
+					assertAction: "DataSource_1 becomes PartitionUnion_6 with children[TableScan_7,TableScan_8]",
 				},
 			},
 		},
@@ -213,7 +213,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_9 with children[TableScan_6,TableScan_8]",
+					assertAction: "DataSource_1 becomes PartitionUnion_7 with children[TableScan_8,TableScan_9]",
 				},
 			},
 		},
@@ -246,7 +246,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_9 with children[TableScan_6,TableScan_8]",
+					assertAction: "DataSource_1 becomes PartitionUnion_7 with children[TableScan_8,TableScan_9]",
 				},
 			},
 		},
