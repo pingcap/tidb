@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -163,7 +164,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	)
 	cc.initInputEncoder(ctx)
 	numParams := stmt.NumParams()
-	args := make([]types.Datum, numParams)
+	args := make([]expression.Expression, numParams)
 	if numParams > 0 {
 		nullBitmapLen := (numParams + 7) >> 3
 		if len(data) < (pos + nullBitmapLen + 1) {
@@ -229,7 +230,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
-func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
+func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []expression.Expression, useCursor bool) (bool, error) {
 	rs, err := stmt.Execute(ctx, args)
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
@@ -318,7 +319,7 @@ func parseStmtFetchCmd(data []byte) (uint32, uint32, error) {
 	return stmtID, fetchSize, nil
 }
 
-func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams [][]byte,
+func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boundParams [][]byte,
 	nullBitmap, paramTypes, paramValues []byte, enc *inputDecoder) (err error) {
 	pos := 0
 	var (
@@ -331,6 +332,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 		enc = newInputDecoder(charset.CharsetUTF8)
 	}
 
+	args := make([]types.Datum, len(params))
 	for i := 0; i < len(args); i++ {
 		// if params had received via ComStmtSendLongData, use them directly.
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
@@ -566,6 +568,12 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			err = errUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
 			return
 		}
+	}
+
+	for i := range params {
+		ft := new(types.FieldType)
+		types.DefaultParamTypeForValue(args[i].GetValue(), ft)
+		params[i] = &expression.Constant{Value: args[i], RetType: ft}
 	}
 	return
 }
