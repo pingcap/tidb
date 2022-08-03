@@ -43,7 +43,7 @@ func (s *Server) newOptimizeTraceHandler() *OptimizeTraceHandler {
 	if s.dom != nil && s.dom.InfoSyncer() != nil {
 		oth.infoGetter = s.dom.InfoSyncer()
 	}
-	if len(cfg.Security.ClusterSSLCA) > 0 {
+	if len(cfg.Security.ClusterSSLKey) > 0 || len(cfg.Security.SSLKey) > 0 {
 		oth.scheme = "https"
 	}
 	return oth
