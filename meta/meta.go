@@ -544,17 +544,12 @@ func (m *Meta) SetDDLTables() error {
 
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
-	dbs, err := m.ListDatabases()
-	if err != nil {
-		return 0, err
-	}
-	for _, db := range dbs {
-		if db.Name.L == mysql.SystemDB {
-			return db.ID, nil
-		}
+	id, err := m.GetSystemDBID()
+	if id != 0 || err != nil {
+		return id, err
 	}
 
-	id, err := m.GenGlobalID()
+	id, err = m.GenGlobalID()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -567,6 +562,20 @@ func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	}
 	err = m.CreateDatabase(&db)
 	return db.ID, err
+}
+
+// GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.
+func (m *Meta) GetSystemDBID() (int64, error) {
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return 0, err
+	}
+	for _, db := range dbs {
+		if db.Name.L == mysql.SystemDB {
+			return db.ID, nil
+		}
+	}
+	return 0, nil
 }
 
 // CheckDDLTableExists check if the tables related to concurrent DDL exists.
