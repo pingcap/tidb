@@ -109,6 +109,7 @@ func TypeStr(tp byte) (r string) {
 // It is used for converting Text to Blob,
 // or converting Char to Binary.
 // Args:
+//
 //	tp: type enum
 //	cs: charset
 func TypeToStr(tp byte, cs string) (r string) {
@@ -126,7 +127,8 @@ func TypeToStr(tp byte, cs string) (r string) {
 
 // StrToType convert a string to type enum.
 // Args:
-// 	ts: type string
+//
+//	ts: type string
 func StrToType(ts string) (tp byte) {
 	ts = strings.Replace(ts, "blob", "text", 1)
 	ts = strings.Replace(ts, "binary", "char", 1)

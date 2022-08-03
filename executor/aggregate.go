@@ -118,43 +118,44 @@ type AfFinalResult struct {
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
 // and updates all the items in PartialAggFuncs.
 // The parallel execution flow is as the following graph shows:
-//
-//                            +-------------+
-//                            | Main Thread |
-//                            +------+------+
-//                                   ^
-//                                   |
-//                                   +
-//                              +-+-            +-+
-//                              | |    ......   | |  finalOutputCh
-//                              +++-            +-+
-//                               ^
-//                               |
-//                               +---------------+
-//                               |               |
-//                 +--------------+             +--------------+
-//                 | final worker |     ......  | final worker |
-//                 +------------+-+             +-+------------+
-//                              ^                 ^
-//                              |                 |
-//                             +-+  +-+  ......  +-+
-//                             | |  | |          | |
-//                             ...  ...          ...    partialOutputChs
-//                             | |  | |          | |
-//                             +++  +++          +++
-//                              ^    ^            ^
-//          +-+                 |    |            |
-//          | |        +--------o----+            |
-// inputCh  +-+        |        +-----------------+---+
-//          | |        |                              |
-//          ...    +---+------------+            +----+-----------+
-//          | |    | partial worker |   ......   | partial worker |
-//          +++    +--------------+-+            +-+--------------+
-//           |                     ^                ^
-//           |                     |                |
-//      +----v---------+          +++ +-+          +++
-//      | data fetcher | +------> | | | |  ......  | |   partialInputChs
-//      +--------------+          +-+ +-+          +-+
+/*
+                            +-------------+
+                            | Main Thread |
+                            +------+------+
+                                   ^
+                                   |
+                                   +
+                              +-+-            +-+
+                              | |    ......   | |  finalOutputCh
+                              +++-            +-+
+                               ^
+                               |
+                               +---------------+
+                               |               |
+                 +--------------+             +--------------+
+                 | final worker |     ......  | final worker |
+                 +------------+-+             +-+------------+
+                              ^                 ^
+                              |                 |
+                             +-+  +-+  ......  +-+
+                             | |  | |          | |
+                             ...  ...          ...    partialOutputChs
+                             | |  | |          | |
+                             +++  +++          +++
+                              ^    ^            ^
+          +-+                 |    |            |
+          | |        +--------o----+            |
+ inputCh  +-+        |        +-----------------+---+
+          | |        |                              |
+          ...    +---+------------+            +----+-----------+
+          | |    | partial worker |   ......   | partial worker |
+          +++    +--------------+-+            +-+--------------+
+           |                     ^                ^
+           |                     |                |
+      +----v---------+          +++ +-+          +++
+      | data fetcher | +------> | | | |  ......  | |   partialInputChs
+      +--------------+          +-+ +-+          +-+
+*/
 type HashAggExec struct {
 	baseExecutor
 
