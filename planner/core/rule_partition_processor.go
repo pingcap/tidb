@@ -1631,9 +1631,9 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 	})
 	if len(children) == 1 {
 		newDS := plan.(*DataSource)
-		newDS.tracerID = origin.SCtx().GetSessionVars().AllocNewPlanID()
+		newDS.id = origin.SCtx().GetSessionVars().AllocNewPlanID()
 		action = func() string {
-			return fmt.Sprintf("%v_%v becomes %s_%v", origin.TP(), origin.ID(), newDS.TP(), newDS.getTracerID())
+			return fmt.Sprintf("%v_%v becomes %s_%v", origin.TP(), origin.ID(), newDS.TP(), newDS.ID())
 		}
 		reason = func() string {
 			return fmt.Sprintf("%v_%v has one needed partition[%s] after pruning", origin.TP(), origin.ID(), used[0].Name)
@@ -1647,8 +1647,8 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 					buffer.WriteString(",")
 				}
 				newDS := child.(*DataSource)
-				newDS.tracerID = origin.SCtx().GetSessionVars().AllocNewPlanID()
-				buffer.WriteString(fmt.Sprintf("%s_%v", child.TP(), newDS.getTracerID()))
+				newDS.id = origin.SCtx().GetSessionVars().AllocNewPlanID()
+				buffer.WriteString(fmt.Sprintf("%s_%v", child.TP(), newDS.ID()))
 			}
 			buffer.WriteString("]")
 			return buffer.String()
