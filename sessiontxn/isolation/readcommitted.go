@@ -122,19 +122,46 @@ func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 // simply, and the Optimizer skip calling `txnManger.AdviseWarmup()` at first, if the final plan is not satified the rules,
 // call `txnManger.AdviseWarmup()` at later.
 func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
+	disableWarmup := false
 	sessionVars := sctx.GetSessionVars()
 	if sessionVars.ConnectionID > 0 &&
+		(variable.InsertUseLastTso.Load() || variable.PointLockReadUseLastTso.Load()) &&
 		sessionVars.InTxn() {
-		if _, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt &&
-			(variable.InsertUseLastTso.Load() || variable.PointLockReadUseLastTso.Load()) {
-			return true
+		/*
+			if _, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt &&
+				(variable.InsertUseLastTso.Load() || variable.PointLockReadUseLastTso.Load()) {
+				return true
+			}
+			if insert, ok := node.(*ast.InsertStmt); ok && insert.Select == nil &&
+				variable.InsertUseLastTso.Load() {
+				return true
+			}
+		*/
+		realNode := node
+		if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+			prepareStmt, err := plannercore.GetPreparedStmt(execStmt, sessionVars)
+			if err != nil {
+				logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
+				return false
+			}
+			realNode = prepareStmt.PreparedAst.Stmt
 		}
-		if insert, ok := node.(*ast.InsertStmt); ok && insert.Select == nil &&
-			variable.InsertUseLastTso.Load() {
-			return true
+		switch v := realNode.(type) {
+		case *ast.InsertStmt:
+			disableWarmup = v.Select == nil
+		case *ast.UpdateStmt:
+			disableWarmup = true
+		case *ast.DeleteStmt:
+			disableWarmup = true
+		case *ast.SelectStmt:
+			if v.LockInfo != nil && (v.LockInfo.LockType == ast.SelectLockForUpdate ||
+				v.LockInfo.LockType == ast.SelectLockForUpdateNoWait ||
+				v.LockInfo.LockType == ast.SelectLockForUpdateWaitN) {
+				disableWarmup = true
+			}
 		}
 	}
-	return false
+	return disableWarmup
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -291,7 +318,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	useLastOracleTS := plannercore.PlanSkipGetTsoFromPD(plan)
+	useLastOracleTS := plannercore.PlanSkipGetTsoFromPD(plan, false)
 
 	if useLastOracleTS {
 		p.stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)

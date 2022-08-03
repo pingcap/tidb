@@ -1087,6 +1087,7 @@ func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, 1, 1)")
 	tk.MustExec("insert into t2 values (1, 1, 1)")
 	tk.MustExec("insert into t2 values (5, 5, 5)")
+	tk.MustExec("insert into t2 values (8, 8, 8)")
 
 	res := tk.MustQuery("show variables like 'transaction_isolation'")
 	require.Equal(t, "READ-COMMITTED", res.Rows()[0][1])
@@ -1097,7 +1098,8 @@ func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
 		tk.MustExec("select * from t1 where id1 = 1 for update")
 		tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
 		tk.MustExec("update t2 set id3 = id3 + 10 where id1 = 1")
-		tk.MustExec("update t2 set id3 = id3 + 10 where id1 > 3")
+		tk.MustExec("update t2 set id3 = id3 + 10 where id1 > 3 and id1 < 6")
+		tk.MustExec("select id1+id2 as x from t1 where id1 = 9 for update")
 		val := i * 10
 		tk.MustExec(fmt.Sprintf("insert into t2 values(%v, %v, %v)", val, val, val))
 		tk.MustExec(fmt.Sprintf("delete from t2 where id1 = %v", val))

@@ -738,27 +738,53 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	return false
 }
 
-func PlanSkipGetTsoFromPD(plan Plan) bool {
-	useLastOracleTS := false
+func PlanSkipGetTsoFromPD(plan Plan, inLockOrWriteStmt bool) bool {
+	/*
+		useLastOracleTS := false
+		switch v := plan.(type) {
+		case *PointGetPlan:
+			if v.Lock && variable.PointLockReadUseLastTso.Load() {
+				useLastOracleTS = true
+			}
+		case *Insert:
+			if v.SelectPlan == nil && variable.InsertUseLastTso.Load() {
+				useLastOracleTS = true
+			}
+		case *Update:
+			if _, Ok := v.SelectPlan.(*PointGetPlan); Ok && variable.PointLockReadUseLastTso.Load() {
+				useLastOracleTS = true
+			}
+		case *Delete:
+			if _, ok := v.SelectPlan.(*PointGetPlan); ok && variable.PointLockReadUseLastTso.Load() {
+				useLastOracleTS = true
+			}
+		}
+		return useLastOracleTS
+	*/
 	switch v := plan.(type) {
 	case *PointGetPlan:
-		if v.Lock && variable.PointLockReadUseLastTso.Load() {
-			useLastOracleTS = true
+
+		return v.Lock || inLockOrWriteStmt
+
+	case PhysicalPlan:
+		if len(v.Children()) == 0 {
+			return false
 		}
-	case *Insert:
-		if v.SelectPlan == nil && variable.InsertUseLastTso.Load() {
-			useLastOracleTS = true
+		_, isPhysicalLock := v.(*PhysicalLock)
+		for _, p := range v.Children() {
+			if !PlanSkipGetTsoFromPD(p, isPhysicalLock || inLockOrWriteStmt) {
+				return false
+			}
 		}
+		return true
 	case *Update:
-		if _, Ok := v.SelectPlan.(*PointGetPlan); Ok && variable.PointLockReadUseLastTso.Load() {
-			useLastOracleTS = true
-		}
+		return PlanSkipGetTsoFromPD(v.SelectPlan, true)
 	case *Delete:
-		if _, ok := v.SelectPlan.(*PointGetPlan); ok && variable.PointLockReadUseLastTso.Load() {
-			useLastOracleTS = true
-		}
+		return PlanSkipGetTsoFromPD(v.SelectPlan, true)
+	case *Insert:
+		return v.SelectPlan == nil
 	}
-	return useLastOracleTS
+	return false
 }
 
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
