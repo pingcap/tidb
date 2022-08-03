@@ -102,7 +102,6 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 		if err := s.Open(ctx); err != nil {
 			return err
 		}
-
 	}
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err

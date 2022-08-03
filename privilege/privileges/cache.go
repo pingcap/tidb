@@ -303,7 +303,7 @@ func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.R
 				}
 			}
 		}
-		head += 1
+		head++
 	}
 	return ret
 }
@@ -1212,7 +1212,6 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION`, g, user, host)
 		} else {
 			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, user, host)
-
 		}
 		gs = append(gs, s)
 	}

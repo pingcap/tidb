@@ -18,11 +18,11 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/paging"
 )
@@ -451,6 +451,11 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, option *Plan
 		rowSize := math.Max(p.getScanRowSize(), 2.0) // to guarantee logRowSize >= 1
 		logRowSize := math.Log2(rowSize)
 		selfCost = getCardinality(p, costFlag) * logRowSize * scanFactor
+
+		// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
+		if p.StoreType == kv.TiFlash {
+			selfCost += 2000 * logRowSize * scanFactor
+		}
 	}
 
 	p.planCost = selfCost
@@ -537,6 +542,14 @@ func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost flo
 	memoryCost := innerConcurrency * (batchSize * distinctFactor) * innerCnt * sessVars.GetMemoryFactor()
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
 	innerPlanCost := outerCnt * innerCost
+	if p.ctx.GetSessionVars().CostModelVersion == 2 {
+		// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
+		//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
+		// Use an empirical value batchRatio to handle this now.
+		// TODO: remove this empirical value.
+		batchRatio := 30.0
+		innerPlanCost /= batchRatio
+	}
 	return outerCost + innerPlanCost + cpuCost + memoryCost + p.estDoubleReadCost(outerCnt)
 }
 
@@ -891,7 +904,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 		build = p.children[1]
 	}
 	sessVars := p.ctx.GetSessionVars()
-	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
+	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
 	rowSize := getAvgRowSize(build.statsInfo(), build.Schema())
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota) && p.storeTp != kv.TiFlash
@@ -1091,7 +1104,7 @@ func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64
 	cpuCost := count * math.Log2(count) * sessVars.GetCPUFactor()
 	memoryCost := count * sessVars.GetMemoryFactor()
 
-	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
+	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
 	rowSize := getAvgRowSize(p.statsInfo(), schema)
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*count > float64(memQuota)
