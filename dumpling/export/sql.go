@@ -17,9 +17,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
@@ -27,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 const (
@@ -205,9 +204,9 @@ func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence
 			return "", err
 		}
 		for _, oneRow := range results {
-			nextGlobalRowId, idType := oneRow[0], oneRow[1]
+			nextGlobalRowID, idType := oneRow[0], oneRow[1]
 			if idType == "SEQUENCE" {
-				nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowId, 10, 64)
+				nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowID, 10, 64)
 			}
 		}
 		fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
@@ -362,6 +361,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	return dbTables, nil
 }
 
+// ListAllPlacementPolicyNames returns all placement policy names.
 func ListAllPlacementPolicyNames(tctx *tcontext.Context, db *BaseConn) ([]string, error) {
 	var policyList []string
 	var policy string
@@ -779,7 +779,9 @@ func getTiDBConfig(db *sql.Conn) (dbconfig.Config, error) {
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	conn, err := db.Conn(context.Background())
 	if err == nil {
-		defer conn.Close()
+		defer func() {
+			_ = conn.Close()
+		}()
 		tidbConfig, err := getTiDBConfig(conn)
 		if err == nil {
 			return tidbConfig.Store == "tikv", nil
@@ -873,9 +875,14 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(s))
 	}
 
+	db.Close()
 	newDB, err := sql.Open("mysql", dsn)
 	if err == nil {
-		db.Close()
+		// ping to make sure all session parameters are set correctly
+		err = newDB.PingContext(tctx)
+		if err != nil {
+			newDB.Close()
+		}
 	}
 	return newDB, errors.Trace(err)
 }
@@ -1507,7 +1514,7 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 	if err = rows.Close(); err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
-	if rows.Err() != nil {
+	if err = rows.Err(); err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	return charsetAndDefaultCollation, err

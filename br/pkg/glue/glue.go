@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -28,6 +29,12 @@ type Glue interface {
 
 	// GetVersion gets BR package version to run backup/restore job
 	GetVersion() string
+
+	// UseOneShotSession temporary creates session from store when run backup job.
+	// because we don't have to own domain/session during the whole backup.
+	// we can close domain as soon as possible.
+	// and we must reuse the exists session and don't close it in SQL backup job.
+	UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se Session) error) error
 }
 
 // Session is an abstraction of the session.Session interface.
@@ -39,6 +46,7 @@ type Session interface {
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()
 	GetGlobalVariable(name string) (string, error)
+	GetSessionCtx() sessionctx.Context
 }
 
 // BatchCreateTableSession is an interface to batch create table parallelly

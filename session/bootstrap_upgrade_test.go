@@ -26,8 +26,7 @@ import (
 
 func TestUpgradeVersion83(t *testing.T) {
 	ctx := context.Background()
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ver, err := session.GetBootstrapVersion(tk.Session())
@@ -58,8 +57,7 @@ func TestUpgradeVersion83(t *testing.T) {
 
 func TestUpgradeVersion84(t *testing.T) {
 	ctx := context.Background()
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ver, err := session.GetBootstrapVersion(tk.Session())

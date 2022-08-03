@@ -90,7 +90,7 @@ type schemasFilter struct {
 	schemas map[string]struct{}
 }
 
-func (f schemasFilter) MatchTable(schema string, table string) bool {
+func (f schemasFilter) MatchTable(schema string, _ string) bool {
 	return f.MatchSchema(schema)
 }
 

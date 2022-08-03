@@ -114,3 +114,13 @@ func GetSysDBName(tempDB model.CIStr) (string, bool) {
 	}
 	return tempDB.O[len(temporaryDBNamePrefix):], true
 }
+
+// GetSysDBCIStrName get the CIStr name of system DB
+func GetSysDBCIStrName(tempDB model.CIStr) (model.CIStr, bool) {
+	if ok := strings.HasPrefix(tempDB.O, temporaryDBNamePrefix); !ok {
+		return tempDB, false
+	}
+	tempDB.O = tempDB.O[len(temporaryDBNamePrefix):]
+	tempDB.L = tempDB.L[len(temporaryDBNamePrefix):]
+	return tempDB, true
+}

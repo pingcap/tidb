@@ -15,7 +15,6 @@
 package domain
 
 import (
-	"sort"
 	"sync"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type checkResult int
@@ -199,7 +199,7 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		for id := range changedTblMap {
 			tblIds = append(tblIds, id)
 		}
-		sort.Slice(tblIds, func(i, j int) bool { return tblIds[i] < tblIds[j] })
+		slices.Sort(tblIds)
 		for _, tblID := range tblIds {
 			actionTypes = append(actionTypes, changedTblMap[tblID])
 		}

@@ -30,8 +30,7 @@ import (
 )
 
 func TestBasicTxnState(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -58,7 +57,7 @@ func TestBasicTxnState(t *testing.T) {
 	info = tk.Session().TxnInfo()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
 	require.Equal(t, expectedDigest.String(), info.CurrentSQLDigest)
-	require.Equal(t, txninfo.TxnLockWaiting, info.State)
+	require.Equal(t, txninfo.TxnLockAcquiring, info.State)
 	require.True(t, info.BlockStartTime.Valid)
 	require.Equal(t, startTS, info.StartTS)
 
@@ -120,8 +119,7 @@ func TestBasicTxnState(t *testing.T) {
 }
 
 func TestEntriesCountAndSize(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -139,8 +137,7 @@ func TestEntriesCountAndSize(t *testing.T) {
 }
 
 func TestRunning(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -162,8 +159,7 @@ func TestRunning(t *testing.T) {
 }
 
 func TestBlocked(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -182,15 +178,14 @@ func TestBlocked(t *testing.T) {
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, txninfo.TxnLockWaiting, tk2.Session().TxnInfo().State)
+	require.Equal(t, txninfo.TxnLockAcquiring, tk2.Session().TxnInfo().State)
 	require.NotNil(t, tk2.Session().TxnInfo().BlockStartTime)
 	tk1.MustExec("commit;")
 	<-ch
 }
 
 func TestCommitting(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -218,8 +213,7 @@ func TestCommitting(t *testing.T) {
 }
 
 func TestRollbackTxnState(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -240,8 +234,7 @@ func TestRollbackTxnState(t *testing.T) {
 }
 
 func TestTxnInfoWithPreparedStmt(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -272,8 +265,7 @@ func TestTxnInfoWithPreparedStmt(t *testing.T) {
 }
 
 func TestTxnInfoWithScalarSubquery(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -303,8 +295,7 @@ func TestTxnInfoWithScalarSubquery(t *testing.T) {
 }
 
 func TestTxnInfoWithPSProtocol(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -360,7 +351,7 @@ func TestTxnInfoWithPSProtocol(t *testing.T) {
 	info = tk.Session().TxnInfo()
 	require.Greater(t, info.StartTS, uint64(0))
 	require.Equal(t, digest2.String(), info.CurrentSQLDigest)
-	require.Equal(t, txninfo.TxnLockWaiting, info.State)
+	require.Equal(t, txninfo.TxnLockAcquiring, info.State)
 	require.True(t, info.BlockStartTime.Valid)
 	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
 	require.Equal(t, []string{beginDigest.String(), digest1.String(), digest2.String()}, info.AllSQLDigests)
