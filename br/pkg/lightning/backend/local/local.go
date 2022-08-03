@@ -167,7 +167,6 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                gRPCKeepAliveTime,
 			Timeout:             gRPCKeepAliveTimeout,
-			PermitWithoutStream: true,
 		}),
 	)
 	cancel()

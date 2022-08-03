@@ -1173,7 +1173,6 @@ func restoreStream(
 func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *conn.Mgr) (*restore.Client, error) {
 	var err error
 	keepaliveCfg := GetKeepalive(&cfg.Config)
-	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
 	err = client.Init(g, mgr.GetStorage())
 	if err != nil {

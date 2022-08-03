@@ -430,7 +430,6 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
 	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {

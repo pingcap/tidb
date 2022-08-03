@@ -87,9 +87,6 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
-	// sometimes we have pooled the connections.
-	// sending heartbeats in idle times is useful.
-	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, true)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
