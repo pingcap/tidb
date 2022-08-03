@@ -402,7 +402,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		sess, err1 := d.sessPool.get()
 		if err1 == nil {
 			sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			err1 = insertDDLJobs2Table(newSession(sess), jobTasks, true)
+			err1 = insertDDLJobs2Table(newSession(sess), true, jobTasks...)
 			d.sessPool.put(sess)
 		}
 		err = err1
