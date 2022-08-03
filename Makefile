@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: check-parallel lint tidy testSuite check-static errdoc
+check: check-parallel lint tidy testSuite errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -207,28 +207,24 @@ tools/bin/xprog: tools/check/xprog.go
 	cd tools/check; \
 	$(GO) build -o ../bin/xprog xprog.go
 
-tools/bin/revive: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/revive github.com/mgechev/revive
+tools/bin/revive:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@v1.2.1
 
-tools/bin/failpoint-ctl: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/failpoint-ctl github.com/pingcap/failpoint/failpoint-ctl
+tools/bin/failpoint-ctl:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@master
 
-tools/bin/errdoc-gen: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
+tools/bin/errdoc-gen:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/errors/errdoc-gen@master
 
 tools/bin/golangci-lint:
-	cd tools/check; \
-	$(GO) build -o ../bin/golangci-lint github.com/golangci/golangci-lint/cmd/golangci-lint
 	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
-	# But the following script from their website doesn't work with Go1.18:
-	# curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.44.2
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
 
-tools/bin/vfsgendev: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/vfsgendev github.com/shurcooL/vfsgen/cmd/vfsgendev
+tools/bin/vfsgendev:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@master
+
+tools/bin/gotestsum:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
 
 # Usage:
 #
@@ -394,9 +390,6 @@ dumpling_bins:
 	@which bin/tidb-lightning
 	@which bin/sync_diff_inspector
 
-tools/bin/gotestsum: tools/check/go.mod
-	cd tools/check && $(GO) build -o ../bin/gotestsum gotest.tools/gotestsum
-
 generate_grafana_scripts:
 	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
 
@@ -412,7 +405,7 @@ bazel_test: failpoint-enable bazel_ci_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 
-bazel_coverage_test: failpoint-enable bazel_ci_prepare
+bazel_coverage_test: bazel_golangcilinter failpoint-enable bazel_ci_prepare
 	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
@@ -422,7 +415,7 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin
-	bazel --output_user_root=/home/jenkins/.tidb/tmp build -k --config=ci //tidb-server/... //br/cmd/... //cmd/... //util/... //dumpling/cmd/... //tidb-binlog/... --//build:with_nogo_flag=true
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci //... --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
@@ -437,3 +430,8 @@ bazel_junit:
 	bazel_collect
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
+
+bazel_golangcilinter:
+	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci --run_under="cd $(CURDIR) && " \
+		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
+	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml

@@ -82,6 +82,9 @@ type RestoreCommonConfig struct {
 	// See https://github.com/tikv/tikv/blob/v4.0.8/components/raftstore/src/coprocessor/config.rs#L35-L38
 	MergeSmallRegionSizeBytes uint64 `json:"merge-region-size-bytes" toml:"merge-region-size-bytes"`
 	MergeSmallRegionKeyCount  uint64 `json:"merge-region-key-count" toml:"merge-region-key-count"`
+
+	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
+	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -110,6 +113,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"after how long a restore batch would be auto sended.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"batch size for ddl to create a batch of tabes once.")
+	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
@@ -131,6 +135,12 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.MergeSmallRegionSizeBytes, err = flags.GetUint64(FlagMergeRegionSizeBytes)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if flags.Lookup(flagWithSysTable) != nil {
+		cfg.WithSysTable, err = flags.GetBool(flagWithSysTable)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return errors.Trace(err)
 }
@@ -171,9 +181,9 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 // DefineStreamRestoreFlags defines for the restore log command.
 func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().String(FlagStreamStartTS, "", "the start timestamp which log restore from.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for log restore.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
 }
@@ -285,6 +295,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
+	client.SetWithSysTable(cfg.WithSysTable)
 
 	err := client.LoadRestoreStores(ctx)
 	if err != nil {
@@ -348,10 +359,9 @@ func CheckNewCollationEnable(
 					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
 					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
 					"use --check-requirements=false to skip this check")
-		} else {
-			log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
-			return nil
 		}
+		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		return nil
 	}
 
 	se, err := g.CreateSession(storage)
@@ -475,7 +485,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// to avoid import cycle problem which we won't do it in this pr, then refactor this
 	//
 	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
-	if cmdName == FullRestoreCmd {
+	if cmdName == FullRestoreCmd && cfg.WithSysTable {
 		client.InitFullClusterRestore(cfg.ExplicitFilter)
 	}
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {

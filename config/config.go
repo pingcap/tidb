@@ -119,6 +119,7 @@ var (
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
 				"max-server-connections":        "max_connections",
+				"run-ddl":                       "tidb_enable_ddl",
 			},
 		},
 		{
@@ -169,9 +170,8 @@ type Config struct {
 	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool   `toml:"split-table" json:"split-table"`
 	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
+	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
@@ -267,6 +267,9 @@ type Config struct {
 	EnableBatchDML bool   `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	MemQuotaQuery  int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	OOMAction      string `toml:"oom-action" json:"oom-action"`
+
+	// OOMUseTmpStorage unused since bootstrap v93
+	OOMUseTmpStorage bool `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 
 	// CheckMb4ValueInUTF8, EnableCollectExecutionInfo, Plugin are deprecated.
 	CheckMb4ValueInUTF8        AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
@@ -480,10 +483,11 @@ type Instance struct {
 	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
 	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
-	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
-	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
-	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
-	MaxConnections             uint32 `toml:"max_connections" json:"max_connections"`
+	EnableCollectExecutionInfo bool       `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
+	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
+	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
+	MaxConnections             uint32     `toml:"max_connections" json:"max_connections"`
+	TiDBEnableDDL              AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -859,6 +863,7 @@ var defaultConf = Config{
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
 		MaxConnections:              0,
+		TiDBEnableDDL:               *NewAtomicBool(true),
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -1026,6 +1031,7 @@ var removedConfig = map[string]struct{}{
 	"plugin.dir":                             {}, // use plugin_dir
 	"performance.feedback-probability":       {}, // This feature is deprecated
 	"performance.query-feedback-limit":       {},
+	"oom-use-tmp-storage":                    {}, // use tidb_enable_tmp_storage_on_oom
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
@@ -1194,7 +1200,7 @@ func (c *Config) Valid() error {
 		}
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, nameList)
 	}
-	if c.Store == "mocktikv" && !c.RunDDL {
+	if c.Store == "mocktikv" && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
 	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {

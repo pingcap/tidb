@@ -377,6 +377,9 @@ const (
 	// TiDBMinPagingSize is used to control the min paging size in the coprocessor paging protocol.
 	TiDBMinPagingSize = "tidb_min_paging_size"
 
+	// TiDBMaxPagingSize is used to control the max paging size in the coprocessor paging protocol.
+	TiDBMaxPagingSize = "tidb_max_paging_size"
+
 	// TiDBEnableCascadesPlanner is used to control whether to enable the cascades planner.
 	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
 
@@ -762,7 +765,7 @@ const (
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
-	//TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
+	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
 	TiDBMemOOMAction = "tidb_mem_oom_action"
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
@@ -784,6 +787,9 @@ const (
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
 	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
+	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
+	// when a single SQL statement exceeds the memory quota specified by the memory quota.
+	TiDBEnableTmpStorageOnOOM = "tidb_enable_tmp_storage_on_oom"
 )
 
 // TiDB intentional limits
@@ -850,6 +856,7 @@ const (
 	DefCurretTS                                    = 0
 	DefInitChunkSize                               = 32
 	DefMinPagingSize                               = int(paging.MinPagingSize)
+	DefMaxPagingSize                               = int(paging.MaxPagingSize)
 	DefMaxChunkSize                                = 1024
 	DefDMLBatchSize                                = 0
 	DefMaxPreparedStmtCount                        = -1
@@ -996,6 +1003,7 @@ const (
 	DefTiDBGenerateBinaryPlan                      = true
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
+	DefTiDBEnableTmpStorageOnOOM                   = true
 )
 
 // Process global variables.
@@ -1006,6 +1014,7 @@ var (
 	QueryLogMaxLen              = atomic.NewInt32(DefTiDBQueryLogMaxLen)
 	EnablePProfSQLCPU           = atomic.NewBool(false)
 	EnableBatchDML              = atomic.NewBool(false)
+	EnableTmpStorageOnOOM       = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
@@ -1056,4 +1065,18 @@ var (
 	SetStatsCacheCapacity atomic.Value
 	// SwitchConcurrentDDL is the func registered by DDL to switch concurrent DDL.
 	SwitchConcurrentDDL func(bool) error = nil
+	// EnableDDL is the func registered by ddl to enable running ddl in this instance.
+	EnableDDL func() error = nil
+	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
+	DisableDDL func() error = nil
 )
+
+// switchDDL turns on/off DDL in an instance.
+func switchDDL(on bool) error {
+	if on && EnableDDL != nil {
+		return EnableDDL()
+	} else if !on && DisableDDL != nil {
+		return DisableDDL()
+	}
+	return nil
+}
