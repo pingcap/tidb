@@ -1430,6 +1430,7 @@ func ContainHiddenConfig(s string) bool {
 	return false
 }
 
+// CheckTempStorageQuota checks if instance.tidb_tmp_storage_quota meets the remaining bytes.
 func CheckTempStorageQuota() {
 	// check capacity and the quota when OOMUseTmpStorage is enabled
 	c := GetGlobalConfig()
