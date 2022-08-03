@@ -1261,7 +1261,7 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			return
 		}
 		if jobID < 1 {
-			writeError(w, errors.New("ddl history start_job_id must be greater than 1"))
+			writeError(w, errors.New("ddl history start_job_id must be greater than 0"))
 			return
 		}
 	}
@@ -1272,7 +1272,7 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			return
 		}
 		if limitID < 1 {
-			writeError(w, errors.New("ddl history limit must be greater than 1"))
+			writeError(w, errors.New("ddl history limit must be greater than 0"))
 			return
 		}
 	}
