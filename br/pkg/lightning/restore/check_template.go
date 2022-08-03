@@ -15,7 +15,6 @@
 package restore
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -124,17 +123,5 @@ func (c *SimpleTemplate) Output() string {
 		}
 		return nil
 	})
-	res := c.t.Render()
-	summary := "\n"
-	if c.criticalFailedCount > 0 {
-		summary += fmt.Sprintf("%d critical check failed", c.criticalFailedCount)
-	}
-	if c.warnFailedCount > 0 {
-		msg := fmt.Sprintf("%d performance check failed", c.warnFailedCount)
-		if len(summary) > 1 {
-			msg = "," + msg
-		}
-		summary += msg
-	}
-	return res + summary
+	return c.t.Render() + "\n"
 }
