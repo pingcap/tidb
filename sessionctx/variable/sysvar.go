@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
@@ -450,7 +451,17 @@ var defaultSysVars = []*SysVar{
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
-	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
+	{Scope: ScopeGlobal, Name: InitConnect, Value: "", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		p := parser.New()
+		p.SetSQLMode(vars.SQLMode)
+		p.SetParserConfig(vars.BuildParserConfig())
+		_, _, err := p.ParseSQL(normalizedValue)
+		if err != nil {
+			return normalizedValue, ErrWrongTypeForVar.GenWithStackByArgs(InitConnect)
+		}
+		return normalizedValue, nil
+	}},
+
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
 		GetGlobal: func(sv *SessionVars) (string, error) {
