@@ -354,14 +354,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []byte, err error) {
 	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		// Only Lock the exist keys in RC isolation.
-		val, err = e.get(ctx, key)
-		if err != nil {
-			if !kv.ErrNotExist.Equal(err) {
-				return nil, err
-			}
-			return nil, nil
-		}
-		err = e.lockKeyIfNeeded(ctx, key)
+		val, err = e.lockKeyIfExists(ctx, key)
 		if err != nil {
 			return nil, err
 		}
@@ -383,19 +376,34 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
+	_, err := e.lockKeyBase(ctx, key, false)
+	return err
+}
+
+// lockKeyIfExists lock the key if need and the key exists. If lock the key successfully,
+// return the value of the key.
+func (e *PointGetExecutor) lockKeyIfExists(ctx context.Context, key []byte) ([]byte, error) {
+	return e.lockKeyBase(ctx, key, true)
+}
+
+func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
+	key []byte,
+	lockExistedKey bool) ([]byte, error) {
 	if len(key) == 0 {
-		return nil
+		return nil, nil
 	}
+
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
 		lockCtx, err := newLockCtx(e.ctx, e.lockWaitTime, 1)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		lockCtx.LockIfExists = lockExistedKey
 		lockCtx.InitReturnValues(1)
 		err = doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		lockCtx.IterateValuesNotLocked(func(k, v []byte) {
 			seVars.TxnCtx.SetPessimisticLockCache(k, v)
@@ -403,8 +411,34 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 		if len(e.handleVal) > 0 {
 			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
 		}
+		if lockExistedKey {
+			return e.getValueFromLockCtx(ctx, lockCtx, key)
+		}
 	}
-	return nil
+
+	return nil, nil
+}
+
+func (e *PointGetExecutor) getValueFromLockCtx(ctx context.Context,
+	lockCtx *kv.LockCtx,
+	key []byte) ([]byte, error) {
+
+	if val, ok := lockCtx.Values[string(key)]; ok {
+		if val.Exists {
+			return val.Value, nil
+		} else if val.AlreadyLocked {
+			val, err := e.get(ctx, key)
+			if err != nil {
+				if !kv.ErrNotExist.Equal(err) {
+					return nil, err
+				}
+				return nil, nil
+			}
+			return val, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // get will first try to get from txn buffer, then check the pessimistic lock cache,
