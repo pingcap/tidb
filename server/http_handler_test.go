@@ -987,6 +987,7 @@ func TestAllHistory(t *testing.T) {
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&jobs)
+	require.NoError(t, err)
 
 	// The result is in descending order
 	lastID := int64(42)
