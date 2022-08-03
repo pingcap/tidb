@@ -333,7 +333,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		newNulls = true
 	}
 	if !isNull || !newNulls {
-		var nullVal byte
+		var nullVal, lastByte byte
 		if !isNull {
 			nullVal = 0xFF
 		}
@@ -342,11 +342,13 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		for i := range c.nullBitmap {
 			c.nullBitmap[i] = nullVal
 		}
-		// Revise the last byte if it's not 0xff
-		if pos := len(c.nullBitmap) & 7; pos != 0 {
-			if len(c.nullBitmap) > 0 {
-				lastByte := byte((1 << pos) - 1)
-				c.nullBitmap[len(c.nullBitmap)-1] = lastByte
+		// Revise the last byte if necessary, when it's not divided by 8.
+		if x := (n % 8); x != 0 {
+			if !isNull {
+				lastByte = byte((1 << x) - 1)
+				if len(c.nullBitmap) > 0 {
+					c.nullBitmap[len(c.nullBitmap)-1] = lastByte
+				}
 			}
 		}
 	}
