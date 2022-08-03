@@ -1507,21 +1507,17 @@ func (cc *clientConn) flush(ctx context.Context) error {
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
 	msg := cc.ctx.LastMessage()
-	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), false)
+	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.OKHeader)
 }
 
-func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16, eof bool) error {
+func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16, header byte) error {
 	enclen := 0
 	if len(msg) > 0 {
 		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
 	}
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
-	if eof {
-		data = append(data, mysql.EOFHeader)
-	} else {
-		data = append(data, mysql.OKHeader)
-	}
+	data = append(data, header)
 	data = dumpLengthEncodedInt(data, affectedRows)
 	data = dumpLengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -1539,7 +1535,7 @@ func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows,
 		return err
 	}
 
-	if eof {
+	if header == mysql.EOFHeader {
 		return nil
 	}
 	return cc.flush(ctx)
@@ -2145,7 +2141,7 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
-	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount(), false)
+	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount(), mysql.OKHeader)
 }
 
 // handleFieldList returns the field list for a table.
@@ -2174,7 +2170,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	}
 	if cc.capability&mysql.ClientDeprecateEOF > 0 {
 		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
-			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), true)
+			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.EOFHeader)
 		if err != nil {
 			return err
 		}
@@ -2326,7 +2322,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	var err error
 	if cc.capability&mysql.ClientDeprecateEOF > 0 {
 		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
-			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), true)
+			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.EOFHeader)
 	} else {
 		err = cc.writeEOF(serverStatus)
 	}
