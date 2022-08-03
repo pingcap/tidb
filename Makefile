@@ -29,16 +29,13 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
-check-setup:tools/bin/revive tools/bin/goword
+check-setup:tools/bin/revive
 
 check: check-parallel lint tidy testSuite errdoc bazel_golangcilinter bazel_all_build
 
 fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
-
-goword:tools/bin/goword
-	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
