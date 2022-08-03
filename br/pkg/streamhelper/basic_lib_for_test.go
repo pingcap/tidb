@@ -424,6 +424,14 @@ func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string,
 	return nil
 }
 
+func (t *testEnv) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.checkpoint = 0
+	return nil
+}
+
 func (t *testEnv) getCheckpoint() uint64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()

@@ -294,7 +294,9 @@ func (d *ddl) limitDDLJobs() {
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
 	var err error
-	if variable.EnableConcurrentDDL.Load() {
+	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
+	toTable := variable.EnableConcurrentDDL.Load() && !variable.DDLForce2Queue.Load()
+	if toTable {
 		err = d.addBatchDDLJobs2Table(tasks)
 	} else {
 		err = d.addBatchDDLJobs2Queue(tasks)
@@ -309,7 +311,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs), zap.Bool("table", toTable))
 	}
 }
 
@@ -402,7 +404,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		sess, err1 := d.sessPool.get()
 		if err1 == nil {
 			sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			err1 = insertDDLJobs2Table(newSession(sess), jobTasks, true)
+			err1 = insertDDLJobs2Table(newSession(sess), true, jobTasks...)
 			d.sessPool.put(sess)
 		}
 		err = err1

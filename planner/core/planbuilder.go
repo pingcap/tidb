@@ -509,6 +509,8 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
+	//Check whether the current building query is a CTE
+	isCTE bool
 
 	// checkSemiJoinHint checks whether the SEMI_JOIN_REWRITE hint is possible to be applied on the current SELECT stmt.
 	// We need this variable for the hint since the hint is set in subquery, but we check its availability in its outer scope.
@@ -518,6 +520,8 @@ type PlanBuilder struct {
 	// hasValidSemijoinHint would tell the outer APPLY/JOIN operator that there's valid hint to be checked later
 	// if there's SEMI_JOIN_REWRITE hint and we find checkSemiJoinHint is true.
 	hasValidSemiJoinHint bool
+	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
+	disableSubQueryPreprocessing bool
 }
 
 type handleColHelper struct {
@@ -619,14 +623,31 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
+// PlanBuilderOpt is used to adjust the plan builder.
+type PlanBuilderOpt interface {
+	Apply(builder *PlanBuilder)
+}
+
+// PlanBuilderOptNoExecution means the plan builder should not run any executor during Build().
+type PlanBuilderOptNoExecution struct{}
+
+// Apply implements the interface PlanBuilderOpt.
+func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
+	builder.disableSubQueryPreprocessing = true
+}
+
 // NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder() *PlanBuilder {
-	return &PlanBuilder{
+func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
+	builder := &PlanBuilder{
 		outerCTEs:           make([]*cteInfo, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 	}
+	for _, opt := range opts {
+		opt.Apply(builder)
+	}
+	return builder
 }
 
 // Init initialize a PlanBuilder.

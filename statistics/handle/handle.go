@@ -1108,7 +1108,7 @@ func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (int64, int64, erro
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
-func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS bool) (err error) {
+func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS, analyzeSnapshot bool) (err error) {
 	tableID := results.TableID.GetStatisticsID()
 	statsVer := uint64(0)
 	defer func() {
@@ -1164,9 +1164,32 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		if modifyCnt < 0 {
 			modifyCnt = 0
 		}
-		cnt := curCnt + results.Count - results.BaseCount
-		if cnt < 0 {
-			cnt = 0
+		logutil.BgLogger().Info("[stats] incrementally update modifyCount",
+			zap.Int64("tableID", tableID),
+			zap.Int64("curModifyCnt", curModifyCnt),
+			zap.Int64("results.BaseModifyCnt", results.BaseModifyCnt),
+			zap.Int64("modifyCount", modifyCnt))
+		var cnt int64
+		if analyzeSnapshot {
+			cnt = curCnt + results.Count - results.BaseCount
+			if cnt < 0 {
+				cnt = 0
+			}
+			logutil.BgLogger().Info("[stats] incrementally update count",
+				zap.Int64("tableID", tableID),
+				zap.Int64("curCnt", curCnt),
+				zap.Int64("results.Count", results.Count),
+				zap.Int64("results.BaseCount", results.BaseCount),
+				zap.Int64("count", cnt))
+		} else {
+			cnt = results.Count
+			if cnt < 0 {
+				cnt = 0
+			}
+			logutil.BgLogger().Info("[stats] directly update count",
+				zap.Int64("tableID", tableID),
+				zap.Int64("results.Count", results.Count),
+				zap.Int64("count", cnt))
 		}
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
 			return err
@@ -1467,9 +1490,13 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 		} else {
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
-			// When there's new collation data, the length of bounds of histogram(the collate key) might be
-			// longer than the FieldType.flen of this column.
-			// We change it to TypeBlob to bypass the length check here.
+			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
+			// original value.
+			// But there's additional conversion logic for new collation data, and the collate key might be longer than
+			// the FieldType.flen.
+			// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
+			// or "Data too long".
+			// So we change it to TypeBlob to bypass those logics here.
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}

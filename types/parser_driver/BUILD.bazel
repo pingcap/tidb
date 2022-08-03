@@ -23,6 +23,7 @@ go_test(
         "value_expr_test.go",
     ],
     embed = [":parser_driver"],
+    flaky = True,
     deps = [
         "//parser/format",
         "//testkit/testsetup",
