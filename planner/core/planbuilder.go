@@ -799,9 +799,9 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (Pla
 		}
 		vars = append(vars, newExpr)
 	}
-	exe := &Execute{Name: v.Name, TxtProtoVars: vars, ExecID: v.ExecID}
+	exe := &Execute{Name: v.Name, Parameters: vars, ExecID: v.ExecID}
 	if v.BinaryArgs != nil {
-		exe.TxtProtoVars = v.BinaryArgs.([]expression.Expression)
+		exe.Parameters = v.BinaryArgs.([]expression.Expression)
 	}
 	return exe, nil
 }
