@@ -498,6 +498,25 @@ func TestToBinFromBin(t *testing.T) {
 	}
 }
 
+func TestDecimalBinSize(t *testing.T) {
+	type tcase struct {
+		precision int
+		frac      int
+		output    int
+		err       error
+	}
+	tests := []tcase{
+		{3, 1, 2, nil},
+		{-1, 0, 0, ErrBadNumber},
+		{3, 5, 0, ErrBadNumber},
+	}
+	for _, tt := range tests {
+		binSize, err := DecimalBinSize(tt.precision, tt.frac)
+		require.Equal(t, tt.output, binSize)
+		require.Equal(t, tt.err, err)
+	}
+}
+
 func TestCompareMyDecimal(t *testing.T) {
 	type tcase struct {
 		a   string
