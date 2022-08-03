@@ -2198,8 +2198,6 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "", a)
 		require.NoError(t, rows.Close())
-		// change the init-connect to invalid.
-		dbt.MustExec(`SET GLOBAL init_connect="invalidstring"`)
 	})
 	// set global init_connect to empty to avoid fail other tests
 	defer cli.runTests(t, func(config *mysql.Config) {

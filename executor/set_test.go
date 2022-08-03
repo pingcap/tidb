@@ -753,6 +753,7 @@ func TestSetVar(t *testing.T) {
 
 	// test variables `init_connect'
 	tk.MustGetErrCode("set global init_connect = '-1'", mysql.ErrWrongTypeForVar)
+	tk.MustGetErrCode("set global init_connect = 'invalidstring'", mysql.ErrWrongTypeForVar)
 	tk.MustExec("set global init_connect = 'select now(); select timestamp()'")
 }
 
