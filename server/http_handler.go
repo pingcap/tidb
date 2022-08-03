@@ -2174,18 +2174,17 @@ func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if len(labels) == 0 {
-		w.WriteHeader(http.StatusNoContent)
-		return
+	if len(labels) > 0 {
+		cfg := *config.GetGlobalConfig()
+		if cfg.Labels == nil {
+			cfg.Labels = make(map[string]string, len(labels))
+		}
+		for k, v := range labels {
+			cfg.Labels[k] = v
+		}
+		config.StoreGlobalConfig(&cfg)
+		logutil.BgLogger().Info("update server labels", zap.Any("labels", cfg.Labels))
 	}
 
-	cfg := *config.GetGlobalConfig()
-	if cfg.Labels == nil {
-		cfg.Labels = make(map[string]string, len(labels))
-	}
-	for k, v := range labels {
-		cfg.Labels[k] = v
-	}
-	config.StoreGlobalConfig(&cfg)
-	w.WriteHeader(http.StatusNoContent)
+	writeData(w, config.GetGlobalConfig().Labels)
 }
