@@ -46,8 +46,7 @@ func testLitAddIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 }
 
 func TestEnableLightning(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Check default value, Current is off
@@ -66,8 +65,7 @@ func TestEnableLightning(t *testing.T) {
 }
 
 func TestAddIndexLit(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -156,7 +156,27 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			return errors.New("index not found")
 		}
 
-		indexHandle, err := tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
+		// If this is temp index data, need remove last byte of index data.
+		var (
+			value       []byte
+			orgKey      []byte
+			indexHandle kv.Handle
+			err         error
+		)
+		if idxID != m.indexID {
+			value = append(value, m.value[:len(m.value)-1]...)
+			if len(value) == 0 || (bytes.Equal(value, []byte("delete")) || bytes.Equal(value, []byte("deleteu"))) {
+				continue
+			}
+			orgKey = append(orgKey, m.key...)
+			tablecodec.TempIndexKey2IndexKey(idxID, orgKey)
+			logutil.BgLogger().Info("LightningDebug:", zap.String("key:", kv.Key(orgKey).String()), zap.ByteString("value:", m.value), zap.Int64("id:", idxID),
+				zap.String("insert handle:", insertionHandle.String()))
+			indexHandle, err = tablecodec.DecodeIndexHandle(orgKey, value, len(indexInfo.Columns))
+		} else {
+			indexHandle, err = tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
+		}
+
 		if err != nil {
 			return errors.Trace(err)
 		}

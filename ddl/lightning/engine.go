@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tikv "github.com/pingcap/tidb/kv"
+	//tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	//"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -162,7 +162,7 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 	}
 
 	// Check Remote duplicate value for index
-	if unique {
+	/*if unique {
 		hasDupe, err := ei.backCtx.Backend.CollectRemoteDuplicateRows(ctx, tbl, ei.tableName, &kv.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: ei.backCtx.sysVars,
@@ -176,7 +176,7 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 			log.L().Error(errMsg)
 			return errors.New(errMsg)
 		}
-	}
+	}*/
 	return nil
 }
 

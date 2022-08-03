@@ -331,7 +331,7 @@ func (m *MemoryRoot) RegistWorkerContext(engineInfoKey string, id int) (*WorkerC
 	return wCtx, err
 }
 
-// Uniform entry to release Engine info.
+// DeleteBackendEngines uniforms entry to release Engine info.
 func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 	var (
 		err   error

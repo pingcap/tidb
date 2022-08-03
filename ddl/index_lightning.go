@@ -345,7 +345,7 @@ func (w *backFillIndexWorker) batchSkipKey(txn kv.Transaction, store kv.Storage,
 			var keyVer []byte
 			length := len(val)
 			keyVer = append(keyVer, val[length-1:]...)
-			if bytes.Equal(keyVer, []byte("2")) {
+			if bytes.Equal(keyVer, []byte("m")) {
 				idxRecords[i].skip = true
 				count--
 				if i == 0 {
@@ -586,7 +586,7 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 		rawValue = rawValue[:length-1]
 		length--
 		// Just skip it.
-		if bytes.Equal(keyVer, []byte("2")) {
+		if bytes.Equal(keyVer, []byte("m")) {
 			return true, nil
 		}
 		if bytes.Equal(rawValue, []byte("delete")) {

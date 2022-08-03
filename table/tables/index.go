@@ -118,18 +118,22 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 
 	var (
 		tempKey []byte
-		keyVer  []byte = []byte("0")
+		// The keyVer means the temp index key/value version, it has below three values.
+		// Use 'i' to be initialize version.
+		// Use 'b' to be backfill version.
+		// Use 'm' to be merge version.
+		keyVer []byte = []byte("i")
 	)
 	// Isbackfill set to true, means this is a backfill worker should not write to temp index.
 	if c.idxInfo.State != model.StatePublic && c.idxInfo.SubState != model.StatePublic && !c.Isbackfill {
 		switch c.idxInfo.SubState {
 		case model.StateNone, model.StateBackfillSync, model.StateBackfill:
 			// Write to the temporary index.
-			keyVer = []byte("1")
+			keyVer = []byte("b")
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, key)
 		case model.StateMergeSync, model.StateMerge:
 			// Double write
-			keyVer = []byte("2")
+			keyVer = []byte("m")
 			tempKey = append(tempKey, key...)
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
 		}
@@ -177,7 +181,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
 
 	if !distinct || skipCheck || opt.Untouched {
-		if !bytes.Equal(keyVer, []byte("0")) {
+		if !bytes.Equal(keyVer, []byte("i")) {
 			idxVal = append(idxVal, keyVer...)
 		}
 		err = txn.GetMemBuffer().Set(key, idxVal)
@@ -224,7 +228,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
-		if !bytes.Equal(keyVer, []byte("0")) {
+		if !bytes.Equal(keyVer, []byte("i")) {
 			idxVal = append(idxVal, keyVer...)
 		}
 		if lazyCheck {
@@ -302,20 +306,20 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	}
 	var (
 		tempKey []byte
-		keyVer  []byte = []byte("0")
+		keyVer  []byte = []byte("i")
 		val     []byte
 	)
 	if c.idxInfo.State != model.StatePublic && c.idxInfo.SubState != model.StatePublic {
 		switch c.idxInfo.SubState {
 		case model.StateNone, model.StateBackfillSync, model.StateBackfill:
 			// Write to the temporary index.
-			keyVer = []byte("1")
+			keyVer = []byte("b")
 			tempKey = append(tempKey, key...)
 			key = nil
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
 		case model.StateMergeSync, model.StateMerge:
 			// Double write
-			keyVer = []byte("2")
+			keyVer = []byte("m")
 			tempKey = append(tempKey, key...)
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
 		}

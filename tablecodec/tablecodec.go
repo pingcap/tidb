@@ -35,8 +35,11 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
+	log "github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
+
+	"go.uber.org/zap"
 )
 
 var (
@@ -919,6 +922,8 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	} else if len(value) >= 8 {
 		return decodeHandleInIndexValue(value)
 	}
+	log.BgLogger().Info("LightningDebug:", zap.ByteString("b", b), zap.Int("cols len:", colsLen),
+		zap.ByteString("value:", value))
 	// Should never execute to here.
 	return nil, errors.Errorf("no handle in index key: %v, value: %v", key, value)
 }
