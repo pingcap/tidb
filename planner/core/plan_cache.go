@@ -88,8 +88,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, is, preparedStmt, ignorePlanCache, cacheKey,
-		latestSchemaVersion, isBinProtocol, varsNum, binVarTypes, txtVarTypes, bindSQL)
+	return generateNewPlan(ctx, sctx, is, preparedStmt, ignorePlanCache, cacheKey, isBinProtocol, varsNum, binVarTypes, txtVarTypes)
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
@@ -198,8 +197,8 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcac
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
-	ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64, isBinProtocol bool, varsNum int, binVarTypes []byte,
-	txtVarTypes []*types.FieldType, bindSQL string) (Plan, []*types.FieldName, error) {
+	ignorePlanCache bool, cacheKey kvcache.Key, isBinProtocol bool, varsNum int, binVarTypes []byte,
+	txtVarTypes []*types.FieldType) (Plan, []*types.FieldName, error) {
 	prepared := preparedStmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -220,15 +219,6 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema
 		stmtCtx.SkipPlanCache = true
 	}
 	if prepared.UseCache && !stmtCtx.SkipPlanCache && !ignorePlanCache {
-		// rebuild key to exclude kv.TiFlash when stmt is not read only
-		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
-			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB,
-				prepared.SchemaVersion, latestSchemaVersion, bindSQL); err != nil {
-				return nil, nil, err
-			}
-			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-		}
 		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, isBinProtocol, binVarTypes, txtVarTypes)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
