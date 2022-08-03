@@ -19,7 +19,6 @@
 # And make sure these backup data can restore through newly BR tools to newly cluster.
 
 set -o pipefail
-make bazel_all_build
 make bazel_coverage_test
 EXIT_STATUS=$?
 # collect the junit and coverage report
