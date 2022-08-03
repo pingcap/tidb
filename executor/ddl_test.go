@@ -571,6 +571,24 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
 			err:   "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 'fk_b' in the referenced table 't1'",
 		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int)",
+				"create table t2 (id int,     b int)",
+				"insert into t2 values (1,1)",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(id)",
+			err:   "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `t1` (`id`))",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int, index(a,b))",
+				"create table t2 (id int, a int, b int)",
+				"insert into t2 values (1, 1, null), (2, null, 1), (3, null, null), (4, 1, 1)",
+			},
+			alter: "alter table t2 add foreign key fk_b(a, b) references t1(a, b)",
+			err:   "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`a`,`b`) REFERENCES `t1` (`a`,`b`))",
+		},
 	}
 	for _, ca := range cases {
 		tk.MustExec("drop table if exists t2")
@@ -581,6 +599,48 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 		err := tk.ExecToErr(ca.alter)
 		require.Error(t, err)
 		require.Equal(t, ca.err, err.Error())
+	}
+
+	passCases := [][]string{
+		{
+			"create table t1 (id int key, b int not null, index(b))",
+			"create table t2 (a int, b int);",
+			"alter table t2 add foreign key fk_b(b) references t1(b)",
+		},
+		{
+			"create table t1 (id int key, a varchar(10), index(a));",
+			"create table t2 (a int, b varchar(20));",
+			"alter table t2 add foreign key fk_b(b) references t1(a)",
+		},
+		{
+			"create table t1 (id int key, a decimal(10,5), index(a));",
+			"create table t2 (a int, b decimal(20, 10));",
+			"alter table t2 add foreign key fk_b(b) references t1(a)",
+		},
+		{
+			"create table t1 (id int key, a varchar(10), index (a(10)));",
+			"create table t2 (a int, b varchar(20));",
+			"alter table t2 add foreign key fk_b(b) references t1(a)",
+		},
+		{
+			"create table t1 (id int key, a int)",
+			"create table t2 (id int,     b int)",
+			"insert into t2 values (1, null)",
+			"alter table t2 add foreign key fk_b(b) references t1(id)",
+		},
+		{
+			"create table t1 (id int, a int, b int, index(a,b))",
+			"create table t2 (id int, a int, b int)",
+			"insert into t2 values (1, 1, null), (2, null, 1), (3, null, null)",
+			"alter table t2 add foreign key fk_b(a, b) references t1(a, b)",
+		},
+	}
+	for _, ca := range passCases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca {
+			tk.MustExec(sql)
+		}
 	}
 }
 

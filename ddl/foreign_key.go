@@ -15,14 +15,19 @@
 package ddl
 
 import (
+	"context"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -64,11 +69,16 @@ func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ e
 	case model.StateWriteOnly:
 		// write-only -> write-reorg
 		// check foreign constrain
-		// todo: execute internal sql:
+		err = addForeignKeyConstrainCheck(w, job.SchemaName, tblInfo.Name.L, &fkInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
 
 		// update parent table info.
 		referDBInfo, referTableInfo, err := fkc.getParentTableFromStorage(d, &fkInfo, t)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, err
 		}
 		referTableInfo.ReferredForeignKeys = append(referTableInfo.ReferredForeignKeys, &model.ReferredFKInfo{
@@ -98,6 +108,62 @@ func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ e
 		return ver, dbterror.ErrInvalidDDLState.GenWithStack("foreign key", fkInfo.State)
 	}
 	return ver, nil
+}
+
+func addForeignKeyConstrainCheck(w *worker, schema, table string, fkInfo *model.FKInfo) error {
+	// Get sessionctx from context resource pool.
+	sctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(sctx)
+
+	return checkForeignKeyConstrain(w.ctx, sctx, schema, table, fkInfo)
+}
+
+func checkForeignKeyConstrain(ctx context.Context, sctx sessionctx.Context, schema, table string, fkInfo *model.FKInfo) error {
+	var buf strings.Builder
+	buf.WriteString("select 1 from %n.%n where ")
+	paramsList := make([]interface{}, 0, 4+len(fkInfo.Cols)*2)
+	paramsList = append(paramsList, schema, table)
+	for i, col := range fkInfo.Cols {
+		if i == 0 {
+			buf.WriteString("%n is not null")
+			paramsList = append(paramsList, col.L)
+		} else {
+			buf.WriteString(" and %n is not null")
+			paramsList = append(paramsList, col.L)
+		}
+	}
+	buf.WriteString(" and (")
+	for i, col := range fkInfo.Cols {
+		if i == 0 {
+			buf.WriteString("%n")
+		} else {
+			buf.WriteString(",%n")
+		}
+		paramsList = append(paramsList, col.L)
+	}
+	buf.WriteString(") not in (select ")
+	for i, col := range fkInfo.RefCols {
+		if i == 0 {
+			buf.WriteString("%n")
+		} else {
+			buf.WriteString(",%n")
+		}
+		paramsList = append(paramsList, col.L)
+	}
+	buf.WriteString(" from %n.%n ) limit 1")
+	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, buf.String(), paramsList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rowCount := len(rows)
+	if rowCount != 0 {
+		return dbterror.ErrNoReferencedRow2.GenWithStackByArgs(fkInfo.String(schema, table))
+	}
+	return nil
 }
 
 func onDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
