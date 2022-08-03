@@ -432,7 +432,6 @@ bazel_junit:
 	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
 
 bazel_golangcilinter:
-	echo $PWD
-	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci --run_under="cd $(pwd) && " \
+	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci --run_under="cd $(CURDIR) && " \
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
 	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml
