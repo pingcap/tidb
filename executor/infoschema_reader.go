@@ -168,10 +168,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForAttributes(sctx, is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
-		case infoschema.TableTrxSummary:
-			err = e.setDataForTrxSummary(sctx)
-		case infoschema.ClusterTableTrxSummary:
-			err = e.setDataForClusterTrxSummary(sctx)
 		case infoschema.TableVariablesInfo:
 			err = e.setDataForVariablesInfo(sctx)
 		}
@@ -2250,29 +2246,6 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 				rows = append(rows, row)
 			}
 		}
-	}
-	e.rows = rows
-	return nil
-}
-
-func (e *memtableRetriever) setDataForTrxSummary(ctx sessionctx.Context) error {
-	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
-	if !hasProcessPriv {
-		return nil
-	}
-	rows := txninfo.Recorder.DumpTrxSummary()
-	e.rows = rows
-	return nil
-}
-
-func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) error {
-	err := e.setDataForTrxSummary(ctx)
-	if err != nil {
-		return err
-	}
-	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
-	if err != nil {
-		return err
 	}
 	e.rows = rows
 	return nil

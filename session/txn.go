@@ -163,9 +163,6 @@ func (txn *LazyTxn) resetTxnInfo(
 		}
 		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel(lastState), hasLockLbl).Observe(time.Since(txn.mu.TxnInfo.LastStateChangeTime).Seconds())
 	}
-	if txn.mu.TxnInfo.StartTS != 0 {
-		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
-	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.TxnInfo.StartTS = startTS
 	txn.mu.TxnInfo.State = state
@@ -288,9 +285,6 @@ func (txn *LazyTxn) changeToInvalid() {
 	lastState := txn.mu.TxnInfo.State
 	lastStateChangeTime := txn.mu.TxnInfo.LastStateChangeTime
 	hasLock := !txn.mu.TxnInfo.BlockStartTime.IsZero()
-	if txn.mu.TxnInfo.StartTS != 0 {
-		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
-	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.Unlock()
 	if !lastStateChangeTime.IsZero() {
@@ -506,12 +500,9 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}
-
-	if !tablecodec.IsIndexKey(k) {
-		return true
-	}
-
-	return tablecodec.IndexKVIsUnique(v)
+	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
+	// Put row key and unique index need to lock.
+	return !isNonUniqueIndex
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
