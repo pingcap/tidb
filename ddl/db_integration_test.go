@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -144,11 +145,7 @@ func TestInvalidNameWhenCreateTable(t *testing.T) {
 
 // TestCreateTableIfNotExistsLike for issue #6879
 func TestCreateTableIfNotExistsLike(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -175,11 +172,7 @@ func TestCreateTableIfNotExistsLike(t *testing.T) {
 
 // for issue #9910
 func TestCreateTableWithKeyWord(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -190,11 +183,7 @@ func TestCreateTableWithKeyWord(t *testing.T) {
 }
 
 func TestUniqueKeyNullValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
@@ -211,10 +200,7 @@ func TestUniqueKeyNullValue(t *testing.T) {
 }
 
 func TestUniqueKeyNullValueClusterIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -232,11 +218,7 @@ func TestUniqueKeyNullValueClusterIndex(t *testing.T) {
 
 // TestModifyColumnAfterAddIndex Issue 5134
 func TestModifyColumnAfterAddIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -246,11 +228,7 @@ func TestModifyColumnAfterAddIndex(t *testing.T) {
 }
 
 func TestIssue2293(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -278,11 +256,7 @@ func TestIssue6101(t *testing.T) {
 }
 
 func TestIssue19229(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -306,11 +280,9 @@ func TestIssue19229(t *testing.T) {
 }
 
 func TestIndexLength(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -361,11 +333,7 @@ func TestIssue3833(t *testing.T) {
 }
 
 func TestIssue2858And2717(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -384,11 +352,7 @@ func TestIssue2858And2717(t *testing.T) {
 }
 
 func TestIssue4432(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -415,11 +379,9 @@ func TestIssue4432(t *testing.T) {
 }
 
 func TestIssue5092(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -688,11 +650,7 @@ func TestTableDDLWithFloatType(t *testing.T) {
 }
 
 func TestTableDDLWithTimeType(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -744,11 +702,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 }
 
 func TestNullGeneratedColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -768,11 +722,7 @@ func TestNullGeneratedColumn(t *testing.T) {
 }
 
 func TestDependedGeneratedColumnPrior2GeneratedColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -798,11 +748,9 @@ func TestDependedGeneratedColumnPrior2GeneratedColumn(t *testing.T) {
 }
 
 func TestChangingTableCharset(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -959,11 +907,7 @@ func TestChangingTableCharset(t *testing.T) {
 }
 
 func TestModifyColumnOption(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -998,11 +942,7 @@ func TestModifyColumnOption(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1019,11 +959,7 @@ func TestIndexOnMultipleGeneratedColumn(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn1(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1040,11 +976,7 @@ func TestIndexOnMultipleGeneratedColumn1(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1061,11 +993,7 @@ func TestIndexOnMultipleGeneratedColumn2(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn3(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1082,11 +1010,7 @@ func TestIndexOnMultipleGeneratedColumn3(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn4(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1103,11 +1027,7 @@ func TestIndexOnMultipleGeneratedColumn4(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn5(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1186,11 +1106,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 }
 
 func TestZeroFillCreateTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1217,11 +1133,9 @@ func TestZeroFillCreateTable(t *testing.T) {
 }
 
 func TestBitDefaultValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1360,11 +1274,7 @@ func TestCreateTableTooManyIndexes(t *testing.T) {
 }
 
 func TestChangeColumnPosition(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1417,11 +1327,7 @@ func TestChangeColumnPosition(t *testing.T) {
 }
 
 func TestAddIndexAfterAddColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1436,11 +1342,7 @@ func TestAddIndexAfterAddColumn(t *testing.T) {
 }
 
 func TestResolveCharset(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1473,11 +1375,7 @@ func TestResolveCharset(t *testing.T) {
 
 func TestAddColumnDefaultNow(t *testing.T) {
 	// Related Issue: https://github.com/pingcap/tidb/issues/31968
-	mockStore, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	mockStore := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, mockStore)
 	const dateHourLength = len("yyyy-mm-dd hh:")
@@ -1669,12 +1567,7 @@ CREATE TABLE t (
 }
 
 func TestAlterColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	d := dom.DDL()
-	ddlChecker := schematracker.NewChecker(d)
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1884,11 +1777,7 @@ func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
 }
 
 func TestAlterAlgorithm(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2246,10 +2135,7 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 }
 
 func TestChangingDBCharset(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -2443,11 +2329,7 @@ func TestInsertIntoGeneratedColumnWithDefaultExpr(t *testing.T) {
 }
 
 func TestSqlFunctionsInGeneratedColumns(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -2491,11 +2373,7 @@ func TestSqlFunctionsInGeneratedColumns(t *testing.T) {
 }
 
 func TestParserIssue284(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2818,10 +2696,7 @@ func queryIndexOnTable(dbName, tableName string) string {
 }
 
 func TestDropColumnWithCompositeIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	query := queryIndexOnTable("drop_composite_index_test", "t_drop_column_with_comp_idx")
@@ -2840,11 +2715,7 @@ func TestDropColumnWithCompositeIndex(t *testing.T) {
 }
 
 func TestDropColumnWithIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2857,11 +2728,7 @@ func TestDropColumnWithIndex(t *testing.T) {
 }
 
 func TestDropColumnWithAutoInc(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2878,11 +2745,7 @@ func TestDropColumnWithAutoInc(t *testing.T) {
 }
 
 func TestDropColumnWithMultiIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2896,11 +2759,7 @@ func TestDropColumnWithMultiIndex(t *testing.T) {
 }
 
 func TestDropColumnsWithMultiIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2929,11 +2788,7 @@ func TestDropLastVisibleColumnOrColumns(t *testing.T) {
 }
 
 func TestAutoIncrementTableOption(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_auto_inc_table_opt;")
@@ -3062,11 +2917,7 @@ func TestAutoIncrementForce(t *testing.T) {
 }
 
 func TestIssue20490(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -3081,11 +2932,7 @@ func TestIssue20490(t *testing.T) {
 }
 
 func TestIssue20741WithEnumField(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3118,11 +2965,7 @@ func TestIssue20741WithSetField(t *testing.T) {
 
 // TestDefaultValueIsLatin1 for issue #18977
 func TestEnumAndSetDefaultValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3211,11 +3054,7 @@ func TestDuplicateErrorMessage(t *testing.T) {
 }
 
 func TestIssue22028(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3977,11 +3816,7 @@ func TestCreateTempTableInTxn(t *testing.T) {
 
 // See https://github.com/pingcap/tidb/issues/29327
 func TestEnumDefaultValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/cteutil"
@@ -160,7 +160,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 
 		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
-			if val.(bool) && config.GetGlobalConfig().OOMUseTmpStorage {
+			if val.(bool) && variable.EnableTmpStorageOnOOM.Load() {
 				defer resAction.WaitForTest()
 				defer iterInAction.WaitForTest()
 				if iterOutAction != nil {
@@ -429,7 +429,7 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 	diskTracker.SetLabel(memory.LabelForCTEStorage)
 	diskTracker.AttachTo(parentDiskTracker)
 
-	if config.GetGlobalConfig().OOMUseTmpStorage {
+	if variable.EnableTmpStorageOnOOM.Load() {
 		actionSpill = tbl.ActionSpill()
 		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
 			if val.(bool) {
