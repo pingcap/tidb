@@ -476,17 +476,25 @@ func TestToBinFromBin(t *testing.T) {
 	var dec MyDecimal
 	dec.FromInt(1)
 	errTests := []struct {
-		prec int
-		frac int
+		prec       int
+		frac       int
+		ToBinErr   error
+		FromBinErr error
 	}{
-		{82, 1},
-		{-1, 1},
-		{10, 31},
-		{10, -1},
+		{82, 1, ErrBadNumber, ErrTruncated},
+		{-1, 1, ErrBadNumber, ErrBadNumber},
+		{10, 31, ErrBadNumber, ErrBadNumber},
+		{10, -1, ErrBadNumber, ErrBadNumber},
 	}
 	for _, tt := range errTests {
 		_, err := dec.ToBin(tt.prec, tt.frac)
-		require.True(t, ErrBadNumber.Equal(err))
+		require.Equal(t, tt.ToBinErr, err)
+		err = dec.FromString([]byte{'0'})
+		require.NoError(t, err)
+		buf, err := dec.ToBin(1, 0)
+		require.NoError(t, err)
+		_, err = dec.FromBin(buf, tt.prec, tt.frac)
+		require.Equal(t, tt.FromBinErr, err)
 	}
 }
 

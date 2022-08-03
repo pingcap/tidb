@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1683,7 +1682,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 				if err == nil {
 					return nil
 				}
-				if terror.ErrorEqual(err, types.ErrBadNumber) {
+				if types.ErrBadNumber.Equal(err) {
 					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
 					return common.ErrInconsistentSchema.GenWithStackByArgs(tableName)
 				}
