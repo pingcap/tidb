@@ -449,10 +449,12 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeInstance, Name: TiDBTmpStoragePath, Value: config.GetGlobalConfig().TempStoragePath, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
-		// TODO: check if temp dir is being used; if used, reject
+		// FIXME: check if temp dir is being used; if used, reject
+		oldVal := config.GetGlobalConfig().Instance.TmpStoragePath
 		config.GetGlobalConfig().Instance.TmpStoragePath = val
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		if err := disk.InitializeTempDir(); err != nil {
+			config.GetGlobalConfig().Instance.TmpStoragePath = oldVal
 			return err
 		}
 		config.CheckTempStorageQuota()
