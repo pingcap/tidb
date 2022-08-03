@@ -1407,10 +1407,10 @@ func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err e
 	if err != nil {
 		return 0, err
 	}
-	dCopy := make([]byte, 40)
 	if binSize < 0 || binSize > 40 {
 		return 0, ErrBadNumber
 	}
+	dCopy := make([]byte, 40)
 	dCopy = dCopy[:binSize]
 	copy(dCopy, bin)
 	dCopy[0] ^= 0x80

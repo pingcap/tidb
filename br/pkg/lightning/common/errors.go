@@ -92,6 +92,7 @@ var (
 	ErrAllocTableRowIDs   = errors.Normalize("allocate table row id error", errors.RFCCodeText("Lightning:Restore:ErrAllocTableRowIDs"))
 	ErrInvalidMetaStatus  = errors.Normalize("invalid meta status: '%s'", errors.RFCCodeText("Lightning:Restore:ErrInvalidMetaStatus"))
 	ErrTableIsChecksuming = errors.Normalize("table '%s' is checksuming", errors.RFCCodeText("Lightning:Restore:ErrTableIsChecksuming"))
+	ErrInconsistentSchema = errors.Normalize("table '%s' has inconsistent schemas", errors.RFCCodeText("Lightning:Restore:ErrInconsistentSchema"))
 )
 
 type withStack struct {
