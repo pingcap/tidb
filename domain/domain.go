@@ -997,9 +997,8 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 			if _, ok := zones[v]; !ok {
 				matches = false
 				break
-			} else {
-				zones[v] += 1
 			}
+			zones[v] += 1
 		}
 	}
 	if matches {
