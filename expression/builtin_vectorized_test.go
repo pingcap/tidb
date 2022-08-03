@@ -928,7 +928,6 @@ func BenchmarkFloat32ColRow(b *testing.B) {
 			if _, _, err := col.EvalReal(ctx, row); err != nil {
 				b.Fatal(err)
 			}
-
 		}
 	}
 }

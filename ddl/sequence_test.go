@@ -32,8 +32,7 @@ import (
 )
 
 func TestCreateSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -98,8 +97,7 @@ func TestCreateSequence(t *testing.T) {
 
 // Test for sequence still works with a infoschema attached by temporary table
 func TestIssue28881(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -113,8 +111,7 @@ func TestIssue28881(t *testing.T) {
 }
 
 func TestDropSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -184,8 +181,7 @@ func TestDropSequence(t *testing.T) {
 }
 
 func TestShowCreateSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -268,8 +264,7 @@ func TestShowCreateSequence(t *testing.T) {
 }
 
 func TestSequenceAsDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -310,8 +305,7 @@ func TestSequenceAsDefaultValue(t *testing.T) {
 }
 
 func TestSequenceFunction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -739,8 +733,7 @@ func TestSequenceFunction(t *testing.T) {
 }
 
 func TestInsertSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -810,8 +803,7 @@ func TestInsertSequence(t *testing.T) {
 }
 
 func TestUnflodSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -862,6 +854,7 @@ func TestUnflodSequence(t *testing.T) {
 	tk.MustQuery("select nextval(seq), b from (select nextval(seq) as b, a from t1) t2").Check(testkit.Rows("227 228", "229 230", "231 232"))
 	tk.MustExec("insert into t2 select nextval(seq), b from (select nextval(seq) as b, a from t1) t2")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("233 234", "235 236", "237 238"))
+	//nolint:all_revive,revive
 	tk.MustExec("delete from t2")
 
 	// For union operator like select1 union select2, select1 and select2 will be executed parallelly,
@@ -878,8 +871,7 @@ func TestUnflodSequence(t *testing.T) {
 // after this PR:
 // single insert consume: 33.213615ms
 func BenchmarkInsertCacheDefaultExpr(b *testing.B) {
-	store, clean := testkit.CreateMockStore(b)
-	defer clean()
+	store := testkit.CreateMockStore(b)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
@@ -902,8 +894,7 @@ func BenchmarkInsertCacheDefaultExpr(b *testing.B) {
 }
 
 func TestSequenceFunctionPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -979,8 +970,7 @@ func TestSequenceFunctionPrivilege(t *testing.T) {
 // [1]: forbid the new added column has sequence as it's default value.
 // [2]: allow the altered column with sequence as default value.
 func TestSequenceDefaultLogic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1011,8 +1001,7 @@ func TestSequenceDefaultLogic(t *testing.T) {
 
 // Close issue #17945, sequence cache shouldn't be negative.
 func TestSequenceCacheShouldNotBeNegative(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1040,8 +1029,7 @@ func TestSequenceCacheShouldNotBeNegative(t *testing.T) {
 }
 
 func TestAlterSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1101,8 +1089,7 @@ func TestAlterSequence(t *testing.T) {
 }
 
 func TestAlterSequencePrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1130,8 +1117,7 @@ func TestAlterSequencePrivilege(t *testing.T) {
 }
 
 func TestDdl_AlterSequenceIssue31265(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

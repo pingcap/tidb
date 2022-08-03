@@ -338,7 +338,6 @@ func TestBRIESecureText(t *testing.T) {
 		n, ok := node.(ast.SensitiveStmtNode)
 		require.True(t, ok, comment)
 		require.Regexp(t, tc.secured, n.SecureText(), comment)
-
 	}
 }
 
