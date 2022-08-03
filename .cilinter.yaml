@@ -10,7 +10,6 @@ linters:
     - deadcode
     - bodyclose
     - rowserrcheck
-    - makezero
     - prealloc
 
 issues:
