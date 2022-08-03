@@ -16,6 +16,7 @@ go_library(
         "//br/pkg/backup",
         "//br/pkg/checksum",
         "//br/pkg/conn",
+        "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/glue",
         "//br/pkg/httputil",

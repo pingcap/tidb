@@ -467,7 +467,6 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock3');`) // not acquired
 	result.Check(testkit.Rows("0"))
 	tk.MustQuery(`SELECT RELEASE_ALL_LOCKS()`).Check(testkit.Rows("0")) // none acquired
-
 }
 
 func TestConvertToBit(t *testing.T) {
@@ -4143,7 +4142,6 @@ func TestNotExistFunc(t *testing.T) {
 	tk.MustExec("use test")
 	_, err = tk.Exec("SELECT timestampliteral(rand())")
 	require.Error(t, err, "[expression:1305]FUNCTION test.timestampliteral does not exist")
-
 }
 
 func TestDecodetoChunkReuse(t *testing.T) {
@@ -5010,7 +5008,6 @@ func TestIssue18525(t *testing.T) {
 	tk.MustExec("insert into t1 values ('l', NULL, '1000-01-04')")
 	tk.MustExec("insert into t1 values ('b', NULL, '1000-01-02')")
 	tk.MustQuery("select INTERVAL( ( CONVERT( -11752 USING utf8 ) ), 6558853612195285496, `col1`) from t1").Check(testkit.Rows("0", "0", "0"))
-
 }
 
 func TestSchemaDMLNotChange(t *testing.T) {
@@ -5907,7 +5904,6 @@ func TestJiraSetInnoDBDefaultRowFormat(t *testing.T) {
 	tk.MustQuery("SHOW VARIABLES LIKE 'character_set_server'").Check(testkit.Rows("character_set_server utf8mb4"))
 	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_file_format'").Check(testkit.Rows("innodb_file_format Barracuda"))
 	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_large_prefix'").Check(testkit.Rows("innodb_large_prefix ON"))
-
 }
 
 func TestIssue23623(t *testing.T) {
@@ -6389,7 +6385,6 @@ OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
 OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
 OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
 OR Variable_name = 'license' OR Variable_name = 'init_connect'`).Rows(), 19)
-
 }
 
 func TestBuiltinFuncJSONMergePatch_InColumn(t *testing.T) {

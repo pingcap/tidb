@@ -479,7 +479,6 @@ func TestCreateBinary(t *testing.T) {
 		bj = CreateBinary(int8(123))
 		require.Equal(t, bj.TypeCode, bj.TypeCode)
 	}()
-
 }
 
 func TestFunctions(t *testing.T) {

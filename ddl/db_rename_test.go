@@ -103,21 +103,16 @@ func TestAlterTableRenameTable(t *testing.T) {
 func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	var (
 		store kv.Storage
+		dom   *domain.Domain
 		clean func()
 	)
 
-	if isAlterTable {
-		store, clean = testkit.CreateMockStore(t)
-		defer clean()
-	} else {
-		var dom *domain.Domain
-		store, dom, clean = testkit.CreateMockStoreAndDomain(t)
-		defer clean()
+	store, dom, clean = testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
-		ddlChecker := schematracker.NewChecker(dom.DDL())
-		dom.SetDDL(ddlChecker)
-		ddlChecker.CreateTestDB()
-	}
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -158,23 +153,11 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 
 	// for failure case
 	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	tk.MustGetErrCode(failSQL, errno.ErrErrorOnRename)
 
@@ -196,8 +179,6 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	}
 	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_not_exist")
 	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 

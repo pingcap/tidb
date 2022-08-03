@@ -766,9 +766,8 @@ func (tr *TableRestore) postProcess(
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 				return false, err
-			} else {
-				hasDupe = hasLocalDupe
 			}
+			hasDupe = hasLocalDupe
 		}
 
 		needChecksum, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
@@ -785,9 +784,9 @@ func (tr *TableRestore) postProcess(
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
 				return false, e
-			} else {
-				hasDupe = hasDupe || hasRemoteDupe
 			}
+			hasDupe = hasDupe || hasRemoteDupe
+
 			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
 				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
 				return false, err

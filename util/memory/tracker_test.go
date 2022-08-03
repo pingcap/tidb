@@ -448,7 +448,6 @@ func TestGlobalTracker(t *testing.T) {
 	}()
 	c2.AttachTo(commonTracker)
 	c2.DetachFromGlobalTracker()
-
 }
 
 func parseByteUnit(str string) (int64, error) {

@@ -65,7 +65,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 		output [][]string
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
@@ -147,7 +147,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		Count float64
 	}
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
 	for i, ran := range input {
 		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, false)
@@ -283,7 +283,7 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	var input, output [][]string
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
 			if j != len(ts)-1 {
@@ -360,7 +360,7 @@ func TestStatsVer2(t *testing.T) {
 		output [][]string
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -398,7 +398,7 @@ func TestTopNOutOfHist(t *testing.T) {
 		output [][]string
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -423,7 +423,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 		output [][]string
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < 5; i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -458,7 +458,7 @@ func TestUniqCompEqualEst(t *testing.T) {
 		output [][]string
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < 1; i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -581,7 +581,7 @@ func TestDiscreteDistribution(t *testing.T) {
 	)
 
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -606,7 +606,7 @@ func TestSelectCombinedLowBound(t *testing.T) {
 	)
 
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -645,7 +645,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 		}
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		sctx := testKit.Session().(sessionctx.Context)
 		stmts, err := session.Parse(sctx, tt)
@@ -762,7 +762,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 		Count float64
 	}
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ran := range input {
 		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.Count, false)
 		require.NoError(t, err)
@@ -913,7 +913,7 @@ func TestDefaultSelectivityForStrMatch(t *testing.T) {
 	)
 
 	statsSuiteData := statistics.GetIntegrationSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	matchExplain, err := regexp.Compile("^explain")
 	require.NoError(t, err)
@@ -942,7 +942,7 @@ func TestTopNAssistedEstimationWithoutNewCollation(t *testing.T) {
 		output []outputType
 	)
 	statsSuiteData := statistics.GetIntegrationSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	testTopNAssistedEstimationInner(t, input, output, store, dom)
 }
 
@@ -955,7 +955,7 @@ func TestTopNAssistedEstimationWithNewCollation(t *testing.T) {
 		output []outputType
 	)
 	statsSuiteData := statistics.GetIntegrationSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	testTopNAssistedEstimationInner(t, input, output, store, dom)
 }
 

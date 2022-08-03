@@ -1226,7 +1226,6 @@ func TestIgnorePlanCacheWithPrepare(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt_join;").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
-
 }
 
 func TestSelectView4PlanCache(t *testing.T) {
