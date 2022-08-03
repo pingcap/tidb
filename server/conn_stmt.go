@@ -217,11 +217,9 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 		// server and fallback to TiKV.
 		prevErr := err
-		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
-		defer func() {
-			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
-		}()
+		cc.ctx.GetSessionVars().StmtCtx.InTiFlashFallBack2TiKV = true
 		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+		cc.ctx.GetSessionVars().StmtCtx.InTiFlashFallBack2TiKV = false
 		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
 		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
 	}
