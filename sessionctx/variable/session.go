@@ -1582,7 +1582,8 @@ func (s *SessionVars) ContainSpecialIsolationRead(engineType kv.StoreType) bool 
 }
 
 // GetIsolationReadEngines gets isolation read engines.
-// The return value is read-only.
+// We copy the s.isolationReadEngines and return the copied one.
+// So the change in the outside will not affect the origin value.
 func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
 	readEngines := make(map[kv.StoreType]struct{})
 	for isolationReadEngine := range s.isolationReadEngines {
@@ -1592,6 +1593,7 @@ func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
 }
 
 // GetAvailableIsolationReadEngines4Plan gets the available read engines for the current statement.
+// We should use this function to get the isolation read engines in the optimize phase.
 // For example, for write stmt, TiFlash has a different results when lock the data in point get plan.
 // So we ban the TiFlash engine in not read only stmt.
 func (s *SessionVars) GetAvailableIsolationReadEngines4Plan() map[kv.StoreType]struct{} {
