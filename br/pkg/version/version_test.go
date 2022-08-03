@@ -416,7 +416,6 @@ func TestCheckVersion(t *testing.T) {
 }
 
 func versionEqualCheck(source *semver.Version, target *semver.Version) (result bool) {
-
 	if source == nil || target == nil {
 		return target == source
 	}
@@ -536,5 +535,4 @@ Check Table Before Drop: false`
 	_, err = FetchVersion(ctx, db)
 	require.Error(t, err)
 	require.Regexp(t, "mock failure$", err.Error())
-
 }

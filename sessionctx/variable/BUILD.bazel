@@ -29,7 +29,6 @@ go_library(
         "//parser/charset",
         "//parser/model",
         "//parser/mysql",
-        "//parser/terror",
         "//parser/types",
         "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",

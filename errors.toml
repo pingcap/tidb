@@ -1261,6 +1261,11 @@ error = '''
 column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
 '''
 
+["ddl:8246"]
+error = '''
+Error happened when enable/disable DDL: %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV

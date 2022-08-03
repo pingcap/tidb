@@ -102,7 +102,8 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 //   recoverFn:    Handler will be called after recover and before dump stack, passing `nil` means noop.
 //   quit:         If this value is true, the current program exits after recovery.
 func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
-	r := recover() //nolint: revive
+	//nolint: revive
+	r := recover()
 	if r == nil {
 		return
 	}

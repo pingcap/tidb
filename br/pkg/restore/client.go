@@ -159,11 +159,15 @@ type Client struct {
 	// fullClusterRestore = true when there is no explicit filter setting, and it's full restore or point command
 	// 	with a full backup data.
 	// todo: maybe change to an enum
+	// this feature is controlled by flag with-sys-table
 	fullClusterRestore bool
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []string
 	deleteRangeQueryCh        chan string
 	deleteRangeQueryWaitGroup sync.WaitGroup
+
+	// see RestoreCommonConfig.WithSysTable
+	withSysTable bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -351,7 +355,6 @@ func (rc *Client) InitBackupMeta(
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader) error {
-
 	if !backupMeta.IsRawKv {
 		databases, err := utils.LoadBackupTables(c, reader)
 		if err != nil {
@@ -728,22 +731,20 @@ func (rc *Client) GoCreateTables(
 	var err error
 
 	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
-
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, newTS, outCh)
 
 		if err == nil {
 			defer log.Debug("all tables are created")
 			close(outCh)
 			return outCh
-			// fall back to old create table (sequential create table)
 		} else if utils.FallBack2CreateTable(err) {
+			// fall back to old create table (sequential create table)
 			log.Info("fall back to the sequential create table")
 		} else {
 			errCh <- err
 			close(outCh)
 			return outCh
 		}
-
 	}
 
 	createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {
@@ -751,7 +752,6 @@ func (rc *Client) GoCreateTables(
 		case <-c.Done():
 			return c.Err()
 		default:
-
 		}
 		rt, err := rc.createTable(c, db, dom, t, newTS)
 		if err != nil {
@@ -895,7 +895,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableSet[table.Info.Name.L] {
+		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
@@ -1772,9 +1772,8 @@ func (rc *Client) ReadStreamDataFiles(
 	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
 		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
 			return i.ResolvedTs < j.ResolvedTs
-		} else {
-			return i.MaxTs < j.MaxTs
 		}
+		return i.MaxTs < j.MaxTs
 	})
 	return dFiles, mFiles, nil
 }
@@ -2119,7 +2118,7 @@ func (rc *Client) RestoreMetaKVFile(
 			return 0, 0, errors.Trace(err)
 		}
 
-		kvCount += 1
+		kvCount++
 		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}
 
@@ -2356,6 +2355,10 @@ func (rc *Client) IsFullClusterRestore() bool {
 	return rc.fullClusterRestore
 }
 
+func (rc *Client) SetWithSysTable(withSysTable bool) {
+	rc.withSysTable = withSysTable
+}
+
 // MockClient create a fake client used to test.
 func MockClient(dbs map[string]*utils.Database) *Client {
 	return &Client{databases: dbs}
@@ -2386,5 +2389,4 @@ func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
 		}
 	}
 	return schemas
-
 }

@@ -18,9 +18,6 @@ path = "/tmp/tidb"
 # The socket file to use for connection.
 socket = "/tmp/tidb-{Port}.sock"
 
-# Run ddl worker on this tidb-server.
-run-ddl = true
-
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "45s"
 
@@ -30,9 +27,6 @@ split-table = true
 
 # The limit of concurrent executed sessions.
 token-limit = 1000
-
-# Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
-oom-use-tmp-storage = true
 
 # Make "kill query" behavior compatible with MySQL. It's not recommend to
 # turn on this option when TiDB server is behind a proxy.
@@ -452,6 +446,9 @@ tidb_record_plan_in_slow_log = 1
 
 # The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
 max_connections = 0
+
+# Run ddl worker on this tidb-server.
+tidb_enable_ddl = true
 
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
 # It defaults to a generated directory in `<TMPDIR>/<os/user.Current().Uid>_tidb/` if it is unset.

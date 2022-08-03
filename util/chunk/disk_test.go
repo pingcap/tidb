@@ -80,7 +80,7 @@ func TestListInDisk(t *testing.T) {
 		err := l.Add(chk)
 		assert.NoError(t, err)
 	}
-	require.True(t, strings.HasPrefix(l.dataFile.disk.Name(), filepath.Join(os.TempDir(), "oom-use-tmp-storage")))
+	require.True(t, strings.HasPrefix(l.dataFile.disk.Name(), filepath.Join(os.TempDir(), "tidb_enable_tmp_storage_on_oom")))
 	assert.Equal(t, numChk, l.NumChunks())
 	assert.Greater(t, l.GetDiskTracker().BytesConsumed(), int64(0))
 
@@ -257,6 +257,21 @@ func testListInDisk(t *testing.T, concurrency int) {
 		}()
 	}
 	wg.Wait()
+}
+
+func BenchmarkListInDisk_GetChunk(b *testing.B) {
+	numChk, numRow := 10, 1000
+	chks, fields := initChunks(numChk, numRow)
+	l := NewListInDisk(fields)
+	defer l.Close()
+	for _, chk := range chks {
+		_ = l.Add(chk)
+	}
+
+	for i := 0; i < b.N; i++ {
+		v := i % numChk
+		_, _ = l.GetChunk(v)
+	}
 }
 
 func TestListInDiskWithChecksum1(t *testing.T) {

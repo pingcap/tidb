@@ -439,7 +439,7 @@ func (fakeImportCli FakeImporterClient) SetDownloadSpeedLimit(
 	req *import_sstpb.SetDownloadSpeedLimitRequest,
 ) (*import_sstpb.SetDownloadSpeedLimitResponse, error) {
 	if storeID == SET_SPEED_LIMIT_ERROR {
-		return nil, fmt.Errorf("storeID:%v ERROR.", storeID)
+		return nil, fmt.Errorf("storeID:%v ERROR", storeID)
 	}
 
 	time.Sleep(WORKING_TIME * time.Millisecond) // simulate doing 100 ms work
