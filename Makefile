@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: check-parallel lint tidy testSuite check-static errdoc
+check: check-parallel lint tidy testSuite errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -405,7 +405,7 @@ bazel_test: failpoint-enable bazel_ci_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 
-bazel_coverage_test: failpoint-enable bazel_ci_prepare
+bazel_coverage_test: bazel_golangcilinter failpoint-enable bazel_ci_prepare
 	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
@@ -430,3 +430,8 @@ bazel_junit:
 	bazel_collect
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
+
+bazel_golangcilinter:
+	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci --run_under="cd $(CURDIR) && " \
+		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
+	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml
