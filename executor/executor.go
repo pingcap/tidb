@@ -1921,7 +1921,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
-
+	sc.IsReadonlyStmt = plannercore.IsReadOnly(s, vars)
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)

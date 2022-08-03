@@ -264,15 +264,15 @@ var defaultSysVars = []*SysVar{
 		}
 		return formatVal, nil
 	}, SetSession: func(s *SessionVars, val string) error {
-		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
+		s.isolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
 			switch engine {
 			case kv.TiKV.Name():
-				s.IsolationReadEngines[kv.TiKV] = struct{}{}
+				s.isolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
-				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				s.isolationReadEngines[kv.TiFlash] = struct{}{}
 			case kv.TiDB.Name():
-				s.IsolationReadEngines[kv.TiDB] = struct{}{}
+				s.isolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
 		return nil
@@ -504,12 +504,6 @@ var defaultSysVars = []*SysVar{
 		// It's a global variable, but it also wants to be cached in server.
 		SetMaxDeltaSchemaCount(TidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBEnablePointGetCache, Value: BoolToOnOff(DefTiDBPointGetCache), Hidden: true, Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
-		EnablePointGetCache.Store(TiDBOptOn(val))
-		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(EnablePointGetCache.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBScatterRegion, Value: BoolToOnOff(DefTiDBScatterRegion), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,
