@@ -228,6 +228,7 @@ func buildInTableIDsString(tableIDs []int64) string {
 		case 0:
 			whereBuilder.WriteString("table_id in (")
 			whereBuilder.WriteString(strconv.FormatInt(id, 10))
+			whereBuilder.WriteString(",")
 		case idLen - 1:
 			whereBuilder.WriteString(strconv.FormatInt(id, 10))
 			whereBuilder.WriteString(")")
