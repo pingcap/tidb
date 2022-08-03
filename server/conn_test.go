@@ -1390,3 +1390,57 @@ func TestMaxAllowedPacket(t *testing.T) {
 	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)), string(readBytes))
 	require.Equal(t, uint8(2), pkt.sequence)
 }
+
+func TestOk(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	var outBuffer bytes.Buffer
+	tidbdrv := NewTiDBDriver(store)
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	defer server.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
+		server:       server,
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(&outBuffer),
+		},
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
+		capability: mysql.ClientProtocol41 | mysql.ClientDeprecateEOF,
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	ctx := &TiDBContext{Session: tk.Session()}
+	cc.setCtx(ctx)
+	var status uint16 = 1
+	lastMessage := cc.ctx.LastMessage()
+	affectedRows := cc.ctx.AffectedRows()
+	lastInsertID := cc.ctx.LastInsertID()
+	warningCount := cc.ctx.WarningCount()
+
+	err = cc.writeOK(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0}, outBuffer.Bytes())
+
+	outBuffer.Reset()
+	err = cc.writeOkWith(context.Background(), lastMessage, affectedRows, lastInsertID, status, warningCount, mysql.OKHeader)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x7, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}, outBuffer.Bytes())
+	require.Equal(t, mysql.OKHeader, outBuffer.Bytes()[4])
+
+	outBuffer.Reset()
+	err = cc.writeOkWith(context.Background(), lastMessage, affectedRows, lastInsertID, status, warningCount, mysql.EOFHeader)
+	require.NoError(t, err)
+	err = cc.flush(context.TODO())
+	require.NoError(t, err)
+	require.Equal(t, mysql.EOFHeader, outBuffer.Bytes()[4])
+	require.Equal(t, []byte{0x7, 0x0, 0x0, 0x2, 0xfe, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}, outBuffer.Bytes())
+}
