@@ -491,6 +491,11 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrInconsistentSchema"]
+error = '''
+table '%s' has inconsistent schemas
+'''
+
 ["Lightning:Restore:ErrInvalidMetaStatus"]
 error = '''
 invalid meta status: '%s'
