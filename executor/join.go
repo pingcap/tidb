@@ -334,8 +334,8 @@ func (e *HashJoinExec) initializeForProbe() {
 	// thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
 
-	e.buildSideRows = make([][]chunk.Row, e.concurrency)
-	e.buildSideRowPtrs = make([][]chunk.RowPtr, e.concurrency)
+	e.buildSideRows = make([][]chunk.Row, e.concurrency*10)
+	e.buildSideRowPtrs = make([][]chunk.RowPtr, e.concurrency*10)
 }
 
 func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
@@ -535,8 +535,8 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	var err error
-	e.buildSideRows[workerID], e.buildSideRowPtrs[workerID], err = rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID], e.buildSideRowPtrs[workerID])
-	buildSideRows := e.buildSideRows[workerID]
+	e.buildSideRows[workerID*10], e.buildSideRowPtrs[workerID*10], err = rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID*10], e.buildSideRowPtrs[workerID*10])
+	buildSideRows := e.buildSideRows[workerID*10]
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
