@@ -334,12 +334,8 @@ endif
 
 br_coverage:
 	tools/bin/gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go|.*__failpoint_binding__.go" > "$(TEST_DIR)/all_cov.out"
-ifeq ("$(JenkinsCI)", "1")
-	tools/bin/goveralls -coverprofile=$(TEST_DIR)/all_cov.out -service=jenkins-ci -repotoken $(COVERALLS_TOKEN)
-else
 	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
 	grep -F '<option' "$(TEST_DIR)/all_cov.html"
-endif
 
 # TODO: adjust bins when br integraion tests reformat.
 br_bins:
