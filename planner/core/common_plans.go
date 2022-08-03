@@ -673,7 +673,8 @@ func (e *Explain) RenderResult() error {
 	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 		pp, ok := e.TargetPlan.(PhysicalPlan)
 		if ok {
-			if _, err := pp.GetPlanCost(property.RootTaskType, CostFlagRecalculate|CostFlagUseTrueCardinality); err != nil {
+			if _, err := pp.GetPlanCost(property.RootTaskType,
+				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagUseTrueCardinality)); err != nil {
 				return err
 			}
 		} else {
@@ -843,7 +844,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
 		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			planCost, _ := pp.GetPlanCost(property.RootTaskType, 0)
+			planCost, _ := pp.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 		} else {
 			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
@@ -953,7 +954,7 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 	if op.IsPhysicalPlan {
 		p := op.Origin.(PhysicalPlan)
 		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			out.Cost, _ = p.GetPlanCost(property.RootTaskType, 0)
+			out.Cost, _ = p.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
 		} else {
 			out.Cost = p.Cost()
 		}
