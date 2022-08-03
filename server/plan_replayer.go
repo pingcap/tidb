@@ -15,18 +15,17 @@
 package server
 
 import (
-	"crypto/tls"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -37,7 +36,6 @@ type PlanReplayerHandler struct {
 	address    string
 	statusPort uint
 	scheme     string
-	server     *Server
 }
 
 func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
@@ -46,7 +44,6 @@ func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
 		address:    cfg.AdvertiseAddress,
 		statusPort: cfg.Status.StatusPort,
 		scheme:     "http",
-		server:     s,
 	}
 	if s.dom != nil && s.dom.InfoSyncer() != nil {
 		prh.infoGetter = s.dom.InfoSyncer()
@@ -69,7 +66,6 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		urlPath:            fmt.Sprintf("plan_replayer/dump/%s", name),
 		downloadedFilename: "plan_replayer",
 		scheme:             prh.scheme,
-		tlsCfg:             prh.server.getTLSConfig(),
 	}
 	handleDownloadFile(handler, w, req)
 }
@@ -127,17 +123,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 		writeError(w, err)
 		return
 	}
-	var client *http.Client
-	if handler.scheme == "http" {
-		client = http.DefaultClient
-	} else {
-		client = &http.Client{
-			Timeout: 5 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: handler.tlsCfg,
-			},
-		}
-	}
+	client := util.InternalHTTPClient()
 	// transfer each remote tidb-server and try to find dump file
 	for _, topo := range topos {
 		if topo.IP == handler.address && topo.StatusPort == handler.statusPort {
@@ -194,7 +180,6 @@ type downloadFileHandler struct {
 	statusPort         uint
 	urlPath            string
 	downloadedFilename string
-	tlsCfg             *tls.Config
 }
 
 func isExists(path string) (bool, error) {

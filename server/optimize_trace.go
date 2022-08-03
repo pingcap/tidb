@@ -31,7 +31,6 @@ type OptimizeTraceHandler struct {
 	address    string
 	statusPort uint
 	scheme     string
-	server     *Server
 }
 
 func (s *Server) newOptimizeTraceHandler() *OptimizeTraceHandler {
@@ -40,7 +39,6 @@ func (s *Server) newOptimizeTraceHandler() *OptimizeTraceHandler {
 		address:    cfg.AdvertiseAddress,
 		statusPort: cfg.Status.StatusPort,
 		scheme:     "http",
-		server:     s,
 	}
 	if s.dom != nil && s.dom.InfoSyncer() != nil {
 		oth.infoGetter = s.dom.InfoSyncer()
@@ -63,7 +61,6 @@ func (oth OptimizeTraceHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 		urlPath:            fmt.Sprintf("optimize_trace/dump/%s", name),
 		downloadedFilename: "optimize_trace",
 		scheme:             oth.scheme,
-		tlsCfg:             oth.server.getTLSConfig(),
 	}
 	handleDownloadFile(handler, w, req)
 }
