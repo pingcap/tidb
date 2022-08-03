@@ -801,7 +801,7 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (Pla
 	}
 	exe := &Execute{Name: v.Name, TxtProtoVars: vars, ExecID: v.ExecID}
 	if v.BinaryArgs != nil {
-		exe.BinProtoVars = v.BinaryArgs.([]types.Datum)
+		exe.TxtProtoVars = v.BinaryArgs.([]expression.Expression)
 	}
 	return exe, nil
 }

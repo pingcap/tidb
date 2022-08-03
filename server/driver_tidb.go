@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -74,7 +75,7 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs ResultSet, err error) {
+func (ts *TiDBStatement) Execute(ctx context.Context, args []expression.Expression) (rs ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.ExecutePreparedStmt(ctx, ts.id, args)
 	if err != nil {
 		return nil, err

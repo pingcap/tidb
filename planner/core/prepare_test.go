@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/prometheus/client_golang/prometheus"
@@ -71,11 +71,11 @@ func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
 
 	ctx := context.Background()
 	// first time plan generated
-	_, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	_, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 
 	// using the generated plan but with different params
-	_, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(nil)})
+	_, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(nil))
 	require.NoError(t, err)
 }
 
@@ -2851,7 +2851,7 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	tk2.MustExec("set tx_isolation='READ-COMMITTED'")
 	tk2.MustExec("begin pessimistic")
 	tk1.MustQuery("execute s").Check(testkit.Rows())
-	rs, err := tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err := tk2.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.Nil(t, err)
 	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 
@@ -2865,7 +2865,7 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	tk1.MustQuery("execute s").Check(testkit.Rows("1 0"))
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	// execute binary protocol
-	rs, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.Nil(t, err)
 	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 0"))
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -2895,7 +2895,7 @@ func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 	// Execute using sql
 	tk1.MustQuery("execute s").Check(testkit.Rows("1 1", "2 2"))
 	// Execute using binary
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.Nil(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1", "2 2"))
 	// Normal sql
@@ -2907,7 +2907,7 @@ func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 	// Execute using sql
 	tk1.MustQuery("execute s").Check(testkit.Rows("1 1", "2 2", "3 <nil>"))
 	// Execute using binary
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.Nil(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1", "2 2", "3 <nil>"))
 	// Normal sql
@@ -2925,7 +2925,7 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	// This time, the cache will be hit.
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
@@ -2937,7 +2937,7 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 	tk1.MustExec("execute s")
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	// Now the plan cache will be valid
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
@@ -3024,12 +3024,12 @@ func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
 	tk1.MustExec("prepare s from 'select * from t1 where id = 1 for update'")
 	stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t1 where id = 1 for update")
 	require.Nil(t, err)
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.Nil(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.Nil(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
@@ -3037,12 +3037,12 @@ func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
 	tk2.MustExec("alter table t1 drop column c")
 	tk2.MustExec("update t1 set id = 10 where id = 1")
 
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.Nil(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.Nil(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))

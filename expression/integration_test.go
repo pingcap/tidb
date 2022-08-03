@@ -6531,6 +6531,59 @@ func TestIssue24953(t *testing.T) {
 	tk.MustQuery("(select col_76,col_1,col_143,col_2 from tbl_0) union (select   col_54,col_57,col_55,col_56 from tbl_9);").Check(testkit.Rows("-5765442 ZdfkUJiHcOfi -597990898 384599625723370089"))
 }
 
+// issue https://github.com/pingcap/tidb/issues/28544
+func TestPrimaryKeyRequiredSysvar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		name varchar(60),
+		age int
+	  )`)
+	tk.MustExec(`DROP TABLE t`)
+
+	tk.MustExec("set @@sql_require_primary_key=true")
+
+	// creating table without primary key should now fail
+	tk.MustGetErrCode(`CREATE TABLE t (
+		name varchar(60),
+		age int
+	  )`, errno.ErrTableWithoutPrimaryKey)
+	// but with primary key should work as usual
+	tk.MustExec(`CREATE TABLE t (
+		id bigint(20) NOT NULL PRIMARY KEY AUTO_RANDOM,
+		name varchar(60),
+		age int
+	  )`)
+	tk.MustGetErrMsg(`ALTER TABLE t
+       DROP COLUMN id`, "[ddl:8200]Unsupported drop integer primary key")
+
+	// test with non-clustered primary key
+	tk.MustExec(`CREATE TABLE t2 (
+       id int(11) NOT NULL,
+       c1 int(11) DEFAULT NULL,
+       PRIMARY KEY(id) NONCLUSTERED)`)
+	tk.MustGetErrMsg(`ALTER TABLE t2
+       DROP COLUMN id`, "[ddl:8200]can't drop column id with composite index covered or Primary Key covered now")
+	tk.MustGetErrCode(`ALTER TABLE t2 DROP PRIMARY KEY`, errno.ErrTableWithoutPrimaryKey)
+
+	// this sysvar is ignored in internal sessions
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	ctx := context.Background()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	sql := `CREATE TABLE t3 (
+		id int(11) NOT NULL,
+		c1 int(11) DEFAULT NULL)`
+	stmts, err := tk.Session().Parse(ctx, sql)
+	require.NoError(t, err)
+	res, err := tk.Session().ExecuteStmt(ctx, stmts[0])
+	require.NoError(t, err)
+	if res != nil {
+		require.NoError(t, res.Close())
+	}
+}
+
 // issue https://github.com/pingcap/tidb/issues/26111
 func TestRailsFKUsage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
