@@ -404,8 +404,8 @@ bazel_test: failpoint-enable bazel_ci_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
-
-bazel_coverage_test: bazel_golangcilinter failpoint-enable bazel_ci_prepare
+bazel_coverage_test: bazel_golangcilinter bazel_all_build failpoint-enable bazel_ci_prepare
+  bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci  //:gazelle
 	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
@@ -413,9 +413,13 @@ bazel_coverage_test: bazel_golangcilinter failpoint-enable bazel_ci_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
-bazel_build: bazel_ci_prepare
+bazel_all_build: bazel_ci_prepare
 	mkdir -p bin
 	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci //... --//build:with_nogo_flag=true
+
+bazel_build: bazel_ci_prepare
+	mkdir -p bin
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci //cmd/importer:importer //tidb-server:tidb-server //tidb-server:tidb-server-check --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
