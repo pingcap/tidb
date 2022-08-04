@@ -317,7 +317,7 @@ func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struc
 		return
 	}
 
-	t := time.NewTicker(cacheTableWriteLease)
+	t := time.NewTicker(cacheTableWriteLease / 2)
 	defer t.Stop()
 	for {
 		select {
