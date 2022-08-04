@@ -284,11 +284,11 @@ func TestIsolationRead(t *testing.T) {
 		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
 	})
 	sessVars := variable.NewSessionVars()
-	ok := sessVars.ContainSpecialIsolationRead(kv.TiDB)
+	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
 	require.True(t, ok)
-	ok = sessVars.ContainSpecialIsolationRead(kv.TiKV)
+	_, ok = sessVars.IsolationReadEngines[kv.TiKV]
 	require.False(t, ok)
-	ok = sessVars.ContainSpecialIsolationRead(kv.TiFlash)
+	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
 	require.True(t, ok)
 }
 

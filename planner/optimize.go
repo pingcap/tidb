@@ -88,6 +88,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
+	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
+	// engine in not read only stmt.
+	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(node, sessVars) {
+		delete(sessVars.IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
+	}
+
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	originStmtHints, originStmtHintsOffs, warns := handleStmtHints(tableHints)
 	sessVars.StmtCtx.StmtHints = originStmtHints
@@ -103,7 +112,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	txnManger := sessiontxn.GetTxnManager(sctx)
-	if sessVars.ContainSpecialIsolationRead(kv.TiKV) {
+	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp core.Plan
 		if fpv, ok := sctx.Value(core.PointPlanKey).(core.PointPlanVal); ok {
 			// point plan is already tried in a multi-statement query.

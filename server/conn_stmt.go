@@ -141,21 +141,18 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 	flag := data[pos]
 	pos++
-	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
+	// Please refer to https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_stmt_execute.html
 	// The client indicates that it wants to use cursor by setting this flag.
-	// 0x00 CURSOR_TYPE_NO_CURSOR
-	// 0x01 CURSOR_TYPE_READ_ONLY
-	// 0x02 CURSOR_TYPE_FOR_UPDATE
-	// 0x04 CURSOR_TYPE_SCROLLABLE
 	// Now we only support forward-only, read-only cursor.
-	var useCursor bool
-	switch flag {
-	case 0:
-		useCursor = false
-	case 1:
+	useCursor := false
+	if flag&mysql.CursorTypeReadOnly > 0 {
 		useCursor = true
-	default:
-		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", nil, flag)
+	}
+	if flag&mysql.CursorTypeForUpdate > 0 {
+		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeForUpdate", nil)
+	}
+	if flag&mysql.CursorTypeScrollable > 0 {
+		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
 	}
 
 	// skip iteration-count, always 1
@@ -221,9 +218,11 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 		// server and fallback to TiKV.
 		prevErr := err
-		cc.ctx.GetSessionVars().StmtCtx.InTiFlashFallBack2TiKV = true
+		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
 		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
-		cc.ctx.GetSessionVars().StmtCtx.InTiFlashFallBack2TiKV = false
 		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
 		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
 	}
