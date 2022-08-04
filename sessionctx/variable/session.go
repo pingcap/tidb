@@ -1257,6 +1257,12 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	}
 }
 
+// AllocNewPlanID alloc new ID
+func (s *SessionVars) AllocNewPlanID() int {
+	s.PlanID++
+	return s.PlanID
+}
+
 const (
 	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
 	PlacementModeStrict string = "STRICT"
