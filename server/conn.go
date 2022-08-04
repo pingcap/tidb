@@ -1935,9 +1935,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 			// server and fallback to TiKV.
 			warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
-			cc.ctx.GetSessionVars().StmtCtx.InTiFlashFallBack2TiKV = true
+			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
 			_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
-			cc.ctx.GetSessionVars().StmtCtx.InTiFlashFallBack2TiKV = false
+			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
 			if err != nil {
 				break
 			}

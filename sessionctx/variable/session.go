@@ -979,8 +979,8 @@ type SessionVars struct {
 	// this variable only take effect when `tidb_follower_read` = 'closest-adaptive'
 	ReplicaClosestReadThreshold int64
 
-	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
-	isolationReadEngines map[kv.StoreType]struct{}
+	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
+	IsolationReadEngines map[kv.StoreType]struct{}
 
 	PlannerSelectBlockAsName []ast.HintTable
 
@@ -1410,7 +1410,7 @@ func NewSessionVars() *SessionVars {
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
 		EnableExtendedStats:         false,
-		isolationReadEngines:        make(map[kv.StoreType]struct{}),
+		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
@@ -1484,11 +1484,11 @@ func NewSessionVars() *SessionVars {
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
 		case kv.TiFlash.Name():
-			vars.isolationReadEngines[kv.TiFlash] = struct{}{}
+			vars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		case kv.TiKV.Name():
-			vars.isolationReadEngines[kv.TiKV] = struct{}{}
+			vars.IsolationReadEngines[kv.TiKV] = struct{}{}
 		case kv.TiDB.Name():
-			vars.isolationReadEngines[kv.TiDB] = struct{}{}
+			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
 		}
 	}
 	if !EnableLocalTxn.Load() {
@@ -1577,33 +1577,9 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
 }
 
-// ContainSpecialIsolationRead checks whether we can access the special read engines.
-func (s *SessionVars) ContainSpecialIsolationRead(engineType kv.StoreType) bool {
-	_, ok := s.isolationReadEngines[engineType]
-	return ok
-}
-
 // GetIsolationReadEngines gets isolation read engines.
-// We copy the s.isolationReadEngines and return the copied one.
-// So the change in the outside will not affect the origin value.
 func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
-	readEngines := make(map[kv.StoreType]struct{})
-	for isolationReadEngine := range s.isolationReadEngines {
-		readEngines[isolationReadEngine] = struct{}{}
-	}
-	return readEngines
-}
-
-// GetAvailableIsolationReadEngines4Plan gets the available read engines for the current statement.
-// We should use this function to get the isolation read engines in the optimize phase.
-// For example, for write stmt, TiFlash has a different results when lock the data in point get plan.
-// So we ban the TiFlash engine in not read only stmt.
-func (s *SessionVars) GetAvailableIsolationReadEngines4Plan() map[kv.StoreType]struct{} {
-	availableReadEngines := s.GetIsolationReadEngines()
-	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && (s.StmtCtx.IsReadonlyStmt || s.StmtCtx.InTiFlashFallBack2TiKV) {
-		delete(availableReadEngines, kv.TiFlash)
-	}
-	return availableReadEngines
+	return s.IsolationReadEngines
 }
 
 // CleanBuffers cleans the temporary bufs
