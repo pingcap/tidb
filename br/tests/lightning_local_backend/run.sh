@@ -69,6 +69,37 @@ check_contains 'sum(c): 46'
 run_sql 'DROP DATABASE cpeng;'
 rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
 
+log_file_name="$TEST_DIR/sql_res.$TEST_NAME.txt"
+echo "--> test retry on stale command error during ingest"
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/backend/local/FailIngestMeta=2*return("stalecommand")'
+run_lightning --backend local --enable-checkpoint=1 --log-file "$log_file_name" --config "tests/$TEST_NAME/config.toml"
+check_contains "StaleCommand - mocked"
+# verify
+run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
+check_contains 'count(*): 4'
+check_contains 'sum(c): 10'
+run_sql 'SELECT count(*), sum(c) FROM cpeng.b'
+check_contains 'count(*): 4'
+check_contains 'sum(c): 46'
+# cleanup
+run_sql 'DROP DATABASE cpeng;'
+rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
+
+echo "--> test retry on readindexnotready error during ingest"
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/backend/local/FailIngestMeta=2*return("readindexnotready")'
+run_lightning --backend local --enable-checkpoint=1 --log-file "$log_file_name" --config "tests/$TEST_NAME/config.toml"
+check_contains "ReadIndexNotReady- mocked"
+# verify
+run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
+check_contains 'count(*): 4'
+check_contains 'sum(c): 10'
+run_sql 'SELECT count(*), sum(c) FROM cpeng.b'
+check_contains 'count(*): 4'
+check_contains 'sum(c): 46'
+# cleanup
+run_sql 'DROP DATABASE cpeng;'
+rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
+
 set +e
 export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfStatusBecomes=return(90);'
 for i in $(seq "$ENGINE_COUNT"); do

@@ -1395,6 +1395,20 @@ loopWrite:
 								},
 							},
 						}
+					case "stalecommand":
+						resp = &sst.IngestResponse{
+							Error: &errorpb.Error{
+								Message:      "StaleCommand - mocked",
+								StaleCommand: &errorpb.StaleCommand{},
+							},
+						}
+					case "readindexnotready":
+						resp = &sst.IngestResponse{
+							Error: &errorpb.Error{
+								Message:           "ReadIndexNotReady- mocked",
+								ReadIndexNotReady: &errorpb.ReadIndexNotReady{Reason: "--not ready--"},
+							},
+						}
 					}
 					if resp != nil {
 						err = nil
@@ -1890,6 +1904,8 @@ func (local *local) isIngestRetryable(
 			}
 		}
 	}
+
+	log.FromContext(ctx).Info("ingest response with error", zap.String("err", resp.GetError().GetMessage()))
 
 	var newRegion *split.RegionInfo
 	var err error
