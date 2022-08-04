@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -1133,8 +1134,6 @@ const (
 	retryIngest
 )
 
-<<<<<<< HEAD
-=======
 func (local *local) isRetryableImportTiKVError(err error) bool {
 	err = errors.Cause(err)
 	// io.EOF is not retryable in normal case
@@ -1148,7 +1147,6 @@ func (local *local) isRetryableImportTiKVError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
->>>>>>> 92c0050aa... lightning: retry on error on tikv ingest like 'stale command' (#36878)
 func (local *local) writeAndIngestPairs(
 	ctx context.Context,
 	engine *Engine,
@@ -1166,11 +1164,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-<<<<<<< HEAD
-			if !common.IsRetryableError(err) {
-=======
 			if !local.isRetryableImportTiKVError(err) {
->>>>>>> 92c0050aa... lightning: retry on error on tikv ingest like 'stale command' (#36878)
 				return err
 			}
 
@@ -1827,8 +1821,6 @@ func (local *local) isIngestRetryable(
 		return retryNone, nil, common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
 	case errPb.RegionNotFound != nil:
 		return retryNone, nil, common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
-<<<<<<< HEAD
-=======
 	case errPb.ReadIndexNotReady != nil:
 		// this error happens when this region is splitting, the error might be:
 		//   read index not ready, reason can not read index due to split, region 64037
@@ -1843,7 +1835,6 @@ func (local *local) isIngestRetryable(
 		return retryWrite, newRegion, common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
 	case errPb.DiskFull != nil:
 		return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
->>>>>>> 92c0050aa... lightning: retry on error on tikv ingest like 'stale command' (#36878)
 	}
 	// all others ingest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
 	// here we use a single named-error ErrKVIngestFailed to represent them all

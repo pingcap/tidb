@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -506,12 +507,6 @@ func TestIsIngestRetryable(t *testing.T) {
 	require.Equal(t, retryWrite, retryType)
 	require.Error(t, err)
 
-<<<<<<< HEAD
-	resp.Error = &errorpb.Error{Message: "unknown error"}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryNone, retryType)
-	require.EqualError(t, err, "non-retryable error: unknown error")
-=======
 	resp.Error = &errorpb.Error{
 		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
 			Reason: "test",
@@ -541,7 +536,6 @@ func TestIsIngestRetryable(t *testing.T) {
 	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryNone, retryType)
 	require.True(t, berrors.Is(err, common.ErrKVIngestFailed))
->>>>>>> 92c0050aa... lightning: retry on error on tikv ingest like 'stale command' (#36878)
 }
 
 type testIngester struct{}
@@ -1268,12 +1262,9 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	require.Equal(t, int64(1), splitSize)
 	require.Equal(t, int64(2), splitKeys)
 }
-<<<<<<< HEAD
-=======
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
 	l := local{}
 	require.True(t, l.isRetryableImportTiKVError(io.EOF))
 	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }
->>>>>>> 92c0050aa... lightning: retry on error on tikv ingest like 'stale command' (#36878)
