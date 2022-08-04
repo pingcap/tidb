@@ -1989,6 +1989,7 @@ func isPartExprUnsigned(tbInfo *model.TableInfo) bool {
 	ctx := mock.NewContext()
 	expr, err := expression.ParseSimpleExprWithTableInfo(ctx, tbInfo.Partition.Expr, tbInfo)
 	if err != nil {
+		logutil.BgLogger().Error("isPartExpr failed parsing expression!", zap.Error(err))
 		return false
 	}
 	if mysql.HasUnsignedFlag(expr.GetType().GetFlag()) {
