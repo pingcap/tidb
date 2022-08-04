@@ -160,6 +160,11 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("1970-01-01 08:00:01.000"))
 	tk.MustExec("set time_zone='+04:00'")
 	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("1970-01-01 04:00:01.000"))
+	tk.MustExec("set time_zone=default")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bit DEFAULT (rand()))")
+	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("rand()"))
 }
 
 func TestEngines(t *testing.T) {

@@ -900,7 +900,7 @@ ForColumnsTag:
 						columnDefault = timeValue.GetMysqlTime().String()
 					}
 				}
-				if ft.GetType() == mysql.TypeBit {
+				if ft.GetType() == mysql.TypeBit && !col.DefaultIsExpr {
 					defaultValBinaryLiteral := types.BinaryLiteral(columnDefault.(string))
 					columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
 				}
