@@ -522,7 +522,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		syncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
+		syncer = util.NewSchemaSyncer(etcdCli, id)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -659,12 +659,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.prepareWorkers4ConcurrencyDDL()
 	d.prepareWorkers4legacyDDL()
 
-	go d.schemaSyncer.StartCleanWork()
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
 		go d.startCleanDeadTableLock()
 	}
-	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 
 	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
