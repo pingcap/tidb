@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/bits"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -892,6 +893,23 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 	}
 }
 
+func updateFKInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol model.CIStr) {
+	for _, fk := range tblInfo.ForeignKeys {
+		for i := range fk.Cols {
+			if fk.Cols[i].L == oldCol.L {
+				fk.Cols[i] = newCol
+			}
+		}
+	}
+	for _, referredFK := range tblInfo.ReferredForeignKeys {
+		for i := range referredFK.Cols {
+			if referredFK.Cols[i].L == oldCol.L {
+				referredFK.Cols[i] = newCol
+			}
+		}
+	}
+}
+
 // filterIndexesToRemove filters out the indexes that can be removed.
 func filterIndexesToRemove(changingIdxs []*model.IndexInfo, colName model.CIStr, tblInfo *model.TableInfo) []*model.IndexInfo {
 	indexesToRemove := make([]*model.IndexInfo, 0, len(changingIdxs))
@@ -1359,8 +1377,12 @@ func (w *worker) doModifyColumn(
 		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
+	tblInfos, err := adjustReferTableInfoAfterModifyColumn(d, t, job, tblInfo, newCol, oldCol)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 
-	ver, err := updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+	ver, err = updateVersionAndMultiTableInfosWithCheck(t, job, tblInfos, true)
 	if err != nil {
 		// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
 		job.State = model.JobStateRollingback
@@ -1389,7 +1411,56 @@ func adjustTableInfoAfterModifyColumn(
 	tblInfo.Columns[oldCol.Offset] = newCol
 	tblInfo.MoveColumnInfo(oldCol.Offset, destOffset)
 	updateNewIdxColsNameOffset(tblInfo.Indices, oldCol.Name, newCol)
+	updateFKInfoWhenModifyColumn(tblInfo, oldCol.Name, newCol.Name)
 	return nil
+}
+
+func adjustReferTableInfoAfterModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo) ([]schemaIDAndTableInfo, error) {
+	InfoList := []schemaIDAndTableInfo{
+		{
+			schemaID: job.SchemaID,
+			tblInfo:  tblInfo,
+		},
+	}
+	if newCol.Name.L == oldCol.Name.L || len(tblInfo.ReferredForeignKeys) == 0 {
+		return InfoList, nil
+	}
+	fkc := ForeignKeyHelper{
+		schemaID: job.SchemaID,
+		tbInfo:   tblInfo,
+	}
+	infos := make(map[int64]schemaIDAndTableInfo)
+	infos[tblInfo.ID] = schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: tblInfo}
+	for _, referredFK := range tblInfo.ReferredForeignKeys {
+		childDBInfo, childTblInfo, err := fkc.getParentTableFromStorage(d, t, referredFK.ChildSchema, referredFK.ChildTable)
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+				continue
+			}
+			return nil, err
+		}
+		childfkInfo := model.FindFKInfoByName(childTblInfo.ForeignKeys, referredFK.ChildFKName.L)
+		if childfkInfo == nil {
+			continue
+		}
+		for i := range childfkInfo.RefCols {
+			if childfkInfo.RefCols[i].L == oldCol.Name.L {
+				childfkInfo.RefCols[i] = newCol.Name
+			}
+		}
+		infos[childTblInfo.ID] = schemaIDAndTableInfo{
+			schemaID: childDBInfo.ID,
+			tblInfo:  childTblInfo,
+		}
+	}
+	InfoList = InfoList[:0]
+	for _, info := range infos {
+		InfoList = append(InfoList, info)
+	}
+	sort.Slice(InfoList, func(i, j int) bool {
+		return InfoList[i].tblInfo.ID < InfoList[j].tblInfo.ID
+	})
+	return InfoList, nil
 }
 
 func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo,

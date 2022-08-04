@@ -170,7 +170,7 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	fkc := ForeignKeyChecker{
+	fkc := ForeignKeyHelper{
 		schemaID: job.SchemaID,
 		tbInfo:   tbInfo,
 	}
@@ -179,7 +179,7 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		var referTableInfo *model.TableInfo
 		for _, fkInfo := range tbInfo.ForeignKeys {
 			if referTableInfo == nil || referTableInfo.Name.L != fkInfo.RefTable.L {
-				_, referTableInfo, err = fkc.getParentTableFromStorage(d, fkInfo, t)
+				_, referTableInfo, err = fkc.getParentTableFromStorage(d, t, fkInfo.RefSchema, fkInfo.RefTable)
 				if err != nil {
 					if !fkChecks && infoschema.ErrTableNotExists.Equal(err) {
 						continue
@@ -214,7 +214,7 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		for ; fkIdx < len(tbInfo.ForeignKeys); fkIdx++ {
 			fkInfo := tbInfo.ForeignKeys[fkIdx]
 			if referTableInfo == nil {
-				referDBInfo, referTableInfo, err = fkc.getParentTableFromStorage(d, fkInfo, t)
+				referDBInfo, referTableInfo, err = fkc.getParentTableFromStorage(d, t, fkInfo.RefSchema, fkInfo.RefTable)
 				if err != nil {
 					if !fkChecks && infoschema.ErrTableNotExists.Equal(err) {
 						continue
@@ -268,18 +268,18 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, errors.Trace(err)
 }
 
-type ForeignKeyChecker struct {
+type ForeignKeyHelper struct {
 	schemaID int64
 	tbInfo   *model.TableInfo
 }
 
-func (c ForeignKeyChecker) getParentTableFromStorage(d *ddlCtx, fkInfo *model.FKInfo, t *meta.Meta) (*model.DBInfo, *model.TableInfo, error) {
-	db, tb, err := c.getParentTableFromInfoCache(d, fkInfo)
+func (c ForeignKeyHelper) getParentTableFromStorage(d *ddlCtx, t *meta.Meta, schema, table model.CIStr) (*model.DBInfo, *model.TableInfo, error) {
+	db, tb, err := c.getParentTableFromInfoCache(d, schema, table)
 	if err != nil {
 		return db, nil, err
 	}
 	// self reference
-	if db.ID == c.schemaID && fkInfo.RefTable.L == c.tbInfo.Name.L {
+	if db.ID == c.schemaID && table.L == c.tbInfo.Name.L {
 		return db, c.tbInfo, nil
 	}
 	tbInfo, err := getTableInfo(t, tb.ID, db.ID)
@@ -287,23 +287,23 @@ func (c ForeignKeyChecker) getParentTableFromStorage(d *ddlCtx, fkInfo *model.FK
 		return db, nil, err
 	}
 	// Check if table name is renamed.
-	if tbInfo.Name.L != fkInfo.RefTable.L {
-		return db, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(fkInfo.RefSchema.O, fkInfo.RefTable.O)
+	if tbInfo.Name.L != table.L {
+		return db, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(schema.O, table.O)
 	}
 	return db, tbInfo, nil
 }
 
-func (c ForeignKeyChecker) getParentTableFromInfoCache(d *ddlCtx, fkInfo *model.FKInfo) (*model.DBInfo, *model.TableInfo, error) {
+func (c ForeignKeyHelper) getParentTableFromInfoCache(d *ddlCtx, schema, table model.CIStr) (*model.DBInfo, *model.TableInfo, error) {
 	is := d.infoCache.GetLatest()
-	db, ok := is.SchemaByName(fkInfo.RefSchema)
+	db, ok := is.SchemaByName(schema)
 	if !ok {
-		return nil, nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fkInfo.RefSchema))
+		return nil, nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
 	// self reference
-	if db.ID == c.schemaID && fkInfo.RefTable.L == c.tbInfo.Name.L {
+	if db.ID == c.schemaID && table.L == c.tbInfo.Name.L {
 		return db, c.tbInfo, nil
 	}
-	tb, err := is.TableByName(fkInfo.RefSchema, fkInfo.RefTable)
+	tb, err := is.TableByName(schema, table)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1469,6 +1469,44 @@ func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo 
 		tblInfo.UpdateTS = t.StartTS
 	}
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
+}
+
+type schemaIDAndTableInfo struct {
+	schemaID int64
+	tblInfo  *model.TableInfo
+}
+
+func updateVersionAndMultiTableInfosWithCheck(t *meta.Meta, job *model.Job, infos []schemaIDAndTableInfo, shouldUpdateVer bool) (
+	ver int64, err error) {
+	for _, info := range infos {
+		err = checkTableInfoValid(info.tblInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+	return updateVersionAndMultiTableInfos(t, job, infos, shouldUpdateVer)
+}
+
+func updateVersionAndMultiTableInfos(t *meta.Meta, job *model.Job, infos []schemaIDAndTableInfo, shouldUpdateVer bool) (
+	ver int64, err error) {
+	if shouldUpdateVer {
+		ver, err = updateSchemaVersionWithInfos(t, job, infos)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+
+	for _, info := range infos {
+		if info.tblInfo.State == model.StatePublic {
+			info.tblInfo.UpdateTS = t.StartTS
+		}
+		err = t.UpdateTable(job.SchemaID, info.tblInfo)
+		if err != nil {
+			return ver, err
+		}
+	}
+	return ver, nil
 }
 
 func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

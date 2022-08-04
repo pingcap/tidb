@@ -41,14 +41,14 @@ func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	fkc := ForeignKeyChecker{
+	fkc := ForeignKeyHelper{
 		schemaID: job.SchemaID,
 		tbInfo:   tblInfo,
 	}
 	switch job.SchemaState {
 	case model.StateNone:
 		// none -> write-only
-		_, referTableInfo, err := fkc.getParentTableFromStorage(d, &fkInfo, t)
+		_, referTableInfo, err := fkc.getParentTableFromStorage(d, t, fkInfo.RefSchema, fkInfo.RefTable)
 		if err != nil {
 			if fkChecks || !infoschema.ErrTableNotExists.Equal(err) {
 				job.State = model.JobStateCancelled
@@ -84,7 +84,7 @@ func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 
 		// update parent table info.
-		referDBInfo, referTableInfo, err := fkc.getParentTableFromStorage(d, &fkInfo, t)
+		referDBInfo, referTableInfo, err := fkc.getParentTableFromStorage(d, t, fkInfo.RefSchema, fkInfo.RefTable)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err

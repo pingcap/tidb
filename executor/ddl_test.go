@@ -739,6 +739,60 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 	}
 }
 
+func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))")
+	tk.MustExec("alter table t1 change id kid int")
+	tbl1Info := getTableInfo(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tbl1Info.ForeignKeys))
+	require.Equal(t, 1, len(tbl1Info.ReferredForeignKeys))
+	require.Equal(t, "kid", tbl1Info.ReferredForeignKeys[0].Cols[0].L)
+	require.Equal(t, "kid", tbl1Info.ForeignKeys[0].RefCols[0].L)
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, b int, index(b))")
+	tk.MustExec("create table t2 (a int, b int, foreign key fk(a) references t1(b));")
+	tk.MustExec("alter table t2 change a aa int")
+	tbl1Info = getTableInfo(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tbl1Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tbl1Info.ReferredForeignKeys[0].Cols))
+	require.Equal(t, "b", tbl1Info.ReferredForeignKeys[0].Cols[0].L)
+	tbl2Info := getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tbl2Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[0].Cols))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[0].RefCols))
+	require.Equal(t, "aa", tbl2Info.ForeignKeys[0].Cols[0].L)
+	require.Equal(t, "b", tbl2Info.ForeignKeys[0].RefCols[0].L)
+
+	tk.MustExec("alter table t1 change id kid int")
+	tk.MustExec("alter table t1 change b bb int")
+	tbl1Info = getTableInfo(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tbl1Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tbl1Info.ReferredForeignKeys[0].Cols))
+	require.Equal(t, "bb", tbl1Info.ReferredForeignKeys[0].Cols[0].L)
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tbl2Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[0].Cols))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[0].RefCols))
+	require.Equal(t, "aa", tbl2Info.ForeignKeys[0].Cols[0].L)
+	require.Equal(t, "bb", tbl2Info.ForeignKeys[0].RefCols[0].L)
+
+	err := tk.ExecToErr("insert into t2 values (1,1)")
+	require.Error(t, err)
+	require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
+	tk.MustExec("insert into t1 values (1,1)")
+	tk.MustExec("insert into t2 values (1,1)")
+	err = tk.ExecToErr("delete from t1")
+	require.Error(t, err)
+	require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+}
+
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb))
