@@ -44,7 +44,7 @@ func TestSyncerSimple(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	origin := CheckVersFirstWaitTime
 	CheckVersFirstWaitTime = 0
@@ -80,7 +80,6 @@ func TestSyncerSimple(t *testing.T) {
 	resp, err := cli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
 	require.NoError(t, err)
 
-	go d.SchemaSyncer().StartCleanWork()
 	defer d.SchemaSyncer().Close()
 
 	key := DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
@@ -110,7 +109,6 @@ func TestSyncerSimple(t *testing.T) {
 	}()
 	defer d1.OwnerManager().Cancel()
 	require.NoError(t, d1.SchemaSyncer().Init(ctx))
-	go d.SchemaSyncer().StartCleanWork()
 	defer d.SchemaSyncer().Close()
 
 	// for watchCh
@@ -160,42 +158,6 @@ func TestSyncerSimple(t *testing.T) {
 	defer cancel()
 	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
 	require.True(t, isTimeoutError(err))
-
-	// for StartCleanWork
-	ttl := 10
-	// Make sure NeededCleanTTL > ttl, then we definitely clean the ttl.
-	NeededCleanTTL = int64(11)
-	ttlKey := "session_ttl_key"
-	ttlVal := "session_ttl_val"
-	session, err := util.NewSession(ctx, "", cli, util.NewSessionDefaultRetryCnt, ttl)
-	require.NoError(t, err)
-	require.NoError(t, PutKVToEtcd(context.Background(), cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease())))
-
-	// Make sure the ttlKey is existing in etcd.
-	resp, err = cli.Get(ctx, ttlKey)
-	require.NoError(t, err)
-	checkRespKV(t, 1, ttlKey, ttlVal, resp.Kvs...)
-	d.SchemaSyncer().NotifyCleanExpiredPaths()
-	// Make sure the clean worker is done.
-	notifiedCnt := 1
-	for i := 0; i < 100; i++ {
-		isNotified := d.SchemaSyncer().NotifyCleanExpiredPaths()
-		if isNotified {
-			notifiedCnt++
-		}
-		// notifyCleanExpiredPathsCh's length is 1,
-		// so when notifiedCnt is 3, we can make sure the clean worker is done at least once.
-		if notifiedCnt == 3 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	require.Equal(t, 3, notifiedCnt)
-
-	// Make sure the ttlKey is removed in etcd.
-	resp, err = cli.Get(ctx, ttlKey)
-	require.NoError(t, err)
-	checkRespKV(t, 0, ttlKey, "", resp.Kvs...)
 
 	// for Close
 	resp, err = cli.Get(context.Background(), key)

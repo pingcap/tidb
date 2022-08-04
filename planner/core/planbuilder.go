@@ -1180,7 +1180,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		}
 	}
 
-	isolationReadEnginesHasTiKV := ctx.GetSessionVars().ContainSpecialIsolationRead(kv.TiKV)
+	_, isolationReadEnginesHasTiKV := ctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
 	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
@@ -1256,7 +1256,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	if dbName.L == mysql.SystemDB {
 		return paths, nil
 	}
-	isolationReadEngines := ctx.GetSessionVars().GetAvailableIsolationReadEngines4Plan()
+	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {
