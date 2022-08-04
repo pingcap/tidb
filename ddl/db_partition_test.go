@@ -2103,6 +2103,18 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	require.NoError(t, err)
 
 	tk.MustExec("alter table e15 exchange partition p0 with table e16")
+
+	tk.MustExec("create table e17 (a int)")
+	tk.MustExec("alter table e17 set tiflash replica 1")
+	tk.MustExec("insert into e17 values (1)")
+
+	tk.MustExec("create table e18 (a int) partition by range (a) (partition p0 values less than (4), partition p1 values less than (10))")
+	tk.MustExec("alter table e18 set tiflash replica 1")
+	tk.MustExec("insert into pt values (2)")
+
+	tk.MustExec("alter table e18 exchange partition p0 with table e17")
+	tk.MustQuery("select * /*+ read_from_storage(tiflash[pt]) */ from e18").Check(testkit.Rows("1"))
+	tk.MustQuery("select * /*+ read_from_storage(tiflash[pt]) */ from e17").Check(testkit.Rows("2"))
 }
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
