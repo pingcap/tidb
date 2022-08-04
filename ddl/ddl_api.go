@@ -5340,6 +5340,9 @@ func (d *ddl) dropTableObject(
 			if tableInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Table")
 			}
+			if referredFK := checkTableHasForeignKeyReferred(ctx, d.GetInfoSchemaWithInterceptor(ctx), tn.Schema, tableInfo.Meta()); referredFK != nil {
+				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
+			}
 		case viewObject:
 			if !tableInfo.Meta().IsView() {
 				return dbterror.ErrWrongObject.GenWithStackByArgs(fullti.Schema, fullti.Name, "VIEW")
@@ -5419,6 +5422,10 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
+	if referredFK := checkTableHasForeignKeyReferred(ctx, d.GetInfoSchemaWithInterceptor(ctx), ti.Schema, tb.Meta()); referredFK != nil {
+		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
+		return errors.Trace(dbterror.ErrTruncateIllegalFk.GenWithStackByArgs(msg))
+	}
 
 	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
@@ -5458,6 +5465,21 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
 		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
+	}
+	return nil
+}
+
+func checkTableHasForeignKeyReferred(ctx sessionctx.Context, is infoschema.InfoSchema, schema model.CIStr, tbInfo *model.TableInfo) *model.ReferredFKInfo {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil
+	}
+	for _, referredFK := range tbInfo.ReferredForeignKeys {
+		if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L {
+			continue
+		}
+		if is.TableExists(referredFK.ChildSchema, referredFK.ChildTable) {
+			return referredFK
+		}
 	}
 	return nil
 }
