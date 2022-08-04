@@ -640,7 +640,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
-		c := cachedTableRenewLease{tables: tables}
+		c := cachedTableRenewLease{tables: tables, ts: s.txn.StartTS()}
 		now := time.Now()
 		err := c.start(ctx)
 		defer c.stop(ctx)
@@ -662,17 +662,25 @@ type cachedTableRenewLease struct {
 	tables map[int64]interface{}
 	lease  []uint64 // Lease for each visited cached tables.
 	exit   chan struct{}
+	ts     uint64
 }
 
 func (c *cachedTableRenewLease) start(ctx context.Context) error {
 	c.exit = make(chan struct{})
 	c.lease = make([]uint64, len(c.tables))
+	tids := make([]int64, len(c.tables))
 	wg := make(chan error, len(c.tables))
 	ith := 0
 	for _, raw := range c.tables {
 		tbl := raw.(table.CachedTable)
+		tids[ith] = tbl.Meta().ID
 		go tbl.WriteLockAndKeepAlive(ctx, c.exit, &c.lease[ith], wg)
 		ith++
+	}
+	if ith > 0 {
+		logutil.BgLogger().Info(">> write lock and keep alive",
+			zap.Int64s("tids", tids),
+			zap.Uint64("ts", c.ts))
 	}
 
 	// Wait for all LockForWrite() return, this function can return.
