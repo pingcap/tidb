@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -1133,6 +1134,19 @@ const (
 	retryIngest
 )
 
+func (local *local) isRetryableTiKVWriteError(err error) bool {
+	err = errors.Cause(err)
+	// io.EOF is not retryable in normal case
+	// but on TiKV restart, if we're writing to TiKV(through GRPC)
+	// it might return io.EOF(it's GRPC Unavailable in most case),
+	// we need to retry on this error.
+	// see SendMsg in https://pkg.go.dev/google.golang.org/grpc#ClientStream
+	if err == io.EOF {
+		return true
+	}
+	return common.IsRetryableError(err)
+}
+
 func (local *local) writeAndIngestPairs(
 	ctx context.Context,
 	engine *Engine,
@@ -1150,7 +1164,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if !common.IsRetryableError(err) {
+			if !local.isRetryableTiKVWriteError(err) {
 				return err
 			}
 
@@ -1808,6 +1822,18 @@ func (local *local) isIngestRetryable(
 		return retryNone, nil, common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
 	case errPb.RegionNotFound != nil:
 		return retryNone, nil, common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
+	case errPb.ReadIndexNotReady != nil:
+		// this error happens when this region is splitting, the error might be:
+		//   read index not ready, reason can not read index due to split, region 64037
+		// we have paused schedule, but it's temporary,
+		// if next request takes a long time, there's chance schedule is enabled again
+		// or on key range border, another engine sharing this region tries to split this
+		// region may cause this error too.
+		newRegion, err = getRegion()
+		if err != nil {
+			return retryNone, nil, errors.Trace(err)
+		}
+		return retryWrite, newRegion, common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
 	}
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
