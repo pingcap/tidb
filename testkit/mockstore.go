@@ -11,13 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testkit
 
 import (
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -43,4 +46,27 @@ func CreateMockStore(t *testing.T) (store kv.Storage, clean func()) {
 	}
 
 	return
+}
+
+// CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
+func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
+	store, err := mockstore.NewMockStore(opts...)
+	require.NoError(t, err)
+	return store, bootstrap(t, store, 0)
+}
+
+func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
+	session.SetSchemaLease(lease)
+	session.DisableStats4Test()
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	dom.SetStatsUpdating(true)
+
+	t.Cleanup(func() {
+		dom.Close()
+		err := store.Close()
+		require.NoError(t, err)
+	})
+	return dom
 }
