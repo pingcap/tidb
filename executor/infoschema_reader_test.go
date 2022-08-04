@@ -710,3 +710,22 @@ SELECT
 `).Check(testkit.Rows("t a b"))
 	}
 }
+
+// https://github.com/pingcap/tidb/issues/36426.
+func TestShowColumnsWithSubQueryView(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE added (`id` int(11), `name` text, `some_date` timestamp);")
+	tk.MustExec("CREATE TABLE incremental (`id` int(11), `name`text, `some_date` timestamp);")
+	tk.MustExec("create view temp_view as (select * from `added` where id > (select max(id) from `incremental`));")
+	// Show columns should not send coprocessor request to the storage.
+	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")`))
+	tk.MustQuery("show columns from temp_view;").Check(testkit.Rows(
+		"id int(11) YES  <nil> ",
+		"name text YES  <nil> ",
+		"some_date timestamp YES  <nil> "))
+	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
+}
