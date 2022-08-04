@@ -51,12 +51,14 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_tikv_client_go_v2//tikv",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "infoschema_test",
+    timeout = "short",
     srcs = [
         "cache_test.go",
         "cluster_tables_test.go",
@@ -105,6 +107,7 @@ go_test(
         "@com_github_pingcap_fn//:fn",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_prometheus_prometheus//promql",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",

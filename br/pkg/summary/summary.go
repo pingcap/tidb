@@ -48,6 +48,7 @@ func Summary(name string) {
 	collector.Summary(name)
 }
 
+// Log outputs log.
 func Log(msg string, fields ...zap.Field) {
 	collector.Log(msg, fields...)
 }

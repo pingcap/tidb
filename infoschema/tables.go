@@ -20,26 +20,21 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stmtsummary"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -48,8 +43,12 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -182,6 +181,8 @@ const (
 	TablePlacementPolicies = "PLACEMENT_POLICIES"
 	// TableTrxSummary is the string constant of transaction summary table.
 	TableTrxSummary = "TRX_SUMMARY"
+	// TableVariablesInfo is the string constant of variables_info table.
+	TableVariablesInfo = "VARIABLES_INFO"
 )
 
 const (
@@ -282,6 +283,7 @@ var tableIDMap = map[string]int64{
 	TablePlacementPolicies:               autoid.InformationSchemaDBID + 79,
 	TableTrxSummary:                      autoid.InformationSchemaDBID + 80,
 	ClusterTableTrxSummary:               autoid.InformationSchemaDBID + 81,
+	TableVariablesInfo:                   autoid.InformationSchemaDBID + 82,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -886,6 +888,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogHasMoreResults, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
+	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
@@ -922,6 +925,14 @@ var TableTiDBHotRegionsHistoryCols = []columnInfo{
 	{name: "FLOW_BYTES", tp: mysql.TypeDouble, size: 22},
 	{name: "KEY_RATE", tp: mysql.TypeDouble, size: 22},
 	{name: "QUERY_RATE", tp: mysql.TypeDouble, size: 22},
+}
+
+// GetTableTiDBHotRegionsHistoryCols is to get TableTiDBHotRegionsHistoryCols.
+// It is an optimization because Go does’t support const arrays. The solution  is to use initialization functions.
+// It is useful in the BCE optimization.
+// https://go101.org/article/bounds-check-elimination.html
+func GetTableTiDBHotRegionsHistoryCols() []columnInfo {
+	return TableTiDBHotRegionsHistoryCols
 }
 
 // TableTiKVStoreStatusCols is TiDB kv store status columns.
@@ -991,6 +1002,14 @@ var TableTiKVRegionPeersCols = []columnInfo{
 	{name: "IS_LEADER", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "STATUS", tp: mysql.TypeVarchar, size: 10, deflt: 0},
 	{name: "DOWN_SECONDS", tp: mysql.TypeLonglong, size: 21, deflt: 0},
+}
+
+// GetTableTiKVRegionPeersCols is to get TableTiKVRegionPeersCols.
+// It is an optimization because Go does’t support const arrays. The solution  is to use initialization functions.
+// It is useful in the BCE optimization.
+// https://go101.org/article/bounds-check-elimination.html
+func GetTableTiKVRegionPeersCols() []columnInfo {
+	return TableTiKVRegionPeersCols
 }
 
 var tableTiDBServersInfoCols = []columnInfo{
@@ -1107,6 +1126,7 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{name: "LOCATION_LABELS", tp: mysql.TypeVarchar, size: 64},
 	{name: "AVAILABLE", tp: mysql.TypeTiny, size: 1},
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
+	{name: "TABLE_MODE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var tableInspectionResultCols = []columnInfo{
@@ -1291,6 +1311,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.PrevSampleTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
 	{name: stmtsummary.PlanDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: stmtsummary.PlanStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
+	{name: stmtsummary.BinaryPlan, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled binary plan"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -1485,6 +1506,17 @@ var tablePlacementPoliciesCols = []columnInfo{
 	{name: "SCHEDULE", tp: mysql.TypeVarchar, size: 20}, // EVEN or MAJORITY_IN_PRIMARY
 	{name: "FOLLOWERS", tp: mysql.TypeLonglong, size: 64},
 	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 64},
+}
+
+var tableVariablesInfoCols = []columnInfo{
+	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "VARIABLE_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "DEFAULT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CURRENT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 64},
+	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "POSSIBLE_VALUES", tp: mysql.TypeVarchar, size: 256},
+	{name: "IS_NOOP", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1818,6 +1850,23 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 	return cnt, nil
 }
 
+// GetDataFromSessionVariables return the [name, value] of all session variables
+func GetDataFromSessionVariables(ctx sessionctx.Context) ([][]types.Datum, error) {
+	sessionVars := ctx.GetSessionVars()
+	sysVars := variable.GetSysVars()
+	rows := make([][]types.Datum, 0, len(sysVars))
+	for _, v := range sysVars {
+		var value string
+		value, err := sessionVars.GetSessionOrGlobalSystemVar(v.Name)
+		if err != nil {
+			return nil, err
+		}
+		row := types.MakeDatums(v.Name, value)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	TableSchemata:                           schemataCols,
 	TableTables:                             tablesCols,
@@ -1890,6 +1939,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableAttributes:                         tableAttributesCols,
 	TablePlacementPolicies:                  tablePlacementPoliciesCols,
 	TableTrxSummary:                         tableTrxSummaryCols,
+	TableVariablesInfo:                      tableVariablesInfoCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -1910,25 +1960,12 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-// SchemasSorter implements the sort.Interface interface, sorts DBInfo by name.
-type SchemasSorter []*model.DBInfo
-
-func (s SchemasSorter) Len() int {
-	return len(s)
-}
-
-func (s SchemasSorter) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
-func (s SchemasSorter) Less(i, j int) bool {
-	return s[i].Name.L < s[j].Name.L
-}
-
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	is := ctx.GetInfoSchema().(InfoSchema)
 	dbs := is.AllSchemas()
-	sort.Sort(SchemasSorter(dbs))
+	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
+		return i.Name.L < j.Name.L
+	})
 	switch it.meta.Name.O {
 	case tableFiles:
 	case tablePlugins, tableTriggers:

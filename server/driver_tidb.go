@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -74,7 +75,7 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs ResultSet, err error) {
+func (ts *TiDBStatement) Execute(ctx context.Context, args []expression.Expression) (rs ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.ExecutePreparedStmt(ctx, ts.id, args)
 	if err != nil {
 		return nil, err
@@ -168,8 +169,9 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
+			bindSQL, _ := core.GetBindSQL4PlanCache(ts.ctx, preparedObj)
 			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
-				preparedObj.PreparedAst.SchemaVersion, 0)
+				preparedObj.PreparedAst.SchemaVersion, 0, bindSQL)
 			if err != nil {
 				return err
 			}
@@ -332,6 +334,15 @@ func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.
 		if !ok {
 			return errors.Errorf("prepared statement %d not found", id)
 		}
+		// Bound params are sent by CMD_STMT_SEND_LONG_DATA, the proxy can wait for COM_STMT_EXECUTE.
+		for _, boundParam := range stmt.BoundParams() {
+			if boundParam != nil {
+				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have bound params")
+			}
+		}
+		if rs := stmt.GetResultSet(); rs != nil && !rs.IsClosed() {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have open result sets")
+		}
 		preparedStmtInfo.ParamTypes = stmt.GetParamsType()
 	}
 	return nil
@@ -414,6 +425,11 @@ func (trs *tidbResultSet) Close() error {
 	err := trs.recordSet.Close()
 	trs.recordSet = nil
 	return err
+}
+
+// IsClosed implements ResultSet.IsClosed interface.
+func (trs *tidbResultSet) IsClosed() bool {
+	return atomic.LoadInt32(&trs.closed) == 1
 }
 
 // OnFetchReturned implements fetchNotifier#OnFetchReturned

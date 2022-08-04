@@ -388,9 +388,8 @@ func getDatumLen(v reflect.Value) int {
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
 			return 0
-		} else {
-			return getDatumLen(v.Elem())
 		}
+		return getDatumLen(v.Elem())
 	}
 	if v.Kind() == reflect.String {
 		return len(v.String())
@@ -403,6 +402,12 @@ func getDatumLen(v reflect.Value) int {
 // See: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md
 func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement, logger log.Logger) error {
 	switch v.Kind() {
+	case reflect.Bool:
+		if v.Bool() {
+			d.SetUint64(1)
+		} else {
+			d.SetUint64(0)
+		}
 	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		d.SetUint64(v.Uint())
 	case reflect.Int8, reflect.Int16:
@@ -509,19 +514,16 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
 }
 
 func formatTime(v int64, units *parquet.TimeUnit, format, utcFormat string, utc bool) string {
-	var sec, nsec int64
+	var t time.Time
 	if units.MICROS != nil {
-		sec = v / 1e6
-		nsec = (v % 1e6) * 1e3
+		t = time.UnixMicro(v)
 	} else if units.MILLIS != nil {
-		sec = v / 1e3
-		nsec = (v % 1e3) * 1e6
+		t = time.UnixMilli(v)
 	} else {
 		// nano
-		sec = v / 1e9
-		nsec = v % 1e9
+		t = time.Unix(0, v)
 	}
-	t := time.Unix(sec, nsec).UTC()
+	t = t.UTC()
 	if utc {
 		return t.Format(utcFormat)
 	}

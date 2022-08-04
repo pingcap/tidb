@@ -27,7 +27,9 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -46,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
@@ -92,6 +95,7 @@ type Domain struct {
 	indexUsageSyncLease  time.Duration
 	dumpFileGcChecker    *dumpFileGcChecker
 	expiredTimeStamp4PC  types.Time
+	logBackupAdvancer    *streamhelper.AdvancerDaemon
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -122,7 +126,7 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	m := meta.NewSnapshotMeta(snapshot)
-	neededSchemaVersion, err := m.GetSchemaVersion()
+	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
@@ -286,8 +290,9 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			return nil, nil, err
 		}
 		if diff == nil {
-			// If diff is missing for any version between used and new version, we fall back to full reload.
-			return nil, nil, fmt.Errorf("failed to get schemadiff")
+			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
+			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
+			continue
 		}
 		diffs = append(diffs, diff)
 	}
@@ -318,7 +323,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica, model.ActionSetTiFlashMode:
 		return true
 	}
 	return false
@@ -369,6 +374,11 @@ func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
 // DDL gets DDL from domain.
 func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
+}
+
+// SetDDL sets DDL to domain, it's only used in tests.
+func (do *Domain) SetDDL(d ddl.DDL) {
+	do.ddl = d
 }
 
 // InfoSyncer gets infoSyncer from domain.
@@ -884,7 +894,31 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
 	}
+	err = do.initLogBackup(ctx, pdClient)
+	if err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
+	cfg := config.GetGlobalConfig()
+	if pdClient == nil || do.etcdClient == nil {
+		log.Warn("pd / etcd client not provided, won't begin Advancer.")
+		return nil
+	}
+	env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+	if err != nil {
+		return err
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
+	loop, err := do.logBackupAdvancer.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	do.wg.Run(loop)
 	return nil
 }
 
@@ -1602,6 +1636,26 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 	if err := do.rebuildSysVarCache(nil); err != nil {
 		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 	}
+}
+
+// LoadSigningCertLoop loads the signing cert periodically to make sure it's fresh new.
+func (do *Domain) LoadSigningCertLoop() {
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Debug("loadSigningCertLoop exited.")
+			util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-time.After(sessionstates.LoadCertInterval):
+				sessionstates.ReloadSigningCert()
+			case <-do.exit:
+				return
+			}
+		}
+	}()
 }
 
 // ServerID gets serverID.

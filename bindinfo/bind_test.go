@@ -34,8 +34,7 @@ import (
 )
 
 func TestPrepareCacheWithBinding(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -300,8 +299,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 }
 
 func TestExplain(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -331,10 +329,50 @@ func TestExplain(t *testing.T) {
 	tk.MustExec("drop global binding for SELECT * from t1 union SELECT * from t1")
 }
 
+func TestBindSemiJoinRewrite(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+	require.True(t, tk.HasKeywordInOperatorInfo("select * from t1 where exists(select 1 from t2 where t1.id=t2.id)", "semi join"))
+	require.True(t, tk.NotHasKeywordInOperatorInfo("select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id)", "semi join"))
+
+	tk.MustExec(`
+create global binding for
+	select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
+using
+	select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id)
+`)
+
+	require.True(t, tk.NotHasKeywordInOperatorInfo("select * from t1 where exists(select 1 from t2 where t1.id=t2.id)", "semi join"))
+}
+
+func TestBindCTEMerge(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int)")
+	require.True(t, tk.HasPlan("with cte as (select * from t1) select * from cte", "CTEFullScan"))
+	require.False(t, tk.HasPlan("with cte as (select /*+ MERGE() */ * from t1) select * from cte", "CTEFullScan"))
+	tk.MustExec(`
+create global binding for
+	with cte as (select * from t1) select * from cte
+using
+	with cte as (select /*+ MERGE() */ * from t1) select * from cte
+`)
+
+	require.False(t, tk.HasPlan("with cte as (select * from t1) select * from cte", "CTEFullScan"))
+}
+
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
 func TestBindingSymbolList(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -371,8 +409,7 @@ func TestBindingSymbolList(t *testing.T) {
 }
 
 func TestDMLSQLBind(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -427,8 +464,7 @@ func TestDMLSQLBind(t *testing.T) {
 }
 
 func TestBestPlanInBaselines(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -467,8 +503,7 @@ func TestBestPlanInBaselines(t *testing.T) {
 }
 
 func TestErrorBind(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -517,8 +552,7 @@ func TestDMLEvolveBaselines(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -585,8 +619,7 @@ func TestAddEvolveTasks(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -619,8 +652,7 @@ func TestRuntimeHintsInEvolveTasks(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -637,8 +669,7 @@ func TestRuntimeHintsInEvolveTasks(t *testing.T) {
 }
 
 func TestDefaultSessionVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery(`show variables like "%baselines%"`).Sort().Check(testkit.Rows(
@@ -652,8 +683,7 @@ func TestDefaultSessionVars(t *testing.T) {
 }
 
 func TestCaptureBaselinesScope(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -689,8 +719,7 @@ func TestCaptureBaselinesScope(t *testing.T) {
 }
 
 func TestStmtHints(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -706,8 +735,7 @@ func TestStmtHints(t *testing.T) {
 }
 
 func TestPrivileges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -730,8 +758,7 @@ func TestHintsSetEvolveTask(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -755,8 +782,7 @@ func TestHintsSetEvolveTask(t *testing.T) {
 }
 
 func TestHintsSetID(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -828,8 +854,7 @@ func TestNotEvolvePlanForReadStorageHint(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -872,8 +897,7 @@ func TestNotEvolvePlanForReadStorageHint(t *testing.T) {
 }
 
 func TestBindingWithIsolationRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -911,8 +935,7 @@ func TestReCreateBindAfterEvolvePlan(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -941,8 +964,7 @@ func TestReCreateBindAfterEvolvePlan(t *testing.T) {
 }
 
 func TestInvisibleIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -976,8 +998,7 @@ func TestInvisibleIndex(t *testing.T) {
 }
 
 func TestSPMHitInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1004,8 +1025,7 @@ func TestSPMHitInfo(t *testing.T) {
 }
 
 func TestReCreateBind(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1037,8 +1057,7 @@ func TestReCreateBind(t *testing.T) {
 }
 
 func TestExplainShowBindSQL(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1056,8 +1075,7 @@ func TestExplainShowBindSQL(t *testing.T) {
 }
 
 func TestDMLIndexHintBind(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1079,8 +1097,7 @@ func TestForbidEvolvePlanBaseLinesBeforeGA(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=0")
@@ -1094,8 +1111,7 @@ func TestForbidEvolvePlanBaseLinesBeforeGA(t *testing.T) {
 }
 
 func TestExplainTableStmts(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1107,8 +1123,7 @@ func TestExplainTableStmts(t *testing.T) {
 }
 
 func TestSPMWithoutUseDatabase(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
@@ -1133,8 +1148,7 @@ func TestSPMWithoutUseDatabase(t *testing.T) {
 }
 
 func TestBindingWithoutCharset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1148,8 +1162,7 @@ func TestBindingWithoutCharset(t *testing.T) {
 }
 
 func TestBindingWithMultiParenthesis(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1171,8 +1184,7 @@ func TestGCBindRecord(t *testing.T) {
 		bindinfo.Lease = originLease
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

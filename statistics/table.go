@@ -17,7 +17,6 @@ package statistics
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -144,8 +144,41 @@ func (t *TableMemoryUsage) TotalTrackingMemUsage() int64 {
 // TableCacheItem indicates the unit item stored in statsCache, eg: Column/Index
 type TableCacheItem interface {
 	ItemID() int64
-	DropEvicted()
 	MemoryUsage() CacheItemMemoryUsage
+	IsAllEvicted() bool
+
+	dropCMS()
+	dropTopN()
+	dropHist()
+	isStatsInitialized() bool
+	getEvictedStatus() int
+	statsVer() int64
+	isCMSExist() bool
+}
+
+// DropEvicted drop stats for table column/index
+func DropEvicted(item TableCacheItem) {
+	if !item.isStatsInitialized() {
+		return
+	}
+	switch item.getEvictedStatus() {
+	case allLoaded:
+		if item.isCMSExist() && item.statsVer() < Version2 {
+			item.dropCMS()
+			return
+		}
+		// For stats version2, there is no cms thus we directly drop topn
+		item.dropTopN()
+		return
+	case onlyCmsEvicted:
+		item.dropTopN()
+		return
+	case onlyHistRemained:
+		item.dropHist()
+		return
+	default:
+		return
+	}
 }
 
 // CacheItemMemoryUsage indicates the memory usage of TableCacheItem
@@ -161,6 +194,7 @@ type ColumnMemUsage struct {
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
 	FMSketchMemUsage  int64
+	TopNMemUsage      int64
 	TotalMemUsage     int64
 }
 
@@ -176,7 +210,7 @@ func (c *ColumnMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *ColumnMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
 }
 
 // IndexMemUsage records index memory usage
@@ -184,6 +218,7 @@ type IndexMemUsage struct {
 	IndexID           int64
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
+	TopNMemUsage      int64
 	TotalMemUsage     int64
 }
 
@@ -199,7 +234,7 @@ func (c *IndexMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *IndexMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
 }
 
 // MemoryUsage returns the total memory usage of this Table.
@@ -272,7 +307,7 @@ func (t *Table) String() string {
 	for _, col := range t.Columns {
 		cols = append(cols, col)
 	}
-	sort.Slice(cols, func(i, j int) bool { return cols[i].ID < cols[j].ID })
+	slices.SortFunc(cols, func(i, j *Column) bool { return i.ID < j.ID })
 	for _, col := range cols {
 		strs = append(strs, col.String())
 	}
@@ -280,7 +315,7 @@ func (t *Table) String() string {
 	for _, idx := range t.Indices {
 		idxs = append(idxs, idx)
 	}
-	sort.Slice(idxs, func(i, j int) bool { return idxs[i].ID < idxs[j].ID })
+	slices.SortFunc(idxs, func(i, j *Index) bool { return i.ID < j.ID })
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}
@@ -337,7 +372,7 @@ func (t *Table) GetColRowCount() float64 {
 }
 
 // GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
-// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, ture.
+// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, true.
 func (t *Table) GetStatsHealthy() (int64, bool) {
 	if t == nil || t.Pseudo {
 		return 0, false
@@ -351,42 +386,37 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	return healthy, true
 }
 
-type tableColumnID struct {
-	TableID  int64
-	ColumnID int64
+type neededStatsMap struct {
+	m     sync.RWMutex
+	items map[model.TableItemID]struct{}
 }
 
-type neededColumnMap struct {
-	m    sync.RWMutex
-	cols map[tableColumnID]struct{}
-}
-
-func (n *neededColumnMap) AllCols() []tableColumnID {
+func (n *neededStatsMap) AllItems() []model.TableItemID {
 	n.m.RLock()
-	keys := make([]tableColumnID, 0, len(n.cols))
-	for key := range n.cols {
+	keys := make([]model.TableItemID, 0, len(n.items))
+	for key := range n.items {
 		keys = append(keys, key)
 	}
 	n.m.RUnlock()
 	return keys
 }
 
-func (n *neededColumnMap) insert(col tableColumnID) {
+func (n *neededStatsMap) insert(col model.TableItemID) {
 	n.m.Lock()
-	n.cols[col] = struct{}{}
+	n.items[col] = struct{}{}
 	n.m.Unlock()
 }
 
-func (n *neededColumnMap) Delete(col tableColumnID) {
+func (n *neededStatsMap) Delete(col model.TableItemID) {
 	n.m.Lock()
-	delete(n.cols, col)
+	delete(n.items, col)
 	n.m.Unlock()
 }
 
-func (n *neededColumnMap) Length() int {
+func (n *neededStatsMap) Length() int {
 	n.m.RLock()
 	defer n.m.RUnlock()
-	return len(n.cols)
+	return len(n.items)
 }
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
@@ -568,6 +598,148 @@ func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 		RowCount: rowCount,
 	}
 	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &CERecord)
+}
+
+func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID int64) (isIndex bool, idx int64) {
+	// try to find available stats in column stats
+	if colStats, ok := coll.Columns[uniqueID]; ok && colStats != nil && !colStats.IsInvalid(sctx, coll.Pseudo) {
+		return false, uniqueID
+	}
+	// try to find available stats in single column index stats (except for prefix index)
+	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
+		if len(cols) == 1 && cols[0] == uniqueID {
+			idxStats, ok := coll.Indices[idxStatsIdx]
+			if ok &&
+				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
+				!idxStats.IsInvalid(coll.Pseudo) {
+				return true, idxStatsIdx
+			}
+		}
+	}
+	return false, -1
+}
+
+// GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN and NULL.
+// The data represented by the Histogram would use the defaultSelectivity parameter as the selectivity.
+// Currently, this method can only handle expressions involving a single column.
+func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
+	defaultSelectivity float64,
+	filters []expression.Expression) (ok bool, selectivity float64, err error) {
+	// 1. Make sure the expressions
+	//   (1) are safe to be evaluated here,
+	//   (2) involve only one column,
+	//   (3) and this column is not a "new collation" string column so that we're able to restore values from the stats.
+	for _, filter := range filters {
+		if expression.IsMutableEffectsExpr(filter) {
+			return false, 0, nil
+		}
+	}
+	if expression.ContainCorrelatedColumn(filters) {
+		return false, 0, nil
+	}
+	cols := expression.ExtractColumnsFromExpressions(nil, filters, nil)
+	if len(cols) != 1 {
+		return false, 0, nil
+	}
+	col := cols[0]
+	tp := col.RetType
+	if types.IsString(tp.GetType()) && collate.NewCollationEnabled() && !collate.IsBinCollation(tp.GetCollate()) {
+		return false, 0, nil
+	}
+
+	// 2. Get the available stats, make sure it's a ver2 stats and get the needed data structure from it.
+	isIndex, i := coll.findAvailableStatsForCol(sctx, col.UniqueID)
+	if i < 0 {
+		return false, 0, nil
+	}
+	var statsVer, nullCnt int64
+	var histTotalCnt, totalCnt float64
+	var topnTotalCnt uint64
+	var hist *Histogram
+	var topn *TopN
+	if isIndex {
+		stats := coll.Indices[i]
+		statsVer = stats.StatsVer
+		hist = &stats.Histogram
+		nullCnt = hist.NullCount
+		topn = stats.TopN
+	} else {
+		stats := coll.Columns[i]
+		statsVer = stats.StatsVer
+		hist = &stats.Histogram
+		nullCnt = hist.NullCount
+		topn = stats.TopN
+	}
+	// Only in stats ver2, we can assume that: TopN + Histogram + NULL == All data
+	if statsVer != Version2 {
+		return false, 0, nil
+	}
+	topnTotalCnt = topn.TotalCount()
+	histTotalCnt = hist.notNullCount()
+	totalCnt = float64(topnTotalCnt) + histTotalCnt + float64(nullCnt)
+
+	var topNSel, histSel, nullSel float64
+
+	// Prepare for evaluation.
+
+	// For execution, we use Column.Index instead of Column.UniqueID to locate a column.
+	// We have only one column here, so we set it to 0.
+	originalIndex := col.Index
+	col.Index = 0
+	defer func() {
+		// Restore the original Index to avoid unexpected situation.
+		col.Index = originalIndex
+	}()
+	size := 1
+	if topn != nil {
+		size = len(topn.TopN)
+	}
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, size)
+	selected := make([]bool, 0, size)
+
+	// 3. Calculate the TopN part selectivity.
+	// This stage is considered as the core functionality of this method, errors in this stage would make this entire method fail.
+	var topNSelectedCnt uint64
+	if topn != nil {
+		for _, item := range topn.TopN {
+			_, val, err := codec.DecodeOne(item.Encoded)
+			if err != nil {
+				return false, 0, err
+			}
+			c.AppendDatum(0, &val)
+		}
+		selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
+		if err != nil {
+			return false, 0, err
+		}
+		for i, isTrue := range selected {
+			if isTrue {
+				topNSelectedCnt += topn.TopN[i].Count
+			}
+		}
+	}
+	topNSel = float64(topNSelectedCnt) / totalCnt
+
+	// 4. Calculate the Histogram part selectivity.
+	histSel = defaultSelectivity * histTotalCnt / totalCnt
+
+	// 5. Calculate the NULL part selectivity.
+	// Errors in this staged would be returned, but would not make this entire method fail.
+	c.Reset()
+	c.AppendNull(0)
+	selected = selected[:0]
+	selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
+	if err != nil || len(selected) != 1 {
+		nullSel = defaultSelectivity * float64(nullCnt) / totalCnt
+	} else if selected[0] {
+		nullSel = float64(nullCnt) / totalCnt
+	} else {
+		nullSel = 0
+	}
+
+	// 6. Get the final result.
+	res := topNSel + histSel + nullSel
+	return true, res, err
 }
 
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
@@ -898,8 +1070,9 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			t.Indices[idx.ID] = &Index{
-				Info:      idx,
-				Histogram: *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
+				PhysicalID: fakePhysicalID,
+				Info:       idx,
+				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
 		}
 	}
 	return t

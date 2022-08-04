@@ -18,9 +18,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -37,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -66,8 +71,7 @@ func (c *Issue33699CheckType) toGetSessionVar() string {
 }
 
 func TestIssue33699(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
@@ -302,8 +306,7 @@ func TestAuthSwitchRequest(t *testing.T) {
 }
 
 func TestInitialHandshake(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
@@ -594,8 +597,7 @@ func TestDispatchClientProtocol41(t *testing.T) {
 }
 
 func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -647,8 +649,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 }
 
 func TestGetSessionVarsWaitTimeout(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -681,8 +682,7 @@ func mapBelong(m1, m2 map[string]string) bool {
 }
 
 func TestConnExecutionTimeout(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	// There is no underlying netCon, use failpoint to avoid panic
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"))
@@ -744,8 +744,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 }
 
 func TestShutDown(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	cc := &clientConn{}
 	se, err := session.CreateSession4Test(store)
@@ -760,8 +759,7 @@ func TestShutDown(t *testing.T) {
 }
 
 func TestShutdownOrNotify(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	tc := &TiDBContext{
@@ -790,8 +788,7 @@ type snapshotCache interface {
 }
 
 func TestPrefetchPointKeys(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
@@ -829,19 +826,19 @@ func TestPrefetchPointKeys(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
-	require.Equal(t, 1, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
+	require.Equal(t, 2, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	err = cc.handleQuery(ctx, query)
 	require.NoError(t, err)
 	txn, err = tk.Session().Txn(false)
 	require.NoError(t, err)
 	require.True(t, txn.Valid())
-	require.Equal(t, 5, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
+	require.Equal(t, 6, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
 }
 
 func TestTiFlashFallback(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t,
+	store := testkit.CreateMockStore(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
@@ -852,7 +849,6 @@ func TestTiFlashFallback(t *testing.T) {
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
-	defer clean()
 
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
@@ -971,8 +967,7 @@ func testFallbackWork(t *testing.T, tk *testkit.TestKit, cc *clientConn, sql str
 
 // For issue https://github.com/pingcap/tidb/issues/25069
 func TestShowErrors(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
@@ -997,8 +992,7 @@ func TestShowErrors(t *testing.T) {
 }
 
 func TestHandleAuthPlugin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	cfg := newTestConfig()
 	cfg.Port = 0
@@ -1216,8 +1210,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 }
 
 func TestAuthPlugin2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	cfg := newTestConfig()
 	cfg.Port = 0
@@ -1255,7 +1248,88 @@ func TestAuthPlugin2(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 	require.Equal(t, respAuthSwitch, []byte(mysql.AuthNativePassword))
 	require.NoError(t, err)
+}
 
+func TestAuthTokenPlugin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// create the cert
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	err = util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER auth_session_token")
+	tk.MustExec("CREATE USER another_user")
+	tk.MustExec(fmt.Sprintf("set global %s='%s'", variable.TiDBAuthSigningCert, certPath))
+	tk.MustExec(fmt.Sprintf("set global %s='%s'", variable.TiDBAuthSigningKey, keyPath))
+
+	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil)
+	require.NoError(t, err)
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "auth_session_token",
+	}
+	cc.setCtx(tc)
+	// create a token without TLS
+	tk1 := testkit.NewTestKitWithSession(t, store, tc.Session)
+	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
+	err = tk1.QueryToErr("show session_states")
+	require.ErrorContains(t, err, "secure transport")
+
+	// create a token with TLS
+	cc.tlsConn = &tls.Conn{}
+	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
+	tk1.MustQuery("show session_states")
+
+	// create a token with UnixSocket
+	cc.tlsConn = nil
+	cc.isUnixSocket = true
+	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	rows := tk1.MustQuery("show session_states").Rows()
+	tokenBytes := []byte(rows[0][1].(string))
+
+	// auth with the token
+	resp := handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthTiDBSessionToken,
+		Auth:       tokenBytes,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	require.NoError(t, err)
+
+	// wrong token should fail
+	tokenBytes[0] ^= 0xff
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	require.ErrorContains(t, err, "Access denied")
+	tokenBytes[0] ^= 0xff
+
+	// using the token to auth with another user should fail
+	cc.user = "another_user"
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	require.ErrorContains(t, err, "Access denied")
 }
 
 func TestMaxAllowedPacket(t *testing.T) {

@@ -113,7 +113,7 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 		totalLength += 2 + len(r.Start) + 2 + len(r.End)
 	}
 	if copReq.PagingSize > 0 {
-		totalLength += 1
+		totalLength++
 	}
 
 	key := make([]byte, totalLength)
@@ -185,14 +185,19 @@ func (c *coprCache) CheckRequestAdmission(ranges int) bool {
 }
 
 // CheckResponseAdmission checks whether a response item is worth caching.
-func (c *coprCache) CheckResponseAdmission(dataSize int, processTime time.Duration) bool {
+func (c *coprCache) CheckResponseAdmission(dataSize int, processTime time.Duration, paging bool) bool {
 	if c == nil {
 		return false
 	}
 	if dataSize == 0 || dataSize > c.admissionMaxSize {
 		return false
 	}
-	if processTime < c.admissionMinProcessTime {
+
+	admissionMinProcessTime := c.admissionMinProcessTime
+	if paging {
+		admissionMinProcessTime = admissionMinProcessTime / 3
+	}
+	if processTime < admissionMinProcessTime {
 		return false
 	}
 	return true

@@ -117,6 +117,7 @@ const (
 	preferHashJoin
 	preferMergeJoin
 	preferBCJoin
+	preferRewriteSemiJoin
 	preferHashAgg
 	preferStreamAgg
 )
@@ -1468,7 +1469,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
 // conds is the conditions used to generate the DetachRangeResult for path.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
-func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) {
+func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression.Expression, isIm bool) {
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
@@ -1672,7 +1673,7 @@ type LogicalWindow struct {
 }
 
 // EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
-func (p *LogicalWindow) EqualPartitionBy(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualPartitionBy(_ sessionctx.Context, newWindow *LogicalWindow) bool {
 	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
 		return false
 	}
@@ -1880,6 +1881,7 @@ type LogicalCTE struct {
 	cteAsName      model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
+	MergeHints     MergeHintInfo
 }
 
 // LogicalCTETable is for CTE table

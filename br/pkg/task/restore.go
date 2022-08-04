@@ -16,6 +16,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -56,11 +57,12 @@ const (
 	FlagStreamFullBackupStorage = "full-backup-storage"
 
 	defaultRestoreConcurrency       = 128
-	defaultRestoreStreamConcurrency = 64
+	defaultRestoreStreamConcurrency = 16
 	maxRestoreBatchSizeLimit        = 10240
 	defaultPDConcurrency            = 1
 	defaultBatchFlushInterval       = 16 * time.Second
 	defaultFlagDdlBatchSize         = 128
+	resetSpeedLimitRetryTimes       = 3
 )
 
 const (
@@ -80,6 +82,9 @@ type RestoreCommonConfig struct {
 	// See https://github.com/tikv/tikv/blob/v4.0.8/components/raftstore/src/coprocessor/config.rs#L35-L38
 	MergeSmallRegionSizeBytes uint64 `json:"merge-region-size-bytes" toml:"merge-region-size-bytes"`
 	MergeSmallRegionKeyCount  uint64 `json:"merge-region-key-count" toml:"merge-region-key-count"`
+
+	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
+	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -108,6 +113,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"after how long a restore batch would be auto sended.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"batch size for ddl to create a batch of tabes once.")
+	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
@@ -129,6 +135,12 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.MergeSmallRegionSizeBytes, err = flags.GetUint64(FlagMergeRegionSizeBytes)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if flags.Lookup(flagWithSysTable) != nil {
+		cfg.WithSysTable, err = flags.GetBool(flagWithSysTable)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return errors.Trace(err)
 }
@@ -169,9 +181,9 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 // DefineStreamRestoreFlags defines for the restore log command.
 func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().String(FlagStreamStartTS, "", "the start timestamp which log restore from.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for log restore.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
 }
@@ -264,8 +276,9 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 }
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
-	if cfg.Config.Concurrency == 0 {
-		cfg.Config.Concurrency = 16
+	if cfg.Config.Concurrency == 0 || cfg.Config.Concurrency > defaultRestoreStreamConcurrency {
+		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
+		cfg.Config.Concurrency = defaultRestoreStreamConcurrency
 	}
 }
 
@@ -282,6 +295,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
+	client.SetWithSysTable(cfg.WithSysTable)
 
 	err := client.LoadRestoreStores(ctx)
 	if err != nil {
@@ -345,10 +359,9 @@ func CheckNewCollationEnable(
 					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
 					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
 					"use --check-requirements=false to skip this check")
-		} else {
-			log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
-			return nil
 		}
+		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		return nil
 	}
 
 	se, err := g.CreateSession(storage)
@@ -381,7 +394,6 @@ func IsStreamRestore(cmdName string) bool {
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	if IsStreamRestore(cmdName) {
-		cfg.adjustRestoreConfigForStreamRestore()
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
 
@@ -399,7 +411,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Restore needs domain to do DDL.
 	needDomain := true
 	keepaliveCfg := GetKeepalive(&cfg.Config)
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, needDomain)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -467,6 +479,22 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
+	// to avoid import cycle problem which we won't do it in this pr, then refactor this
+	//
+	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+	if cmdName == FullRestoreCmd && cfg.WithSysTable {
+		client.InitFullClusterRestore(cfg.ExplicitFilter)
+	}
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+		if err = client.CheckTargetClusterFresh(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	sp := utils.BRServiceSafePoint{
@@ -613,6 +641,25 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// when user skip checksum, just collect tables, and drop them.
 		finish = dropToBlackhole(ctx, afterRestoreStream, errCh, updateCh)
 	}
+
+	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
+	defer func() {
+		var resetErr error
+		// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+		for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
+			resetErr = client.ResetSpeedLimit(ctx)
+			if resetErr != nil {
+				log.Warn("failed to reset speed limit, retry it",
+					zap.Int("retry time", retry), logutil.ShortError(resetErr))
+				time.Sleep(time.Duration(retry+3) * time.Second)
+				continue
+			}
+			break
+		}
+		if resetErr != nil {
+			log.Error("failed to reset speed limit", zap.Error(resetErr))
+		}
+	}()
 
 	select {
 	case err = <-errCh:
