@@ -300,9 +300,9 @@ func TestBeginSleepABA(t *testing.T) {
 	require.True(t, cacheUsed)
 
 	// Begin, read from cache.
-	tk1.MustExec("begin")
 	cacheUsed = false
 	for i := 0; i < 100; i++ {
+		tk1.MustExec("begin")
 		tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
 		if lastReadFromCache(tk1) {
 			cacheUsed = true
