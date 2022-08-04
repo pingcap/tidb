@@ -1406,7 +1406,14 @@ loopWrite:
 						resp = &sst.IngestResponse{
 							Error: &errorpb.Error{
 								Message:           "ReadIndexNotReady- mocked",
-								ReadIndexNotReady: &errorpb.ReadIndexNotReady{Reason: "--not ready--"},
+								ReadIndexNotReady: &errorpb.ReadIndexNotReady{},
+							},
+						}
+					case "dataisnotready":
+						resp = &sst.IngestResponse{
+							Error: &errorpb.Error{
+								Message:        "DataIsNotReady- mocked",
+								DataIsNotReady: &errorpb.DataIsNotReady{},
 							},
 						}
 					}
