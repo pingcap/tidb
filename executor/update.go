@@ -357,7 +357,9 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false)
+			val, err = table.CastValueWithErrorConvert(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false, func(err error) error {
+				return e.handleErr(assign.ColName, rowIdx, err)
+			})
 			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
@@ -384,7 +386,9 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false)
+			val, err = table.CastValueWithErrorConvert(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false, func(err error) error {
+				return e.handleErr(assign.ColName, rowIdx, err)
+			})
 			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
@@ -413,7 +417,9 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false)
+			val, err = table.CastValueWithErrorConvert(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false, func(err error) error {
+				return e.handleErr(assign.ColName, rowIdx, err)
+			})
 			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
