@@ -329,11 +329,6 @@ ifeq ("$(GOOS)", "freebsd")
         GOBUILD  = CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(LDFLAGS)'
 endif
 
-br_coverage:
-	tools/bin/gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go|.*__failpoint_binding__.go" > "$(TEST_DIR)/all_cov.out"
-	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
-	grep -F '<option' "$(TEST_DIR)/all_cov.html"
-
 # TODO: adjust bins when br integraion tests reformat.
 br_bins:
 	@which bin/tidb-server
