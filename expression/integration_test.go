@@ -493,8 +493,8 @@ func TestConvertToBit(t *testing.T) {
 	tk.MustExec("create table t(a tinyint, b bit(63));")
 	tk.MustExec("insert ignore  into t values(599999999, -1);")
 	tk.MustQuery("show warnings;").Check(testkit.Rows(
-		"Warning 1690 constant 599999999 overflows tinyint",
-		"Warning 1406 Data Too Long, field len 63"))
+		"Warning 1264 Out of range value for column 'a' at row 1",
+		"Warning 1406 Data too long for column 'b' at row 1"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("127 \u007f\xff\xff\xff\xff\xff\xff\xff"))
 
 	// For issue 24900
@@ -502,8 +502,8 @@ func TestConvertToBit(t *testing.T) {
 	tk.MustExec("create table t(b bit(16));")
 	tk.MustExec("insert ignore into t values(0x3635313836),(0x333830);")
 	tk.MustQuery("show warnings;").Check(testkit.Rows(
-		"Warning 1406 Data Too Long, field len 16",
-		"Warning 1406 Data Too Long, field len 16"))
+		"Warning 1406 Data too long for column 'b' at row 1",
+		"Warning 1406 Data too long for column 'b' at row 2"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("\xff\xff", "\xff\xff"))
 }
 
@@ -5255,7 +5255,7 @@ func TestIssue19892(t *testing.T) {
 
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustExec("INSERT INTO dd(c) values('0000-00-00 20:00:00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1"))
 			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -5269,7 +5269,7 @@ func TestIssue19892(t *testing.T) {
 		{
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustExec("INSERT INTO dd(b) values('0000-0-00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '0000-0-00'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '0000-0-00' for column 'b' at row 1"))
 			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -5290,7 +5290,7 @@ func TestIssue19892(t *testing.T) {
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustGetErrMsg("INSERT INTO dd(c) VALUES ('0000-00-00 20:00:00')", "[table:1292]Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1")
 			tk.MustExec("INSERT IGNORE INTO dd(c) VALUES ('0000-00-00 20:00:00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1"))
 			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -5341,7 +5341,7 @@ func TestIssue19892(t *testing.T) {
 		{
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustExec("INSERT INTO dd(a) values('2000-01-00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-01-00'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-01-00' for column 'a' at row 1"))
 			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -5369,7 +5369,7 @@ func TestIssue19892(t *testing.T) {
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustGetErrMsg("INSERT INTO dd(b) VALUES ('2000-01-00')", "[table:1292]Incorrect datetime value: '2000-01-00' for column 'b' at row 1")
 			tk.MustExec("INSERT IGNORE INTO dd(b) VALUES ('2000-00-01')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01' for column 'b' at row 1"))
 			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -5422,7 +5422,7 @@ func TestIssue19892(t *testing.T) {
 		tk.MustExec("TRUNCATE TABLE dd")
 		tk.MustGetErrMsg("INSERT INTO dd(b) VALUES ('2000-01-00')", "[table:1292]Incorrect datetime value: '2000-01-00' for column 'b' at row 1")
 		tk.MustExec("INSERT IGNORE INTO dd(b) VALUES ('2000-00-01')")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01'"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01' for column 'b' at row 1"))
 		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 		tk.MustExec("TRUNCATE TABLE dd")
