@@ -163,7 +163,8 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tbInfo := &model.TableInfo{}
 	fkIdx := 0
-	if err := job.DecodeArgs(tbInfo, &fkIdx); err != nil {
+	fkChecks := false
+	if err := job.DecodeArgs(tbInfo, &fkIdx, &fkChecks); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -180,6 +181,9 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			if referTableInfo == nil || referTableInfo.Name.L != fkInfo.RefTable.L {
 				_, referTableInfo, err = fkc.getParentTableFromStorage(d, fkInfo, t)
 				if err != nil {
+					if !fkChecks && infoschema.ErrTableNotExists.Equal(err) {
+						continue
+					}
 					job.State = model.JobStateCancelled
 					return ver, err
 				}
@@ -202,7 +206,7 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 		job.SchemaState = model.StateDeleteOnly
 		fkIdx := 0
-		job.Args = []interface{}{tbInfo, fkIdx}
+		job.Args = []interface{}{tbInfo, fkIdx, fkChecks}
 	case model.StateDeleteOnly:
 		// update parent table info.
 		var referTableInfo *model.TableInfo
@@ -212,6 +216,9 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			if referTableInfo == nil {
 				referDBInfo, referTableInfo, err = fkc.getParentTableFromStorage(d, fkInfo, t)
 				if err != nil {
+					if !fkChecks && infoschema.ErrTableNotExists.Equal(err) {
+						continue
+					}
 					return ver, err
 				}
 			}
@@ -225,14 +232,16 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 				Cols:        fkInfo.RefCols,
 			})
 		}
-		originalSchemaID, originalTableID, originalJobType := job.SchemaID, job.TableID, job.Type
-		job.SchemaID, job.TableID, job.Type = referDBInfo.ID, referTableInfo.ID, model.ActionAddForeignKey
-		ver, err = updateVersionAndTableInfo(d, t, job, referTableInfo, true)
-		job.SchemaID, job.TableID, job.Type = originalSchemaID, originalTableID, originalJobType
-		if err != nil {
-			return ver, errors.Trace(err)
+		if referTableInfo != nil {
+			originalSchemaID, originalTableID, originalJobType := job.SchemaID, job.TableID, job.Type
+			job.SchemaID, job.TableID, job.Type = referDBInfo.ID, referTableInfo.ID, model.ActionAddForeignKey
+			ver, err = updateVersionAndTableInfo(d, t, job, referTableInfo, true)
+			job.SchemaID, job.TableID, job.Type = originalSchemaID, originalTableID, originalJobType
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
-		job.Args = []interface{}{tbInfo, fkIdx}
+		job.Args = []interface{}{tbInfo, fkIdx, fkChecks}
 		if fkIdx == len(tbInfo.ForeignKeys) {
 			job.SchemaState = model.StateWriteOnly
 		}

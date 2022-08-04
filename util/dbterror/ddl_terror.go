@@ -392,7 +392,7 @@ var (
 	// ErrColumnInChange indicates there is modification on the column in parallel.
 	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)
 
-	ErrNoReferencedRow2  = ClassDDL.NewStd(mysql.ErrNoReferencedRow2)
-	ErrTruncateIllegalFk = ClassDDL.NewStd(mysql.ErrTruncateIllegalFk)
+	ErrNoReferencedRow2           = ClassDDL.NewStd(mysql.ErrNoReferencedRow2)
+	ErrTruncateIllegalFk          = ClassDDL.NewStd(mysql.ErrTruncateIllegalFk)
 	ErrForeignKeyCannotDropParent = ClassDDL.NewStd(mysql.ErrForeignKeyCannotDropParent)
 )

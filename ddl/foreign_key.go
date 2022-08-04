@@ -35,7 +35,8 @@ func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	}
 
 	var fkInfo model.FKInfo
-	err = job.DecodeArgs(&fkInfo)
+	var fkChecks bool
+	err = job.DecodeArgs(&fkInfo, &fkChecks)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -49,22 +50,29 @@ func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		// none -> write-only
 		_, referTableInfo, err := fkc.getParentTableFromStorage(d, &fkInfo, t)
 		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
+			if fkChecks || !infoschema.ErrTableNotExists.Equal(err) {
+				job.State = model.JobStateCancelled
+				return ver, err
+			}
 		}
-		err = checkTableForeignKey(referTableInfo, tblInfo, &fkInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
+		if referTableInfo != nil {
+			err = checkTableForeignKey(referTableInfo, tblInfo, &fkInfo)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, err
+			}
+			fkInfo.State = model.StateWriteOnly
+			job.SchemaState = model.StateWriteOnly
+		} else {
+			fkInfo.State = model.StateWriteReorganization
+			job.SchemaState = model.StateWriteReorganization
 		}
 		fkInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
-		fkInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	case model.StateWriteOnly:
 		// write-only -> write-reorg

@@ -527,6 +527,11 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			"create table t1 (id int key, a varchar(10), index (a(10)));",
 			"create table t2 (a int, b varchar(20), foreign key fk_b(b) references t1(a));",
 		},
+		{
+			"set @@foreign_key_checks=0;",
+			"create table t2 (a int, b int, foreign key fk_b(b) references t_unknown(b));",
+			"set @@foreign_key_checks=1;",
+		},
 	}
 	for _, ca := range passCases {
 		tk.MustExec("drop table if exists t2")
@@ -717,6 +722,12 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 			"create table t2 (id int, a int, b int)",
 			"insert into t2 values (1, 1, null), (2, null, 1), (3, null, null)",
 			"alter table t2 add foreign key fk_b(a, b) references t1(a, b)",
+		},
+		{
+			"set @@foreign_key_checks=0;",
+			"create table t2 (a int, b varchar(20));",
+			"alter table t2 add foreign key fk_b(b) references t_unknown(a)",
+			"set @@foreign_key_checks=1;",
 		},
 	}
 	for _, ca := range passCases {

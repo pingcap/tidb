@@ -2298,7 +2298,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return err
 	}
-	if err = checkTableForeignKeysValid(is, schema.Name.L, tbInfo); err != nil {
+	if err = checkTableForeignKeysValid(ctx, is, schema.Name.L, tbInfo); err != nil {
 		return err
 	}
 
@@ -2398,6 +2398,7 @@ func (d *ddl) createTableWithInfoJob(
 		if len(tbInfo.ForeignKeys) > 0 {
 			fkIdx := 0
 			args = append(args, fkIdx)
+			args = append(args, ctx.GetSessionVars().ForeignKeyChecks)
 		}
 		actionType = model.ActionCreateTable
 	}
@@ -6072,9 +6073,10 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 	return fkInfo, nil
 }
 
-func checkTableForeignKeysValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
+func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
+	fkCheck := sctx.GetSessionVars().ForeignKeyChecks
 	for _, fk := range tbInfo.ForeignKeys {
-		err := checkTableForeignKeyValid(is, schema, tbInfo, fk)
+		err := checkTableForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
 		if err != nil {
 			return err
 		}
@@ -6082,13 +6084,16 @@ func checkTableForeignKeysValid(is infoschema.InfoSchema, schema string, tbInfo 
 	return nil
 }
 
-func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo) error {
+func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	var referTblInfo *model.TableInfo
 	if fk.RefSchema.L == schema && fk.RefTable.L == tbInfo.Name.L {
 		referTblInfo = tbInfo
 	} else {
 		referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
 		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) && !fkCheck {
+				return nil
+			}
 			return err
 		}
 		referTblInfo = referTable.Meta()
@@ -6153,7 +6158,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkTableForeignKeyValid(is, schema.Name.L, t.Meta(), fkInfo); err != nil {
+	if err = checkTableForeignKeyValid(is, schema.Name.L, t.Meta(), fkInfo, ctx.GetSessionVars().ForeignKeyChecks); err != nil {
 		return err
 	}
 	if model.FindIndexByColumns(t.Meta(), fkInfo.Cols...) == nil {
@@ -6182,7 +6187,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{fkInfo},
+		Args:       []interface{}{fkInfo, ctx.GetSessionVars().ForeignKeyChecks},
 	}
 
 	err = d.DoDDLJob(ctx, job)
