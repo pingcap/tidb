@@ -196,9 +196,17 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	return adjustColumns(ret, e.columns, e.table), nil
 }
 
-func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, error) {
+func getRowCountTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
+	var rows []chunk.Row
+	var err error
+	if len(tableIDs) == 0 {
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
+	} else {
+		inTblIDs := buildInTableIDsString(tableIDs)
+		sql := "select table_id, count from mysql.stats_meta where " + inTblIDs
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -212,14 +220,36 @@ func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int6
 	return rowCountMap, nil
 }
 
+func buildInTableIDsString(tableIDs []int64) string {
+	var whereBuilder strings.Builder
+	whereBuilder.WriteString("table_id in (")
+	for i, id := range tableIDs {
+		whereBuilder.WriteString(strconv.FormatInt(id, 10))
+		if i != len(tableIDs)-1 {
+			whereBuilder.WriteString(",")
+		}
+	}
+	whereBuilder.WriteString(")")
+	return whereBuilder.String()
+}
+
 type tableHistID struct {
 	tableID int64
 	histID  int64
 }
 
-func getColLengthAllTables(ctx context.Context, sctx sessionctx.Context) (map[tableHistID]uint64, error) {
+func getColLengthTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+	var rows []chunk.Row
+	var err error
+	if len(tableIDs) == 0 {
+		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0"
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+	} else {
+		inTblIDs := buildInTableIDsString(tableIDs)
+		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0 and " + inTblIDs
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -275,6 +305,7 @@ type statsCache struct {
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
+	dirtyIDs   []int64
 }
 
 var tableStatsCache = &statsCache{}
@@ -282,26 +313,42 @@ var tableStatsCache = &statsCache{}
 // TableStatsCacheExpiry is the expiry time for table stats cache.
 var TableStatsCacheExpiry = 3 * time.Second
 
-func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
-	c.mu.RLock()
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
-		tableRows, colLength := c.tableRows, c.colLength
-		c.mu.RUnlock()
-		return tableRows, colLength, nil
-	}
-	c.mu.RUnlock()
+func invalidInfoSchemaStatCache(tblID int64) {
+	tableStatsCache.mu.Lock()
+	defer tableStatsCache.mu.Unlock()
+	tableStatsCache.dirtyIDs = append(tableStatsCache.dirtyIDs, tblID)
+}
 
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
-		return c.tableRows, c.colLength, nil
+		if len(c.dirtyIDs) > 0 {
+			tableRows, err := getRowCountTables(ctx, sctx, c.dirtyIDs...)
+			if err != nil {
+				return nil, nil, err
+			}
+			for id, tr := range tableRows {
+				c.tableRows[id] = tr
+			}
+			colLength, err := getColLengthTables(ctx, sctx, c.dirtyIDs...)
+			if err != nil {
+				return nil, nil, err
+			}
+			for id, cl := range colLength {
+				c.colLength[id] = cl
+			}
+			c.dirtyIDs = nil
+		}
+		tableRows, colLength := c.tableRows, c.colLength
+		return tableRows, colLength, nil
 	}
-	tableRows, err := getRowCountAllTable(ctx, sctx)
+	tableRows, err := getRowCountTables(ctx, sctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	colLength, err := getColLengthAllTables(ctx, sctx)
+	colLength, err := getColLengthTables(ctx, sctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -309,6 +356,7 @@ func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int6
 	c.tableRows = tableRows
 	c.colLength = colLength
 	c.modifyTime = time.Now()
+	c.dirtyIDs = nil
 	return tableRows, colLength, nil
 }
 

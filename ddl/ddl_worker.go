@@ -1283,7 +1283,6 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
-		d.schemaSyncer.NotifyCleanExpiredPaths()
 		// Wait until timeout.
 		<-ctx.Done()
 		return
