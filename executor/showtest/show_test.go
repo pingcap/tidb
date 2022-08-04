@@ -465,6 +465,13 @@ func TestShowCreateTable(t *testing.T) {
 			"  `a` set('a','b') CHARACTER SET binary COLLATE binary DEFAULT NULL,\n"+
 			"  `b` enum('a','b') CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a bit default (rand()))`)
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` bit(1) DEFAULT rand()\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {

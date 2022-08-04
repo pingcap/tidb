@@ -1013,13 +1013,15 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 						defaultValStr = timeValue.GetMysqlTime().String()
 					}
 
-					if col.GetType() == mysql.TypeBit {
-						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
-						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
-					} else if col.DefaultIsExpr {
+					if col.DefaultIsExpr {
 						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
 					} else {
-						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
+						if col.GetType() == mysql.TypeBit {
+							defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
+							fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
+						} else {
+							fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
+						}
 					}
 				}
 			}
