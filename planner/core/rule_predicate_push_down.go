@@ -897,10 +897,7 @@ func (adder *exprPrefixAdder) addExprPrefix4CNFCond(conds []expression.Expressio
 // AddExprPrefix4DNFCond
 // add the prefix expression for DNF condition, e.g. `WHERE a = 1 OR a = 10`, ......
 // The condition returned is `WHERE (tidb_shard(a) = 214 AND a = 1) OR (tidb_shard(a) = 142 AND a = 10)`
-// @param[in] condition    the original condtion of the datasoure. e.g. `WHERE a = 1 OR a = 10`.
-//
-//	condtion is `a = 1 OR a = 10`
-//
+// @param[in] condition    the original condtion of the datasoure. e.g. `WHERE a = 1 OR a = 10`. condtion is `a = 1 OR a = 10`
 // @return 	 -          the new condition after adding expression prefix. It's still a LogicOr expression.
 func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.ScalarFunction) ([]expression.Expression, error) {
 	var err error

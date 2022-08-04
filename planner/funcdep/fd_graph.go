@@ -937,9 +937,9 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 // MaxOneRow will regard every column in the fdSet as a constant. Since constant is stronger that strict FD, it will
 // take over all existed strict/lax FD, only keeping the equivalence. Because equivalence is stronger than constant.
 //
-//   f:      {a}--> {b,c}, {abc} == {abc}
-//   cols:   {a,c}
-//   result: {} --> {a,c}, {a,c} == {a,c}
+//	f:      {a}--> {b,c}, {abc} == {abc}
+//	cols:   {a,c}
+//	result: {} --> {a,c}, {a,c} == {a,c}
 func (s *FDSet) MaxOneRow(cols FastIntSet) {
 	cnt := 0
 	for i := 0; i < len(s.fdEdges); i++ {
