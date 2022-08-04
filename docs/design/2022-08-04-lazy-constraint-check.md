@@ -1,6 +1,6 @@
 # Proposal: Lazy Constraint Check in Pessimistic Transactions
 
-* Authors: [sticnarf](https://github.com/sticnarf), [ekexium](https://github.com/sticnarf)
+* Authors: [sticnarf](https://github.com/sticnarf), [ekexium](https://github.com/ekexium)
 * Tracking issue: [#36579](https://github.com/pingcap/tidb/issues/36579)
 
 ## Abstract
@@ -13,14 +13,14 @@ Lazy uniqueness constraint check is a feature enabled by default for optimistic 
 
 ```sql
 CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY);
-INSERT INTO t1 VALUES (1, 2);
+INSERT INTO t1 VALUES (1), (2);
 BEGIN OPTIMISTIC;
 INSERT INTO t1 VALUES (1); -- MySQL returns an error here; TiDB returns success.
 INSERT INTO t1 VALUES (2);
 COMMIT; -- ERROR 1062 (23000): Duplicate entry '1' for key 'PRIMARY'
 ```
 
-However, the feature is not available for pessimistic transactions now. We developed the pessimistic transaction mode to make the behavior identical to MySQL as much as possible. So, the constraint checks are always done at the time of executing the DML and pessimistic locks for the unique keys are always written meanwhile.
+However, the feature is not available for pessimistic transactions now. We developed the pessimistic transaction mode to make the behavior close to MySQL as much as possible. So, the constraint checks are always done at the time of executing the DML and pessimistic locks for the unique keys are always written meanwhile.
 
 Obviously, it is not free. Say we have a transaction that consists of N `INSERT` statements. By deferring the constraint checks, no RPC interactions between TiDB and TiKV are needed before the transaction commits. While in a pessimistic transaction, the RPC number during the 2PC period does not change, but there are extra N `AcquirePessimisticLock` RPCs before `COMMIT`.
 
@@ -34,7 +34,7 @@ This feature makes it possible to skip acquiring pessimistic locks for the keys 
 
 ```sql
 CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY);
-INSERT INTO t1 VALUES (1, 2);
+INSERT INTO t1 VALUES (1), (2);
 BEGIN PESSIMISTIC;
 SELECT * FROM t1 WHERE id = 1 FOR UPDATE; -- SELECT FOR UPDATE locks key as usual.
 INSERT INTO t1 VALUES (2); -- Skip acquiring the lock and return success.
@@ -75,7 +75,7 @@ In a special case, the success rate may drop due to the write conflict check:
 /* s1 */ COMMIT;
 ```
 
-If we check constraints while acquiring the lock, `s1` will succeed because the row with `id=1` has been deleted when acquiring the lock. However, if we check constraints lazily, to ensure snapshot isolation, we have to do write a conflict check like in optimistic transactions in additional to constraint checks. In the case above, write conflict check will fail because the commit TS of `s2` is bigger than the start TS of `s1`.
+If we check constraints while acquiring the lock, `s1` will succeed because the row with `id=1` has been deleted when acquiring the lock. However, if we check constraints lazily, to ensure snapshot isolation, we have to do a write conflict check like in optimistic transactions in additional to constraint checks. In the case above, write conflict check will fail because the commit TS of `s2` is bigger than the start TS of `s1`.
 
 #### List of typical use cases
 
@@ -86,7 +86,7 @@ Note that the feature is only needed if part of your transaction still needs to 
 
 ### Protocol
 
-Although we skip locking some keys and doing constraint checks before `COMMIT`, it is still a pessimistic transactions. Except the keys that need constraint checks, we acquire pessimistic locks for other keys as usual.
+Although we skip locking some keys and doing constraint checks before `COMMIT`, it is still a pessimistic transaction. Except for the keys that need constraint checks, we acquire pessimistic locks for other keys as usual.
 
 It is completely a new kind of behavior to do constraint checks during prewrite for keys that don't get locked ahead of time. We need to change the prewrite protocol to describe it.
 
