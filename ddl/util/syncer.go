@@ -27,10 +27,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/parser/terror"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -88,17 +86,8 @@ type SchemaSyncer interface {
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
 	// It returns until all servers' versions are equal to the latest version or the ctx is done.
 	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
-	// NotifyCleanExpiredPaths informs to clean up expired paths.
-	// The returned value is used for testing.
-	NotifyCleanExpiredPaths() bool
-	// StartCleanWork starts to clean up tasks.
-	StartCleanWork()
 	// Close ends SchemaSyncer.
 	Close()
-}
-
-type ownerChecker interface {
-	IsOwner() bool
 }
 
 type schemaVersionSyncer struct {
@@ -109,25 +98,13 @@ type schemaVersionSyncer struct {
 		sync.RWMutex
 		globalVerCh clientv3.WatchChan
 	}
-
-	// for clean worker
-	ownerChecker              ownerChecker
-	notifyCleanExpiredPathsCh chan struct{}
-	ctx                       context.Context
-	cancel                    context.CancelFunc
-	cleanGroup                sync.WaitGroup
 }
 
 // NewSchemaSyncer creates a new SchemaSyncer.
-func NewSchemaSyncer(ctx context.Context, etcdCli *clientv3.Client, id string, oc ownerChecker) SchemaSyncer {
-	childCtx, cancelFunc := context.WithCancel(ctx)
+func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 	return &schemaVersionSyncer{
-		etcdCli:                   etcdCli,
-		selfSchemaVerPath:         fmt.Sprintf("%s/%s", DDLAllSchemaVersions, id),
-		ownerChecker:              oc,
-		notifyCleanExpiredPathsCh: make(chan struct{}, 1),
-		ctx:                       childCtx,
-		cancel:                    cancelFunc,
+		etcdCli:           etcdCli,
+		selfSchemaVerPath: fmt.Sprintf("%s/%s", DDLAllSchemaVersions, id),
 	}
 }
 
@@ -413,115 +390,9 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 	}
 }
 
-const (
-	opDefaultRetryCnt = 10
-	failedGetTTLLimit = 20
-	opDefaultTimeout  = 3 * time.Second
-	opRetryInterval   = 500 * time.Millisecond
-)
-
-// NeededCleanTTL is exported for testing.
-var NeededCleanTTL = int64(-60)
-
-func (s *schemaVersionSyncer) StartCleanWork() {
-	defer tidbutil.Recover(metrics.LabelDDLSyncer, "StartCleanWorker", nil, false)
-	s.cleanGroup.Add(1)
-	defer s.cleanGroup.Done()
-
-	for {
-		select {
-		case <-s.notifyCleanExpiredPathsCh:
-			if !s.ownerChecker.IsOwner() {
-				continue
-			}
-
-			for i := 0; i < opDefaultRetryCnt; i++ {
-				childCtx, cancelFunc := context.WithTimeout(s.ctx, opDefaultTimeout)
-				resp, err := s.etcdCli.Leases(childCtx)
-				cancelFunc()
-				if err != nil {
-					logutil.BgLogger().Info("[ddl] syncer clean expired paths, failed to get leases.", zap.Error(err))
-					continue
-				}
-
-				if isFinished := s.doCleanExpirePaths(resp.Leases); isFinished {
-					break
-				}
-				time.Sleep(opRetryInterval)
-			}
-		case <-s.ctx.Done():
-			return
-		}
-	}
-}
-
 func (s *schemaVersionSyncer) Close() {
-	s.cancel()
-	s.cleanGroup.Wait()
-
 	err := s.removeSelfVersionPath()
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] remove self version path failed", zap.Error(err))
 	}
-}
-
-func (s *schemaVersionSyncer) NotifyCleanExpiredPaths() bool {
-	var isNotified bool
-	var err error
-	startTime := time.Now()
-	select {
-	case s.notifyCleanExpiredPathsCh <- struct{}{}:
-		isNotified = true
-	default:
-		err = errors.New("channel is full, failed to notify clean expired paths")
-	}
-	metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerNotifyCleanExpirePaths, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return isNotified
-}
-
-func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) bool {
-	failedGetIDs := 0
-	failedRevokeIDs := 0
-	startTime := time.Now()
-
-	defer func() {
-		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerCleanExpirePaths, metrics.RetLabel(nil)).Observe(time.Since(startTime).Seconds())
-	}()
-	// TODO: Now LeaseStatus only has lease ID.
-	for _, lease := range leases {
-		// The DDL owner key uses '%x', so here print it too.
-		leaseID := fmt.Sprintf("%x, %d", lease.ID, lease.ID)
-		childCtx, cancelFunc := context.WithTimeout(s.ctx, opDefaultTimeout)
-		ttlResp, err := s.etcdCli.TimeToLive(childCtx, lease.ID)
-		cancelFunc()
-		if err != nil {
-			logutil.BgLogger().Info("[ddl] syncer clean expired paths, failed to get one TTL.", zap.String("leaseID", leaseID), zap.Error(err))
-			failedGetIDs++
-			continue
-		}
-
-		if failedGetIDs > failedGetTTLLimit {
-			return false
-		}
-		if ttlResp.TTL >= NeededCleanTTL {
-			continue
-		}
-
-		st := time.Now()
-		childCtx, cancelFunc = context.WithTimeout(s.ctx, opDefaultTimeout)
-		_, err = s.etcdCli.Revoke(childCtx, lease.ID)
-		cancelFunc()
-		if err != nil && terror.ErrorEqual(err, rpctypes.ErrLeaseNotFound) {
-			logutil.BgLogger().Warn("[ddl] syncer clean expired paths, failed to revoke lease.", zap.String("leaseID", leaseID),
-				zap.Int64("TTL", ttlResp.TTL), zap.Error(err))
-			failedRevokeIDs++
-		}
-		logutil.BgLogger().Warn("[ddl] syncer clean expired paths,", zap.String("leaseID", leaseID), zap.Int64("TTL", ttlResp.TTL))
-		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerCleanOneExpirePath, metrics.RetLabel(err)).Observe(time.Since(st).Seconds())
-	}
-
-	if failedGetIDs == 0 && failedRevokeIDs == 0 {
-		return true
-	}
-	return false
 }

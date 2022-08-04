@@ -103,7 +103,9 @@ func isSingleRetryableError(err error) bool {
 	case *errors.Error:
 		switch {
 		case berrors.Is(nerr, ErrKVEpochNotMatch), berrors.Is(nerr, ErrKVNotLeader),
-			berrors.Is(nerr, ErrKVRegionNotFound), berrors.Is(nerr, ErrKVServerIsBusy):
+			berrors.Is(nerr, ErrKVRegionNotFound), berrors.Is(nerr, ErrKVServerIsBusy),
+			berrors.Is(nerr, ErrKVReadIndexNotReady), berrors.Is(nerr, ErrKVIngestFailed),
+			berrors.Is(nerr, ErrKVRaftProposalDropped):
 			// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
 			// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
 			// so we have to transform it into a defined code
