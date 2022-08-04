@@ -1600,7 +1600,7 @@ func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
 // So we ban the TiFlash engine in not read only stmt.
 func (s *SessionVars) GetAvailableIsolationReadEngines4Plan() map[kv.StoreType]struct{} {
 	availableReadEngines := s.GetIsolationReadEngines()
-	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && (s.StmtCtx.IsReadonlyStmt || s.StmtCtx.InTiFlashFallBack2TiKV) {
+	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && (!s.StmtCtx.IsReadonlyStmt || s.StmtCtx.InTiFlashFallBack2TiKV) {
 		delete(availableReadEngines, kv.TiFlash)
 	}
 	return availableReadEngines

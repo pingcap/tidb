@@ -890,8 +890,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
 	tk.MustExec("set @@tidb_allow_mpp=OFF")
 	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(a) from t"))
-	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+	require.Error(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
 
 	// test COM_STMT_FETCH (cursor mode)
 	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}))
@@ -961,8 +960,7 @@ func testFallbackWork(t *testing.T, tk *testkit.TestKit, cc *clientConn, sql str
 	require.Error(t, tk.QueryToErr(sql))
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
 
-	require.NoError(t, cc.handleQuery(ctx, sql))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+	require.Error(t, cc.handleQuery(ctx, sql))
 }
 
 // For issue https://github.com/pingcap/tidb/issues/25069
