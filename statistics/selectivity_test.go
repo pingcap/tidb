@@ -47,8 +47,7 @@ import (
 )
 
 func TestCollationColumnEstimate(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -65,7 +64,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 		output [][]string
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
@@ -75,8 +74,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 }
 
 func BenchmarkSelectivity(b *testing.B) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(b)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(b)
 	testKit := testkit.NewTestKit(b, store)
 	statsTbl, err := prepareSelectivity(testKit, dom)
 	require.NoError(b, err)
@@ -113,8 +111,7 @@ func BenchmarkSelectivity(b *testing.B) {
 }
 
 func TestOutOfRangeEstimation(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -147,7 +144,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		Count float64
 	}
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
 	for i, ran := range input {
 		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, false)
@@ -163,8 +160,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 }
 
 func TestEstimationForUnknownValues(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -241,8 +237,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -274,8 +269,7 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 }
 
 func TestPrimaryKeySelectivity(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -283,7 +277,7 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	var input, output [][]string
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
 			if j != len(ts)-1 {
@@ -302,8 +296,7 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 }
 
 func TestStatsVer2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("set tidb_analyze_version=2")
@@ -360,7 +353,7 @@ func TestStatsVer2(t *testing.T) {
 		output [][]string
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -370,8 +363,7 @@ func TestStatsVer2(t *testing.T) {
 }
 
 func TestTopNOutOfHist(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("set tidb_analyze_version=2")
@@ -398,7 +390,7 @@ func TestTopNOutOfHist(t *testing.T) {
 		output [][]string
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -408,8 +400,7 @@ func TestTopNOutOfHist(t *testing.T) {
 }
 
 func TestColumnIndexNullEstimation(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -423,7 +414,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 		output [][]string
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < 5; i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -442,8 +433,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 }
 
 func TestUniqCompEqualEst(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -458,7 +448,7 @@ func TestUniqCompEqualEst(t *testing.T) {
 		output [][]string
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < 1; i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -468,8 +458,7 @@ func TestUniqCompEqualEst(t *testing.T) {
 }
 
 func TestSelectivity(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	statsTbl, err := prepareSelectivity(testKit, dom)
 	require.NoError(t, err)
@@ -562,8 +551,7 @@ func TestSelectivity(t *testing.T) {
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
 // consists several columns, and the first column has small NDV.
 func TestDiscreteDistribution(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -581,7 +569,7 @@ func TestDiscreteDistribution(t *testing.T) {
 	)
 
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -592,8 +580,7 @@ func TestDiscreteDistribution(t *testing.T) {
 }
 
 func TestSelectCombinedLowBound(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -606,7 +593,7 @@ func TestSelectCombinedLowBound(t *testing.T) {
 	)
 
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -618,8 +605,7 @@ func TestSelectCombinedLowBound(t *testing.T) {
 
 // TestDNFCondSelectivity tests selectivity calculation with DNF conditions covered by using independence assumption.
 func TestDNFCondSelectivity(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 
 	testKit.MustExec("use test")
@@ -645,7 +631,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 		}
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		sctx := testKit.Session().(sessionctx.Context)
 		stmts, err := session.Parse(sctx, tt)
@@ -687,8 +673,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 }
 
 func TestIndexEstimationCrossValidate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -716,8 +701,7 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 }
 
 func TestRangeStepOverflow(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -734,8 +718,7 @@ func TestRangeStepOverflow(t *testing.T) {
 }
 
 func TestSmallRangeEstimation(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -762,7 +745,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 		Count float64
 	}
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ran := range input {
 		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.Count, false)
 		require.NoError(t, err)
@@ -897,8 +880,7 @@ func TestSelectivityGreedyAlgo(t *testing.T) {
 }
 
 func TestDefaultSelectivityForStrMatch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -913,7 +895,7 @@ func TestDefaultSelectivityForStrMatch(t *testing.T) {
 	)
 
 	statsSuiteData := statistics.GetIntegrationSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	matchExplain, err := regexp.Compile("^explain")
 	require.NoError(t, err)
@@ -934,28 +916,26 @@ func TestDefaultSelectivityForStrMatch(t *testing.T) {
 }
 
 func TestTopNAssistedEstimationWithoutNewCollation(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	collate.SetNewCollationEnabledForTest(false)
 	var (
 		input  []string
 		output []outputType
 	)
 	statsSuiteData := statistics.GetIntegrationSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	testTopNAssistedEstimationInner(t, input, output, store, dom)
 }
 
 func TestTopNAssistedEstimationWithNewCollation(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	collate.SetNewCollationEnabledForTest(true)
 	var (
 		input  []string
 		output []outputType
 	)
 	statsSuiteData := statistics.GetIntegrationSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	testTopNAssistedEstimationInner(t, input, output, store, dom)
 }
 

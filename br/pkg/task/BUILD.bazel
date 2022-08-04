@@ -70,6 +70,7 @@ go_library(
 
 go_test(
     name = "task_test",
+    timeout = "short",
     srcs = [
         "backup_test.go",
         "common_test.go",

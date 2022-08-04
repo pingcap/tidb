@@ -4204,6 +4204,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				b.outerCTEs = b.outerCTEs[:i]
 				o := b.buildingCTE
 				b.buildingCTE = false
+				//nolint:all_revive,revive
 				defer func() {
 					b.outerCTEs = append(b.outerCTEs, saveCte...)
 					b.buildingCTE = o

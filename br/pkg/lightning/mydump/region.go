@@ -161,19 +161,19 @@ func MakeTableRegions(
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for info := range fileChan {
 				regions, sizes, err := makeSourceFileRegion(execCtx, meta, info, columns, cfg, ioWorkers, store)
 				select {
 				case resultChan <- fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}:
 				case <-ctx.Done():
-					break
+					return
 				}
 				if err != nil {
 					log.FromContext(ctx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
 					break
 				}
 			}
-			wg.Done()
 		}()
 	}
 

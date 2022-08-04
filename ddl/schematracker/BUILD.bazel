@@ -25,6 +25,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//statistics/handle",
+        "//store/mockstore",
         "//table",
         "//table/tables",
         "//tidb-binlog/pump_client",
@@ -37,6 +38,7 @@ go_library(
 
 go_test(
     name = "schematracker_test",
+    timeout = "short",
     srcs = [
         "dm_tracker_test.go",
         "info_store_test.go",

@@ -26,8 +26,7 @@ import (
 )
 
 func TestFailBeforeDecodeArgs(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
