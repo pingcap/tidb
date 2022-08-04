@@ -21,6 +21,7 @@ go_library(
         "//ddl/placement",
         "//ddl/schematracker",
         "//domain",
+        "//domain/infosync",
         "//errno",
         "//executor",
         "//expression",
