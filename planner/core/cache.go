@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -71,6 +72,9 @@ type planCacheKey struct {
 	isolationReadEngines     map[kv.StoreType]struct{}
 	selectLimit              uint64
 	bindSQL                  string
+	inRestrictedSQL          bool
+	restrictedReadOnly       bool
+	TiDBSuperReadOnly        bool
 
 	hash []byte
 }
@@ -103,6 +107,9 @@ func (key *planCacheKey) Hash() []byte {
 		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
 		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 	}
 	return key.hash
 }
@@ -152,6 +159,9 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		isolationReadEngines:     make(map[kv.StoreType]struct{}),
 		selectLimit:              sessionVars.SelectLimit,
 		bindSQL:                  bindSQL,
+		inRestrictedSQL:          sessionVars.InRestrictedSQL,
+		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
+		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
