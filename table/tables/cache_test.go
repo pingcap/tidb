@@ -303,7 +303,8 @@ func TestBeginSleepABA(t *testing.T) {
 	tk1.MustExec("begin")
 	tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
 	if !lastReadFromCache(tk1) {
-		// should read from cache, but it is not stable
+		// TODO: should read from cache, but it is not stable
+		// It is a bug, ref https://github.com/pingcap/tidb/issues/36838
 		t.Skip("unstable now, skip")
 		return
 	}
