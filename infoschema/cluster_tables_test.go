@@ -16,28 +16,20 @@ package infoschema_test
 
 import (
 	"fmt"
-	"net/http/httptest"
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 )
 
 type clusterTablesSuite struct {
-	store      kv.Storage
-	dom        *domain.Domain
-	rpcserver  *grpc.Server
-	httpServer *httptest.Server
-	mockAddr   string
-	listenAddr string
-	startTime  time.Time
+	store kv.Storage
+	dom   *domain.Domain
 }
 
 func TestStmtSummaryIssue35340(t *testing.T) {
