@@ -17,6 +17,7 @@ package structure
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -31,9 +32,12 @@ type HashPair struct {
 
 // HSet sets the string value of a hash field.
 func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
+	logutil.BgLogger().Info("~~~~~~~~HSet 1111")
 	if t.readWriter == nil {
 		return ErrWriteOnSnapshot
 	}
+	logutil.BgLogger().Info("~~~~~~~~HSet 2222")
+
 	return t.updateHash(key, field, func([]byte) ([]byte, error) {
 		return value, nil
 	})

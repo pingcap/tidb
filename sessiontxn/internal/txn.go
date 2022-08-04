@@ -16,7 +16,6 @@ package internal
 
 import (
 	"context"
-
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"

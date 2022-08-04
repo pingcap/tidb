@@ -1483,6 +1483,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	logutil.BgLogger().Info("！！！！onExchangeTablePartition", zap.Int64("RowID", newAutoIDs.RowID),
+		zap.Int64("IncrementID", newAutoIDs.IncrementID), zap.Int64("RandomID", newAutoIDs.RandomID))
+
+	d.mu.RLock()
+	d.mu.hook.OnJobUpdated(job)
+	d.mu.RUnlock()
+
 	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
 	if err != nil {
 		job.State = model.JobStateCancelled

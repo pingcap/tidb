@@ -16,6 +16,8 @@ package infoschema
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/tmpsession"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -191,7 +193,7 @@ type Builder struct {
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
-func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) ApplyDiff(sess sessionctx.Context, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
 	switch diff.Type {
 	case model.ActionCreateSchema:
@@ -215,15 +217,15 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionRecoverTable:
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
-		return b.applyCreateTables(m, diff)
+		return b.applyCreateTables(sess, m, diff)
 	case model.ActionExchangeTablePartition:
-		return b.applyExchangePartitionWithTable(m, diff)
+		return b.applyExchangePartitionWithTable(sess, m, diff)
 	default:
-		return b.applyDefaultAction(m, diff)
+		return b.applyDefaultAction(sess, m, diff)
 	}
 }
 
-func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyCreateTables(sess sessionctx.Context, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs := make([]int64, 0, len(diff.AffectedOpts))
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
@@ -235,7 +237,7 @@ func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int
 				OldSchemaID: opt.OldSchemaID,
 				OldTableID:  opt.OldTableID,
 			}
-			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+			affectedIDs, err := b.ApplyDiff(sess, m, affectedDiff)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -245,12 +247,15 @@ func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
-func (b *Builder) applyExchangePartitionWithTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyExchangePartitionWithTable(sess sessionctx.Context, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+
+	logutil.BgLogger().Info("~~~~~~~~applyExchangePartitionWithTable start1")
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	logutil.BgLogger().Info("~~~~~~~~applyExchangePartitionWithTable start2")
 	for _, opt := range diff.AffectedOpts {
 		affectedDiff := &model.SchemaDiff{
 			Version:     diff.Version,
@@ -260,14 +265,18 @@ func (b *Builder) applyExchangePartitionWithTable(m *meta.Meta, diff *model.Sche
 			OldSchemaID: opt.OldSchemaID,
 			OldTableID:  opt.OldTableID,
 		}
-		affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+		affectedIDs, err := b.ApplyDiff(sess, m, affectedDiff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		tblIDs = append(tblIDs, affectedIDs...)
 
+		logutil.BgLogger().Info("++++++applyExchangePartitionWithTable start3")
+
 		// handle partition table and table AutoID
-		err = updateAutoIDForExchangePartition(m, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.OldTableID)
+		//err = updateAutoIDForExchangePartition(m, affectedDiff.SchemaID, diff.OldTableID, diff.SchemaID, affectedDiff.TableID)
+		err = updateAutoIDForExchangePartition(sess, affectedDiff.SchemaID, diff.OldTableID, diff.SchemaID, diff.TableID)
+		// err = updateAutoIDForExchangePartition(m, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.OldTableID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -276,17 +285,35 @@ func (b *Builder) applyExchangePartitionWithTable(m *meta.Meta, diff *model.Sche
 	return tblIDs, nil
 }
 
-func updateAutoIDForExchangePartition(m *meta.Meta, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
+func updateAutoIDForExchangePartition(sessCtx sessionctx.Context, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
 	// partition table auto IDs.
-	ptAutoIDs, err := m.GetAutoIDAccessors(ptSchemaID, ptID).Get()
+	sess := tmpsession.NewSession(sessCtx)
+	err := sess.Begin()
 	if err != nil {
 		return err
 	}
+	txn, err := sess.STxn()
+	if err != nil {
+		sess.Rollback()
+		return err
+	}
+	t := meta.NewMeta(txn)
+	if err != nil {
+		return err
+	}
+
+	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("~~~~~~~~updateAutoIDForExchangePartitio 1111")
+
 	// non-partition table auto IDs.
-	ntAutoIDs, err := m.GetAutoIDAccessors(ntSchemaID, ntID).Get()
+	ntAutoIDs, err := t.GetAutoIDAccessors(ntSchemaID, ntID).Get()
 	if err != nil {
 		return err
 	}
+	logutil.BgLogger().Info("~~~~~~~~updateAutoIDForExchangePartitio 222")
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	newAutoIDs := meta.AutoIDGroup{
@@ -294,14 +321,21 @@ func updateAutoIDForExchangePartition(m *meta.Meta, ptSchemaID, ptID, ntSchemaID
 		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
 		RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}
-	err = m.GetAutoIDAccessors(ptSchemaID, ptID).Put(newAutoIDs)
+	logutil.BgLogger().Info("~~~~~~~~updateAutoIDForExchangePartitio 3333")
+	err = t.GetAutoIDAccessors(ptSchemaID, ptID).Put(newAutoIDs)
 	if err != nil {
 		return err
 	}
-	err = m.GetAutoIDAccessors(ntSchemaID, ntID).Put(newAutoIDs)
+	logutil.BgLogger().Info("~~~~~~~~updateAutoIDForExchangePartitio 444")
+
+	err = t.GetAutoIDAccessors(ntSchemaID, ntID).Put(newAutoIDs)
 	if err != nil {
 		return err
 	}
+	err = sess.Commit()
+
+	logutil.BgLogger().Info("~~~~~~~~updateAutoIDForExchangePartition 555", zap.Int64("RowID", newAutoIDs.RowID),
+		zap.Int64("IncrementID", newAutoIDs.IncrementID), zap.Int64("RandomID", newAutoIDs.RandomID))
 
 	return nil
 }
@@ -351,7 +385,7 @@ func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyDefaultAction(sess sessionctx.Context, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -367,13 +401,15 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 			OldSchemaID: opt.OldSchemaID,
 			OldTableID:  opt.OldTableID,
 		}
-		affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+		affectedIDs, err := b.ApplyDiff(sess, m, affectedDiff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		tblIDs = append(tblIDs, affectedIDs...)
 	}
-
+	if diff.Type == model.ActionExchangeTablePartition {
+		logutil.BgLogger().Info("！！！！applyDefaultAction ActionExchangeTablePartition success")
+	}
 	return tblIDs, nil
 }
 
@@ -392,8 +428,8 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
 	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
-		oldTableID = diff.OldTableID
-		newTableID = diff.TableID
+		oldTableID = diff.OldTableID // nt id  (before change)
+		newTableID = diff.TableID    // def id (before change)
 	default:
 		oldTableID = diff.TableID
 		newTableID = diff.TableID
@@ -642,6 +678,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	logutil.BgLogger().Info("~~~~~~~~applyCreateTable start1")
+
 	if tblInfo == nil {
 		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
 		// full load.
@@ -650,6 +688,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
+	logutil.BgLogger().Info("~~~~~~~~applyCreateTable start2")
 
 	switch tp {
 	case model.ActionDropTablePartition:

@@ -16,6 +16,7 @@ package infoschema
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/infoschema/tmpbuild"
 	"sort"
 	"sync"
 
@@ -114,7 +115,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	for _, tb := range tbList {
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
-		bucketIdx := tableBucketIdx(tb.ID)
+		bucketIdx := tmpbuild.tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
@@ -141,7 +142,7 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	for _, tb := range tbList {
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
-		bucketIdx := tableBucketIdx(tb.ID)
+		bucketIdx := tmpbuild.tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
@@ -242,7 +243,7 @@ func (is *infoSchema) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBIn
 }
 
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
-	slice := is.sortedTablesBuckets[tableBucketIdx(id)]
+	slice := is.sortedTablesBuckets[tmpbuild.tableBucketIdx(id)]
 	idx := slice.searchTable(id)
 	if idx == -1 {
 		return nil, false

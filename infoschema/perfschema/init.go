@@ -16,11 +16,11 @@ package perfschema
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/infoschema"
 	"sync"
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"

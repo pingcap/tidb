@@ -5,6 +5,7 @@ package restore_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/pingcap/tidb/infoschema"
 	"math"
 	"strconv"
 	"testing"
@@ -18,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"

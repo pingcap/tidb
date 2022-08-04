@@ -15,10 +15,10 @@ package ddl_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/infoschema"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"

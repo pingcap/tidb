@@ -2426,6 +2426,89 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
 }
 
+func TestExchangePartitionHook3(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	// why use tkCancel, not tk.
+	//tkCancel := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int primary key auto_increment) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 values less than (9),
+        PARTITION p3 values less than (MAXVALUE)
+		);`)
+	tk.MustExec(`create table nt(a int primary key auto_increment);`)
+
+	tk.MustExec(`insert into pt values (0), (4), (7)`)
+	tk.MustExec("insert into nt values (1)")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	dom.DDL().SetHook(hook)
+
+	hookFunc := func(job *model.Job) {
+		tk.MustExec(`insert into pt values (40000000)`)
+	}
+	hook.OnJobUpdatedExported = hookFunc
+
+	//tk.MustExec(`create table nt1(a int);`)
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	time.Sleep(time.Duration(63) * time.Second)
+	tk.MustExec("insert into nt values (NULL)")
+	tk.MustQuery("select * from nt").Check(testkit.Rows(""))
+	tk.MustQuery("select * from pt").Check(testkit.Rows(""))
+
+	//tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
+	//tk.MustExec("alter table pt exchange partition p0 with table nt")
+	//tkCancel.MustExec("insert into nt values (1)")
+	//tkCancel.MustExec("use test")
+	//	tkCancel.MustExec("insert into pt values (2)")
+	//	tkCancel.MustQuery("select * from pt partition(p0)").Check(testkit.Rows())
+}
+
+func TestExchangePartitionHook2(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	// why use tkCancel, not tk.
+	//tkCancel := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE pt (a int primary key auto_increment, b varchar(255))
+		PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (1000000),
+		partition p1M values less than (2000000));`)
+	tk.MustExec(`create table t (a int primary key auto_increment, b varchar(255))`)
+
+	tk.MustExec(`insert into pt values (1, "1")`)
+	tk.MustExec(`insert into t values (2, "2")`)
+	tk.MustExec(`insert into t values (4000000, "4M")`)
+	tk.MustExec(`delete from t where a = 4000000`)
+	tk.MustExec(`alter table pt exchange partition p0 with table t`)
+
+	//hook := &ddl.TestDDLCallback{Do: dom}
+	//dom.DDL().SetHook(hook)
+	//
+	//hookFunc := func(job *model.Job) {
+	//	if job.Type == model.ActionExchangeTablePartition && job.SchemaState != model.StateNone {
+	//		tkCancel.MustExec("use test")
+	//		tkCancel.MustGetErrCode("insert into nt values (5)", tmysql.ErrRowDoesNotMatchGivenPartitionSet)
+	//	}
+	//}
+	//hook.OnJobUpdatedExported = hookFunc
+	//
+	//tk.MustExec("alter table pt exchange partition p0 with table nt")
+	//tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
+}
+
 func TestExchangePartitionExpressIndex(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()

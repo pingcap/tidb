@@ -1567,13 +1567,31 @@ func GetLastHistoryDDLJobsIterator(m *meta.Meta) (meta.LastJobIterator, error) {
 	return m.GetLastHistoryDDLJobsIterator()
 }
 
+// Session wraps sessionctx.Context for transaction usage.
+type Session struct {
+	sessionctx.Context
+}
+
 // session wraps sessionctx.Context for transaction usage.
 type session struct {
 	sessionctx.Context
 }
 
+func NewSession(s sessionctx.Context) *session {
+	return &session{s}
+}
+
 func newSession(s sessionctx.Context) *session {
 	return &session{s}
+}
+
+func (s *session) Begin() error {
+	err := sessiontxn.NewTxn(context.Background(), s)
+	if err != nil {
+		return err
+	}
+	s.GetSessionVars().SetInTxn(true)
+	return nil
 }
 
 func (s *session) begin() error {
@@ -1585,13 +1603,27 @@ func (s *session) begin() error {
 	return nil
 }
 
+func (s *session) Commit() error {
+	s.StmtCommit()
+	return s.CommitTxn(context.Background())
+}
+
 func (s *session) commit() error {
 	s.StmtCommit()
 	return s.CommitTxn(context.Background())
 }
 
+func (s *session) STxn() (kv.Transaction, error) {
+	return s.Txn(true)
+}
+
 func (s *session) txn() (kv.Transaction, error) {
 	return s.Txn(true)
+}
+
+func (s *session) Rollback() {
+	s.StmtRollback()
+	s.RollbackTxn(context.Background())
 }
 
 func (s *session) rollback() {

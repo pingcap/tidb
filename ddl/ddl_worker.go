@@ -799,9 +799,9 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 		d.mu.RUnlock()
 	}
 
-	d.mu.RLock()
-	d.mu.hook.OnJobUpdated(job)
-	d.mu.RUnlock()
+	//d.mu.RLock()
+	//d.mu.hook.OnJobUpdated(job)
+	//d.mu.RUnlock()
 
 	return nil
 }
@@ -959,9 +959,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.RUnlock()
 		}
 
-		d.mu.RLock()
-		d.mu.hook.OnJobUpdated(job)
-		d.mu.RUnlock()
+		//d.mu.RLock()
+		//d.mu.hook.OnJobUpdated(job)
+		//d.mu.RUnlock()
 
 		if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
 			asyncNotify(d.ddlJobDoneCh)
