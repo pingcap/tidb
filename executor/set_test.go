@@ -779,6 +779,10 @@ func TestGetSetNoopVars(t *testing.T) {
 	err := tk.ExecToErr("SET GLOBAL tidb_enable_noop_variables = 2")
 	require.Error(t, err)
 	require.Equal(t, "[variable:1231]Variable 'tidb_enable_noop_variables' can't be set to the value of '2'", err.Error())
+
+	err = tk.ExecToErr("SET GLOBAL tidb_enable_noop_variables = 'warn'")
+	require.Error(t, err)
+	require.Equal(t, "[variable:1231]Variable 'tidb_enable_noop_variables' can't be set to the value of 'warn'", err.Error())
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
