@@ -263,7 +263,6 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
 			if err != nil {
 				return false, false, err
-
 			}
 		}
 		if i == 0 {
@@ -578,7 +577,7 @@ func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, 
 		case types.ETDecimal:
 			err = expr.VecEvalDecimal(ctx, input, result)
 		default:
-			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+			err = fmt.Errorf("invalid eval type %v", expr.GetType().EvalType())
 		}
 	} else {
 		ind, n := 0, input.NumRows()
@@ -686,7 +685,7 @@ func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, 
 				ind++
 			}
 		default:
-			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+			err = fmt.Errorf("invalid eval type %v", expr.GetType().EvalType())
 		}
 	}
 	return
@@ -766,6 +765,7 @@ type VarAssignment struct {
 
 // splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
 func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
+	//nolint: revive
 	switch v := onExpr.(type) {
 	case *ScalarFunction:
 		if v.FuncName.L == funcName {
@@ -1043,7 +1043,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return true
 		}
 	case
-		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift,
+		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift, ast.LeftShift,
 		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Strcmp,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
@@ -1055,7 +1055,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength,
+		ast.JSONLength, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
@@ -1157,6 +1157,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return true
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
+		return true
+	case ast.GetFormat:
 		return true
 	}
 	return false
@@ -1431,4 +1433,32 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 			args[0].GetType().SetDecimalUnderLimit(newDecimal)
 		}
 	}
+}
+
+// Args2Expressions4Test converts these values to an expression list.
+// This conversion is incomplete, so only use for test.
+func Args2Expressions4Test(args ...interface{}) []Expression {
+	exprs := make([]Expression, len(args))
+	for i, v := range args {
+		d := types.NewDatum(v)
+		var ft *types.FieldType
+		switch d.Kind() {
+		case types.KindNull:
+			ft = types.NewFieldType(mysql.TypeNull)
+		case types.KindInt64:
+			ft = types.NewFieldType(mysql.TypeLong)
+		case types.KindUint64:
+			ft = types.NewFieldType(mysql.TypeLong)
+			ft.AddFlag(mysql.UnsignedFlag)
+		case types.KindFloat64:
+			ft = types.NewFieldType(mysql.TypeDouble)
+		case types.KindString:
+			ft = types.NewFieldType(mysql.TypeVarString)
+		default:
+			exprs[i] = nil
+			continue
+		}
+		exprs[i] = &Constant{Value: d, RetType: ft}
+	}
+	return exprs
 }

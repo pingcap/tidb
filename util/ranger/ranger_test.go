@@ -35,8 +35,7 @@ import (
 )
 
 func TestTableRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -290,8 +289,7 @@ func TestTableRange(t *testing.T) {
 
 // for issue #6661
 func TestIndexRangeForUnsignedAndOverflow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -478,8 +476,7 @@ create table t(
 }
 
 func TestColumnRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -840,8 +837,7 @@ func TestColumnRange(t *testing.T) {
 }
 
 func TestIndexRangeEliminatedProjection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -864,8 +860,7 @@ func TestIndexRangeEliminatedProjection(t *testing.T) {
 }
 
 func TestCompIndexInExprCorrCol(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -879,7 +874,7 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -890,8 +885,7 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 }
 
 func TestIndexStringIsTrueRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -906,7 +900,7 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -917,8 +911,7 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 }
 
 func TestCompIndexDNFMatch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -933,7 +926,7 @@ func TestCompIndexDNFMatch(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -946,8 +939,7 @@ func TestCompIndexDNFMatch(t *testing.T) {
 }
 
 func TestCompIndexMultiColDNF1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -963,7 +955,7 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -976,8 +968,7 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 }
 
 func TestCompIndexMultiColDNF2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -993,7 +984,7 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1006,8 +997,7 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 }
 
 func TestPrefixIndexMultiColDNF(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
@@ -1021,7 +1011,7 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	inputLen := len(input)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -1038,8 +1028,7 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 }
 
 func TestIndexRangeForBit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
@@ -1060,7 +1049,7 @@ func TestIndexRangeForBit(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1073,8 +1062,7 @@ func TestIndexRangeForBit(t *testing.T) {
 }
 
 func TestIndexRangeForYear(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 
@@ -1232,8 +1220,7 @@ func TestIndexRangeForYear(t *testing.T) {
 
 // For https://github.com/pingcap/tidb/issues/22032
 func TestPrefixIndexRangeScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 
@@ -1300,8 +1287,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 }
 
 func TestIndexRangeForDecimal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
@@ -1317,7 +1303,7 @@ func TestIndexRangeForDecimal(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1330,8 +1316,7 @@ func TestIndexRangeForDecimal(t *testing.T) {
 }
 
 func TestPrefixIndexAppendPointRanges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("USE test")
@@ -1351,7 +1336,7 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1364,8 +1349,7 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 }
 
 func TestIndexRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -1712,8 +1696,7 @@ create table t(
 }
 
 func TestTableShardIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
@@ -1988,9 +1971,7 @@ func TestTableShardIndex(t *testing.T) {
 }
 
 func TestShardIndexFuncSuites(t *testing.T) {
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	sctx := testKit.Session().(sessionctx.Context)
 

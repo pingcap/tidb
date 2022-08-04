@@ -4,6 +4,7 @@ go_library(
     name = "streamhelper",
     srcs = [
         "advancer.go",
+        "advancer_cliext.go",
         "advancer_daemon.go",
         "advancer_env.go",
         "client.go",
@@ -11,7 +12,6 @@ go_library(
         "models.go",
         "prefix_scanner.go",
         "regioniter.go",
-        "stream_listener.go",
         "tsheap.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/streamhelper",
@@ -26,6 +26,7 @@ go_library(
         "//kv",
         "//metrics",
         "//owner",
+        "//util/mathutil",
         "@com_github_gogo_protobuf//proto",
         "@com_github_golang_protobuf//proto",
         "@com_github_google_btree//:btree",
@@ -43,21 +44,26 @@ go_library(
         "@org_golang_google_grpc//keepalive",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
 
 go_test(
     name = "streamhelper_test",
+    timeout = "short",
     srcs = [
         "advancer_test.go",
         "basic_lib_for_test.go",
         "integration_test.go",
+        "regioniter_test.go",
         "tsheap_test.go",
     ],
+    flaky = True,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//br/pkg/redact",
         "//br/pkg/storage",
         "//br/pkg/streamhelper/config",
         "//kv",

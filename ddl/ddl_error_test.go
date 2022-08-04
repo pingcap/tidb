@@ -30,8 +30,7 @@ import (
 // For unexpected error, we mock a SQL job to check it.
 
 func TestTableError(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -65,8 +64,7 @@ func TestTableError(t *testing.T) {
 }
 
 func TestViewError(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -80,8 +78,7 @@ func TestViewError(t *testing.T) {
 }
 
 func TestForeignKeyError(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
@@ -96,8 +93,7 @@ func TestForeignKeyError(t *testing.T) {
 }
 
 func TestIndexError(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -122,8 +118,7 @@ func TestIndexError(t *testing.T) {
 }
 
 func TestColumnError(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -179,8 +174,7 @@ func TestColumnError(t *testing.T) {
 }
 
 func TestCreateDatabaseError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
@@ -189,8 +183,7 @@ func TestCreateDatabaseError(t *testing.T) {
 }
 
 func TestRenameViewOverDifferentSchemaError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	//init
@@ -214,5 +207,4 @@ func TestRenameViewOverDifferentSchemaError(t *testing.T) {
 
 	//same schema
 	tk.MustExec("rename table test.view_1 to test.view_1000;")
-
 }

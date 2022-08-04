@@ -18,7 +18,7 @@ for failure in $cases; do
     rm -f "$hint_finegrained" "$hint_backup_start" "$hint_get_backup_client"
     export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/hint-backup-start=1*return(\"$hint_backup_start\");\
 github.com/pingcap/tidb/br/pkg/backup/hint-fine-grained-backup=1*return(\"$hint_finegrained\");\
-github.com/pingcap/tidb/br/pkg/conn/hint-get-backup-client=1*return(\"$hint_get_backup_client\")"
+github.com/pingcap/tidb/br/pkg/utils/hint-get-backup-client=1*return(\"$hint_get_backup_client\")"
     if [ "$failure" = outage-at-finegrained ]; then
         export GO_FAILPOINTS="$GO_FAILPOINTS;github.com/pingcap/tidb/br/pkg/backup/noop-backup=return(true)"
     fi

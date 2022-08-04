@@ -34,8 +34,7 @@ import (
 )
 
 func TestResourceGroupTag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -196,6 +195,10 @@ func TestResourceGroupTag(t *testing.T) {
 				p, ok := info.Plan.(plannercore.Plan)
 				require.True(t, ok)
 				_, expectPlanDigest = plannercore.NormalizePlan(p)
+
+				flat := plannercore.FlattenPhysicalPlan(p, false)
+				_, newPlanDigest := plannercore.NormalizeFlatPlan(flat)
+				require.Equal(t, expectPlanDigest, newPlanDigest)
 			}
 			require.Equal(t, sqlDigest.String(), expectSQLDigest.String(), "%v", ca.sql)
 			require.Equal(t, planDigest.String(), expectPlanDigest.String())

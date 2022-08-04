@@ -104,10 +104,11 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 	return idxParts, nil
 }
 
-func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications []*ast.IndexPartSpecification) (*model.ColumnInfo, error) {
+// CheckPKOnGeneratedColumn checks the specification of PK is valid.
+func CheckPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications []*ast.IndexPartSpecification) (*model.ColumnInfo, error) {
 	var lastCol *model.ColumnInfo
 	for _, colName := range indexPartSpecifications {
-		lastCol = getColumnInfoByName(tblInfo, colName.Column.Name.L)
+		lastCol = tblInfo.FindPublicColumnByName(colName.Column.Name.L)
 		if lastCol == nil {
 			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(colName.Column.Name)
 		}
@@ -236,12 +237,23 @@ func calcBytesLengthForDecimal(m int) int {
 	return (m / 9 * 4) + ((m%9)+1)/2
 }
 
-func buildIndexInfo(ctx sessionctx.Context, tblInfo *model.TableInfo, indexName model.CIStr, indexPartSpecifications []*ast.IndexPartSpecification, state model.SchemaState) (*model.IndexInfo, error) {
+// BuildIndexInfo builds a new IndexInfo according to the index information.
+func BuildIndexInfo(
+	ctx sessionctx.Context,
+	allTableColumns []*model.ColumnInfo,
+	indexName model.CIStr,
+	isPrimary bool,
+	isUnique bool,
+	isGlobal bool,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+	state model.SchemaState,
+) (*model.IndexInfo, error) {
 	if err := checkTooLongIndex(indexName); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	idxColumns, err := buildIndexColumns(ctx, tblInfo.Columns, indexPartSpecifications)
+	idxColumns, err := buildIndexColumns(ctx, allTableColumns, indexPartSpecifications)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -251,11 +263,32 @@ func buildIndexInfo(ctx sessionctx.Context, tblInfo *model.TableInfo, indexName 
 		Name:    indexName,
 		Columns: idxColumns,
 		State:   state,
+		Primary: isPrimary,
+		Unique:  isUnique,
+		Global:  isGlobal,
 	}
+
+	if indexOption != nil {
+		idxInfo.Comment = indexOption.Comment
+		if indexOption.Visibility == ast.IndexVisibilityInvisible {
+			idxInfo.Invisible = true
+		}
+		if indexOption.Tp == model.IndexTypeInvalid {
+			// Use btree as default index type.
+			idxInfo.Tp = model.IndexTypeBtree
+		} else {
+			idxInfo.Tp = indexOption.Tp
+		}
+	} else {
+		// Use btree as default index type.
+		idxInfo.Tp = model.IndexTypeBtree
+	}
+
 	return idxInfo, nil
 }
 
-func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
+// AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.
+func AddIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	if indexInfo.Primary {
 		for _, col := range indexInfo.Columns {
 			tblInfo.Columns[col.Offset].AddFlag(mysql.PriKeyFlag)
@@ -271,7 +304,8 @@ func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	}
 }
 
-func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
+// DropIndexColumnFlag drops the column flag of columns in TableInfo according to the IndexInfo.
+func DropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	if indexInfo.Primary {
 		for _, col := range indexInfo.Columns {
 			tblInfo.Columns[col.Offset].DelFlag(mysql.PriKeyFlag)
@@ -293,11 +327,12 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 			continue
 		}
 
-		addIndexColumnFlag(tblInfo, index)
+		AddIndexColumnFlag(tblInfo, index)
 	}
 }
 
-func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
+// ValidateRenameIndex checks if index name is ok to be renamed.
+func ValidateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
 	if fromIdx := tbl.FindIndexByName(from.L); fromIdx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
@@ -338,11 +373,16 @@ func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	return ver, nil
 }
 
-func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
-	if idx := tbl.FindIndexByName(indexName.L); idx == nil {
+func validateAlterIndexVisibility(ctx sessionctx.Context, indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+	var idx *model.IndexInfo
+	if idx = tbl.FindIndexByName(indexName.L); idx == nil || idx.State != model.StatePublic {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
-	} else if idx.Invisible == invisible {
-		return true, nil
+	}
+	if ctx == nil || ctx.GetSessionVars() == nil || ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
+		// Early return.
+		if idx.Invisible == invisible {
+			return true, nil
+		}
 	}
 	return false, nil
 }
@@ -352,14 +392,27 @@ func onAlterIndexVisibility(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
-	idx := tblInfo.FindIndexByName(from.L)
-	idx.Invisible = invisible
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return updateVersionAndTableInfo(d, t, job, tblInfo, false)
+	}
+
+	setIndexVisibility(tblInfo, from, invisible)
 	if ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+func setIndexVisibility(tblInfo *model.TableInfo, name model.CIStr, invisible bool) {
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.L == name.L || (isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
+			idx.Invisible = invisible
+		}
+	}
 }
 
 func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*model.ColumnInfo, error) {
@@ -373,7 +426,7 @@ func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*m
 	return nullCols, nil
 }
 
-func checkPrimaryKeyNotNull(d *ddlCtx, w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job *model.Job,
+func checkPrimaryKeyNotNull(d *ddlCtx, w *worker, t *meta.Meta, job *model.Job,
 	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (warnings []string, err error) {
 	if !indexInfo.Primary {
 		return nil, nil
@@ -496,44 +549,35 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	if indexInfo == nil {
 		if len(hiddenCols) > 0 {
 			for _, hiddenCol := range hiddenCols {
-				initAndAddColumnToTable(tblInfo, hiddenCol)
+				InitAndAddColumnToTable(tblInfo, hiddenCol)
 			}
 		}
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		indexInfo, err = buildIndexInfo(nil, tblInfo, indexName, indexPartSpecifications, model.StateNone)
+		indexInfo, err = BuildIndexInfo(
+			nil,
+			tblInfo.Columns,
+			indexName,
+			isPK,
+			unique,
+			global,
+			indexPartSpecifications,
+			indexOption,
+			model.StateNone,
+		)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		if indexOption != nil {
-			indexInfo.Comment = indexOption.Comment
-			if indexOption.Visibility == ast.IndexVisibilityInvisible {
-				indexInfo.Invisible = true
-			}
-			if indexOption.Tp == model.IndexTypeInvalid {
-				// Use btree as default index type.
-				indexInfo.Tp = model.IndexTypeBtree
-			} else {
-				indexInfo.Tp = indexOption.Tp
-			}
-		} else {
-			// Use btree as default index type.
-			indexInfo.Tp = model.IndexTypeBtree
-		}
-		indexInfo.Primary = false
 		if isPK {
-			if _, err = checkPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
+			if _, err = CheckPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, err
 			}
-			indexInfo.Primary = true
 		}
-		indexInfo.Unique = unique
-		indexInfo.Global = global
-		indexInfo.ID = allocateIndexID(tblInfo)
+		indexInfo.ID = AllocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 		if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
 			job.State = model.JobStateCancelled
@@ -559,11 +603,11 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, err
 		}
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(0)
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String()).Set(0)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		indexInfo.State = model.StateWriteOnly
-		_, err = checkPrimaryKeyNotNull(d, w, sqlMode, t, job, tblInfo, indexInfo)
+		_, err = checkPrimaryKeyNotNull(d, w, t, job, tblInfo, indexInfo)
 		if err != nil {
 			break
 		}
@@ -575,7 +619,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		indexInfo.State = model.StateWriteReorganization
-		_, err = checkPrimaryKeyNotNull(d, w, sqlMode, t, job, tblInfo, indexInfo)
+		_, err = checkPrimaryKeyNotNull(d, w, t, job, tblInfo, indexInfo)
 		if err != nil {
 			break
 		}
@@ -604,9 +648,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		// Set column index flag.
-		addIndexColumnFlag(tblInfo, indexInfo)
+		AddIndexColumnFlag(tblInfo, indexInfo)
 		if isPK {
-			if err = updateColsNull2NotNull(tblInfo, indexInfo); err != nil {
+			if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
 				return ver, errors.Trace(err)
 			}
 		}
@@ -640,7 +684,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-	rh := newReorgHandler(t)
+	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
 	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
@@ -677,7 +721,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
 			job.Warning = toTError(err)
-			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.State = model.JobStateDone
 			return ver, nil
 		}
 		return ver, errors.Trace(err)
@@ -719,8 +763,8 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// reorganization -> absent
 		indexInfo.State = model.StateNone
 		// Set column index flag.
-		dropIndexColumnFlag(tblInfo, indexInfo)
-		removeDependentHiddenColumns(tblInfo, indexInfo)
+		DropIndexColumnFlag(tblInfo, indexInfo)
+		RemoveDependentHiddenColumns(tblInfo, indexInfo)
 		removeIndexInfo(tblInfo, indexInfo)
 
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
@@ -738,9 +782,9 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 			job.Args[0] = indexInfo.ID
+		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
-		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
@@ -751,7 +795,8 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func removeDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+// RemoveDependentHiddenColumns removes hidden columns by the indexInfo.
+func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffs := make([]int, 0)
 	for _, indexColumn := range idxInfo.Columns {
 		col := tblInfo.Columns[indexColumn.Offset]
@@ -807,7 +852,7 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 	}
 
 	// Double check for drop index on auto_increment column.
-	err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
+	err = CheckDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, false, autoid.ErrWrongAutoKey
@@ -846,7 +891,8 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 	return nil
 }
 
-func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+// CheckDropIndexOnAutoIncrementColumn checks if the index to drop is on auto_increment column.
+func CheckDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	cols := tblInfo.Columns
 	for _, idxCol := range indexInfo.Columns {
 		flag := cols[idxCol.Offset].GetFlag()
@@ -887,7 +933,7 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIS
 	}
 
 	// Double check. See function `RenameIndex` in ddl_api.go
-	duplicate, err := validateRenameIndex(from, to, tblInfo)
+	duplicate, err := ValidateRenameIndex(from, to, tblInfo)
 	if duplicate {
 		return nil, from, to, nil
 	}
@@ -915,12 +961,13 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 
-	skip, err := validateAlterIndexVisibility(indexName, invisible, tblInfo)
+	skip, err := validateAlterIndexVisibility(nil, indexName, invisible, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 	if skip {
+		job.State = model.JobStateDone
 		return nil, indexName, invisible, nil
 	}
 	return tblInfo, indexName, invisible, nil
@@ -961,7 +1008,7 @@ type addIndexWorker struct {
 	distinctCheckFlags []bool
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &addIndexWorker{
@@ -971,7 +1018,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_rate"),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("add_idx_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
 			jobContext:     jc,
 		},
@@ -1076,7 +1123,11 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in baseIndexWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			taskDone = recordKey.Cmp(taskRange.endKey) > 0
+			if taskRange.endInclude {
+				taskDone = recordKey.Cmp(taskRange.endKey) > 0
+			} else {
+				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
+			}
 
 			if taskDone || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
@@ -1099,7 +1150,6 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			w.cleanRowMap()
 
 			if recordKey.Cmp(taskRange.endKey) == 0 {
-				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
 				taskDone = true
 				return false, nil
 			}
@@ -1333,7 +1383,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 			ts := oracle.GoTimeToTS(time.Now())
 			s := reorg.d.store.(tikv.Storage)
 			s.UpdateSPCache(ts, time.Now())
-			time.Sleep(time.Millisecond * 3)
+			time.Sleep(time.Second * 3)
 		}
 	})
 	currentVer, err := getValidCurrentVersion(reorg.d.store)
@@ -1347,7 +1397,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(start)
+	err = reorg.UpdateReorgMeta(start, w.sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo",
 		zap.Int64("jobID", reorg.Job.ID),
 		zap.ByteString("elementType", reorg.currElement.TypeKey),
@@ -1372,7 +1422,8 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 	return 0, errors.Errorf("partition id not found %d", currentPartition)
 }
 
-func allocateIndexID(tblInfo *model.TableInfo) int64 {
+// AllocateIndexID allocates an index ID from TableInfo.
+func AllocateIndexID(tblInfo *model.TableInfo) int64 {
 	tblInfo.MaxIndexID++
 	return tblInfo.MaxIndexID
 }
@@ -1408,7 +1459,7 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
-func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
+func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
@@ -1423,7 +1474,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("cleanup_idx_rate"),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("cleanup_idx_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
 			jobContext:     jc,
 		},
@@ -1533,7 +1584,7 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(reorg.StartKey)
+	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
 		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
 		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),
@@ -1543,24 +1594,24 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 
 // changingIndex is used to store the index that need to be changed during modifying column.
 type changingIndex struct {
-	indexInfo *model.IndexInfo
+	IndexInfo *model.IndexInfo
 	// Column offset in idxInfo.Columns.
-	offset int
+	Offset int
 	// When the modifying column is contained in the index, a temp index is created.
 	// isTemp indicates whether the indexInfo is a temp index created by a previous modify column job.
 	isTemp bool
 }
 
-// findRelatedIndexesToChange finds the indexes that covering the given column.
+// FindRelatedIndexesToChange finds the indexes that covering the given column.
 // The normal one will be overridden by the temp one.
-func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []changingIndex {
+func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []changingIndex {
 	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
 	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.
 	var normalIdxInfos, tempIdxInfos []changingIndex
 	for _, idxInfo := range tblInfo.Indices {
 		if pos := findIdxCol(idxInfo, colName); pos != -1 {
 			isTemp := isTempIdxInfo(idxInfo, tblInfo)
-			r := changingIndex{indexInfo: idxInfo, offset: pos, isTemp: isTemp}
+			r := changingIndex{IndexInfo: idxInfo, Offset: pos, isTemp: isTemp}
 			if isTemp {
 				tempIdxInfos = append(tempIdxInfos, r)
 			} else {
@@ -1574,9 +1625,9 @@ func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) [
 	// In this case, we would create a temporary index like $$i($a, $b), so the latter should be chosen.
 	result := normalIdxInfos
 	for _, tmpIdx := range tempIdxInfos {
-		origName := getChangingIndexOriginName(tmpIdx.indexInfo)
+		origName := getChangingIndexOriginName(tmpIdx.IndexInfo)
 		for i, normIdx := range normalIdxInfos {
-			if normIdx.indexInfo.Name.O == origName {
+			if normIdx.IndexInfo.Name.O == origName {
 				result[i] = tmpIdx
 			}
 		}

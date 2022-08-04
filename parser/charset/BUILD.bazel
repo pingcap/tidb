@@ -35,11 +35,13 @@ go_library(
 
 go_test(
     name = "charset_test",
+    timeout = "short",
     srcs = [
         "charset_test.go",
         "encoding_test.go",
     ],
     embed = [":charset"],
+    flaky = True,
     deps = [
         "@com_github_stretchr_testify//require",
         "@org_golang_x_text//transform",

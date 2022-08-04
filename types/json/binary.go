@@ -615,8 +615,7 @@ func appendBinaryValElem(buf []byte, docOff, valEntryOff int, val interface{}) (
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	switch typeCode {
-	case TypeCodeLiteral:
+	if typeCode == TypeCodeLiteral {
 		litCode := buf[elemDocOff]
 		buf = buf[:elemDocOff]
 		buf[valEntryOff] = TypeCodeLiteral

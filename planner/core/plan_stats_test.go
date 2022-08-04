@@ -34,8 +34,7 @@ import (
 
 func TestPlanStatsLoad(t *testing.T) {
 	p := parser.New()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -231,8 +230,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	newConfig.Performance.StatsLoadQueueSize = 1
 	config.StoreGlobalConfig(newConfig)
 	defer config.StoreGlobalConfig(originConfig)
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

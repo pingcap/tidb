@@ -24,6 +24,7 @@ go_library(
         "//store/driver/backoff",
         "//store/driver/error",
         "//store/driver/options",
+        "//util",
         "//util/execdetails",
         "//util/logutil",
         "//util/mathutil",
@@ -57,6 +58,7 @@ go_library(
 
 go_test(
     name = "copr_test",
+    timeout = "short",
     srcs = [
         "batch_coprocessor_test.go",
         "coprocessor_cache_test.go",
@@ -65,6 +67,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":copr"],
+    flaky = True,
     deps = [
         "//kv",
         "//store/driver/backoff",

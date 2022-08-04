@@ -31,7 +31,9 @@ go_library(
 
 go_test(
     name = "tidb_test",
+    timeout = "short",
     srcs = ["tidb_test.go"],
+    flaky = True,
     deps = [
         ":tidb",
         "//br/pkg/lightning/backend",
