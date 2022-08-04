@@ -17,6 +17,7 @@ Thus we use lru to maintain stats cache in order to keep memory safe.
 
 - Use LRU to maintain the stats cache in memory
 - Keep the total memory usage of stats cache under the quota
+- Support loading stats back into memory when tidb server needs it
 
 ### Non-Goals
 
@@ -27,7 +28,7 @@ Thus we use lru to maintain stats cache in order to keep memory safe.
 ### Stats Cache Interface
 
 We will provide a Stats Cache Interface which is implemented by LRU Cache and Map Cache. 
-If the tidb server didn't enable Stats LRU Cache, it will use Map Cache by default.
+If the tidb server didn't enable Stats LRU Cache, it will use Map Cache by default. Also, we will provide config and global session variable to control whether enable Stats LRU Cache and the capacity of it.
 
 ```go
 // statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
@@ -67,3 +68,4 @@ When the Stats LRU Cache memory usage exceeds the quota, the LRU Cache will sele
 
 Previously tidb server has Sync Stats and asynchronously Loading Histograms in order to load column stats into memory during query.
 As Stats LRU Cache Policy may evict index stats in memory, we also need Sync Stats and asynchronously Loading Histograms to support loading index stats according to its loading status to keep compatible.
+During the query optimization, tidb server will collect the used columns and indices, if their stats are not fully loaded, tidb-server will try to load their stats back into the memory.
