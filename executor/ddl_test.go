@@ -432,6 +432,9 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 
 	passCases := [][]string{
 		{
+			"create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))",
+		},
+		{
 			"create table t1 (id int key, b int not null, index(b))",
 			"create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
 		},
@@ -602,6 +605,10 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 	}
 
 	passCases := [][]string{
+		{
+			"create table t1 (id int key, a int, b int)",
+			"alter table t1 add foreign key fk(a) references t1(id)",
+		},
 		{
 			"create table t1 (id int key, b int not null, index(b))",
 			"create table t2 (a int, b int);",

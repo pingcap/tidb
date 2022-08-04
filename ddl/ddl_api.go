@@ -2298,7 +2298,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return err
 	}
-	if err = checkTableForeignKeysValid(is, tbInfo); err != nil {
+	if err = checkTableForeignKeysValid(is, schema.Name.L, tbInfo); err != nil {
 		return err
 	}
 
@@ -6050,9 +6050,9 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 	return fkInfo, nil
 }
 
-func checkTableForeignKeysValid(is infoschema.InfoSchema, tbInfo *model.TableInfo) error {
+func checkTableForeignKeysValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
 	for _, fk := range tbInfo.ForeignKeys {
-		err := checkTableForeignKeyValid(is, tbInfo, fk)
+		err := checkTableForeignKeyValid(is, schema, tbInfo, fk)
 		if err != nil {
 			return err
 		}
@@ -6060,12 +6060,18 @@ func checkTableForeignKeysValid(is infoschema.InfoSchema, tbInfo *model.TableInf
 	return nil
 }
 
-func checkTableForeignKeyValid(is infoschema.InfoSchema, tbInfo *model.TableInfo, fk *model.FKInfo) error {
-	referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
-	if err != nil {
-		return err
+func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo) error {
+	var referTblInfo *model.TableInfo
+	if fk.RefSchema.L == schema && fk.RefTable.L == tbInfo.Name.L {
+		referTblInfo = tbInfo
+	} else {
+		referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+		if err != nil {
+			return err
+		}
+		referTblInfo = referTable.Meta()
 	}
-	return checkTableForeignKey(referTable.Meta(), tbInfo, fk)
+	return checkTableForeignKey(referTblInfo, tbInfo, fk)
 }
 
 func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.FKInfo) error {
@@ -6125,7 +6131,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkTableForeignKeyValid(is, t.Meta(), fkInfo); err != nil {
+	if err = checkTableForeignKeyValid(is, schema.Name.L, t.Meta(), fkInfo); err != nil {
 		return err
 	}
 	if model.FindIndexByColumns(t.Meta(), fkInfo.Cols...) == nil {
