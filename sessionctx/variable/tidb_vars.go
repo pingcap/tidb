@@ -452,9 +452,6 @@ const (
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
 
-	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
-	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
-
 	// TiDBPlacementMode is used to control the mode for placement
 	TiDBPlacementMode = "tidb_placement_mode"
 
@@ -765,7 +762,7 @@ const (
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
-	//TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
+	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
 	TiDBMemOOMAction = "tidb_mem_oom_action"
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
@@ -791,6 +788,9 @@ const (
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
 	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
+	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
+	// when a single SQL statement exceeds the memory quota specified by the memory quota.
+	TiDBEnableTmpStorageOnOOM = "tidb_enable_tmp_storage_on_oom"
 )
 
 // TiDB intentional limits
@@ -889,7 +889,6 @@ const (
 	DefTiDBDDLReorgBatchSize                       = 256
 	DefTiDBDDLErrorCountLimit                      = 512
 	DefTiDBMaxDeltaSchemaCount                     = 1024
-	DefTiDBPointGetCache                           = false
 	DefTiDBPlacementMode                           = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated          = false
 	DefTiDBHashAggPartialConcurrency               = ConcurrencyUnset
@@ -1006,6 +1005,7 @@ const (
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBDDLEnableFastReorg                      = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
+	DefTiDBEnableTmpStorageOnOOM                   = true
 )
 
 // Process global variables.
@@ -1016,6 +1016,7 @@ var (
 	QueryLogMaxLen              = atomic.NewInt32(DefTiDBQueryLogMaxLen)
 	EnablePProfSQLCPU           = atomic.NewBool(false)
 	EnableBatchDML              = atomic.NewBool(false)
+	EnableTmpStorageOnOOM       = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
@@ -1033,7 +1034,6 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
-	EnablePointGetCache                   = atomic.NewBool(DefTiDBPointGetCache)
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)

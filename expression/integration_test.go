@@ -3648,6 +3648,42 @@ func TestIssue16973(t *testing.T) {
 		"AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;").Check(testkit.Rows("1"))
 }
 
+func TestShardIndexOnTiFlash(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key clustered, a int, b int, unique key uk_expr((tidb_shard(a)),a))")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
+	rows := tk.MustQuery("explain select max(b) from t").Rows()
+	for _, row := range rows {
+		line := fmt.Sprintf("%v", row)
+		require.NotContains(t, line, "tiflash")
+	}
+	tk.MustExec("set @@session.tidb_enforce_mpp = 0")
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	rows = tk.MustQuery("explain select max(b) from t").Rows()
+	for _, row := range rows {
+		line := fmt.Sprintf("%v", row)
+		require.NotContains(t, line, "tiflash")
+	}
+}
+
 func TestExprPushdownBlacklist(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -6493,6 +6529,59 @@ func TestIssue24953(t *testing.T) {
 	tk.MustExec("CREATE TABLE `tbl_0` (\n  `col_76` bigint(20) unsigned DEFAULT NULL,\n  `col_1` time NOT NULL DEFAULT '13:11:28',\n  `col_2` datetime DEFAULT '1990-07-29 00:00:00',\n  `col_3` date NOT NULL DEFAULT '1976-09-16',\n  `col_4` date DEFAULT NULL,\n  `col_143` varbinary(208) DEFAULT 'lXRTXUkTeWaJ',\n  KEY `idx_0` (`col_2`,`col_1`,`col_76`,`col_4`,`col_3`),\n  PRIMARY KEY (`col_1`,`col_3`) /*T![clustered_index] NONCLUSTERED */,\n  KEY `idx_2` (`col_1`,`col_4`,`col_76`,`col_3`),\n  KEY `idx_3` (`col_4`,`col_76`,`col_3`,`col_2`,`col_1`),\n  UNIQUE KEY `idx_4` (`col_76`,`col_3`,`col_1`,`col_4`),\n  KEY `idx_5` (`col_3`,`col_4`,`col_76`,`col_2`),\n  KEY `idx_6` (`col_2`),\n  KEY `idx_7` (`col_76`,`col_3`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("insert into tbl_9 values (-5765442,-597990898,384599625723370089,\"ZdfkUJiHcOfi\");")
 	tk.MustQuery("(select col_76,col_1,col_143,col_2 from tbl_0) union (select   col_54,col_57,col_55,col_56 from tbl_9);").Check(testkit.Rows("-5765442 ZdfkUJiHcOfi -597990898 384599625723370089"))
+}
+
+// issue https://github.com/pingcap/tidb/issues/28544
+func TestPrimaryKeyRequiredSysvar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		name varchar(60),
+		age int
+	  )`)
+	tk.MustExec(`DROP TABLE t`)
+
+	tk.MustExec("set @@sql_require_primary_key=true")
+
+	// creating table without primary key should now fail
+	tk.MustGetErrCode(`CREATE TABLE t (
+		name varchar(60),
+		age int
+	  )`, errno.ErrTableWithoutPrimaryKey)
+	// but with primary key should work as usual
+	tk.MustExec(`CREATE TABLE t (
+		id bigint(20) NOT NULL PRIMARY KEY AUTO_RANDOM,
+		name varchar(60),
+		age int
+	  )`)
+	tk.MustGetErrMsg(`ALTER TABLE t
+       DROP COLUMN id`, "[ddl:8200]Unsupported drop integer primary key")
+
+	// test with non-clustered primary key
+	tk.MustExec(`CREATE TABLE t2 (
+       id int(11) NOT NULL,
+       c1 int(11) DEFAULT NULL,
+       PRIMARY KEY(id) NONCLUSTERED)`)
+	tk.MustGetErrMsg(`ALTER TABLE t2
+       DROP COLUMN id`, "[ddl:8200]can't drop column id with composite index covered or Primary Key covered now")
+	tk.MustGetErrCode(`ALTER TABLE t2 DROP PRIMARY KEY`, errno.ErrTableWithoutPrimaryKey)
+
+	// this sysvar is ignored in internal sessions
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	ctx := context.Background()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	sql := `CREATE TABLE t3 (
+		id int(11) NOT NULL,
+		c1 int(11) DEFAULT NULL)`
+	stmts, err := tk.Session().Parse(ctx, sql)
+	require.NoError(t, err)
+	res, err := tk.Session().ExecuteStmt(ctx, stmts[0])
+	require.NoError(t, err)
+	if res != nil {
+		require.NoError(t, res.Close())
+	}
 }
 
 // issue https://github.com/pingcap/tidb/issues/26111

@@ -971,3 +971,26 @@ func BenchmarkMergeNullsNonVectorized(b *testing.B) {
 		}
 	}
 }
+
+func TestColumnResizeInt64(t *testing.T) {
+	var col = NewColumn(types.NewFieldType(mysql.TypeLonglong), 2)
+	col.AppendUint64(11)
+	col.AppendUint64(11)
+
+	col.ResizeInt64(4, false)
+	require.Equal(t, col.nullBitmap, []byte{0b1111})
+	col.AppendUint64(11)
+	require.Equal(t, col.nullBitmap, []byte{0b11111})
+	col.AppendNull()
+	require.Equal(t, col.nullBitmap, []byte{0b011111})
+
+	col.ResizeUint64(11, false)
+	require.Equal(t, col.nullBitmap, []byte{0b11111111, 0b111})
+
+	col.ResizeUint64(7, true)
+	require.Equal(t, col.nullBitmap, []byte{0})
+
+	col.AppendUint64(32)
+	col.AppendUint64(32)
+	require.Equal(t, col.nullBitmap, []byte{0b10000000, 0b1})
+}

@@ -97,6 +97,7 @@ require (
 
 require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+	github.com/ashanbrown/makezero v1.1.1
 	github.com/charithe/durationcheck v0.0.9
 	github.com/daixiang0/gci v0.4.3
 	github.com/golangci/gofmt v0.0.0-20190930125516-244bba706f1a
