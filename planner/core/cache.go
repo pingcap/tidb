@@ -133,8 +133,11 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // NewPlanCacheKey creates a new planCacheKey object.
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string) (kvcache.Key, error) {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, prepared *CachedPrepareStmt, lastUpdatedSchemaVersion int64, bindSQL string) (kvcache.Key, error) {
+	stmtText := prepared.StmtText
+	stmtDB := prepared.StmtDB
+	schemaVersion := prepared.PreparedAst.SchemaVersion
+	isReadonlyStmt := prepared.IsReadonlyStmt
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -156,7 +159,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
 		sqlMode:                  sessionVars.SQLMode,
 		timezoneOffset:           timezoneOffset,
-		isolationReadEngines:     sessionVars.GetAvailableIsolationReadEngines4Plan(),
+		isolationReadEngines:     sessionVars.GetAvailableIsolationReadEngines4Plan(isReadonlyStmt),
 		selectLimit:              sessionVars.SelectLimit,
 		bindSQL:                  bindSQL,
 		inRestrictedSQL:          sessionVars.InRestrictedSQL,
@@ -254,6 +257,7 @@ type CachedPrepareStmt struct {
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
 	NormalizedSQL4PC    string
 	SQLDigest4PC        string
+	IsReadonlyStmt      bool
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then
@@ -280,4 +284,17 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*Cached
 		return preparedObj, nil
 	}
 	return nil, ErrStmtNotFound
+}
+
+// newCachedPrepareStmt4Test
+func newCachedPrepareStmt4Test(stmtText, stmtDB string, schemaVersion int64, isReadonlyStmt bool) *CachedPrepareStmt {
+	prepared := &ast.Prepared{
+		SchemaVersion: schemaVersion,
+	}
+	return &CachedPrepareStmt{
+		PreparedAst:    prepared,
+		StmtDB:         stmtDB,
+		StmtText:       stmtText,
+		IsReadonlyStmt: isReadonlyStmt,
+	}
 }

@@ -1256,7 +1256,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	if dbName.L == mysql.SystemDB {
 		return paths, nil
 	}
-	isolationReadEngines := ctx.GetSessionVars().GetAvailableIsolationReadEngines4Plan()
+	isolationReadEngines := ctx.GetSessionVars().GetAvailableIsolationReadEngines4Plan(ctx.GetSessionVars().StmtCtx.IsReadonlyStmt)
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {

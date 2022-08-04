@@ -66,8 +66,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 			// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
-		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText,
-			preparedStmt.StmtDB, prepared.SchemaVersion, latestSchemaVersion, bindSQL); err != nil {
+		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt, latestSchemaVersion, bindSQL); err != nil {
 			return nil, nil, err
 		}
 	}

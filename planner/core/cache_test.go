@@ -32,20 +32,28 @@ func TestCacheKey(t *testing.T) {
 	ctx.GetSessionVars().InRestrictedSQL = false
 	variable.RestrictedReadOnly.Store(false)
 	variable.VarTiDBSuperReadOnly.Store(false)
-	key, err := NewPlanCacheKey(ctx.GetSessionVars(), "", "test", 1, 1, "")
+
+	prepared := newCachedPrepareStmt4Test("", "test", 1, true)
+	key, err := NewPlanCacheKey(ctx.GetSessionVars(), prepared, 1, "")
 	if err.Error() != "no statement text" {
 		t.Fail() // no statement text
 	}
-	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "", 1, 1, "")
+
+	prepared = newCachedPrepareStmt4Test("select 1", "", 1, true)
+	key, err = NewPlanCacheKey(ctx.GetSessionVars(), prepared, 1, "")
 	if err != nil {
 		t.Fail() // schema can be nil
 	}
-	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "test", 1, 1,
+
+	prepared = newCachedPrepareStmt4Test("select 1", "test", 1, true)
+	key, err = NewPlanCacheKey(ctx.GetSessionVars(), prepared, 1,
 		"select /*+ ignore_plan_cache() */ * from t")
 	if err != nil {
 		t.Fail()
 	}
-	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "test", 1, 1, "")
+
+	prepared = newCachedPrepareStmt4Test("select 1", "test", 1, true)
+	key, err = NewPlanCacheKey(ctx.GetSessionVars(), prepared, 1, "")
 	if err != nil {
 		t.Fail()
 	}

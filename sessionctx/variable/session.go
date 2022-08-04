@@ -1604,9 +1604,9 @@ func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
 // We should use this function to get the isolation read engines in the optimize phase.
 // For example, for write stmt, TiFlash has a different results when lock the data in point get plan.
 // So we ban the TiFlash engine in not read only stmt.
-func (s *SessionVars) GetAvailableIsolationReadEngines4Plan() map[kv.StoreType]struct{} {
+func (s *SessionVars) GetAvailableIsolationReadEngines4Plan(isReadonlyStmt bool) map[kv.StoreType]struct{} {
 	availableReadEngines := s.GetIsolationReadEngines()
-	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && (!s.StmtCtx.IsReadonlyStmt || s.StmtCtx.InTiFlashFallBack2TiKV) {
+	if _, isolationReadContainTiFlash := availableReadEngines[kv.TiFlash]; isolationReadContainTiFlash && (!isReadonlyStmt || s.StmtCtx.InTiFlashFallBack2TiKV) {
 		delete(availableReadEngines, kv.TiFlash)
 	}
 	return availableReadEngines

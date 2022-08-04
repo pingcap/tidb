@@ -240,6 +240,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		NormalizedSQL4PC:    normalizedSQL4PC,
 		SQLDigest4PC:        digest4PC,
+		IsReadonlyStmt:      plannercore.IsReadOnly(prepared.Stmt, e.ctx.GetSessionVars()),
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
@@ -300,12 +301,10 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !ok {
 		return errors.Errorf("invalid CachedPrepareStmt type")
 	}
-	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
 		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.ctx, preparedObj)
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
-			0, bindSQL)
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj, 0, bindSQL)
 		if err != nil {
 			return err
 		}

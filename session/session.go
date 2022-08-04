@@ -339,20 +339,18 @@ func (s *session) cleanRetryInfo() {
 	}
 
 	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
-	var cacheKey kvcache.Key
-	var err error
-	var preparedAst *ast.Prepared
-	var stmtText, stmtDB string
+	var (
+		cacheKey    kvcache.Key
+		err         error
+		preparedObj *plannercore.CachedPrepareStmt
+	)
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
-			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+			preparedObj, ok = preparedPointer.(*plannercore.CachedPrepareStmt)
 			if ok {
-				preparedAst = preparedObj.PreparedAst
-				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
 				bindSQL, _ := plannercore.GetBindSQL4PlanCache(s, preparedObj)
-				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion,
-					0, bindSQL)
+				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, preparedObj, 0, bindSQL)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -362,8 +360,8 @@ func (s *session) cleanRetryInfo() {
 	}
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
-			if i > 0 && preparedAst != nil {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.GetAvailableIsolationReadEngines4Plan())
+			if i > 0 && preparedObj.PreparedAst != nil {
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, preparedObj.StmtText, preparedObj.PreparedAst.SchemaVersion, s.sessionVars.GetAvailableIsolationReadEngines4Plan(preparedObj.IsReadonlyStmt))
 			}
 			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
 				s.PreparedPlanCache().Delete(cacheKey)
