@@ -57,8 +57,7 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	mockCtx := mock.NewContext()
@@ -119,8 +118,7 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 			idxNonUnique = idx
 		}
 	}
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
@@ -173,8 +171,7 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 }
 
 func TestIssue29520(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_mutation_checker=1")
 	tk.MustExec("use test")
@@ -184,8 +181,7 @@ func TestIssue29520(t *testing.T) {
 }
 
 func TestAssertionWithLazyCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_txn_assertion_level = 'STRICT'")
 

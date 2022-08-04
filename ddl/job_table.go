@@ -250,7 +250,7 @@ const (
 	updateDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
 )
 
-func insertDDLJobs2Table(sess *session, jobs []*model.Job, updateRawArgs bool) error {
+func insertDDLJobs2Table(sess *session, updateRawArgs bool, jobs ...*model.Job) error {
 	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
@@ -432,7 +432,7 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 }
 
 // MoveJobFromQueue2Table move existing DDLs in queue to table.
-func (d *ddl) MoveJobFromQueue2Table(force bool) error {
+func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
 	sess, err := d.sessPool.get()
 	if err != nil {
 		return err
@@ -445,7 +445,11 @@ func (d *ddl) MoveJobFromQueue2Table(force bool) error {
 		}
 		t := meta.NewMeta(txn)
 		isConcurrentDDL, err := t.IsConcurrentDDL()
-		if !force && (isConcurrentDDL || err != nil) {
+		if !inBootstrap && (isConcurrentDDL || err != nil) {
+			return errors.Trace(err)
+		}
+		systemDBID, err := t.GetSystemDBID()
+		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, tp := range []workerType{addIdxWorker, generalWorker} {
@@ -454,15 +458,19 @@ func (d *ddl) MoveJobFromQueue2Table(force bool) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = insertDDLJobs2Table(se, jobs, false)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if tp == generalWorker {
-				// general job do not have reorg info.
-				continue
-			}
 			for _, job := range jobs {
+				// In bootstrap, we can ignore the internal DDL.
+				if inBootstrap && job.SchemaID == systemDBID {
+					continue
+				}
+				err = insertDDLJobs2Table(se, false, job)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if tp == generalWorker {
+					// General job do not have reorg info.
+					continue
+				}
 				element, start, end, pid, err := t.GetDDLReorgHandle(job)
 				if meta.ErrDDLReorgElementNotExist.Equal(err) {
 					continue

@@ -29,8 +29,7 @@ import (
 )
 
 func TestGetDDLJobs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	sess := testkit.NewTestKit(t, store).Session()
 	_, err := sess.Execute(context.Background(), "begin")
@@ -85,8 +84,7 @@ func TestGetDDLJobs(t *testing.T) {
 }
 
 func TestGetDDLJobsIsSort(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	sess := testkit.NewTestKit(t, store).Session()
 	_, err := sess.Execute(context.Background(), "begin")
@@ -118,8 +116,7 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 }
 
 func TestGetHistoryDDLJobs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	// delete the internal DDL record.
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(ctx context.Context, txn kv.Transaction) error {
