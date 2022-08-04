@@ -1165,6 +1165,18 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	}, nil
 }
 
+// GetHistoryDDLJobsIterator gets the jobs iterator begin with startJobID.
+func (m *Meta) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, error) {
+	field := m.jobIDKey(startJobID)
+	iter, err := structure.NewHashReverseIterBeginWithField(m.txn, mDDLJobHistoryKey, field)
+	if err != nil {
+		return nil, err
+	}
+	return &HLastJobIterator{
+		iter: iter,
+	}, nil
+}
+
 // HLastJobIterator is the iterator for gets the latest history.
 type HLastJobIterator struct {
 	iter *structure.ReverseHashIterator
