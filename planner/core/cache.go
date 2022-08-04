@@ -278,7 +278,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*Cached
 	return nil, ErrStmtNotFound
 }
 
-// newCachedPrepareStmt4Test
+// newCachedPrepareStmt4Test just used for plan cached related tests.
 func newCachedPrepareStmt4Test(stmtText, stmtDB string, schemaVersion int64, isReadonlyStmt bool) *CachedPrepareStmt {
 	prepared := &ast.Prepared{
 		SchemaVersion: schemaVersion,
