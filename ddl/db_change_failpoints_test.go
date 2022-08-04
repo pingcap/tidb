@@ -41,8 +41,7 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -87,8 +86,7 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
@@ -140,8 +138,7 @@ func TestParallelFlashbackTable(t *testing.T) {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// clear GC variables first.

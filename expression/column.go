@@ -16,7 +16,6 @@ package expression
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"golang.org/x/exp/slices"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -690,8 +690,8 @@ func (col *Column) Repertoire() Repertoire {
 func SortColumns(cols []*Column) []*Column {
 	sorted := make([]*Column, len(cols))
 	copy(sorted, cols)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].UniqueID < sorted[j].UniqueID
+	slices.SortFunc(sorted, func(i, j *Column) bool {
+		return i.UniqueID < j.UniqueID
 	})
 	return sorted
 }

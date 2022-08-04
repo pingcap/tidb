@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -365,6 +364,9 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 type CompactReplicaKind string
 
 const (
+	// CompactReplicaKindAll means compacting both TiKV and TiFlash replicas.
+	CompactReplicaKindAll = "ALL"
+
 	// CompactReplicaKindTiFlash means compacting TiFlash replicas.
 	CompactReplicaKindTiFlash = "TIFLASH"
 
@@ -387,10 +389,15 @@ func (n *CompactTableStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while add table")
 	}
 
-	// Note: There is only TiFlash replica available now. TiKV will be added later.
-	ctx.WriteKeyWord(" COMPACT ")
-	ctx.WriteKeyWord(string(n.ReplicaKind))
-	ctx.WriteKeyWord(" REPLICA")
+	if n.ReplicaKind == CompactReplicaKindAll {
+		ctx.WriteKeyWord(" COMPACT")
+	} else {
+		// Note: There is only TiFlash replica available now. TiKV will be added later.
+		ctx.WriteKeyWord(" COMPACT ")
+		ctx.WriteKeyWord(string(n.ReplicaKind))
+		ctx.WriteKeyWord(" REPLICA")
+	}
+
 	return nil
 }
 
@@ -619,7 +626,6 @@ const (
 func (n CompletionType) Restore(ctx *format.RestoreCtx) error {
 	switch n {
 	case CompletionTypeDefault:
-		break
 	case CompletionTypeChain:
 		ctx.WriteKeyWord(" AND CHAIN")
 	case CompletionTypeRelease:
@@ -1048,11 +1054,11 @@ func (n *SetConfigStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetConfigStmt)
-	if node, ok := n.Value.Accept(v); !ok {
+	node, ok := n.Value.Accept(v)
+	if !ok {
 		return n, false
-	} else {
-		n.Value = node.(ExprNode)
 	}
+	n.Value = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -2025,6 +2031,7 @@ const (
 	AdminCleanupIndex
 	AdminCheckIndexRange
 	AdminShowDDLJobQueries
+	AdminShowDDLJobQueriesWithRange
 	AdminChecksumTable
 	AdminShowSlow
 	AdminShowNextRowID
@@ -2112,6 +2119,12 @@ func (n *ShowSlow) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// LimitSimple is the struct for Admin statement limit option.
+type LimitSimple struct {
+	Count  uint64
+	Offset uint64
+}
+
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
@@ -2127,6 +2140,7 @@ type AdminStmt struct {
 	Plugins        []string
 	Where          ExprNode
 	StatementScope StatementScope
+	LimitSimple    LimitSimple
 }
 
 // Restore implements Node interface.
@@ -2221,6 +2235,9 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 	case AdminShowDDLJobQueries:
 		ctx.WriteKeyWord("SHOW DDL JOB QUERIES ")
 		restoreJobIDs()
+	case AdminShowDDLJobQueriesWithRange:
+		ctx.WriteKeyWord("SHOW DDL JOB QUERIES LIMIT ")
+		ctx.WritePlainf("%d, %d", n.LimitSimple.Offset, n.LimitSimple.Count)
 	case AdminShowSlow:
 		ctx.WriteKeyWord("SHOW SLOW ")
 		if err := n.ShowSlow.Restore(ctx); err != nil {
@@ -2351,11 +2368,10 @@ func (n *PrivElem) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(n.Name)
 	} else {
 		str, ok := mysql.Priv2Str[n.Priv]
-		if ok {
-			ctx.WriteKeyWord(str)
-		} else {
+		if !ok {
 			return errors.New("Undefined privilege type")
 		}
+		ctx.WriteKeyWord(str)
 	}
 	if n.Cols != nil {
 		ctx.WritePlain(" (")
@@ -3537,7 +3553,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join":
+	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge":
 		ctx.WritePlain(")")
 		return nil
 	}
@@ -3618,27 +3634,6 @@ func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
 type TextString struct {
 	Value           string
 	IsBinaryLiteral bool
-}
-
-// TransformTextStrings converts a slice of TextString to strings.
-// This is only used by enum/set strings.
-func TransformTextStrings(ts []*TextString, _ string) []string {
-	// The UTF-8 encoding rather than other encoding is used
-	// because parser is not possible to determine the "real"
-	// charset that a binary literal string should be converted to.
-	enc := charset.EncodingUTF8Impl
-	ret := make([]string, 0, len(ts))
-	for _, t := range ts {
-		if !t.IsBinaryLiteral {
-			ret = append(ret, t.Value)
-		} else {
-			// Validate the binary literal string.
-			// See https://github.com/pingcap/tidb/issues/30740.
-			r, _ := enc.Transform(nil, charset.HackSlice(t.Value), charset.OpDecodeNoErr)
-			ret = append(ret, charset.HackString(r))
-		}
-	}
-	return ret
 }
 
 type BinaryLiteral interface {

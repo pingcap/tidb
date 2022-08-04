@@ -9,16 +9,19 @@ go_library(
         "//parser/mysql",
         "//util/hack",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
     ],
 )
 
 go_test(
     name = "stringutil_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "string_util_test.go",
     ],
     embed = [":stringutil"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

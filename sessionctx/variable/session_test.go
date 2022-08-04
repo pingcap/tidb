@@ -56,7 +56,7 @@ func TestSetSystemVariable(t *testing.T) {
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			mtx.Lock()
-			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
+			err := v.SetSystemVar(tc.key, tc.value)
 			mtx.Unlock()
 			if tc.err {
 				require.Error(t, err)

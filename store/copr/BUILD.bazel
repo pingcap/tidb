@@ -24,6 +24,7 @@ go_library(
         "//store/driver/backoff",
         "//store/driver/error",
         "//store/driver/options",
+        "//util",
         "//util/execdetails",
         "//util/logutil",
         "//util/mathutil",
@@ -50,12 +51,14 @@ go_library(
         "@com_github_tikv_client_go_v2//util",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "copr_test",
+    timeout = "short",
     srcs = [
         "batch_coprocessor_test.go",
         "coprocessor_cache_test.go",
@@ -64,6 +67,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":copr"],
+    flaky = True,
     deps = [
         "//kv",
         "//store/driver/backoff",

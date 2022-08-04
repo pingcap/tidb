@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -67,7 +68,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -340,11 +340,13 @@ type CancelDDLJobsExec struct {
 // Open implements the Executor Open interface.
 func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
-	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
-		e.errs, err = ddl.CancelJobs(txn, e.jobIDs)
-		return
-	})
-	return errInTxn
+	newSess, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	e.errs, err = ddl.CancelJobs(newSess, e.ctx.GetStore(), e.jobIDs)
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -356,7 +358,7 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendString(0, strconv.FormatInt(e.jobIDs[i], 10))
-		if e.errs[i] != nil {
+		if e.errs != nil && e.errs[i] != nil {
 			req.AppendString(1, fmt.Sprintf("error: %v", e.errs[i]))
 		} else {
 			req.AppendString(1, "successful")
@@ -397,8 +399,10 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		switch alloc.GetType() {
 		case autoid.RowIDAllocType, autoid.AutoIncrementType:
 			idType = "AUTO_INCREMENT"
-			if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
-				colName = col.Name.O
+			if tblMeta.PKIsHandle {
+				if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
+					colName = col.Name.O
+				}
 			} else {
 				colName = model.ExtraHandleName.O
 			}
@@ -478,6 +482,7 @@ type ShowDDLJobsExec struct {
 
 	jobNumber int
 	is        infoschema.InfoSchema
+	sess      sessionctx.Context
 }
 
 // DDLJobRetriever retrieve the DDLJobs.
@@ -492,9 +497,9 @@ type DDLJobRetriever struct {
 	TZLoc          *time.Location
 }
 
-func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
+func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
 	m := meta.NewMeta(txn)
-	jobs, err := ddl.GetAllDDLJobs(m)
+	jobs, err := ddl.GetAllDDLJobs(sess, m)
 	if err != nil {
 		return err
 	}
@@ -567,6 +572,22 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		req.AppendNull(10)
 	}
 	req.AppendString(11, job.State.String())
+	if job.Type == model.ActionMultiSchemaChange {
+		for _, subJob := range job.MultiSchemaInfo.SubJobs {
+			req.AppendInt64(0, job.ID)
+			req.AppendString(1, schemaName)
+			req.AppendString(2, tableName)
+			req.AppendString(3, subJob.Type.String()+" /* subjob */")
+			req.AppendString(4, subJob.SchemaState.String())
+			req.AppendInt64(5, job.SchemaID)
+			req.AppendInt64(6, job.TableID)
+			req.AppendInt64(7, subJob.RowCount)
+			req.AppendNull(8)
+			req.AppendNull(9)
+			req.AppendNull(10)
+			req.AppendString(11, subJob.State.String())
+		}
+	}
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {
@@ -589,18 +610,36 @@ type ShowDDLJobQueriesExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
+	var err error
+	var jobs []*model.Job
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
+	session, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+	err = sessiontxn.NewTxn(context.Background(), session)
 	if err != nil {
 		return err
 	}
-	historyJobs, err := ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	defer func() {
+		// releaseSysSession will rollbacks txn automatically.
+		e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), session)
+	}()
+	txn, err := session.Txn(true)
+	if err != nil {
+		return err
+	}
+	session.GetSessionVars().SetInTxn(true)
+
+	m := meta.NewMeta(txn)
+	jobs, err = ddl.GetAllDDLJobs(session, m)
+	if err != nil {
+		return err
+	}
+
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(m, ddl.DefNumHistoryJobs)
 	if err != nil {
 		return err
 	}
@@ -632,24 +671,105 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	return nil
 }
 
+// ShowDDLJobQueriesWithRangeExec represents a show DDL job queries with range executor.
+// The jobs id that is given by 'admin show ddl job queries' statement,
+// can be searched within a specified range in history jobs using offset and limit.
+type ShowDDLJobQueriesWithRangeExec struct {
+	baseExecutor
+
+	cursor int
+	jobs   []*model.Job
+	offset uint64
+	limit  uint64
+}
+
 // Open implements the Executor Open interface.
-func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
+func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
+	var err error
+	var jobs []*model.Job
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
+	session, err := e.getSysSession()
 	if err != nil {
+		return err
+	}
+	err = sessiontxn.NewTxn(context.Background(), session)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// releaseSysSession will rollbacks txn automatically.
+		e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), session)
+	}()
+	txn, err := session.Txn(true)
+	if err != nil {
+		return err
+	}
+	session.GetSessionVars().SetInTxn(true)
+
+	m := meta.NewMeta(txn)
+	jobs, err = ddl.GetAllDDLJobs(session, m)
+	if err != nil {
+		return err
+	}
+
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(m, int(e.offset+e.limit))
+	if err != nil {
+		return err
+	}
+
+	e.jobs = append(e.jobs, jobs...)
+	e.jobs = append(e.jobs, historyJobs...)
+
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.maxChunkSize)
+	if e.cursor >= len(e.jobs) {
+		return nil
+	}
+	if int(e.limit) > len(e.jobs) {
+		return nil
+	}
+	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
+	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+		if i >= int(e.offset) && i < int(e.offset+e.limit) {
+			req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
+			req.AppendString(1, e.jobs[i].Query)
+		}
+	}
+	e.cursor += numCurBatch
+	return nil
+}
+
+// Open implements the Executor Open interface.
+func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	e.DDLJobRetriever.is = e.is
 	if e.jobNumber == 0 {
 		e.jobNumber = ddl.DefNumHistoryJobs
 	}
-	err = e.DDLJobRetriever.initial(txn)
+	sess, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	return nil
+	e.sess = sess
+	err = sessiontxn.NewTxn(context.Background(), sess)
+	if err != nil {
+		return err
+	}
+	txn, err := sess.Txn(true)
+	if err != nil {
+		return err
+	}
+	sess.GetSessionVars().SetInTxn(true)
+	err = e.DDLJobRetriever.initial(txn, sess)
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -686,6 +806,12 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.cursor += len(e.cacheJobs)
 	}
 	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *ShowDDLJobsExec) Close() error {
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), e.sess)
+	return e.baseExecutor.Close()
 }
 
 func getSchemaName(is infoschema.InfoSchema, id int64) string {
@@ -1025,6 +1151,15 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					physTblID := tblID
 					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
 						physTblID = row.GetInt64(physTblColIdx)
+						if physTblID == 0 {
+							// select * from t1 left join t2 on t1.c = t2.c for update
+							// The join right side might be added NULL in left join
+							// In that case, physTblID is 0, so skip adding the lock.
+							//
+							// Note, we can't distinguish whether it's the left join case,
+							// or a bug that TiKV return without correct physical ID column.
+							continue
+						}
 					}
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 				}
@@ -1042,12 +1177,20 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for id := range e.tblID2Handle {
 		e.updateDeltaForTableID(id)
 	}
-
-	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime, len(e.keys)), e.keys...)
+	lockCtx, err := newLockCtx(e.ctx, lockWaitTime, len(e.keys))
+	if err != nil {
+		return err
+	}
+	return doLockKeys(ctx, e.ctx, lockCtx, e.keys...)
 }
 
-func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *tikvstore.LockCtx {
-	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
+func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
+	seVars := sctx.GetSessionVars()
+	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.Killed
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
@@ -1082,7 +1225,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *
 	if lockCtx.ForUpdateTS > 0 && seVars.AssertionLevel != variable.AssertionLevelOff {
 		lockCtx.InitCheckExistence(numKeys)
 	}
-	return lockCtx
+	return lockCtx, nil
 }
 
 // doLockKeys is the main entry for pessimistic lock keys
@@ -1280,7 +1423,7 @@ func init() {
 			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
 
-		e := newExecutorBuilder(sctx, is, nil, oracle.GlobalTxnScope)
+		e := newExecutorBuilder(sctx, is, nil)
 		exec := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -1789,7 +1932,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
-	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
+	if variable.EnableTmpStorageOnOOM.Load() && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
 	switch variable.OOMAction.Load() {
@@ -1904,11 +2047,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
-		// Try to mark the `RCCheckTS` flag for the first time execution of in-transaction read requests
-		// using read-consistency isolation level.
-		if NeedSetRCCheckTSFlag(ctx, stmt) {
-			sc.RCCheckTS = true
-		}
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
@@ -1919,12 +2057,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors {
+		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
 	case *ast.SplitRegionStmt:
 		sc.IgnoreTruncate = false
+		sc.IgnoreZeroInDate = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	case *ast.SetSessionStatesStmt:
+		sc.InSetSessionStatesStmt = true
+		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
@@ -1945,7 +2088,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
 	}
 	sc.PrevAffectedRows = 0
-	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt {
+	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt || vars.StmtCtx.InSetSessionStatesStmt {
 		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
@@ -2041,14 +2184,4 @@ func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
 		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
-}
-
-// NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
-func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
-	sessionVars := ctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && sessionVars.RcReadCheckTS && sessionVars.InTxn() &&
-		sessionVars.IsPessimisticReadConsistency() && !sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
-		return true
-	}
-	return false
 }

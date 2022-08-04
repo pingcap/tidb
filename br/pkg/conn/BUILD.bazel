@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/conn",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/glue",
         "//br/pkg/logutil",
@@ -19,6 +20,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/logbackuppb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//oracle",
@@ -26,9 +28,7 @@ go_library(
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@com_github_tikv_pd_client//:client",
         "@org_golang_google_grpc//:grpc",
-        "@org_golang_google_grpc//backoff",
         "@org_golang_google_grpc//codes",
-        "@org_golang_google_grpc//credentials",
         "@org_golang_google_grpc//keepalive",
         "@org_golang_google_grpc//status",
         "@org_uber_go_zap//:zap",
@@ -37,12 +37,15 @@ go_library(
 
 go_test(
     name = "conn_test",
+    timeout = "short",
     srcs = [
         "conn_test.go",
         "main_test.go",
     ],
     embed = [":conn"],
+    flaky = True,
     deps = [
+        "//br/pkg/conn/util",
         "//br/pkg/pdutil",
         "//br/pkg/utils",
         "//testkit/testsetup",

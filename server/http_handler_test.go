@@ -849,8 +849,7 @@ func TestGetSchema(t *testing.T) {
 	}
 	sort.Strings(names)
 	require.Equal(t, expects, names)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	userTbl := external.GetTableByName(t, tk, "mysql", "user")
@@ -978,6 +977,25 @@ func TestAllHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, data, jobs)
+
+	// Cover the start_job_id parameter.
+	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41&limit=3")
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&jobs)
+	require.NoError(t, err)
+
+	// The result is in descending order
+	lastID := int64(42)
+	for _, job := range jobs {
+		require.Less(t, job.ID, lastID)
+		lastID = job.ID
+	}
+	require.NoError(t, resp.Body.Close())
 }
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {

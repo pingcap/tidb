@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	field_types "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -67,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"golang.org/x/exp/slices"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -97,6 +100,12 @@ type ShowExec struct {
 	IfNotExists bool // Used for `show create database if not exists`
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
+}
+
+type showTableRegionRowItem struct {
+	regionMeta
+	schedulingConstraints string
+	schedulingState       string
 }
 
 // Next implements the Executor Next interface.
@@ -219,7 +228,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus()
 	case ast.ShowRegions:
-		return e.fetchShowTableRegions()
+		return e.fetchShowTableRegions(ctx)
 	case ast.ShowBuiltins:
 		return e.fetchShowBuiltins()
 	case ast.ShowBackups:
@@ -347,6 +356,7 @@ func (e *ShowExec) fetchShowBind() error {
 
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
 	if err != nil {
@@ -377,6 +387,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM information_schema.engines`)
@@ -404,7 +415,7 @@ func moveInfoSchemaToFront(dbs []string) {
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	sort.Strings(dbs)
+	slices.Sort(dbs)
 	var (
 		fieldPatternsLike collate.WildcardPattern
 		fieldFilter       string
@@ -509,7 +520,7 @@ func (e *ShowExec) fetchShowTables() error {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
 	}
-	sort.Strings(tableNames)
+	slices.Sort(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
 			e.appendRow([]interface{}{v, tableTypes[v]})
@@ -532,6 +543,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	}
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 
 	var snapshot uint64
 	txn, err := e.ctx.Txn(false)
@@ -575,7 +587,6 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 			continue
 		}
 		e.result.AppendRow(row)
-
 	}
 	return nil
 }
@@ -820,15 +831,18 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
+				if v.IsNoop && !variable.EnableNoopVariables.Load() {
+					continue
+				}
 				if fieldFilter != "" && v.Name != fieldFilter {
 					continue
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
 				}
-				if v.Hidden || e.sysVarHiddenForSem(v.Name) {
+				if e.sysVarHiddenForSem(v.Name) {
 					continue
 				}
-				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
+				value, err = sessionVars.GetGlobalSystemVar(v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -842,15 +856,18 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
+		if v.IsNoop && !variable.EnableNoopVariables.Load() {
+			continue
+		}
 		if fieldFilter != "" && v.Name != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if v.Hidden || e.sysVarHiddenForSem(v.Name) {
+		if e.sysVarHiddenForSem(v.Name) {
 			continue
 		}
-		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
+		value, err = sessionVars.GetSessionOrGlobalSystemVar(v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -940,7 +957,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			buf.WriteString(",\n")
 		}
 		fmt.Fprintf(buf, "  %s %s", stringutil.Escape(col.Name.O, sqlMode), col.GetTypeDesc())
-		if col.GetCharset() != "binary" {
+		if field_types.HasCharset(&col.FieldType) {
 			if col.GetCharset() != tblCharset {
 				fmt.Fprintf(buf, " CHARACTER SET %s", col.GetCharset())
 			}
@@ -996,13 +1013,15 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 						defaultValStr = timeValue.GetMysqlTime().String()
 					}
 
-					if col.GetType() == mysql.TypeBit {
-						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
-						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
-					} else if col.DefaultIsExpr {
+					if col.DefaultIsExpr {
 						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
 					} else {
-						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
+						if col.GetType() == mysql.TypeBit {
+							defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
+							fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
+						} else {
+							fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
+						}
 					}
 				}
 			}
@@ -1341,7 +1360,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		}
 	}
 	// this if statement takes care of lists/range columns case
-	if partitionInfo.Columns != nil {
+	if len(partitionInfo.Columns) > 0 {
 		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
 		// Notice that MySQL uses two spaces between LIST and COLUMNS...
 		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
@@ -1397,7 +1416,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	sqlMode := ctx.GetSessionVars().SQLMode
 	var ifNotExistsStr string
 	if ifNotExists {
-		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
+		ifNotExistsStr = "IF NOT EXISTS "
 	}
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
 	if dbInfo.Charset != "" {
@@ -1507,6 +1526,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 
 	userName, hostName := e.User.Username, e.User.Hostname
 	sessVars := e.ctx.GetSessionVars()
@@ -1812,7 +1832,7 @@ func (e *ShowExec) appendRow(row []interface{}) {
 	}
 }
 
-func (e *ShowExec) fetchShowTableRegions() error {
+func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	store := e.ctx.GetStore()
 	tikvStore, ok := store.(helper.Storage)
 	if !ok {
@@ -1852,20 +1872,80 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
 	var regions []regionMeta
 	if len(e.IndexName.L) != 0 {
+		// show table * index * region
 		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
 		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
 	} else {
+		// show table * region
 		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
 	}
-
 	if err != nil {
 		return err
 	}
-	e.fillRegionsToChunk(regions)
+
+	regionRowItem, err := e.fetchSchedulingInfo(ctx, regions, tb.Meta())
+	if err != nil {
+		return err
+	}
+
+	e.fillRegionsToChunk(regionRowItem)
 	return nil
+}
+
+func (e *ShowExec) fetchSchedulingInfo(ctx context.Context, regions []regionMeta, tbInfo *model.TableInfo) ([]showTableRegionRowItem, error) {
+	scheduleState := make(map[int64]infosync.PlacementScheduleState)
+	schedulingConstraints := make(map[int64]*model.PlacementSettings)
+	regionRowItem := make([]showTableRegionRowItem, 0)
+	tblPlacement, err := e.getTablePlacement(tbInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	if tbInfo.GetPartitionInfo() != nil {
+		// partitioned table
+		for _, part := range tbInfo.GetPartitionInfo().Definitions {
+			_, err = fetchScheduleState(ctx, scheduleState, part.ID)
+			if err != nil {
+				return nil, err
+			}
+			placement, err := e.getPolicyPlacement(part.PlacementPolicyRef)
+			if err != nil {
+				return nil, err
+			}
+			if placement == nil {
+				schedulingConstraints[part.ID] = tblPlacement
+			} else {
+				schedulingConstraints[part.ID] = placement
+			}
+		}
+	} else {
+		// un-partitioned table or index
+		schedulingConstraints[tbInfo.ID] = tblPlacement
+		_, err = fetchScheduleState(ctx, scheduleState, tbInfo.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var constraintStr string
+	var scheduleStateStr string
+	for i := range regions {
+		if constraint, ok := schedulingConstraints[regions[i].physicalID]; ok && constraint != nil {
+			constraintStr = constraint.String()
+			scheduleStateStr = scheduleState[regions[i].physicalID].String()
+		} else {
+			constraintStr = ""
+			scheduleStateStr = ""
+		}
+		regionRowItem = append(regionRowItem, showTableRegionRowItem{
+			regionMeta:            regions[i],
+			schedulingConstraints: constraintStr,
+			schedulingState:       scheduleStateStr,
+		})
+	}
+	return regionRowItem, nil
 }
 
 func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
@@ -1894,7 +1974,7 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 	return regions, nil
 }
 
-func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
+func (e *ShowExec) fillRegionsToChunk(regions []showTableRegionRowItem) {
 	for i := range regions {
 		e.result.AppendUint64(0, regions[i].region.Id)
 		e.result.AppendString(1, regions[i].start)
@@ -1920,6 +2000,8 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 		e.result.AppendUint64(8, regions[i].readBytes)
 		e.result.AppendInt64(9, regions[i].approximateSize)
 		e.result.AppendInt64(10, regions[i].approximateKeys)
+		e.result.AppendString(11, regions[i].schedulingConstraints)
+		e.result.AppendString(12, regions[i].schedulingState)
 	}
 }
 
@@ -1944,8 +2026,19 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
 		return err
 	}
-	// This will be implemented in future PRs.
-	tokenBytes, err := gjson.Marshal("")
+	// session token
+	var token *sessionstates.SessionToken
+	// In testing, user may be nil.
+	if user := e.ctx.GetSessionVars().User; user != nil {
+		// The token may be leaked without secure transport, so we enforce secure transport (TLS or Unix Socket).
+		if !e.ctx.GetSessionVars().ConnectionInfo.IsSecureTransport() {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried with secure transport")
+		}
+		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+			return err
+		}
+	}
+	tokenBytes, err := gjson.Marshal(token)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1964,12 +2057,14 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	if !tbl.IsView() {
 		return nil
 	}
+	ctx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	// We need to run the build plan process in another session because there may be
 	// multiple goroutines running at the same time while session is not goroutine-safe.
 	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.
-	return runWithSystemSession(sctx, func(s sessionctx.Context) error {
+	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
-		planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
+		planBuilder, _ := plannercore.NewPlanBuilder(
+			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
 			viewOutputNames := viewLogicalPlan.OutputNames()
@@ -1989,12 +2084,12 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	})
 }
 
-func runWithSystemSession(sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
+func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
 	b := &baseExecutor{ctx: sctx}
 	sysCtx, err := b.getSysSession()
 	if err != nil {
 		return err
 	}
-	defer b.releaseSysSession(sysCtx)
+	defer b.releaseSysSession(ctx, sysCtx)
 	return fn(sysCtx)
 }

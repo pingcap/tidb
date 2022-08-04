@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2020 PingCAP, Inc.
 #
@@ -25,8 +25,6 @@ run_lightning_and_check_meta() {
   check_not_contains "Database: lightning_metadata"
 }
 
-DB_NAME=incr
-
 run_sql "DROP DATABASE IF EXISTS incr;"
 run_sql "DROP DATABASE IF EXISTS lightning_metadata;"
 run_lightning_and_check_meta
@@ -35,6 +33,8 @@ for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
   run_sql "SELECT count(*) from incr.$tbl"
   check_contains "count(*): 3"
 done
+
+declare -A next_ids=()
 
 for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
   if [ "$tbl" = "auto_random" ]; then
@@ -45,11 +45,12 @@ for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
   check_contains 'inc: 1'
   check_contains 'inc: 2'
   check_contains 'inc: 3'
+  next_ids["$tbl"]="$(run_sql "SHOW TABLE incr.$tbl NEXT_ROW_ID" | grep NEXT_GLOBAL_ROW_ID | awk '{print $2}')"
 done
 
 for tbl in pk_auto_inc rowid_uk_inc; do
-  run_sql "SELECT group_concat(v) from incr.$tbl group by 'all';"
-  check_contains "group_concat(v): a,b,c"
+  run_sql "SELECT group_concat(v order by v) as result from incr.$tbl group by 'all';"
+  check_contains "result: a,b,c"
 done
 
 run_sql "SELECT sum(pk) from incr.uk_auto_inc;"
@@ -69,14 +70,15 @@ for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
   else
     run_sql "SELECT id as inc FROM incr.$tbl"
   fi
-  check_contains 'inc: 4'
-  check_contains 'inc: 5'
-  check_contains 'inc: 6'
+  next_id=${next_ids["$tbl"]}
+  check_contains "inc: $next_id"
+  check_contains "inc: $((next_id + 1))"
+  check_contains "inc: $((next_id + 2))"
 done
 
 for tbl in pk_auto_inc rowid_uk_inc; do
-  run_sql "SELECT group_concat(v) from incr.$tbl group by 'all';"
-  check_contains "group_concat(v): a,b,c,d,e,f"
+  run_sql "SELECT group_concat(v order by v) as result from incr.$tbl group by 'all';"
+  check_contains "result: a,b,c,d,e,f"
 done
 
 run_sql "SELECT sum(pk) from incr.uk_auto_inc;"

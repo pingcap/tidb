@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,6 +48,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type tableDeltaMap map[int64]variable.TableDelta
@@ -136,7 +136,7 @@ func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
 }
 
 // colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
-type colStatsUsageMap map[model.TableColumnID]time.Time
+type colStatsUsageMap map[model.TableItemID]time.Time
 
 func (m colStatsUsageMap) merge(other colStatsUsageMap) {
 	for id, t := range other {
@@ -345,7 +345,7 @@ const batchInsertSize = 10
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	mapper := h.sweepIdxUsageList()
 	type FullIndexUsageInformation struct {
 		id          GlobalIndexID
@@ -519,14 +519,14 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ctx := context.TODO()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(context.Background(), exec, err)
+		err = finishTransaction(ctx, exec, err)
 	}()
 
 	txn, err := h.mu.ctx.Txn(true)
@@ -579,9 +579,10 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	if len(values) == 0 {
 		return nil
 	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	_, _, err := h.execRestrictedSQL(context.Background(), sql)
+	_, _, err := h.execRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
 
@@ -631,9 +632,10 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 	if fb.Tp == statistics.IndexType {
 		isIndex = 1
 	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	const sql = "insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values (%?, %?, %?, %?)"
 	h.mu.Lock()
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, fb.PhysicalID, fb.Hist.ID, isIndex, vals)
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, fb.PhysicalID, fb.Hist.ID, isIndex, vals)
 	h.mu.Unlock()
 	if err != nil {
 		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
@@ -751,7 +753,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	tables, _, err := h.execRestrictedSQL(ctx, "SELECT distinct table_id from mysql.stats_feedback")
 	if err != nil {
 		return errors.Trace(err)
@@ -866,9 +868,10 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	hasData := true
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	for hasData {
 		sql := "delete from mysql.stats_feedback where table_id = %? and hist_id = %? and is_index = %? limit 10000"
-		_, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tableID, histID, isIndex)
+		_, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, tableID, histID, isIndex)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -901,18 +904,18 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		h.colMap.Unlock()
 	}()
 	type pair struct {
-		tblColID   model.TableColumnID
+		tblColID   model.TableItemID
 		lastUsedAt string
 	}
 	pairs := make([]pair, 0, len(colMap))
 	for id, t := range colMap {
 		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
 	}
-	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i].tblColID.TableID == pairs[j].tblColID.TableID {
-			return pairs[i].tblColID.ColumnID < pairs[j].tblColID.ColumnID
+	slices.SortFunc(pairs, func(i, j pair) bool {
+		if i.tblColID.TableID == j.tblColID.TableID {
+			return i.tblColID.ID < j.tblColID.ID
 		}
-		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
+		return i.tblColID.TableID < j.tblColID.TableID
 	})
 	// Use batch insert to reduce cost.
 	for i := 0; i < len(pairs); i += batchInsertSize {
@@ -925,7 +928,7 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		for j := i; j < end; j++ {
 			// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
 			// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
-			sqlexec.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ColumnID, pairs[j].lastUsedAt)
+			sqlexec.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ID, pairs[j].lastUsedAt)
 			if j < end-1 {
 				sqlexec.MustFormatSQL(sql, ",")
 			}
@@ -975,7 +978,7 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
-		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
+		t := time.UnixMilli(oracle.ExtractPhysical(tbl.Version))
 		dur := time.Since(t)
 		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %v", dur)
 	}
@@ -995,7 +998,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
 	rows, _, err := h.execRestrictedSQL(ctx, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
 	if err != nil {
@@ -1031,6 +1034,16 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 	return s, e, err
 }
 
+func (h *Handle) getAnalyzeSnapshot() (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	analyzeSnapshot, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
+	if err != nil {
+		return false, err
+	}
+	return variable.TiDBOptOn(analyzeSnapshot), nil
+}
+
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	err := h.UpdateSessionVar()
@@ -1050,6 +1063,11 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		return false
 	}
 	pruneMode := h.CurrentPruneMode()
+	analyzeSnapshot, err := h.getAnalyzeSnapshot()
+	if err != nil {
+		logutil.BgLogger().Error("[stats] load tidb_enable_analyze_snapshot for auto analyze session failed", zap.Error(err))
+		return false
+	}
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
@@ -1075,7 +1093,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, autoAnalyzeRatio, analyzeSnapshot, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
@@ -1084,7 +1102,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 				continue
 			}
 			if pruneMode == variable.Dynamic {
-				analyzed := h.autoAnalyzePartitionTable(tblInfo, pi, db, start, end, autoAnalyzeRatio)
+				analyzed := h.autoAnalyzePartitionTable(tblInfo, pi, db, autoAnalyzeRatio, analyzeSnapshot)
 				if analyzed {
 					return true
 				}
@@ -1093,7 +1111,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			for _, def := range pi.Definitions {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, autoAnalyzeRatio, analyzeSnapshot, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -1103,7 +1121,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	return false
 }
 
-func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, params ...interface{}) bool {
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, ratio float64, analyzeSnapshot bool, sql string, params ...interface{}) bool {
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
@@ -1115,7 +1133,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", escaped), zap.String("reason", reason))
 		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		h.execAutoAnalyze(tableStatsVer, sql, params...)
+		h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
@@ -1129,14 +1147,14 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", escaped))
 			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			h.execAutoAnalyze(tableStatsVer, sqlWithIdx, paramsWithIdx...)
+			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
 	return false
 }
 
-func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, start, end time.Time, ratio float64) bool {
+func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, ratio float64, analyzeSnapshot bool) bool {
 	h.mu.RLock()
 	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 	h.mu.RUnlock()
@@ -1169,7 +1187,7 @@ func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.P
 		params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
 		statsTbl := h.GetTableStats(tblInfo)
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		h.execAutoAnalyze(tableStatsVer, sql, params...)
+		h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
@@ -1190,7 +1208,7 @@ func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.P
 			params = append(params, idx.Name.O)
 			statsTbl := h.GetTableStats(tblInfo)
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			h.execAutoAnalyze(tableStatsVer, sql, params...)
+			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
 			return true
 		}
 	}
@@ -1203,9 +1221,10 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
 }
 
-func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
+func (h *Handle) execAutoAnalyze(statsVer int, analyzeSnapshot bool, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(h.serverIDGetter), sql, params...)
+	autoAnalyzeProcID := util.GetAutoAnalyzeProcID(h.serverIDGetter)
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, autoAnalyzeProcID, analyzeSnapshot, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {

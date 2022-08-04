@@ -29,8 +29,7 @@ import (
 )
 
 func TestHashPartitionPruner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
@@ -53,7 +52,7 @@ func TestHashPartitionPruner(t *testing.T) {
 		Result []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -64,8 +63,7 @@ func TestHashPartitionPruner(t *testing.T) {
 }
 
 func TestRangeColumnPartitionPruningForIn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_range_col_in")
 	tk.MustExec("create database test_range_col_in")
@@ -144,8 +142,7 @@ func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 }
 
 func TestRangeColumnPartitionPruningForInString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_range_col_in_string")
 	tk.MustExec("create database test_range_col_in_string")
@@ -253,8 +250,7 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 }
 
 func TestListPartitionPruner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
@@ -304,7 +300,7 @@ func TestListPartitionPruner(t *testing.T) {
 		Plan   []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -325,8 +321,7 @@ func TestListPartitionPruner(t *testing.T) {
 }
 
 func TestListColumnsPartitionPruner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop database if exists test_partition;")
@@ -375,7 +370,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		IndexPlan []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
 		// Test for table without index.
@@ -482,8 +477,7 @@ func getFieldValue(prefix, row string) string {
 }
 
 func TestListColumnsPartitionPrunerRandom(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	valueNum := 10
 	// Create table.
@@ -537,8 +531,7 @@ func TestListColumnsPartitionPrunerRandom(t *testing.T) {
 }
 
 func TestIssue22635(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS t1")
@@ -565,8 +558,7 @@ PARTITIONS 4`)
 }
 
 func TestIssue22898(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS test;")
@@ -578,8 +570,7 @@ func TestIssue22898(t *testing.T) {
 }
 
 func TestIssue23622(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("drop table if exists t2;")
@@ -589,8 +580,7 @@ func TestIssue23622(t *testing.T) {
 }
 
 func Test22396(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS test;")
@@ -603,8 +593,7 @@ func Test22396(t *testing.T) {
 }
 
 func TestIssue23608(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
@@ -651,8 +640,7 @@ partition by range (a) (
 
 //issue 22079
 func TestRangePartitionPredicatePruner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec("drop database if exists test_partition;")
@@ -673,7 +661,7 @@ func TestRangePartitionPredicatePruner(t *testing.T) {
 		Result []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -684,8 +672,7 @@ func TestRangePartitionPredicatePruner(t *testing.T) {
 }
 
 func TestHashPartitionPruning(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("USE test;")
@@ -704,9 +691,23 @@ func TestHashPartitionPruning(t *testing.T) {
 	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
 }
 
+func TestIssue32815(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("create table t (a int primary key, b int, key (b)) partition by hash(a) (partition P0, partition p1, partition P2)")
+	tk.MustExec("insert into t values (1, 1),(2, 2),(3, 3)")
+	tk.MustQuery("explain select * from t where a IN (1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get_1 2.00 root table:t, partition:p1,P2 handle:[1 2], keep order:false, desc:false"))
+	tk.MustQuery("explain select * from t where a IN (1, 2, 1)").Check(testkit.Rows(
+		"Batch_Point_Get_1 3.00 root table:t, partition:p1,P2 handle:[1 2 1], keep order:false, desc:false"))
+}
+
 func TestIssue32007(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database Issue32007")
 	tk.MustExec("USE Issue32007")
@@ -727,8 +728,7 @@ func TestIssue32007(t *testing.T) {
 }
 
 func TestIssue33231(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue33231")
 	tk.MustExec("use issue33231")

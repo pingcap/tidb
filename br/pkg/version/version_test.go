@@ -13,6 +13,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
@@ -43,6 +44,74 @@ func TestCheckClusterVersion(t *testing.T) {
 
 	mock := mockPDClient{
 		Client: nil,
+	}
+
+	{
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v5.4.2`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.0.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.1.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* version mismatch when use PiTR v6.2.0\+, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.2.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.NoError(t, err)
+	}
+
+	{
+		build.ReleaseVersion = "v6.1.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v5.4.2`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.1.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.1.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.NoError(t, err)
+	}
+
+	{
+		build.ReleaseVersion = "v6.1.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.2.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* version mismatch when use PiTR v6.1.0, please `, err.Error())
 	}
 
 	{
@@ -193,6 +262,55 @@ func TestCheckClusterVersion(t *testing.T) {
 		require.Error(t, err)
 	}
 
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v6.4.0"}}
+		}
+		originVal := variable.EnableConcurrentDDL.Load()
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
+		require.NoError(t, err)
+		require.Equal(t, originVal, variable.EnableConcurrentDDL.Load())
+	}
+
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v6.2.0"}}
+		}
+		originVal := variable.EnableConcurrentDDL.Load()
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
+		require.NoError(t, err)
+		require.Equal(t, originVal, variable.EnableConcurrentDDL.Load())
+	}
+
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v6.2.0-alpha"}}
+		}
+		originVal := variable.EnableConcurrentDDL.Load()
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
+		require.NoError(t, err)
+		require.Equal(t, originVal, variable.EnableConcurrentDDL.Load())
+	}
+
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v6.1.0"}}
+		}
+		variable.EnableConcurrentDDL.Store(true)
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
+		require.NoError(t, err)
+		require.False(t, variable.EnableConcurrentDDL.Load())
+	}
+
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v5.4.0"}}
+		}
+		variable.EnableConcurrentDDL.Store(true)
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
+		require.NoError(t, err)
+		require.False(t, variable.EnableConcurrentDDL.Load())
+	}
 }
 
 func TestCompareVersion(t *testing.T) {
@@ -298,7 +416,6 @@ func TestCheckVersion(t *testing.T) {
 }
 
 func versionEqualCheck(source *semver.Version, target *semver.Version) (result bool) {
-
 	if source == nil || target == nil {
 		return target == source
 	}
@@ -418,5 +535,4 @@ Check Table Before Drop: false`
 	_, err = FetchVersion(ctx, db)
 	require.Error(t, err)
 	require.Regexp(t, "mock failure$", err.Error())
-
 }

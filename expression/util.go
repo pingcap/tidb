@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -547,8 +548,8 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 
 func locateStringWithCollation(str, substr, coll string) int64 {
 	collator := collate.GetCollator(coll)
-	strKey := collator.Key(str)
-	subStrKey := collator.Key(substr)
+	strKey := collator.KeyWithoutTrimRightSpace(str)
+	subStrKey := collator.KeyWithoutTrimRightSpace(substr)
 
 	index := bytes.Index(strKey, subStrKey)
 	if index == -1 || index == 0 {
@@ -559,9 +560,9 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 	count := int64(0)
 	for {
 		r, size := utf8.DecodeRuneInString(str)
-		count += 1
-		index -= len(collator.Key(string(r)))
-		if index == 0 {
+		count++
+		index -= len(collator.KeyWithoutTrimRightSpace(string(r)))
+		if index <= 0 {
 			return count + 1
 		}
 		str = str[size:]
@@ -685,6 +686,21 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
 	return expr, not
+}
+
+// GetExprInsideIsTruth get the expression inside the `istrue_with_null` and `istrue`.
+// This is useful when handling expressions from "not" or "!", because we might wrap `istrue_with_null` or `istrue`
+// when handling them. See pushNotAcrossExpr() and wrapWithIsTrue() for details.
+func GetExprInsideIsTruth(expr Expression) Expression {
+	if f, ok := expr.(*ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.IsTruthWithNull, ast.IsTruthWithoutNull:
+			return GetExprInsideIsTruth(f.GetArgs()[0])
+		default:
+			return expr
+		}
+	}
+	return expr
 }
 
 // PushDownNot pushes the `not` function down to the expression's arguments.
@@ -1366,6 +1382,7 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
 func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
 		return r.runMockQuery(r.mockLocalData, inValues)

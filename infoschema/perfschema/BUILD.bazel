@@ -28,17 +28,20 @@ go_library(
         "//util/profile",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@org_golang_x_exp//slices",
     ],
 )
 
 go_test(
     name = "perfschema_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "tables_test.go",
     ],
     data = glob(["testdata/**"]),
     embed = [":perfschema"],
+    flaky = True,
     deps = [
         "//kv",
         "//parser/terror",

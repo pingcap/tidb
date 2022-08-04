@@ -21,8 +21,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -38,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
@@ -124,9 +121,6 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
-
-	v.initTxnContextProviderIfNecessary(node)
-
 	return errors.Trace(v.err)
 }
 
@@ -160,9 +154,8 @@ type PreprocessorReturn struct {
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
-	LastSnapshotTS   uint64
-	InfoSchema       infoschema.InfoSchema
-	ReadReplicaScope string
+	LastSnapshotTS uint64
+	InfoSchema     infoschema.InfoSchema
 }
 
 // preprocessWith is used to record info from WITH statements like CTE name.
@@ -686,7 +679,6 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			p.err = errors.Errorf("Incorrect column specifier for column '%s'", col.Name.Name.O)
 		}
 	}
-
 }
 
 // checkSetOprSelectList checks union's selectList.
@@ -720,20 +712,20 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 }
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
-	if isIncorrectName(stmt.Name) {
+	if isIncorrectName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
-	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
+	if isIncorrectName(stmt.Name.L) && !stmt.AlterDefaultDatabase {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
-	if isIncorrectName(stmt.Name) {
+	if isIncorrectName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
@@ -782,7 +774,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				p.err = err
 				return
 			}
-
 		}
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
@@ -1287,7 +1278,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			// return nil, to make the check in the ddl.CreateTable.
 			return nil
 		}
-		err := ddl.IsTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
+		err := types.IsVarcharTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
 		if err != nil {
 			return err
 		}
@@ -1413,7 +1404,6 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 }
 
 func (p *preprocessor) stmtType() string {
-
 	switch p.stmtTp {
 	case TypeDelete:
 		return "DELETE"
@@ -1440,7 +1430,6 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-
 		for _, cte := range p.preprocessWith.cteCanUsed {
 			if cte == tn.Name.L {
 				return
@@ -1657,24 +1646,12 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
 					return err
 				}
-				if err := txnManager.OnStmtStart(context.TODO()); err != nil {
+				if err := txnManager.OnStmtStart(context.TODO(), txnManager.GetCurrentStmt()); err != nil {
 					return err
 				}
 			}
 		}
 	}
-
-	// It is a little hacking for the below codes. `ReadReplicaScope` is used both by stale read's closest read and local txn.
-	// They are different features and the value for `ReadReplicaScope` will be conflicted in some scenes.
-	// But because local txn is still an experimental feature, we should make stale read work first.
-	if p.IsStaleness || p.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
-		// When stale read or closet read is set, we read the tidb's locality as the read replica scope
-		p.ReadReplicaScope = config.GetTxnScopeFromConfig()
-	} else {
-		// Otherwise, use the scope from TxnCtx for local txn validation
-		p.ReadReplicaScope = p.ctx.GetSessionVars().TxnCtx.TxnScope
-	}
-
 	p.initedLastSnapshotTS = true
 	return nil
 }
@@ -1689,20 +1666,8 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 		return p.InfoSchema
 	}
 
-	p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	p.InfoSchema = sessiontxn.GetTxnManager(p.ctx).GetTxnInfoSchema()
 	return p.InfoSchema
-}
-
-func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
-	if p.err != nil || p.flag&initTxnContextProvider == 0 {
-		return
-	}
-
-	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
-		// When the current provider is `legacy.SimpleTxnContextProvider` it should to keep the logic equals to the old implement.
-		// After refactoring, the `legacy.SimpleTxnContextProvider` will be removed, and this code will be removed too.
-		provider.InfoSchema = p.ensureInfoSchema()
-	}
 }
 
 func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
