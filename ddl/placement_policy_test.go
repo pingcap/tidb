@@ -940,9 +940,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 	require.Equal(t, true, in())
 
 	// Test drop policy can't succeed cause there are still some table depend on them.
-	_, err := tk.Exec("drop placement policy x")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:8241]Placement policy 'x' is still in use", err.Error())
+	tk.MustGetErrMsg("drop placement policy x", "[ddl:8241]Placement policy 'x' is still in use")
 
 	// Drop depended table t firstly.
 	tk.MustExec("drop table if exists t")
@@ -951,9 +949,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 	require.Equal(t, 1, len(dependencies))
 	require.Equal(t, tbl2.Meta().ID, dependencies[0])
 
-	_, err = tk.Exec("drop placement policy x")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:8241]Placement policy 'x' is still in use", err.Error())
+	tk.MustGetErrMsg("drop placement policy x", "[ddl:8241]Placement policy 'x' is still in use")
 
 	// Drop depended table t2 secondly.
 	tk.MustExec("drop table if exists t2")

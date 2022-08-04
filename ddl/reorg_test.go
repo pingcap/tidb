@@ -50,7 +50,7 @@ func TestReorgOwner(t *testing.T) {
 
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		return testkit.NewTestKit(t, store).Session(), nil
-	}, 2, 2, 5))
+	}, 20, 20, 5))
 	require.NoError(t, err)
 
 	defer func() {

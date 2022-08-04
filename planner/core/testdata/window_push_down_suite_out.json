@@ -340,11 +340,12 @@
           "TableReader_84 8000.00 root  data:ExchangeSender_83",
           "└─ExchangeSender_83 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_82 8000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
-          "    └─Projection_19 8000.00 mpp[tiflash]  Column#5",
-          "      └─HashAgg_12 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#5",
-          "        └─ExchangeReceiver_18 10000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
-          "            └─TableFullScan_16 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "    └─Projection_21 8000.00 mpp[tiflash]  Column#5",
+          "      └─HashAgg_22 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:sum(Column#8)->Column#5",
+          "        └─ExchangeReceiver_24 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_23 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "            └─HashAgg_13 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#8",
+          "              └─TableFullScan_20 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -372,12 +373,13 @@
           "TableReader_61 8000.00 root  data:ExchangeSender_60",
           "└─ExchangeSender_60 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_59 8000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row)",
-          "    └─Sort_18 8000.00 mpp[tiflash]  test.employee.deptid",
-          "      └─Projection_17 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
-          "        └─HashAgg_12 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#5, funcs:firstrow(test.employee.deptid)->test.employee.deptid",
-          "          └─ExchangeReceiver_16 10000.00 mpp[tiflash]  ",
-          "            └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
-          "              └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "    └─Sort_24 8000.00 mpp[tiflash]  test.employee.deptid",
+          "      └─Projection_20 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
+          "        └─HashAgg_21 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:sum(Column#8)->Column#5, funcs:firstrow(test.employee.deptid)->test.employee.deptid",
+          "          └─ExchangeReceiver_23 8000.00 mpp[tiflash]  ",
+          "            └─ExchangeSender_22 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "              └─HashAgg_13 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#8",
+          "                └─TableFullScan_19 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -432,15 +434,16 @@
         "Plan": [
           "TableReader_54 10000.00 root  data:ExchangeSender_53",
           "└─ExchangeSender_53 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_48 10000.00 mpp[tiflash]  Column#7",
-          "    └─HashAgg_46 10000.00 mpp[tiflash]  group by:Column#6, funcs:count(test.employee.empid)->Column#7",
-          "      └─ExchangeReceiver_32 10000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_31 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: binary]",
-          "          └─Window_30 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row)",
-          "            └─Sort_21 10000.00 mpp[tiflash]  test.employee.deptid",
-          "              └─ExchangeReceiver_20 10000.00 mpp[tiflash]  ",
-          "                └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
-          "                  └─TableFullScan_18 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "  └─Projection_49 10000.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg_50 10000.00 mpp[tiflash]  group by:Column#6, funcs:sum(Column#10)->Column#7",
+          "      └─ExchangeReceiver_52 10000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender_51 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: binary]",
+          "          └─HashAgg_47 10000.00 mpp[tiflash]  group by:Column#6, funcs:count(test.employee.empid)->Column#10",
+          "            └─Window_36 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row)",
+          "              └─Sort_21 10000.00 mpp[tiflash]  test.employee.deptid",
+          "                └─ExchangeReceiver_20 10000.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "                    └─TableFullScan_18 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       }

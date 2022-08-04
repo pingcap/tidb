@@ -1,0 +1,3 @@
+[tikv-importer]
+incremental-import = true
+backend = 'local'

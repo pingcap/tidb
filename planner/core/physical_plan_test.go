@@ -538,6 +538,10 @@ func TestEliminateMaxOneRow(t *testing.T) {
 	tk.MustExec("create table t2(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL)")
 	tk.MustExec("create table t3(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL, UNIQUE KEY idx_abc (a, b, c))")
 
+	// When paging is used, there is a 'paging:true' makes the explain output differ.
+	// IndexLookUp 0.00 root  paging:true
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts

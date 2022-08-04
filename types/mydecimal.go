@@ -15,6 +15,7 @@
 package types
 
 import (
+	"encoding/json"
 	"math"
 	"strconv"
 	"strings"
@@ -1536,6 +1537,41 @@ func (d *MyDecimal) Compare(to *MyDecimal) int {
 		return -1
 	}
 	return 1
+}
+
+// None of ToBin, ToFloat64, or ToString can encode MyDecimal without loss.
+// So we still need a MarshalJSON/UnmarshalJSON function.
+type jsonMyDecimal struct {
+	DigitsInt  int8
+	DigitsFrac int8
+	ResultFrac int8
+	Negative   bool
+	WordBuf    [maxWordBufLen]int32
+}
+
+// MarshalJSON implements Marshaler.MarshalJSON interface.
+func (d *MyDecimal) MarshalJSON() ([]byte, error) {
+	var r jsonMyDecimal
+	r.DigitsInt = d.digitsInt
+	r.DigitsFrac = d.digitsFrac
+	r.ResultFrac = d.resultFrac
+	r.Negative = d.negative
+	r.WordBuf = d.wordBuf
+	return json.Marshal(r)
+}
+
+// UnmarshalJSON implements Unmarshaler.UnmarshalJSON interface.
+func (d *MyDecimal) UnmarshalJSON(data []byte) error {
+	var r jsonMyDecimal
+	err := json.Unmarshal(data, &r)
+	if err == nil {
+		d.digitsInt = r.DigitsInt
+		d.digitsFrac = r.DigitsFrac
+		d.resultFrac = r.ResultFrac
+		d.negative = r.Negative
+		d.wordBuf = r.WordBuf
+	}
+	return err
 }
 
 // DecimalNeg reverses decimal's sign.

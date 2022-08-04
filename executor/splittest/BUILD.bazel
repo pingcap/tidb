@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "splittest_test",
+    srcs = [
+        "main_test.go",
+        "split_table_test.go",
+    ],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "//ddl",
+        "//errno",
+        "//parser/mysql",
+        "//parser/terror",
+        "//planner/core",
+        "//sessionctx/variable",
+        "//table",
+        "//testkit",
+        "//testkit/external",
+        "//util/dbterror",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

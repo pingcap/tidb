@@ -188,6 +188,11 @@ func TestSplitRegionTimeout(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	require.NoError(t, failpoint.Enable("tikvclient/injectLiveness", `return("reachable")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/injectLiveness"))
+	}()
+
 	require.NoError(t, failpoint.Enable("tikvclient/mockSplitRegionTimeout", `return(true)`))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -81,6 +81,17 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option)
 	}
+	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
+		req.Paging = false
+	})
+	if req.StoreType == kv.TiDB {
+		// coprocessor on TiDB doesn't support paging
+		req.Paging = false
+	}
+	if req.Tp != kv.ReqTypeDAG {
+		// coprocessor request but type is not DAG
+		req.Paging = false
+	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)

@@ -3959,6 +3959,23 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
 
+	// Test ORDERED_HASH_JOIN
+	stmt, _, err = p.Parse("select /*+ ORDERED_HASH_JOIN(t1, T2), ordered_hash_join(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "ordered_hash_join", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 2)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	require.Equal(t, "t2", hints[0].Tables[1].TableName.L)
+
+	require.Equal(t, "ordered_hash_join", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 2)
+	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
+	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
+
 	// Test HASH_JOIN with SWAP_JOIN_INPUTS/NO_SWAP_JOIN_INPUTS
 	// t1 for build, t4 for probe
 	stmt, _, err = p.Parse("select /*+ HASH_JOIN(t1, T2), hash_join(t3, t4), SWAP_JOIN_INPUTS(t1), NO_SWAP_JOIN_INPUTS(t4)  */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")

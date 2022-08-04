@@ -12,7 +12,6 @@ go_library(
     deps = [
         "//errno",
         "//infoschema",
-        "//infoschema/perfschema",
         "//parser/ast",
         "//parser/auth",
         "//parser/mysql",

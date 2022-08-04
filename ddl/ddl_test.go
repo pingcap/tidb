@@ -358,7 +358,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	// Ensure that the notification is not handled in workers `start` function.
 	d.cancel()
 	for _, worker := range d.workers {
-		worker.close()
+		worker.Close()
 	}
 
 	job := &model.Job{
@@ -401,7 +401,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	// Ensure that the notification is not handled by worker's "start".
 	d1.cancel()
 	for _, worker := range d1.workers {
-		worker.close()
+		worker.Close()
 	}
 	d1.ownerManager.RetireOwner()
 	d1.asyncNotifyWorker(job)
@@ -983,28 +983,6 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 
 	err = txn.Rollback()
 	require.NoError(t, err)
-}
-
-func TestIsJobRollbackable(t *testing.T) {
-	cases := []struct {
-		tp     model.ActionType
-		state  model.SchemaState
-		result bool
-	}{
-		{model.ActionDropIndex, model.StateNone, true},
-		{model.ActionDropIndex, model.StateDeleteOnly, false},
-		{model.ActionDropSchema, model.StateDeleteOnly, false},
-		{model.ActionDropColumn, model.StateDeleteOnly, false},
-		{model.ActionDropColumns, model.StateDeleteOnly, false},
-		{model.ActionDropIndexes, model.StateDeleteOnly, false},
-	}
-	job := &model.Job{}
-	for _, ca := range cases {
-		job.Type = ca.tp
-		job.SchemaState = ca.state
-		re := job.IsRollbackable()
-		require.Equal(t, ca.result, re)
-	}
 }
 
 func TestError(t *testing.T) {

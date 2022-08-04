@@ -55,6 +55,7 @@ go_test(
         "util_test.go",
     ],
     embed = [":aggregation"],
+    flaky = True,
     deps = [
         "//expression",
         "//parser/ast",

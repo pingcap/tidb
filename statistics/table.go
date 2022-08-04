@@ -128,6 +128,19 @@ func (t *TableMemoryUsage) TotalIdxTrackingMemUsage() (sum int64) {
 	return sum
 }
 
+// TotalColTrackingMemUsage returns total columns' tracking memory usage
+func (t *TableMemoryUsage) TotalColTrackingMemUsage() (sum int64) {
+	for _, col := range t.ColumnsMemUsage {
+		sum += col.TrackingMemUsage()
+	}
+	return sum
+}
+
+// TotalTrackingMemUsage return total tracking memory usage
+func (t *TableMemoryUsage) TotalTrackingMemUsage() int64 {
+	return t.TotalIdxTrackingMemUsage() + t.TotalColTrackingMemUsage()
+}
+
 // TableCacheItem indicates the unit item stored in statsCache, eg: Column/Index
 type TableCacheItem interface {
 	ItemID() int64

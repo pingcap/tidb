@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -32,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
 )
 
@@ -255,6 +259,15 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	return err
 }
 
+// MustExecToErr executes a sql statement and must return Error.
+func (tk *TestKit) MustExecToErr(sql string, args ...interface{}) {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.require.NoError(res.Close())
+	}
+	tk.require.Error(err)
+}
+
 func newSession(t testing.TB, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -284,6 +297,12 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
 	err := tk.ExecToErr(sql)
 	tk.require.EqualError(err, errStr)
+}
+
+// MustGetDBError executes a sql statement and assert its terror.
+func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
+	err := tk.ExecToErr(sql)
+	tk.require.Truef(terror.ErrorEqual(err, dberr), "err %v", err)
 }
 
 // MustContainErrMsg executes a sql statement and assert its error message containing errStr.
@@ -389,4 +408,29 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 // CheckLastMessage checks last message after executing MustExec
 func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
+}
+
+// RegionProperityClient is to get region properties.
+type RegionProperityClient struct {
+	tikv.Client
+	mu struct {
+		sync.Mutex
+		failedOnce bool
+		count      int64
+	}
+}
+
+// SendRequest is to mock send request.
+func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdDebugGetRegionProperties {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.mu.count++
+		// Mock failure once.
+		if !c.mu.failedOnce {
+			c.mu.failedOnce = true
+			return &tikvrpc.Response{}, nil
+		}
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }

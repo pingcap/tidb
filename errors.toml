@@ -1231,6 +1231,11 @@ error = '''
 '%s' is unsupported on cache tables.
 '''
 
+["ddl:8245"]
+error = '''
+column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1374,6 +1379,11 @@ Dynamic privilege '%s' is not registered with the server.
 ["executor:8003"]
 error = '''
 TiDB admin check table failed.
+'''
+
+["executor:8067"]
+error = '''
+Load data: unmatched columns
 '''
 
 ["executor:8114"]

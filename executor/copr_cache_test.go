@@ -35,7 +35,7 @@ func TestIntegrationCopCache(t *testing.T) {
 	config.StoreGlobalConfig(config.NewConfig())
 	defer config.StoreGlobalConfig(originConfig)
 
-	cli := &regionProperityClient{}
+	cli := &testkit.RegionProperityClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
 		return cli
@@ -52,6 +52,9 @@ func TestIntegrationCopCache(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key)")
+
+	// TODO(tiancaiamao) update the test and support cop cache for paging.
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)

@@ -90,9 +90,9 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType, arg0, arg1 Expression, isReal bool, isMultiply bool) {
 	a, b := arg0.GetType(), arg1.GetType()
 	if a.GetDecimal() != types.UnspecifiedLength && b.GetDecimal() != types.UnspecifiedLength {
-		retTp.SetDecimal(a.GetDecimal() + b.GetDecimal())
+		retTp.SetDecimalUnderLimit(a.GetDecimal() + b.GetDecimal())
 		if !isMultiply {
-			retTp.SetDecimal(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+			retTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
 		}
 		if !isReal && retTp.GetDecimal() > mysql.MaxDecimalScale {
 			retTp.SetDecimal(mysql.MaxDecimalScale)
@@ -105,12 +105,12 @@ func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType
 		if isMultiply {
 			digitsInt = a.GetFlen() - a.GetDecimal() + b.GetFlen() - b.GetDecimal()
 		}
-		retTp.SetFlen(digitsInt + retTp.GetDecimal() + 1)
+		retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal() + 1)
 		if isReal {
 			retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxRealWidth))
 			return
 		}
-		retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxDecimalWidth))
+		retTp.SetFlenUnderLimit(mathutil.Min(retTp.GetFlen(), mysql.MaxDecimalWidth))
 		return
 	}
 	if isReal {
@@ -130,20 +130,14 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 	if decb == types.UnspecifiedFsp {
 		decb = 0
 	}
-	retTp.SetDecimal(deca + precIncrement)
-	if retTp.GetDecimal() > mysql.MaxDecimalScale {
-		retTp.SetDecimal(mysql.MaxDecimalScale)
-	}
+	retTp.SetDecimalUnderLimit(deca + precIncrement)
 	if a.GetFlen() == types.UnspecifiedLength {
 		retTp.SetFlen(mysql.MaxDecimalWidth)
 		return
 	}
 	aPrec := types.DecimalLength2Precision(a.GetFlen(), a.GetDecimal(), mysql.HasUnsignedFlag(a.GetFlag()))
-	retTp.SetFlen(aPrec + decb + precIncrement)
-	retTp.SetFlen(types.Precision2LengthNoTruncation(retTp.GetFlen(), retTp.GetDecimal(), mysql.HasUnsignedFlag(retTp.GetFlag())))
-	if retTp.GetFlen() > mysql.MaxDecimalWidth {
-		retTp.SetFlen(mysql.MaxDecimalWidth)
-	}
+	retTp.SetFlenUnderLimit(aPrec + decb + precIncrement)
+	retTp.SetFlenUnderLimit(types.Precision2LengthNoTruncation(retTp.GetFlen(), retTp.GetDecimal(), mysql.HasUnsignedFlag(retTp.GetFlag())))
 }
 
 func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldType) {
@@ -883,10 +877,7 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	if a.GetDecimal() == types.UnspecifiedLength || b.GetDecimal() == types.UnspecifiedLength {
 		retTp.SetDecimal(types.UnspecifiedLength)
 	} else {
-		retTp.SetDecimal(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
-		if isDecimal && retTp.GetDecimal() > mysql.MaxDecimalScale {
-			retTp.SetDecimal(mysql.MaxDecimalScale)
-		}
+		retTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
 	}
 
 	if a.GetFlen() == types.UnspecifiedLength || b.GetFlen() == types.UnspecifiedLength {
@@ -894,7 +885,7 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	} else {
 		retTp.SetFlen(mathutil.Max(a.GetFlen(), b.GetFlen()))
 		if isDecimal {
-			retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxDecimalWidth))
+			retTp.SetFlenUnderLimit(retTp.GetFlen())
 			return
 		}
 		retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxRealWidth))

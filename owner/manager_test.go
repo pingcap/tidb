@@ -65,10 +65,6 @@ func TestSingle(t *testing.T) {
 		WithInfoCache(ic),
 	)
 	require.NoError(t, d.OwnerManager().CampaignOwner())
-	defer func() {
-		_ = d.Stop()
-	}()
-
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
 

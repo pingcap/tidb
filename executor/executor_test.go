@@ -6070,12 +6070,3 @@ func TestIsFastPlan(t *testing.T) {
 		require.Equal(t, ca.isFastPlan, ok)
 	}
 }
-
-func TestShowSessionStates(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("show session_states").Check(testkit.Rows())
-	tk.MustExec("set session_states 'x'")
-	tk.MustGetErrCode("set session_states 1", errno.ErrParse)
-}

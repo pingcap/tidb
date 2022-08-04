@@ -1,16 +1,16 @@
-//// Copyright 2015 PingCAP, Inc.
-////
-//// Licensed under the Apache License, Version 2.0 (the "License");
-//// you may not use this file except in compliance with the License.
-//// You may obtain a copy of the License at
-////
-////     http://www.apache.org/licenses/LICENSE-2.0
-////
-//// Unless required by applicable law or agreed to in writing, software
-//// distributed under the License is distributed on an "AS IS" BASIS,
-//// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//// See the License for the specific language governing permissions and
-//// limitations under the License.
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 package ddl_test
 
@@ -231,7 +231,7 @@ func TestParallelDDL(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	wg.Run(func() {
 		tk := testkit.NewTestKit(t, store)
-		_, err := tk.Exec("alter table test_parallel_ddl_2.t3 add index db3_idx1(c2)")
+		err := tk.ExecToErr("alter table test_parallel_ddl_2.t3 add index db3_idx1(c2)")
 		require.Error(t, err)
 		rs := tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.seq_num')")
 		seqIDs[10], _ = strconv.Atoi(rs.Rows()[0][0].(string))

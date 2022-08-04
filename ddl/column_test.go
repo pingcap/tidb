@@ -890,7 +890,7 @@ func TestDropColumns(t *testing.T) {
 
 	d.SetHook(tc)
 
-	jobID := testDropColumns(tk, t, testNewContext(store), tableID, colNames, false, dom)
+	jobID := testDropColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colNames, false, dom)
 	testCheckJobDone(t, store, jobID, false)
 	mu.Lock()
 	hErr := hookErr

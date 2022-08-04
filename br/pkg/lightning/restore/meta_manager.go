@@ -78,6 +78,11 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 type tableMetaMgr interface {
 	InitTableMeta(ctx context.Context) error
 	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
+	// ReallocTableRowIDs reallocates the row IDs of a table.
+	// It returns new rowIDBase and maxRowID or any error it encounters.
+	// Note that noopTableMetaMgr has a noop implementation of this function.
+	// If maxRowID is 0, caller should maintain rowIDBase and maxRowID itself.
+	ReallocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
 	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
@@ -158,6 +163,51 @@ func parseMetaStatus(s string) (metaStatus, error) {
 	default:
 		return metaStatusInitial, common.ErrInvalidMetaStatus.GenWithStackByArgs(s)
 	}
+}
+
+func (m *dbTableMetaMgr) ReallocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error) {
+	conn, err := m.session.Conn(ctx)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	defer conn.Close()
+	exec := &common.SQLWithRetry{
+		DB:     m.session,
+		Logger: m.tr.logger,
+	}
+	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
+	if err != nil {
+		return 0, 0, errors.Annotate(err, "enable pessimistic transaction failed")
+	}
+	var (
+		maxRowIDMax int64
+		newRowIDMax int64
+	)
+	err = exec.Transact(ctx, "realloc table rowID", func(ctx context.Context, tx *sql.Tx) error {
+		row := tx.QueryRowContext(
+			ctx,
+			fmt.Sprintf("SELECT MAX(row_id_max) from %s WHERE table_id = ? FOR UPDATE", m.tableName),
+			m.tr.tableInfo.ID,
+		)
+		if row.Err() != nil {
+			return errors.Trace(err)
+		}
+		if err := row.Scan(&maxRowIDMax); err != nil {
+			return errors.Trace(err)
+		}
+		newRowIDMax = maxRowIDMax + newRowIDCount
+		// nolint:gosec
+		query := fmt.Sprintf("UPDATE %s SET row_id_max = ? WHERE table_id = ? AND task_id = ?", m.tableName)
+		if _, err := tx.ExecContext(ctx, query, newRowIDMax, m.tr.tableInfo.ID, m.taskID); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	// newRowIDBase = maxRowIDMax + 1
+	return maxRowIDMax + 1, newRowIDMax, nil
 }
 
 func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
@@ -1029,6 +1079,12 @@ type noopTableMetaMgr struct{}
 
 func (m noopTableMetaMgr) InitTableMeta(ctx context.Context) error {
 	return nil
+}
+
+func (m noopTableMetaMgr) ReallocTableRowIDs(ctx context.Context, _ int64) (int64, int64, error) {
+	// we don't need to reconcile rowIDs across all the instances
+	// barring using parallel import
+	return 0, 0, nil
 }
 
 func (m noopTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {

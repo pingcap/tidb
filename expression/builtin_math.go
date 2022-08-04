@@ -138,8 +138,8 @@ func (c *absFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		bf.tp.SetFlen(flen)
 		bf.tp.SetDecimal(decimal)
 	} else {
-		bf.tp.SetFlen(argFieldTp.GetFlen())
-		bf.tp.SetDecimal(argFieldTp.GetDecimal())
+		bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen())
+		bf.tp.SetDecimalUnderLimit(argFieldTp.GetDecimal())
 	}
 	var sig builtinFunc
 	switch argTp {
@@ -276,14 +276,14 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
 	if argTp == types.ETDecimal {
-		bf.tp.SetFlen(argFieldTp.GetFlen())
-		bf.tp.SetDecimal(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
+		bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen())
+		bf.tp.SetDecimalUnderLimit(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
 		if bf.tp.GetDecimal() != types.UnspecifiedLength {
 			if argFieldTp.GetDecimal() != types.UnspecifiedLength {
 				decimalDelta := bf.tp.GetDecimal() - argFieldTp.GetDecimal()
-				bf.tp.SetFlen(bf.tp.GetFlen() + mathutil.Max(decimalDelta, 0))
+				bf.tp.SetFlenUnderLimit(bf.tp.GetFlen() + mathutil.Max(decimalDelta, 0))
 			} else {
-				bf.tp.SetFlen(argFieldTp.GetFlen() + bf.tp.GetDecimal())
+				bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen() + bf.tp.GetDecimal())
 			}
 		}
 	}
@@ -493,7 +493,7 @@ func (c *ceilFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	setFlag4FloorAndCeil(bf.tp, args[0])
 	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
 	if retTp == types.ETDecimal {
-		bf.tp.SetFlen(args[0].GetType().GetFlen())
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen())
 		bf.tp.SetDecimal(0)
 	}
 
@@ -685,7 +685,7 @@ func (c *floorFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
 	if retTp == types.ETDecimal {
-		bf.tp.SetFlen(args[0].GetType().GetFlen())
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen())
 		bf.tp.SetDecimal(0)
 	}
 	switch argTp {
@@ -1911,8 +1911,8 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
 	if argTp == types.ETDecimal {
-		bf.tp.SetDecimal(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
-		bf.tp.SetFlen(args[0].GetType().GetFlen() - args[0].GetType().GetDecimal() + bf.tp.GetDecimal())
+		bf.tp.SetDecimalUnderLimit(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen() - args[0].GetType().GetDecimal() + bf.tp.GetDecimal())
 	}
 	bf.tp.AddFlag(args[0].GetType().GetFlag())
 
