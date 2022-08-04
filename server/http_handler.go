@@ -93,6 +93,7 @@ const (
 const (
 	qTableID   = "table_id"
 	qLimit     = "limit"
+	qJobID     = "start_job_id"
 	qOperation = "op"
 	qSeconds   = "seconds"
 )
@@ -1251,50 +1252,51 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP handles request of ddl jobs history.
 func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if limitID := req.FormValue(qLimit); len(limitID) > 0 {
-		lid, err := strconv.Atoi(limitID)
-
+	var jobID, limitID int
+	var err error
+	if jobValue := req.FormValue(qJobID); len(jobValue) > 0 {
+		jobID, err = strconv.Atoi(jobValue)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-
-		if lid < 1 {
-			writeError(w, errors.New("ddl history limit must be greater than 1"))
+		if jobID < 1 {
+			writeError(w, errors.New("ddl history start_job_id must be greater than 0"))
 			return
 		}
-
-		jobs, err := h.getAllHistoryDDL()
-		if err != nil {
-			writeError(w, errors.New("ddl history not found"))
-			return
-		}
-
-		jobsLen := len(jobs)
-		if jobsLen > lid {
-			start := jobsLen - lid
-			jobs = jobs[start:]
-		}
-
-		writeData(w, jobs)
-		return
 	}
-	jobs, err := h.getAllHistoryDDL()
+	if limitValue := req.FormValue(qLimit); len(limitValue) > 0 {
+		limitID, err = strconv.Atoi(limitValue)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if limitID < 1 {
+			writeError(w, errors.New("ddl history limit must be greater than 0"))
+			return
+		}
+	}
+
+	jobs, err := h.getHistoryDDL(jobID, limitID)
 	if err != nil {
-		writeError(w, errors.New("ddl history not found"))
+		writeError(w, err)
 		return
 	}
 	writeData(w, jobs)
 }
 
-func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
+func (h ddlHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job, err error) {
 	txn, err := h.Store.Begin()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	txnMeta := meta.NewMeta(txn)
 
-	jobs, err := ddl.GetAllHistoryDDLJobs(txnMeta)
+	if jobID == 0 && limit == 0 {
+		jobs, err = ddl.GetAllHistoryDDLJobs(txnMeta)
+	} else {
+		jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
