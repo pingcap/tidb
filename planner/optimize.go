@@ -359,8 +359,8 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 // OptimizeExecStmt to handle the "execute" statement
 func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
-	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
-	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
+	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	builder.Init(sctx, is, nil)
 
@@ -368,7 +368,18 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	if execPlan, ok := p.(*plannercore.Execute); ok {
+	if execPlan, ok := p.(*core.Execute); ok {
+		// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
+		// engine in not read only stmt.
+		// TODO: this part will be removed later
+		sessVars := sctx.GetSessionVars()
+		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(execAst, sessVars) {
+			delete(sessVars.IsolationReadEngines, kv.TiFlash)
+			defer func() {
+				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+			}()
+		}
+
 		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
 		return execPlan, execPlan.OutputNames(), err
 	}
@@ -376,7 +387,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	return nil, nil, err
 }
 
-func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, hintProcessor *hint.BlockHintProcessor, builder *plannercore.PlanBuilder) (plannercore.Plan, error) {
+func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, hintProcessor *hint.BlockHintProcessor, builder *core.PlanBuilder) (core.Plan, error) {
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
