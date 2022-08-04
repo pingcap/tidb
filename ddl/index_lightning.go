@@ -68,6 +68,10 @@ func isPiTREnable(w *worker) bool {
 		return true
 	}
 	defer w.sessPool.put(ctx)
+	failpoint.Inject("EnablePiTR", func() {
+		logutil.BgLogger().Info("Lightning: Failpoint enable PiTR.")
+		failpoint.Return(true)
+	})
 	return lit.CheckPiTR(ctx)
 }
 
@@ -102,7 +106,7 @@ func prepareBackend(ctx context.Context, unique bool, job *model.Job, sqlMode my
 func prepareLightningEngine(job *model.Job, indexID int64, workerCnt int) (wCnt int, err error) {
 	bcKey := lit.GenBackendContextKey(job.ID)
 	enginKey := lit.GenEngineInfoKey(job.ID, indexID)
-	wCnt, err = lit.GlobalEnv.LitMemRoot.RegistEngineInfo(job, bcKey, enginKey, int32(indexID), workerCnt)
+	wCnt, err = lit.GlobalEnv.LitMemRoot.RegistEngineInfo(job, bcKey, enginKey, indexID, workerCnt)
 	if err != nil {
 		lit.GlobalEnv.LitMemRoot.DeleteBackendContext(bcKey)
 	}

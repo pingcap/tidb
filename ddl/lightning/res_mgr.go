@@ -229,7 +229,7 @@ func (m *MemoryRoot) ClearEngines(jobID int64, indexIDs ...int64) {
 
 // RegistEngineInfo check and allocate one EngineInfo, delete engineInfo are packed into close backend flow
 // The worker count means at this time the engine need pre-check memory for workers usage.
-func (m *MemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, engineKey string, indexID int32, workerCount int) (int, error) {
+func (m *MemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, engineKey string, indexID int64, workerCount int) (int, error) {
 	var err error = nil
 	m.mLock.Lock()
 	defer func() {

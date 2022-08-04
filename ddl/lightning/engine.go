@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	//tikv "github.com/pingcap/tidb/kv"
+	tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	//"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -41,7 +41,7 @@ var (
 // One engine for one index reorg task, each task will create several new writers under the
 // Opened Engine. Note engineInfo is not thread safe.
 type engineInfo struct {
-	id  int32
+	id  int64
 	key string
 
 	backCtx      *BackendContext
@@ -55,7 +55,7 @@ type engineInfo struct {
 
 // NewEngineInfo create a new EngineInfo struct.
 func NewEngineInfo(
-	id int32, key string, cfg *backend.EngineConfig, bCtx *BackendContext,
+	id int64, key string, cfg *backend.EngineConfig, bCtx *BackendContext,
 	en *backend.OpenedEngine, tblName string, uuid uuid.UUID, wCnt int) *engineInfo {
 	ei := engineInfo{
 		id:           id,
@@ -82,7 +82,7 @@ func CreateEngine(
 	job *model.Job,
 	backendKey string,
 	engineKey string,
-	indexID int32,
+	indexID int64,
 	wCnt int) (err error) {
 	var cfg backend.EngineConfig
 	cfg.Local = &backend.LocalEngineConfig{
@@ -103,7 +103,7 @@ func CreateEngine(
 	be := bc.Backend
 
 	// Opne one engine under an exist backend
-	en, err := be.OpenEngine(ctx, &cfg, job.TableName, indexID)
+	en, err := be.OpenEngine(ctx, &cfg, job.TableName, int32(indexID))
 	if err != nil {
 		errMsg := LitErrCreateEngineFail + err.Error()
 		log.L().Error(errMsg)
@@ -162,21 +162,21 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 	}
 
 	// Check Remote duplicate value for index
-	/*if unique {
-		hasDupe, err := ei.backCtx.Backend.CollectRemoteDuplicateRows(ctx, tbl, ei.tableName, &kv.SessionOptions{
+	if unique {
+		hasDupe, err := ei.backCtx.Backend.CollectRemoteDuplicateIndex(ctx, tbl, ei.tableName, &kv.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: ei.backCtx.sysVars,
-		})
-		if hasDupe {
-			errMsg = LitErrRemoteDupExistErr + keyMsg
-			log.L().Error(errMsg)
-			return tikv.ErrKeyExists
-		} else if err != nil {
+		}, ei.id)
+		if err != nil {
 			errMsg = LitErrRemoteDupCheckrr + keyMsg
 			log.L().Error(errMsg)
 			return errors.New(errMsg)
+		} else if hasDupe {
+			errMsg = LitErrRemoteDupExistErr + keyMsg
+			log.L().Error(errMsg)
+			return tikv.ErrKeyExists
 		}
-	}*/
+	}
 	return nil
 }
 

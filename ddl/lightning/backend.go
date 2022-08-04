@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbconf "github.com/pingcap/tidb/config"
@@ -91,7 +92,8 @@ func createLocalBackend(ctx context.Context, cfg *config.Config, glue glue.Glue)
 		return backend.Backend{}, err
 	}
 
-	return local.NewLocalBackend(ctx, tls, cfg, glue, int(GlobalEnv.limit), nil)
+	errorMgr := errormanager.New(nil, cfg, log.FromContext(ctx))
+	return local.NewLocalBackend(ctx, tls, cfg, glue, int(GlobalEnv.limit), errorMgr)
 }
 
 // CloseBackend close one backend for one add index task.

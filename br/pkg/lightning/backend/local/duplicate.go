@@ -543,6 +543,7 @@ type dupTask struct {
 	tidbkv.KeyRange
 	tableID   int64
 	indexInfo *model.IndexInfo
+	indexID   int64 // This is only used by add index by ligthning.
 }
 
 func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
@@ -572,6 +573,29 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 				KeyRange:  kr,
 				tableID:   tableID,
 				indexInfo: indexInfo,
+			})
+		}
+	}
+	return tasks, nil
+}
+
+func (m *DuplicateManager) buildIDupTasks(indexID int64) ([]dupTask, error) {
+	var tasks []dupTask
+	for _, indexInfo := range m.tbl.Meta().Indices {
+		if indexInfo.ID != indexID {
+			continue
+		}
+		keyRanges, err := tableIndexKeyRanges(m.tbl.Meta(), indexInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, kr := range keyRanges {
+			tableID := tablecodec.DecodeTableID(kr.StartKey)
+			tasks = append(tasks, dupTask{
+				KeyRange:  kr,
+				tableID:   tableID,
+				indexInfo: indexInfo,
+				indexID:   indexID,
 			})
 		}
 	}
@@ -832,6 +856,40 @@ func (m *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, imp
 				logutil.Key("startKey", task.StartKey),
 				logutil.Key("endKey", task.EndKey),
 				zap.Int64("tableID", task.tableID),
+			)
+			if task.indexInfo != nil {
+				taskLogger = taskLogger.With(
+					zap.String("indexName", task.indexInfo.Name.O),
+					zap.Int64("indexID", task.indexInfo.ID),
+				)
+			}
+			err := m.processRemoteDupTask(gCtx, task, taskLogger, importClientFactory, regionPool)
+			return errors.Trace(err)
+		})
+	}
+	return errors.Trace(g.Wait())
+}
+
+// CollectDuplicateIndexFromTiKV collects duplicates from the remote TiKV and records all duplicate row info into errorMgr.
+func (m *DuplicateManager) CollectDuplicateIndexFromTiKV(ctx context.Context, importClientFactory ImportClientFactory, indexID int64) error {
+	tasks, err := m.buildIDupTasks(indexID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logger := m.logger
+	logger.Info("[detect-dupe] collect duplicate rows from tikv", zap.Int("tasks", len(tasks)))
+
+	taskPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv")
+	regionPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv by region")
+	g, gCtx := errgroup.WithContext(ctx)
+	for _, task := range tasks {
+		task := task
+		taskPool.ApplyOnErrorGroup(g, func() error {
+			taskLogger := logger.With(
+				logutil.Key("startKey", task.StartKey),
+				logutil.Key("endKey", task.EndKey),
+				zap.Int64("tableID", task.tableID),
+				zap.Int64("IndexID", task.indexID),
 			)
 			if task.indexInfo != nil {
 				taskLogger = taskLogger.With(
