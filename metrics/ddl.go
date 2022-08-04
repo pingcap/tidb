@@ -99,7 +99,6 @@ var (
 
 	CreateDDLInstance = "create_ddl_instance"
 	CreateDDL         = "create_ddl"
-	StartCleanWork    = "start_clean_work"
 	DDLOwner          = "owner"
 	DDLCounter        = prometheus.NewCounterVec(
 		prometheus.CounterOpts{

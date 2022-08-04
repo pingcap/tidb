@@ -90,10 +90,6 @@ type SchemaSyncer interface {
 	Close()
 }
 
-type ownerChecker interface {
-	IsOwner() bool
-}
-
 type schemaVersionSyncer struct {
 	selfSchemaVerPath string
 	etcdCli           *clientv3.Client
@@ -102,23 +98,13 @@ type schemaVersionSyncer struct {
 		sync.RWMutex
 		globalVerCh clientv3.WatchChan
 	}
-
-	// for clean worker
-	ownerChecker              ownerChecker
-	notifyCleanExpiredPathsCh chan struct{}
-	ctx                       context.Context
-	cancel                    context.CancelFunc
 }
 
 // NewSchemaSyncer creates a new SchemaSyncer.
-func NewSchemaSyncer(ctx context.Context, etcdCli *clientv3.Client, id string, oc ownerChecker) SchemaSyncer {
-	childCtx, cancelFunc := context.WithCancel(ctx)
+func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 	return &schemaVersionSyncer{
 		etcdCli:           etcdCli,
 		selfSchemaVerPath: fmt.Sprintf("%s/%s", DDLAllSchemaVersions, id),
-		ownerChecker:      oc,
-		ctx:               childCtx,
-		cancel:            cancelFunc,
 	}
 }
 
@@ -405,8 +391,6 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 }
 
 func (s *schemaVersionSyncer) Close() {
-	s.cancel()
-
 	err := s.removeSelfVersionPath()
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] remove self version path failed", zap.Error(err))
