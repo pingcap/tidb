@@ -202,7 +202,7 @@ func (t *MockTargetInfo) FetchRemoteTableModels(ctx context.Context, schemaName 
 	resultInfos := []*model.TableInfo{}
 	tblMap, ok := t.dbTblInfoMap[schemaName]
 	if !ok {
-		return resultInfos, nil
+		return nil, errors.Errorf("get xxxxxx http status code != 200, message [schema:1049]Unknown database '%s'", schemaName)
 	}
 	for _, tblInfo := range tblMap {
 		resultInfos = append(resultInfos, tblInfo.TableModel)

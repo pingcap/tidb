@@ -368,7 +368,9 @@ func (p *PreRestoreInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Cont
 	dbName := dbSrcFileMeta.Name
 	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
 	if err != nil {
-		return nil, errors.Trace(err)
+		if !strings.Contains(err.Error(), "Unknown database") {
+			return nil, errors.Trace(err)
+		}
 	}
 	currentTableInfosMap := make(map[string]*model.TableInfo)
 	for _, tblInfo := range currentTableInfosFromDB {
