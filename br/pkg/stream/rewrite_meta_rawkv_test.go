@@ -92,7 +92,6 @@ func TestRewriteValueForDB(t *testing.T) {
 }
 
 func TestRewriteValueForTable(t *testing.T) {
-
 	var (
 		dbId      int64 = 40
 		tableID   int64 = 100

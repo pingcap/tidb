@@ -29,8 +29,7 @@ import (
 )
 
 func TestPlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -57,8 +56,7 @@ func TestPlanCache(t *testing.T) {
 }
 
 func TestSQLBinding(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -83,8 +81,7 @@ func TestSQLBinding(t *testing.T) {
 }
 
 func TestClusteredIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -106,7 +103,7 @@ func runTestData(t *testing.T, tk *testkit.TestKit, name string) {
 		Plan []string
 	}
 	statsSuiteData := plannercore.GetOrderedResultModeSuiteData()
-	statsSuiteData.GetTestCasesByName(name, t, &input, &output)
+	statsSuiteData.LoadTestCasesByName(name, t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -117,8 +114,7 @@ func runTestData(t *testing.T, tk *testkit.TestKit, name string) {
 }
 
 func TestOrderedResultMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -130,8 +126,7 @@ func TestOrderedResultMode(t *testing.T) {
 }
 
 func TestOrderedResultModeOnDML(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -142,8 +137,7 @@ func TestOrderedResultModeOnDML(t *testing.T) {
 }
 
 func TestOrderedResultModeOnSubQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -156,8 +150,7 @@ func TestOrderedResultModeOnSubQuery(t *testing.T) {
 }
 
 func TestOrderedResultModeOnJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -170,8 +163,7 @@ func TestOrderedResultModeOnJoin(t *testing.T) {
 }
 
 func TestOrderedResultModeOnOtherOperators(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -184,8 +176,7 @@ func TestOrderedResultModeOnOtherOperators(t *testing.T) {
 }
 
 func TestOrderedResultModeOnPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -204,8 +195,7 @@ func TestOrderedResultModeOnPartitionTable(t *testing.T) {
 }
 
 func TestStableResultSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show variables where variable_name like 'tidb_enable_ordered_result_mode'").Rows()

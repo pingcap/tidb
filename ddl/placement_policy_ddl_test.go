@@ -58,8 +58,7 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.DDL, 
 }
 
 func TestPlacementPolicyInUse(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	d := dom.DDL()
 
 	sctx := testkit.NewTestKit(t, store).Session()

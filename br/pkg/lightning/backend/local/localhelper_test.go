@@ -811,7 +811,6 @@ func TestStoreWriteLimiter(t *testing.T) {
 			// In theory, gotTokens should be less than or equal to maxTokens.
 			// But we allow a little of error to avoid the test being flaky.
 			require.LessOrEqual(t, gotTokens, maxTokens+1)
-
 		}(uint64(i))
 	}
 	wg.Wait()

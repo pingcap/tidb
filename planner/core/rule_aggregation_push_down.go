@@ -509,8 +509,8 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						p = proj
 					}
 				}
-				// push aggregation across projection
 			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
+				// push aggregation across projection
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
 				noSideEffects := true

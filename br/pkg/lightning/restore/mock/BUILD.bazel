@@ -18,6 +18,7 @@ go_library(
 
 go_test(
     name = "mock_test",
+    timeout = "short",
     srcs = ["mock_test.go"],
     embed = [":mock"],
     flaky = True,

@@ -509,6 +509,8 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
+	//Check whether the current building query is a CTE
+	isCTE bool
 
 	// checkSemiJoinHint checks whether the SEMI_JOIN_REWRITE hint is possible to be applied on the current SELECT stmt.
 	// We need this variable for the hint since the hint is set in subquery, but we check its availability in its outer scope.
@@ -799,7 +801,7 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (Pla
 	}
 	exe := &Execute{Name: v.Name, TxtProtoVars: vars, ExecID: v.ExecID}
 	if v.BinaryArgs != nil {
-		exe.BinProtoVars = v.BinaryArgs.([]types.Datum)
+		exe.TxtProtoVars = v.BinaryArgs.([]expression.Expression)
 	}
 	return exe, nil
 }
@@ -1549,7 +1551,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 				ts.schema.Append(commonCols[pkOffset])
 				ts.HandleIdx = append(ts.HandleIdx, len(ts.Columns)-1)
 			}
-
 		}
 	}
 

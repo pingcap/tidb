@@ -15,6 +15,7 @@ go_library(
 
 go_test(
     name = "terror_test",
+    timeout = "short",
     srcs = ["terror_test.go"],
     embed = [":terror"],
     flaky = True,

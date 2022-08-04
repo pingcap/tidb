@@ -779,8 +779,7 @@ func TestTiFlashBackoff(t *testing.T) {
 }
 
 func TestAlterDatabaseErrorGrammar(t *testing.T) {
-	store, tear := testkit.CreateMockStore(t)
-	defer tear()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
@@ -835,8 +834,7 @@ func checkBatchPandingNum(t *testing.T, tkx *testkit.TestKit, level string, valu
 }
 
 func TestTiFlashBatchAddVariables(t *testing.T) {
-	store, tear := testkit.CreateMockStore(t)
-	defer tear()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set SESSION tidb_batch_pending_tiflash_count=5")
@@ -908,7 +906,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 			tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_ddl_limit"), model.NewCIStr(fmt.Sprintf("t%v", i)))
 			require.NoError(t, err)
 			if tb.Meta().TiFlashReplica != nil {
-				cnt += 1
+				cnt++
 			}
 		}
 		require.Equal(t, expected, cnt)

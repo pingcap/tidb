@@ -600,3 +600,10 @@ const (
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
 	PartitionCountLimit = 8192
 )
+
+// This is enum_cursor_type in MySQL
+const (
+	CursorTypeReadOnly = 1 << iota
+	CursorTypeForUpdate
+	CursorTypeScrollable
+)
