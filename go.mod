@@ -245,4 +245,4 @@ replace honnef.co/go/tools => honnef.co/go/tools v0.3.3
 
 replace github.com/pingcap/kvproto => github.com/MyonKeminta/kvproto v0.0.0-20220802090504-c8c6d3148d2a
 
-replace github.com/tikv/client-go/v2 => github.com/MyonKeminta/client-go/v2 v2.0.0-20220803141420-f12f8d6f37b1
+replace github.com/tikv/client-go/v2 => github.com/MyonKeminta/client-go/v2 v2.0.0-20220804115852-8dafa312c734
