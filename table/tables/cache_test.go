@@ -308,6 +308,7 @@ func TestBeginSleepABA(t *testing.T) {
 			cacheUsed = true
 			break
 		}
+		tk1.MustExec("commit")
 	}
 	require.True(t, cacheUsed)
 
