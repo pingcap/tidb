@@ -152,7 +152,7 @@ func ExecuteEvery(nTick int, f func(ctx context.Context) error) *SyncIntervalExe
 // OnTick advances the internal logic timer of the executor.
 func (t *SyncIntervalExecutor) OnTick(ctx context.Context) error {
 	log.Debug("tick-tok", zap.Int("interval", t.tickInterval), zap.Int("before", t.beforeNextTick))
-	if t.beforeNextTick == 0 {
+	if t.beforeNextTick <= 1 {
 		t.beforeNextTick = t.tickInterval
 		return t.do(ctx)
 	}

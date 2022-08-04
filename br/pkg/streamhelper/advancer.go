@@ -303,6 +303,18 @@ func (c *CheckpointAdvancer) TryCalculateGlobalCheckpoint(ctx context.Context) (
 	s := c.state.(*fullScan)
 
 	defer c.recordTimeCost("record all")
+	rngs := s.todo
+	if len(rngs) > 3 {
+		rngs = rngs[:3]
+	}
+	rts := RangesSharesTS{
+		TS:     c.task.StartTs,
+		Ranges: rngs,
+	}
+	log.Info("[log backup advancer] try calculate global checkpoint",
+		zap.Int("remain", len(s.todo)),
+		zap.Object("ranges", rts.Zap()),
+	)
 	coll := NewClusterCollector(ctx, c.env)
 	coll.setOnSuccessHook(c.cache.InsertRange)
 	for _, u := range s.todo {
@@ -508,6 +520,19 @@ func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
 	}()
 	err = c.tick(ctx)
 	return
+}
+
+func (c *CheckpointAdvancer) onConsistencyCheckTick(context.Context) error {
+	defer c.recordTimeCost("consistency check")()
+	err := c.cache.ConsistencyCheck()
+	if err != nil {
+		log.Error("consistency check failed! log backup may lose data! rolling back to full scan for saving.", logutil.ShortError(err))
+		c.resetToFullScan()
+		return err
+	} else {
+		log.Debug("consistency check passed.")
+	}
+	return nil
 }
 
 func (c *CheckpointAdvancer) onUpdateSmallTreeTick(ctx context.Context) error {
