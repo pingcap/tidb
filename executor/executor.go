@@ -1922,6 +1922,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 	sc.IsReadonlyStmt = plannercore.IsReadOnly(s, vars)
+	sc.InTiFlashFallBack2TiKV = ctx.GetSessionVars().StmtCtx.InTiFlashFallBack2TiKV
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
