@@ -1792,6 +1792,9 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 func runWithSystemSession(sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
 	b := &baseExecutor{ctx: sctx}
 	sysCtx, err := b.getSysSession()
+	if err != nil {
+		return err
+	}
 	// TODO(tangenta): remove the CurrentDB assignment after
 	// https://github.com/pingcap/tidb/issues/34090 is fixed.
 	originDB := sysCtx.GetSessionVars().CurrentDB
@@ -1799,9 +1802,6 @@ func runWithSystemSession(sctx sessionctx.Context, fn func(sessionctx.Context) e
 	defer func() {
 		sysCtx.GetSessionVars().CurrentDB = originDB
 	}()
-	if err != nil {
-		return err
-	}
 	defer b.releaseSysSession(sysCtx)
 	return fn(sysCtx)
 }
