@@ -635,10 +635,10 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //
 //		<2> constant FD from the join conditions is only used for checking other FD. We cannot keep itself.
 /*
-			a   b  |  c     d
-          -------+---------
-          1   1  |  1     1
-          1   2  | NULL NULL
+//			a   b  |  c     d
+//			-------+---------
+//          1   1  |  1     1
+//          1   2  | NULL NULL
 */
 //          left join with (a,b) * (c,d) on (a=c and d=1), some rhs rows will be substituted with null values, and FD on rhs
 //          {d=1} are lost.
@@ -657,11 +657,11 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //			cols and no other `LEFT` condition on the (left-side cols except the cols in EFD's from) to filter the left join results. We can maintain the strict
 //			FD from EFD's `from` side to EFD's `to` side over the left join result.
 /*
-		a  b  |  c     d     e
-		------+----------------
-	 	1  1  |  1    NULL   1
-	    1  2  | NULL  NULL  NULL
-	    2  1  | NULL  NULL  NULL
+//    		a  b  |  c     d     e
+//    		------+----------------
+//	    	1  1  |  1    NULL   1
+//	        1  2  | NULL  NULL  NULL
+//	        2  1  | NULL  NULL  NULL
 */
 //			Neg eg: left join with (a,b) * (c,d,e) on (a=c and b=1), other b=1 will filter the result, causing the left row (1, 2)
 //			miss matched with right row (1, null 1) by a=c, consequently leading the left row appended as (1,2,null,null,null), which
@@ -675,11 +675,11 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //			Pos eg: if the filter is on EFD's `from` cols, it's ok. Let's say: (a,b) * (c,d,e) on (a=c and a=2), a=2 only won't leading
 //			same key a with matched c and mismatched NULL, neg case result is changed as above, so strict FD {a} -> {c} can exist.
 /*
-		a  b  |  c     d     e
-		------+----------------
-	 	1  1  |  1    NULL   1
-	    1  2  | NULL  NULL  NULL
-		2  1  | NULL  NULL  NULL
+//			a  b  |  c     d     e
+//			------+----------------
+//	 		1  1  |  1    NULL   1
+//		    1  2  | NULL  NULL  NULL
+//			2  1  | NULL  NULL  NULL
 */
 //			Neg eg: left join with (a,b) * (c,d,e) on (a=c and b=c), two EFD here, where b=c can also refuse some rows joined by a=c,
 //			consequently applying it with NULL as (1  2  | NULL  NULL  NULL), leading the same key a has different value 1/NULL. But
@@ -691,11 +691,11 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //		<3.2> equivalence FD: when the determinant and dependencies from an equivalence FD of join condition are each covering a strict
 //			FD of the left / right side. After joining, we can extend the left side strict FD's dependencies to all cols.
 /*
-		a  b  |  c     d     e
-		------+----------------
-	 	1  1  |  1    NULL   1
-	    2  2  | NULL  NULL  NULL
-	    3  1  | NULL  NULL  NULL
+//			a  b  |  c     d     e
+//			------+----------------
+//	 		1  1  |  1    NULL   1
+//	    	2  2  | NULL  NULL  NULL
+//	    	3  1  | NULL  NULL  NULL
 */
 //			left join with (a,b) * (c,d,e) on (a=c and b=1). Supposing that left `a` are strict Key and right `c` are strict Key too.
 //			Key means the strict FD can determine all cols from that table.
@@ -711,11 +711,11 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //		<3.3> equivalence FD: let's see equivalence FD as double-directed strict FD from join equal conditions, and we  only keep the
 //			rhs ~~> lhs.
 /*
-		a  b  |  c     d     e
-		------+----------------
-	 	1  1  |  1    NULL   1
-	    1  2  | NULL  NULL  NULL
-	    2  1  | NULL  NULL  NULL
+//			a  b  |  c     d     e
+//			------+----------------
+//	 		1  1  |  1    NULL   1
+//	    	1  2  | NULL  NULL  NULL
+//	    	2  1  | NULL  NULL  NULL
 */
 //			left join with (a,b) * (c,d,e) on (a=c and b=1). From the join equivalence condition can derive a new FD {ac} == {ac}.
 //			while since there are some supplied null value in the c column, we don't guarantee {ac} == {ac} yet, so do {a} -> {c}
