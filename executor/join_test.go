@@ -58,9 +58,6 @@ func TestJoinPanic2(t *testing.T) {
 func TestJoinInDisk(t *testing.T) {
 	origin := config.RestoreFunc()
 	defer origin()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

@@ -103,6 +103,12 @@ func parseParamTypes(sctx sessionctx.Context, isBinProtocol bool, binProtoVars [
 	} else { // txt protocol
 		varsNum = len(txtProtoVars)
 		for _, param := range txtProtoVars {
+			if c, ok := param.(*expression.Constant); ok { // from binary protocol
+				txtVarTypes = append(txtVarTypes, c.GetType())
+				continue
+			}
+
+			// from text protocol, there must be a GetVar function
 			name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 			tp := sctx.GetSessionVars().UserVarTypes[name]
 			if tp == nil {

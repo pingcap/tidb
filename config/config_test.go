@@ -208,14 +208,11 @@ token-limit = 1000
 # The maximum memory available for a single SQL statement. Default: 1GB
 mem-quota-query = 1073741824
 
-# Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
-oom-use-tmp-storage = true
-
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 # <snip>
 # tmp-storage-path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
 
-# Specifies the maximum use of temporary storage (bytes) for all active queries when oom-use-tmp-storage is enabled.
+# Specifies the maximum use of temporary storage (bytes) for all active queries when tidb_enable_tmp_storage_on_oom is enabled.
 # If the tmp-storage-quota exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
 # The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
 tmp-storage-quota = -1
