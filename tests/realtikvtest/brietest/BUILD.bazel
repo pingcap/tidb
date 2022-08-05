@@ -8,6 +8,7 @@ go_test(
         "binlog_test.go",
         "main_test.go",
     ],
+    data = ["//tidb-server:tidb-server-raw"],
     flaky = True,
     deps = [
         "//config",

@@ -9,6 +9,7 @@ go_test(
         "retry_test.go",
         "session_fail_test.go",
     ],
+    data = ["//tidb-server:tidb-server-raw"],
     flaky = True,
     shard_count = 50,
     deps = [
