@@ -824,10 +824,11 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	}
 
 	meta := &import_sstpb.KVMeta{
-		Name: file.Path,
-		Cf:   file.Cf,
-		// TODO fill the length
-		Length:          0,
+		Name:            file.Path,
+		Cf:              file.Cf,
+		Offset:          file.Offset,
+		Length:          file.Length,
+		CompressLength:  file.CompressLength,
 		IsDelete:        file.Type == backuppb.FileType_Delete,
 		StartSnapshotTs: startTS,
 		RestoreTs:       restoreTS,

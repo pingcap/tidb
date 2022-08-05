@@ -1091,17 +1091,18 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
-	shiftStartTS, err := client.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
+	streamFilesLoader := client.GetStreamFilesLoader(cfg.UseStorageV2)
+	shiftStartTS, err := streamFilesLoader.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Annotate(err, "failed to get shift TS")
 	}
 
 	// read meta by given ts.
-	metas, err := client.ReadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
+	metaSize, err := streamFilesLoader.LoadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(metas) == 0 {
+	if metaSize == 0 {
 		log.Info("nothing to restore.")
 		return nil
 	}
@@ -1109,7 +1110,7 @@ func restoreStream(
 	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
 
 	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
+	dmlFiles, ddlFiles, metaFilesCache, err := streamFilesLoader.LoadStreamDataFiles(ctx, shiftStartTS, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1135,7 +1136,7 @@ func restoreStream(
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
+		return client.RestoreMetaKVFiles(ctx, ddlFiles, metaFilesCache, schemasReplace, updateStats, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}

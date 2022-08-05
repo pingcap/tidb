@@ -34,7 +34,8 @@ import (
 )
 
 const (
-	streamBackupMetaPrefix = "v1/backupmeta"
+	streamBackupMetaPrefix   = "v1/backupmeta"
+	streamBackupMetaV2Prefix = "v2/backupmeta"
 
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
 
@@ -43,6 +44,10 @@ const (
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
+}
+
+func GetStreamBackupMetaV2Prefix() string {
+	return streamBackupMetaV2Prefix
 }
 
 func GetStreamBackupGlobalCheckpointPrefix() string {
@@ -178,6 +183,49 @@ func FastUnmarshalMetaData(
 				return errors.Annotatef(err, "during reading meta file %s from storage", readPath)
 			}
 			m := &backuppb.Metadata{}
+			err = m.Unmarshal(b)
+			if err != nil {
+				if !strings.HasSuffix(readPath, ".meta") {
+					return nil
+				} else {
+					return err
+				}
+			}
+			return fn(readPath, m)
+		})
+		return nil
+	})
+	if err != nil {
+		readErr := eg.Wait()
+		if readErr != nil {
+			return errors.Annotatef(readErr, "scanning metadata meets error %s", err)
+		}
+		return errors.Annotate(err, "scanning metadata meets error")
+	}
+	return eg.Wait()
+}
+
+// FastUnmarshalMetaData used a 128 worker pool to speed up
+// read metadata content from external_storage.
+func FastUnmarshalMetaDataV2(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	fn func(path string, m *backuppb.MetadataV2) error,
+) error {
+	log.Info("use workers to speed up reading metadata files", zap.Int("workers", metaDataWorkerPoolSize))
+	pool := utils.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
+	eg, ectx := errgroup.WithContext(ctx)
+	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaV2Prefix()}
+	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
+		readPath := path
+		pool.ApplyOnErrorGroup(eg, func() error {
+			log.Info("fast read meta file from storage", zap.String("path", readPath))
+			b, err := s.ReadFile(ectx, readPath)
+			if err != nil {
+				log.Error("failed to read file", zap.String("file", readPath))
+				return errors.Annotatef(err, "during reading meta file %s from storage", readPath)
+			}
+			m := &backuppb.MetadataV2{}
 			err = m.Unmarshal(b)
 			if err != nil {
 				if !strings.HasSuffix(readPath, ".meta") {

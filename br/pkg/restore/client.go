@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -73,6 +74,292 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 )
+
+type MetaFilesCache interface {
+	Drain(ctx context.Context, path string, offset uint64, storage storage.ExternalStorage) ([]byte, error)
+}
+
+type MetaFilesCacheV1 struct {
+}
+
+func (m *MetaFilesCacheV1) Drain(ctx context.Context, path string, offset uint64, storage storage.ExternalStorage) ([]byte, error) {
+	return storage.ReadFile(ctx, path)
+}
+
+// cache the data in partition of data-files from merge-files
+//  data <- cache[path][offset]
+type MetaFilesCacheV2 struct {
+	metaFilesCache map[string]map[uint64]*segmentDataMap
+	decoder        *zstd.Decoder
+}
+
+type segmentDataMap struct {
+	metaDataCache []byte
+	end           uint64
+}
+
+func NewMetaFilesCacheV2(MetaFilesCache map[string]map[uint64]*segmentDataMap) *MetaFilesCacheV2 {
+	decoder, _ := zstd.NewReader(nil)
+	return &MetaFilesCacheV2{
+		metaFilesCache: MetaFilesCache,
+		decoder:        decoder,
+	}
+}
+
+func (m *MetaFilesCacheV2) Drain(ctx context.Context, path string, offset uint64, storage storage.ExternalStorage) ([]byte, error) {
+	metaFileCache, ok := m.metaFilesCache[path]
+	if !ok {
+		return nil, errors.Errorf("data in MetaFilesCache is lost")
+	}
+	seg, ok := metaFileCache[offset]
+	if !ok {
+		return nil, errors.Errorf("data in MetaFilesCache is lost")
+	}
+	if seg.metaDataCache == nil {
+		data, err := storage.ReadFile(ctx, path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for off, segp := range metaFileCache {
+			buf, err := m.decoder.DecodeAll(data[off:segp.end], nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			segp.metaDataCache = buf
+		}
+	}
+
+	delete(metaFileCache, offset)
+	return seg.metaDataCache, nil
+}
+
+type CostAnalyzer struct {
+	baselines map[string]uint64
+}
+
+func (ca *CostAnalyzer) usePartDownload(path string) bool {
+	// 10000 GET operations = 1 GB data download
+	// Given three variables N, P and K.
+	// N means the size of the merged file.
+	// P means the number of small files which the merged file is merged from
+	// K means the number of TiKV need the merged file.
+	// For
+	return false
+}
+
+type StreamFilesLoader interface {
+	// GetShiftTS get shift-ts from metadata
+	GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error)
+	// ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
+	LoadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) (int, error)
+	// LoadStreamDataFiles is used for streaming task. collect all meta file by TS.
+	LoadStreamDataFiles(ctx context.Context, shiftStartTS uint64, startTS uint64, restoreTS uint64) (dataFiles, metaFiles []*backuppb.DataFileInfo, metaFilesCache MetaFilesCache, err error)
+}
+
+type StreamFilesLoaderV1 struct {
+	metas   []*backuppb.Metadata
+	storage storage.ExternalStorage
+}
+
+func (s *StreamFilesLoaderV1) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error) {
+	shiftTS := struct {
+		sync.Mutex
+		value  uint64
+		exists bool
+	}{}
+	err := stream.FastUnmarshalMetaData(ctx, s.storage, func(path string, m *backuppb.Metadata) error {
+		shiftTS.Lock()
+		defer shiftTS.Unlock()
+
+		ts, ok := UpdateShiftTS(m, startTS, restoreTS)
+		if ok && (!shiftTS.exists || shiftTS.value > ts) {
+			shiftTS.value = ts
+			shiftTS.exists = true
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if !shiftTS.exists {
+		return startTS, nil
+	}
+	return shiftTS.value, nil
+}
+
+// ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
+func (s *StreamFilesLoaderV1) LoadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) (int, error) {
+	streamBackupMetaFiles := struct {
+		sync.Mutex
+		metas []*backuppb.Metadata
+	}{}
+	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
+
+	err := stream.FastUnmarshalMetaData(ctx, s.storage, func(path string, metadata *backuppb.Metadata) error {
+		streamBackupMetaFiles.Lock()
+		if restoreTS >= metadata.MinTs && metadata.MaxTs >= shiftedStartTS {
+			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		}
+		streamBackupMetaFiles.Unlock()
+		return nil
+	})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	s.metas = streamBackupMetaFiles.metas
+	return len(s.metas), nil
+}
+
+// LoaddStreamDataFiles is used for streaming task. collect all meta file by TS.
+func (s *StreamFilesLoaderV1) LoadStreamDataFiles(
+	ctx context.Context,
+	shiftStartTS uint64,
+	startTS uint64,
+	restoreTS uint64,
+) (dataFiles, metaFiles []*backuppb.DataFileInfo, metaFilesCache MetaFilesCache, err error) {
+	dFiles := make([]*backuppb.DataFileInfo, 0)
+	mFiles := make([]*backuppb.DataFileInfo, 0)
+
+	for _, m := range s.metas {
+		for _, d := range m.Files {
+			if d.MinTs > restoreTS {
+				continue
+			} else if d.Cf == stream.WriteCF && d.MaxTs < startTS {
+				continue
+			} else if d.Cf == stream.DefaultCF && d.MaxTs < shiftStartTS {
+				continue
+			}
+
+			if d.IsMeta {
+				mFiles = append(mFiles, d)
+			} else {
+				dFiles = append(dFiles, d)
+			}
+			log.Debug("backup stream collect data file", zap.String("file", d.Path))
+		}
+	}
+
+	// sort files firstly.
+	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
+		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
+			return i.ResolvedTs < j.ResolvedTs
+		} else {
+			return i.MaxTs < j.MaxTs
+		}
+	})
+
+	return dFiles, mFiles, &MetaFilesCacheV1{}, nil
+}
+
+type StreamFilesLoaderV2 struct {
+	metas    []*backuppb.MetadataV2
+	dataFile []*backuppb.DataFileInfo
+	metaFile []*backuppb.DataFileInfo
+	storage  storage.ExternalStorage
+}
+
+func (s *StreamFilesLoaderV2) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error) {
+	shiftTS := struct {
+		sync.Mutex
+		value  uint64
+		exists bool
+	}{}
+	err := stream.FastUnmarshalMetaDataV2(ctx, s.storage, func(path string, m *backuppb.MetadataV2) error {
+		shiftTS.Lock()
+		defer shiftTS.Unlock()
+
+		ts, ok := UpdateShiftTSV2(m, startTS, restoreTS)
+		if ok && (!shiftTS.exists || shiftTS.value > ts) {
+			shiftTS.value = ts
+			shiftTS.exists = true
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if !shiftTS.exists {
+		return startTS, nil
+	}
+	return shiftTS.value, nil
+}
+
+// ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
+func (s *StreamFilesLoaderV2) LoadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) (int, error) {
+	streamBackupMetaFiles := struct {
+		sync.Mutex
+		metas []*backuppb.MetadataV2
+	}{}
+	streamBackupMetaFiles.metas = make([]*backuppb.MetadataV2, 0, 128)
+
+	err := stream.FastUnmarshalMetaDataV2(ctx, s.storage, func(path string, metadata *backuppb.MetadataV2) error {
+		streamBackupMetaFiles.Lock()
+		if restoreTS >= metadata.MinTs && metadata.MaxTs >= shiftedStartTS {
+			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		}
+		streamBackupMetaFiles.Unlock()
+		return nil
+	})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	s.metas = streamBackupMetaFiles.metas
+	return len(s.metas), nil
+}
+
+// ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
+func (s *StreamFilesLoaderV2) LoadStreamDataFiles(
+	ctx context.Context,
+	shiftStartTS uint64,
+	startTS uint64,
+	restoreTS uint64,
+) (dataFiles, metaFiles []*backuppb.DataFileInfo, metaFilesCache MetaFilesCache, err error) {
+	dFiles := make([]*backuppb.DataFileInfo, 0)
+	mFiles := make([]*backuppb.DataFileInfo, 0)
+
+	placeholder := make(map[string]map[uint64]*segmentDataMap)
+
+	for _, m := range s.metas {
+		for _, ds := range m.FileGroups {
+			log.Debug("backup stream collect data file", zap.String("file", ds.Path))
+			holder := make(map[uint64]*segmentDataMap)
+			for _, d := range ds.DataFilesInfo {
+				if d.MinTs > restoreTS {
+					continue
+				} else if d.Cf == stream.WriteCF && d.MaxTs < startTS {
+					continue
+				} else if d.Cf == stream.DefaultCF && d.MaxTs < shiftStartTS {
+					continue
+				}
+
+				d.Path = ds.Path
+				if d.IsMeta {
+					// just a placeholder. So the data read from external storage can be split into these segment.
+					holder[d.Offset] = &segmentDataMap{
+						metaDataCache: nil,
+						end:           d.CompressLength + d.Offset,
+					}
+					mFiles = append(mFiles, d)
+				} else {
+					dFiles = append(dFiles, d)
+				}
+				log.Debug("backup stream collect data partition", zap.Uint64("offset", d.Offset), zap.Uint64("length", d.Length))
+			}
+			placeholder[ds.Path] = holder
+		}
+	}
+
+	// sort files firstly.
+	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
+		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
+			return i.ResolvedTs < j.ResolvedTs
+		} else {
+			return i.MaxTs < j.MaxTs
+		}
+	})
+
+	return dFiles, mFiles, NewMetaFilesCacheV2(placeholder), nil
+}
 
 // Client sends requests to restore files.
 type Client struct {
@@ -383,6 +670,13 @@ func (rc *Client) InitBackupMeta(
 // IsRawKvMode checks whether the backup data is in raw kv format, in which case transactional recover is forbidden.
 func (rc *Client) IsRawKvMode() bool {
 	return rc.backupMeta.IsRawKv
+}
+
+func (rc *Client) GetStreamFilesLoader(useV2 bool) StreamFilesLoader {
+	if useV2 {
+		return &StreamFilesLoaderV2{storage: rc.storage}
+	}
+	return &StreamFilesLoaderV1{storage: rc.storage}
 }
 
 // GetFilesInRawRange gets all files that are in the given range or intersects with the given range.
@@ -1693,92 +1987,6 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
-func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error) {
-	shiftTS := struct {
-		sync.Mutex
-		value  uint64
-		exists bool
-	}{}
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, m *backuppb.Metadata) error {
-		shiftTS.Lock()
-		defer shiftTS.Unlock()
-
-		ts, ok := UpdateShiftTS(m, startTS, restoreTS)
-		if ok && (!shiftTS.exists || shiftTS.value > ts) {
-			shiftTS.value = ts
-			shiftTS.exists = true
-		}
-		return nil
-	})
-	if err != nil {
-		return 0, err
-	}
-	if !shiftTS.exists {
-		return startTS, nil
-	}
-	return shiftTS.value, nil
-}
-
-// ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) ([]*backuppb.Metadata, error) {
-	streamBackupMetaFiles := struct {
-		sync.Mutex
-		metas []*backuppb.Metadata
-	}{}
-	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
-
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
-		streamBackupMetaFiles.Lock()
-		if restoreTS >= metadata.MinTs && metadata.MaxTs >= shiftedStartTS {
-			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
-		}
-		streamBackupMetaFiles.Unlock()
-		return nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return streamBackupMetaFiles.metas, nil
-}
-
-// ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamDataFiles(
-	ctx context.Context,
-	metas []*backuppb.Metadata,
-) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
-	dFiles := make([]*backuppb.DataFileInfo, 0)
-	mFiles := make([]*backuppb.DataFileInfo, 0)
-
-	for _, m := range metas {
-		for _, d := range m.Files {
-			if d.MinTs > rc.restoreTS {
-				continue
-			} else if d.Cf == stream.WriteCF && d.MaxTs < rc.startTS {
-				continue
-			} else if d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS {
-				continue
-			}
-
-			if d.IsMeta {
-				mFiles = append(mFiles, d)
-			} else {
-				dFiles = append(dFiles, d)
-			}
-			log.Debug("backup stream collect data file", zap.String("file", d.Path))
-		}
-	}
-
-	// sort files firstly.
-	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
-		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
-			return i.ResolvedTs < j.ResolvedTs
-		} else {
-			return i.MaxTs < j.MaxTs
-		}
-	})
-	return dFiles, mFiles, nil
-}
-
 // FixIndex tries to fix a single index.
 func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -2001,12 +2209,12 @@ func (rc *Client) InitSchemasReplaceForDDL(
 func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
+	metaFilesCache MetaFilesCache,
 	schemasReplace *stream.SchemasReplace,
 	updateStats func(kvCount uint64, size uint64),
 	progressInc func(),
 ) error {
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
-
 	// The k-v events in default CF should be restored firstly. The reason is that:
 	// The error of transactions of meta could happen if restore write CF events successfully,
 	// but failed to restore default CF events.
@@ -2023,7 +2231,7 @@ func (rc *Client) RestoreMetaKVFiles(
 			continue
 		}
 
-		kvCount, size, err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
+		kvCount, size, err := rc.RestoreMetaKVFile(ctx, f, metaFilesCache, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2033,7 +2241,7 @@ func (rc *Client) RestoreMetaKVFiles(
 
 	// Restore files in write CF.
 	for _, f := range filesInWriteCF {
-		kvCount, size, err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
+		kvCount, size, err := rc.RestoreMetaKVFile(ctx, f, metaFilesCache, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2052,21 +2260,29 @@ func (rc *Client) RestoreMetaKVFiles(
 func (rc *Client) RestoreMetaKVFile(
 	ctx context.Context,
 	file *backuppb.DataFileInfo,
+	metaFilesCache MetaFilesCache,
 	sr *stream.SchemasReplace,
 ) (uint64, uint64, error) {
 	var (
 		kvCount uint64
 		size    uint64
+
+		buff []byte
+		err  error
 	)
 	log.Info("restore meta kv events", zap.String("file", file.Path),
+		zap.Uint64("offset", file.Offset), zap.Uint64("length", file.CompressLength),
 		zap.String("cf", file.Cf), zap.Int64("kv-count", file.NumberOfEntries),
 		zap.Uint64("min-ts", file.MinTs), zap.Uint64("max-ts", file.MaxTs))
 
 	rc.rawKVClient.SetColumnFamily(file.GetCf())
-	buff, err := rc.storage.ReadFile(ctx, file.Path)
+
+	buff, err = metaFilesCache.Drain(ctx, file.Path, file.Offset, rc.storage)
+
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
+
 	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
 		return 0, 0, errors.Annotatef(berrors.ErrInvalidMetaFile,
 			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])

@@ -270,6 +270,32 @@ func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint
 	return minBeginTS, isExist
 }
 
+func UpdateShiftTSV2(m *backuppb.MetadataV2, startTS uint64, restoreTS uint64) (uint64, bool) {
+	var (
+		minBeginTS uint64
+		isExist    bool
+	)
+	if len(m.FileGroups) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+		return 0, false
+	}
+
+	for _, ds := range m.FileGroups {
+		for _, d := range ds.DataFilesInfo {
+			if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+				continue
+			}
+			if d.MinTs > restoreTS || d.MaxTs < startTS {
+				continue
+			}
+			if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
+				isExist = true
+				minBeginTS = d.MinBeginTsInDefaultCf
+			}
+		}
+	}
+	return minBeginTS, isExist
+}
+
 // CalculateShiftTS gets the minimal begin-ts about transaction according to the kv-event in write-cf.
 func CalculateShiftTS(
 	metas []*backuppb.Metadata,
