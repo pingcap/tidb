@@ -155,3 +155,13 @@ The `INSERT` statement puts the row with `id = 1` in the transaction write buffe
 So, we choose to do the missing constraint check when acquiring locks. Whenever we are going to acquire the pessimistic lock of a key with a `PresumeKeyNotExists` flag that is already in the write buffer, we will bring the constraint check to TiKV immediately.
 
 This means the `SELECT FOR UPDATE` will throw a "duplicate entry" error in the case above. It may be strange that a read-only statement raises errors like this. We should make the user aware of the behavior.
+
+### Safety
+
+With this feature enabled, we accept slight behavior changes, but we must guarantee the general transaction properties are still preserved.
+
+First, atomicity is not affected. Although we skip the locking phase for some of the keys, we don't skip any conflict and constraint checks that are necessary in the usual 2PC procedure. To be more secure, we can do conflict checks for the non-unique index keys just like optimistic transactions. It avoids the risk of producing duplicated write records when there are RPC retries.
+
+The uniqueness constraints are also preserved. For all the keys with a `PresumeKeyNotExists` flag, we check the constraint either when prewriting them, or when acquiring the pessimistic locks like in the case of [Locking Lazy Checked Keys](#behavior-of-locking-lazy-checked-keys) above. So we can guarantee no duplicated entry exists after committing the transaction. In the case of "delete-your-write" or "rollback to savepoint", some keys that need constraint checks may be unchanged in the end, but we will still check the constraints for them in prewrite to make sure the client does not miss any errors.
+
+Note that we will face the problem similar to [#24195](https://github.com/pingcap/tidb/issues/24195). When `INSERT` does not check the constraint, the result set may not always satisfy the unique constraint. But finally, such a transaction will fail to commit and will not result in any data corruption.
