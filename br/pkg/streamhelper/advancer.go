@@ -329,7 +329,7 @@ func (c *CheckpointAdvancer) TryCalculateGlobalCheckpoint(ctx context.Context) (
 	}
 	log.Debug("full: a run finished", zap.Any("checkpoint", result))
 
-	if s.checkpointTillNow > result.Checkpoint {
+	if result.HasCheckpoint && s.checkpointTillNow > result.Checkpoint {
 		s.checkpointTillNow = result.Checkpoint
 	}
 	if len(result.FailureSubRanges) == 0 {
