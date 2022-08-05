@@ -11,7 +11,7 @@ DB_NAME="empty_test"
 run_sql "drop database if exists \`$DB_NAME\`;"
 
 # build data on mysql
-run_sql "create database \`$DB_NAME\`;"
+run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 
 # dumping
 export DUMPLING_TEST_DATABASE=$DB_NAME

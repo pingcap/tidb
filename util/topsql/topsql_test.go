@@ -86,6 +86,10 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
+func mockPlanBinaryCompressFunc(plan []byte) string {
+	return string(plan)
+}
+
 func TestTopSQLReporter(t *testing.T) {
 	err := cpuprofile.StartCPUProfiler()
 	require.NoError(t, err)
@@ -100,7 +104,7 @@ func TestTopSQLReporter(t *testing.T) {
 	})
 
 	topsqlstate.EnableTopSQL()
-	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	report.Start()
 	ds := reporter.NewSingleTargetDataSink(report)
 	ds.Start()
@@ -124,9 +128,9 @@ func TestTopSQLReporter(t *testing.T) {
 	defer wg.Wait()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
 	sqlMap := make(map[string]string)
 	sql2plan := make(map[string]string)
+	recordsCnt := server.RecordsCnt()
 	for _, req := range reqs {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
@@ -143,29 +147,35 @@ func TestTopSQLReporter(t *testing.T) {
 			}
 		})
 	}
-	server.WaitCollectCnt(1, time.Second*5)
-	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
-	for _, req := range records {
-		require.Greater(t, len(req.Items), 0)
-		require.Greater(t, req.Items[0].CpuTimeMs, uint32(0))
-		sqlMeta, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
-		require.True(t, exist)
-		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
-		require.True(t, exist)
-		require.Equal(t, expectedNormalizedSQL, sqlMeta.NormalizedSql)
+	for retry := 0; retry < 5; retry++ {
+		server.WaitCollectCnt(recordsCnt, 1, time.Second*5)
+		records := server.GetLatestRecords()
+		for _, req := range records {
+			require.Greater(t, len(req.Items), 0)
+			require.Greater(t, req.Items[0].CpuTimeMs, uint32(0))
+			sqlMeta, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
+			require.True(t, exist)
+			expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
+			require.True(t, exist)
+			require.Equal(t, expectedNormalizedSQL, sqlMeta.NormalizedSql)
 
-		expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
-		if expectedNormalizedPlan == "" || len(req.PlanDigest) == 0 {
-			require.Len(t, req.PlanDigest, 0)
-			continue
+			expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
+			if expectedNormalizedPlan == "" || len(req.PlanDigest) == 0 {
+				require.Len(t, req.PlanDigest, 0)
+				checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
+				continue
+			}
+			normalizedPlan, exist := server.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
+			require.True(t, exist)
+			require.Equal(t, expectedNormalizedPlan, normalizedPlan)
+			checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
 		}
-		normalizedPlan, exist := server.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
-		require.True(t, exist)
-		require.Equal(t, expectedNormalizedPlan, normalizedPlan)
-		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
+		if len(checkSQLPlanMap) == len(reqs) {
+			break
+		}
 	}
-	require.Equal(t, 2, len(checkSQLPlanMap))
+	require.Equal(t, len(reqs), len(checkSQLPlanMap))
 }
 
 func TestMaxSQLAndPlanTest(t *testing.T) {
@@ -181,10 +191,11 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	// Test for normal sql and plan
 	sql := "select * from t"
 	sqlDigest := mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
+	topsql.AttachAndRegisterSQLInfo(ctx, sql, sqlDigest, false)
 	plan := "TableReader table:t"
 	planDigest := genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
+	topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+	topsql.RegisterPlan(plan, planDigest)
 
 	cSQL := collector.GetSQL(sqlDigest.Bytes())
 	require.Equal(t, sql, cSQL)
@@ -194,10 +205,11 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	// Test for huge sql and plan
 	sql = genStr(topsql.MaxSQLTextSize + 10)
 	sqlDigest = mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
+	topsql.AttachAndRegisterSQLInfo(ctx, sql, sqlDigest, false)
 	plan = genStr(topsql.MaxBinaryPlanSize + 10)
 	planDigest = genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
+	topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+	topsql.RegisterPlan(plan, planDigest)
 
 	cSQL = collector.GetSQL(sqlDigest.Bytes())
 	require.Equal(t, sql[:topsql.MaxSQLTextSize], cSQL)
@@ -214,7 +226,7 @@ func TestTopSQLPubSub(t *testing.T) {
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 
 	topsqlstate.EnableTopSQL()
-	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	report.Start()
 	defer report.Close()
 	topsql.SetupTopSQLForTest(report)
@@ -333,7 +345,7 @@ func TestTopSQLPubSub(t *testing.T) {
 
 func TestPubSubWhenReporterIsStopped(t *testing.T) {
 	topsqlstate.EnableTopSQL()
-	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	report.Start()
 
 	server, err := mockServer.NewMockPubSubServer()
@@ -373,10 +385,11 @@ func TestPubSubWhenReporterIsStopped(t *testing.T) {
 func mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
+	topsql.AttachAndRegisterSQLInfo(ctx, sql, sqlDigest, false)
 	mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
+	topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+	topsql.RegisterPlan(plan, planDigest)
 	mockExecute(time.Millisecond * 300)
 }
 

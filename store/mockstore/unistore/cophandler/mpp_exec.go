@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -99,8 +101,9 @@ func (b *baseMPPExec) stop() error {
 }
 
 type scanResult struct {
-	chk *chunk.Chunk
-	err error
+	chk              *chunk.Chunk
+	lastProcessedKey kv.Key
+	err              error
 }
 
 type tableScanExec struct {
@@ -118,9 +121,15 @@ type tableScanExec struct {
 	chk    *chunk.Chunk
 	result chan scanResult
 	done   chan struct{}
+	wg     util.WaitGroupWrapper
 
 	decoder *rowcodec.ChunkDecoder
 	desc    bool
+
+	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
+	physTblIDColIdx *int
+	// This is used to update the paging range result, updated in next().
+	paging *coprocessor.KeyRange
 }
 
 func (e *tableScanExec) SkipValue() bool { return false }
@@ -135,11 +144,16 @@ func (e *tableScanExec) Process(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if e.physTblIDColIdx != nil {
+		tblID := tablecodec.DecodeTableID(key)
+		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
+	}
 	e.rowCnt++
 
 	if e.chk.IsFull() {
+		lastProcessed := kv.Key(append([]byte{}, key...)) // make a copy to avoid data race
 		select {
-		case e.result <- scanResult{chk: e.chk, err: nil}:
+		case e.result <- scanResult{chk: e.chk, lastProcessedKey: lastProcessed, err: nil}:
 			e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
 		case <-e.done:
 			return dbreader.ErrScanBreak
@@ -166,10 +180,12 @@ func (e *tableScanExec) open() error {
 	e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
 	e.result = make(chan scanResult, 1)
 	e.done = make(chan struct{})
-	go func() {
+	e.wg.Run(func() {
 		// close the channel when done scanning, so that next() will got nil chunk
 		defer close(e.result)
-		for i, ran := range e.kvRanges {
+		var i int
+		var ran kv.KeyRange
+		for i, ran = range e.kvRanges {
 			oldCnt := e.rowCnt
 			if e.desc {
 				err = e.dbReader.ReverseScan(ran.StartKey, ran.EndKey, math.MaxInt64, e.startTS, e)
@@ -195,13 +211,30 @@ func (e *tableScanExec) open() error {
 			}
 			return
 		}
-	}()
+	})
 
 	return nil
 }
 
 func (e *tableScanExec) next() (*chunk.Chunk, error) {
 	result := <-e.result
+	// Update the range for coprocessor paging protocol.
+	if e.paging != nil && result.err == nil {
+		if e.desc {
+			if result.lastProcessedKey != nil {
+				*e.paging = coprocessor.KeyRange{Start: result.lastProcessedKey}
+			} else {
+				*e.paging = coprocessor.KeyRange{Start: e.kvRanges[len(e.kvRanges)-1].StartKey}
+			}
+		} else {
+			if result.lastProcessedKey != nil {
+				*e.paging = coprocessor.KeyRange{End: result.lastProcessedKey.Next()}
+			} else {
+				*e.paging = coprocessor.KeyRange{End: e.kvRanges[len(e.kvRanges)-1].EndKey}
+			}
+		}
+	}
+
 	if result.chk == nil || result.err != nil {
 		return nil, result.err
 	}
@@ -214,6 +247,7 @@ func (e *tableScanExec) stop() error {
 	if e.done != nil {
 		close(e.done)
 	}
+	e.wg.Wait()
 	return nil
 }
 
@@ -238,6 +272,12 @@ type indexScanExec struct {
 	colInfos   []rowcodec.ColInfo
 	numIdxCols int
 	hdlStatus  tablecodec.HandleStatus
+
+	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
+	physTblIDColIdx *int
+	// This is used to update the paging range result, updated in next().
+	paging                 *coprocessor.KeyRange
+	chunkLastProcessedKeys []kv.Key
 }
 
 func (e *indexScanExec) SkipValue() bool { return false }
@@ -272,8 +312,16 @@ func (e *indexScanExec) Process(key, value []byte) error {
 			}
 		}
 	}
+	if e.physTblIDColIdx != nil {
+		tblID := tablecodec.DecodeTableID(key)
+		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
+	}
 	if e.chk.IsFull() {
 		e.chunks = append(e.chunks, e.chk)
+		if e.paging != nil {
+			lastProcessed := kv.Key(append([]byte{}, key...)) // need a deep copy to store the key
+			e.chunkLastProcessedKeys = append(e.chunkLastProcessedKeys, lastProcessed)
+		}
 		e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
 	}
 	return nil
@@ -312,9 +360,32 @@ func (e *indexScanExec) open() error {
 
 func (e *indexScanExec) next() (*chunk.Chunk, error) {
 	if e.chkIdx < len(e.chunks) {
-		e.chkIdx += 1
+		e.chkIdx++
 		e.execSummary.updateOnlyRows(e.chunks[e.chkIdx-1].NumRows())
+		if e.paging != nil {
+			if e.desc {
+				if e.chkIdx == len(e.chunks) {
+					*e.paging = coprocessor.KeyRange{Start: e.kvRanges[len(e.kvRanges)-1].StartKey}
+				} else {
+					*e.paging = coprocessor.KeyRange{Start: e.chunkLastProcessedKeys[e.chkIdx-1]}
+				}
+			} else {
+				if e.chkIdx == len(e.chunks) {
+					*e.paging = coprocessor.KeyRange{End: e.kvRanges[len(e.kvRanges)-1].EndKey}
+				} else {
+					*e.paging = coprocessor.KeyRange{End: e.chunkLastProcessedKeys[e.chkIdx-1].Next()}
+				}
+			}
+		}
 		return e.chunks[e.chkIdx-1], nil
+	}
+
+	if e.paging != nil {
+		if e.desc {
+			*e.paging = coprocessor.KeyRange{Start: e.kvRanges[len(e.kvRanges)-1].StartKey}
+		} else {
+			*e.paging = coprocessor.KeyRange{End: e.kvRanges[len(e.kvRanges)-1].EndKey}
+		}
 	}
 	return nil, nil
 }
@@ -353,6 +424,9 @@ type topNExec struct {
 	conds []expression.Expression
 	row   *sortRow
 	recv  []*chunk.Chunk
+
+	// When dummy is true, topNExec just copy what it read from children to its parent.
+	dummy bool
 }
 
 func (e *topNExec) open() error {
@@ -362,6 +436,11 @@ func (e *topNExec) open() error {
 	if err != nil {
 		return err
 	}
+
+	if e.dummy {
+		return nil
+	}
+
 	for {
 		chk, err = e.children[0].next()
 		if err != nil {
@@ -396,6 +475,10 @@ func (e *topNExec) open() error {
 }
 
 func (e *topNExec) next() (*chunk.Chunk, error) {
+	if e.dummy {
+		return e.children[0].next()
+	}
+
 	chk := chunk.NewChunkWithCapacity(e.getFieldTypes(), DefaultBatchSize)
 	for ; !chk.IsFull() && e.idx < e.topn && e.idx < uint64(e.heap.heapSize); e.idx++ {
 		row := e.heap.rows[e.idx]
@@ -877,7 +960,7 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 		aggCtxs := e.getContexts(gk)
 		for i, agg := range e.aggExprs {
 			result := agg.GetResult(aggCtxs[i])
-			if e.fieldTypes[i].Tp == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
+			if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
 				var err error
 				result, err = result.ConvertTo(e.sc, e.fieldTypes[i])
 				if err != nil {

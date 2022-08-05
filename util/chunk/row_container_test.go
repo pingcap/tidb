@@ -156,14 +156,14 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 	var tracker *memory.Tracker
 	var err error
 	tracker = rc.GetMemTracker()
-	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
+	tracker.SetBytesLimit(chk.MemoryUsage() + int64(8*chk.NumRows()) + 1)
 	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
 	require.False(t, rc.AlreadySpilledSafeForTest())
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
 	require.NoError(t, err)
 	require.False(t, rc.AlreadySpilledSafeForTest())
-	require.Equal(t, chk.MemoryUsage(), rc.GetMemTracker().BytesConsumed())
+	require.Equal(t, chk.MemoryUsage()+int64(8*chk.NumRows()), rc.GetMemTracker().BytesConsumed())
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)

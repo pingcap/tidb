@@ -203,13 +203,19 @@ func TestValues(t *testing.T) {
 
 func TestSetVarFromColumn(t *testing.T) {
 	ctx := createContext(t)
+	ft1 := types.FieldType{}
+	ft1.SetType(mysql.TypeVarString)
+	ft1.SetFlen(20)
+
+	ft2 := ft1.Clone()
+	ft3 := ft1.Clone()
 	// Construct arguments.
 	argVarName := &Constant{
 		Value:   types.NewStringDatum("a"),
-		RetType: &types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		RetType: &ft1,
 	}
 	argCol := &Column{
-		RetType: &types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		RetType: ft2,
 		Index:   0,
 	}
 
@@ -217,7 +223,7 @@ func TestSetVarFromColumn(t *testing.T) {
 	funcSetVar, err := NewFunction(
 		ctx,
 		ast.SetVar,
-		&types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		ft3,
 		[]Expression{argVarName, argCol}...,
 	)
 	require.NoError(t, err)

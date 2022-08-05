@@ -70,7 +70,8 @@ type IndexNestedLoopHashJoin struct {
 	// taskCh is only used when `keepOuterOrder` is true.
 	taskCh chan *indexHashJoinTask
 
-	stats *indexLookUpJoinRuntimeStats
+	stats    *indexLookUpJoinRuntimeStats
+	prepared bool
 }
 
 type indexHashJoinOuterWorker struct {
@@ -133,7 +134,6 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.finished.Store(false)
-	e.startWorkers(ctx)
 	return nil
 }
 
@@ -181,7 +181,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
 		e.IndexLookUpJoin.finished.Store(true)
-		err := errors.New(fmt.Sprintf("%v", r))
+		err := fmt.Errorf("%v", r)
 		if !e.keepOuterOrder {
 			e.resultCh <- &indexHashJoinResult{err: err}
 		} else {
@@ -207,6 +207,10 @@ func (e *IndexNestedLoopHashJoin) wait4JoinWorkers() {
 
 // Next implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) error {
+	if !e.prepared {
+		e.startWorkers(ctx)
+		e.prepared = true
+	}
 	req.Reset()
 	if e.keepOuterOrder {
 		return e.runInOrder(ctx, req)
@@ -299,6 +303,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	}
 	e.joinChkResourceCh = nil
 	e.finished.Store(false)
+	e.prepared = false
 	return e.baseExecutor.Close()
 }
 
@@ -459,6 +464,10 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 	}
 	h, resultCh := fnv.New64(), iw.resultCh
 	for {
+		// The previous task has been processed, so release the occupied memory
+		if task != nil {
+			task.memTracker.Detach()
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -527,7 +536,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 	select {
 	case joinResult.chk, ok = <-iw.joinChkResourceCh:
 	case <-ctx.Done():
-		return nil, false
+		return joinResult, false
 	}
 	return joinResult, ok
 }
@@ -599,7 +608,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		if task.keepOuterOrder {
 			if err != nil {
 				joinResult.err = err
-				resultCh <- joinResult
+				select {
+				case <-ctx.Done():
+				case resultCh <- joinResult:
+				}
 			}
 			close(resultCh)
 		}

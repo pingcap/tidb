@@ -1,4 +1,3 @@
-set @@tidb_partition_prune_mode='dynamic';
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -90,6 +89,8 @@ Projection	5.00	root		test.sgc1.j1, test.sgc1.j2, test.sgc1.a, test.sgc1.b, test
   └─TableReader(Probe)	5.00	root		data:Selection
     └─Selection	5.00	cop[tikv]		not(isnull(test.sgc1.a))
       └─TableFullScan	5.00	cop[tikv]	table:sgc1	keep order:false
+set @old_prune_mode = @@tidb_partition_prune_mode;
+set @@tidb_partition_prune_mode='static';
 DROP TABLE IF EXISTS sgc3;
 CREATE TABLE sgc3 (
 j JSON,
@@ -136,6 +137,31 @@ PartitionUnion	23263.33	root
 └─TableReader	3323.33	root		data:Selection
   └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
     └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:max	keep order:false, stats:pseudo
+set @@tidb_partition_prune_mode='dynamic';
+DROP TABLE sgc3;
+CREATE TABLE sgc3 (
+j JSON,
+a INT AS (JSON_EXTRACT(j, "$.a")) STORED
+)
+PARTITION BY RANGE (a) (
+PARTITION p0 VALUES LESS THAN (1),
+PARTITION p1 VALUES LESS THAN (2),
+PARTITION p2 VALUES LESS THAN (3),
+PARTITION p3 VALUES LESS THAN (4),
+PARTITION p4 VALUES LESS THAN (5),
+PARTITION p5 VALUES LESS THAN (6),
+PARTITION max VALUES LESS THAN MAXVALUE);
+EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a <= 1;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root	partition:p0,p1	data:Selection
+└─Selection	3323.33	cop[tikv]		le(test.sgc3.a, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:sgc3	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a < 7;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root	partition:all	data:Selection
+└─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+  └─TableFullScan	10000.00	cop[tikv]	table:sgc3	keep order:false, stats:pseudo
+set @@tidb_partition_prune_mode = @old_prune_mode;
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS (c+1) VIRTUAL, KEY(b), INDEX IDX(c, d));
 INSERT INTO t1 (a) VALUES (0);

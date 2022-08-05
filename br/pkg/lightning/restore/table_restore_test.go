@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/noop"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	restoremock "github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
@@ -58,12 +58,14 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/promutil"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/tikv/pd/server/api"
 )
 
 type tableRestoreSuiteBase struct {
@@ -162,7 +164,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
 	// Collect into the test TableRestore structure
 	var err error
-	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil)
+	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.NoError(t, err)
 
 	s.cfg = config.NewConfig()
@@ -306,7 +308,7 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 	s.cfg.Mydumper.MaxRegionSize = 5
 	err = s.tr.populateChunks(context.Background(), rc, cp)
 	require.Error(s.T(), err)
-	require.Regexp(s.T(), `.*unknown columns in header \[1 2 3\]`, err.Error())
+	require.Regexp(s.T(), `.*unknown columns in header \(1,2,3\)`, err.Error())
 	s.cfg.Mydumper.MaxRegionSize = regionSize
 	s.cfg.Mydumper.CSV.Header = false
 }
@@ -338,7 +340,6 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 		backend:        backend.MakeBackend(mockBackend),
 		errorSummaries: makeErrorSummaries(log.L()),
 		saveCpCh:       make(chan saveCp, 1),
-		diskQuotaLock:  newDiskQuotaLock(),
 	}
 	defer close(rc.saveCpCh)
 	go func() {
@@ -357,12 +358,12 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
-	realBackend := tidb.NewTiDBBackend(nil, "replace", nil)
+	realBackend := tidb.NewTiDBBackend(ctx, nil, "replace", nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
-		Return(realBackend.NewEncoder(tbl, &kv.SessionOptions{})).
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(realBackend.NewEncoder(ctx, tbl, &kv.SessionOptions{})).
 		AnyTimes()
 	mockBackend.EXPECT().MakeEmptyRows().Return(realBackend.MakeEmptyRows()).AnyTimes()
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(noop.Writer{}, nil)
@@ -454,7 +455,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	cfg.Mydumper.StrictFormat = true
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
-	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil)
+	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), tr.populateChunks(context.Background(), rc, cp))
 
@@ -667,13 +668,13 @@ func (s *tableRestoreSuite) TestInitializeColumns() {
 			[]string{"_tidb_rowid", "b", "a", "c", "d"},
 			nil,
 			nil,
-			`unknown columns in header \[d\]`,
+			`\[Lightning:Restore:ErrUnknownColumns\]unknown columns in header \(d\) for table table`,
 		},
 		{
 			[]string{"e", "b", "c", "d"},
 			nil,
 			nil,
-			`unknown columns in header \[e d\]`,
+			`\[Lightning:Restore:ErrUnknownColumns\]unknown columns in header \(e,d\) for table table`,
 		},
 	}
 
@@ -719,7 +720,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
 		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
 
@@ -832,7 +833,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess() {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID, gomock.Any()).
+		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
 		Return(nil)
 	mockBackend.EXPECT().
 		CleanupEngine(ctx, engineUUID).
@@ -867,7 +868,7 @@ func (s *tableRestoreSuite) TestImportKVFailure() {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID, gomock.Any()).
+		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
@@ -880,17 +881,17 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 
-	chunkPendingBase := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
-	chunkFinishedBase := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
-	engineFinishedBase := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
-	tableFinishedBase := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
+	metrics := metric.NewMetrics(promutil.NewDefaultFactory())
+	chunkPendingBase := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	chunkFinishedBase := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	engineFinishedBase := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
+	tableFinishedBase := metric.ReadCounter(metrics.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 
-	ctx := context.Background()
+	ctx := metric.NewContext(context.Background(), metrics)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
 	cfg := config.NewConfig()
 	cfg.Mydumper.BatchSize = 1
-	cfg.PostRestore.Checksum = config.OpLevelOff
 
 	cfg.Checkpoint.Enable = false
 	cfg.TiDB.Host = "127.0.0.1"
@@ -900,7 +901,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 
 	cfg.Mydumper.SourceDir = "."
 	cfg.Mydumper.CSV.Header = false
-	cfg.TikvImporter.Backend = config.BackendImporter
+	cfg.TikvImporter.Backend = config.BackendTiDB
 	tls, err := cfg.ToTLS()
 	require.NoError(s.T(), err)
 
@@ -909,19 +910,34 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 
 	cpDB := checkpoints.NewNullCheckpointsDB()
 	g := mock.NewMockGlue(controller)
+	dbMetas := []*mydump.MDDatabaseMeta{
+		{
+			Name:   s.tableInfo.DB,
+			Tables: []*mydump.MDTableMeta{s.tableMeta},
+		},
+	}
+	ioWorkers := worker.NewPool(ctx, 5, "io")
+	targetInfoGetter := &TargetInfoGetterImpl{
+		cfg:          cfg,
+		targetDBGlue: g,
+	}
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:              cfg,
+		dbMetas:          dbMetas,
+		targetInfoGetter: targetInfoGetter,
+		srcStorage:       s.store,
+		ioWorkers:        ioWorkers,
+	}
+	preInfoGetter.Init()
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
+		s.tableInfo.DB: s.dbInfo,
+	}
 	rc := &Controller{
-		cfg: cfg,
-		dbMetas: []*mydump.MDDatabaseMeta{
-			{
-				Name:   s.tableInfo.DB,
-				Tables: []*mydump.MDTableMeta{s.tableMeta},
-			},
-		},
-		dbInfos: map[string]*checkpoints.TidbDBInfo{
-			s.tableInfo.DB: s.dbInfo,
-		},
+		cfg:               cfg,
+		dbMetas:           dbMetas,
+		dbInfos:           dbInfos,
 		tableWorkers:      worker.NewPool(ctx, 6, "table"),
-		ioWorkers:         worker.NewPool(ctx, 5, "io"),
+		ioWorkers:         ioWorkers,
 		indexWorkers:      worker.NewPool(ctx, 2, "index"),
 		regionWorkers:     worker.NewPool(ctx, 10, "region"),
 		checksumWorks:     worker.NewPool(ctx, 2, "region"),
@@ -935,8 +951,9 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		closedEngineLimit: worker.NewPool(ctx, 1, "closed_engine"),
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
-		diskQuotaLock:     newDiskQuotaLock(),
-		errorMgr:          errormanager.New(nil, cfg),
+		errorMgr:          errormanager.New(nil, cfg, log.L()),
+		taskMgr:           noopTaskMetaMgr{},
+		preInfoGetter:     preInfoGetter,
 	}
 	go func() {
 		for scp := range chptCh {
@@ -956,15 +973,15 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	err = rc.restoreTables(ctx)
 	require.NoError(s.T(), err)
 
-	chunkPending := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
-	chunkFinished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	chunkPending := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	chunkFinished := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 	require.Equal(s.T(), float64(7), chunkPending-chunkPendingBase)
 	require.Equal(s.T(), chunkPending-chunkPendingBase, chunkFinished-chunkFinishedBase)
 
-	engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
+	engineFinished := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
 	require.Equal(s.T(), float64(8), engineFinished-engineFinishedBase)
 
-	tableFinished := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
+	tableFinished := metric.ReadCounter(metrics.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 	require.Equal(s.T(), float64(1), tableFinished-tableFinishedBase)
 }
 
@@ -987,10 +1004,25 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 	}
 	rc.checkpointsWg.Add(1)
-	go rc.listenCheckpointUpdates()
+	go rc.listenCheckpointUpdates(log.L())
+
+	rc.errorSummaries = makeErrorSummaries(log.L())
+
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
+
+	err = rc.saveStatusCheckpoint(
+		context.Background(),
+		common.UniqueTable("test", "tbl"), indexEngineID,
+		common.ErrChecksumMismatch.GenWithStackByArgs(0, 0, 0, 0, 0, 0),
+		checkpoints.CheckpointStatusImported,
+	)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, len(rc.errorSummaries.summary))
 
 	start := time.Now()
-	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
+	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	elapsed := time.Since(start)
 	require.GreaterOrEqual(s.T(), elapsed, time.Millisecond*100)
@@ -1082,14 +1114,34 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 
 		url := strings.TrimPrefix(server.URL, "https://")
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
-		rc := &Controller{cfg: cfg, tls: tls, store: mockStore, checkTemplate: template}
+		targetInfoGetter := &TargetInfoGetterImpl{
+			cfg: cfg,
+			tls: tls,
+		}
+		preInfoGetter := &PreRestoreInfoGetterImpl{
+			cfg:              cfg,
+			targetInfoGetter: targetInfoGetter,
+			srcStorage:       mockStore,
+		}
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil)
+		rc := &Controller{
+			cfg:                 cfg,
+			tls:                 tls,
+			store:               mockStore,
+			checkTemplate:       template,
+			preInfoGetter:       preInfoGetter,
+			precheckItemBuilder: theCheckBuilder,
+		}
 		var sourceSize int64
 		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 			sourceSize += size
 			return nil
 		})
 		require.NoError(s.T(), err)
-		err = rc.clusterResource(ctx, sourceSize)
+		err = rc.clusterResource(WithPreInfoGetterEstimatedSrcSizeCache(ctx, &EstimateSourceDataSizeResult{
+			SizeWithIndex:    sourceSize,
+			SizeWithoutIndex: sourceSize,
+		}))
 		require.NoError(s.T(), err)
 
 		require.Equal(s.T(), ca.expectErrorCount, template.FailedCount(Critical))
@@ -1116,41 +1168,41 @@ func (mockTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(ta
 
 func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
-		stores         api.StoresInfo
-		emptyRegions   api.RegionsInfo
+		stores         pdtypes.StoresInfo
+		emptyRegions   pdtypes.RegionsInfo
 		expectMsgs     []string
 		expectResult   bool
 		expectErrorCnt int
 	}
 
-	makeRegions := func(regionCnt int, storeID uint64) []api.RegionInfo {
-		var regions []api.RegionInfo
+	makeRegions := func(regionCnt int, storeID uint64) []pdtypes.RegionInfo {
+		var regions []pdtypes.RegionInfo
 		for i := 0; i < regionCnt; i++ {
-			regions = append(regions, api.RegionInfo{Peers: []api.MetaPeer{{Peer: &metapb.Peer{StoreId: storeID}}}})
+			regions = append(regions, pdtypes.RegionInfo{Peers: []pdtypes.MetaPeer{{Peer: &metapb.Peer{StoreId: storeID}}}})
 		}
 		return regions
 	}
 
 	testCases := []testCase{
 		{
-			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 200}},
+			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 200}},
 			}},
-			emptyRegions: api.RegionsInfo{
-				Regions: append([]api.RegionInfo(nil), makeRegions(100, 1)...),
+			emptyRegions: pdtypes.RegionsInfo{
+				Regions: append([]pdtypes.RegionInfo(nil), makeRegions(100, 1)...),
 			},
 			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
 			expectResult:   true,
 			expectErrorCnt: 0,
 		},
 		{
-			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 2000}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 3100}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 2000}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 3100}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
-			emptyRegions: api.RegionsInfo{
-				Regions: append(append(append([]api.RegionInfo(nil),
+			emptyRegions: pdtypes.RegionsInfo{
+				Regions: append(append(append([]pdtypes.RegionInfo(nil),
 					makeRegions(600, 1)...),
 					makeRegions(300, 2)...),
 					makeRegions(1200, 3)...),
@@ -1164,20 +1216,20 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			expectErrorCnt: 1,
 		},
 		{
-			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 1200}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 3000}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 1200}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 3000}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectResult:   false,
 			expectErrorCnt: 1,
 		},
 		{
-			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 0}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 2800}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 0}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 2800}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectResult:   false,
@@ -1209,9 +1261,30 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 
 		url := strings.TrimPrefix(server.URL, "https://")
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
-		rc := &Controller{cfg: cfg, tls: tls, taskMgr: mockTaskMetaMgr{}, checkTemplate: template}
 
-		err := rc.checkClusterRegion(context.Background())
+		targetInfoGetter := &TargetInfoGetterImpl{
+			cfg: cfg,
+			tls: tls,
+		}
+		dbMetas := []*mydump.MDDatabaseMeta{}
+		preInfoGetter := &PreRestoreInfoGetterImpl{
+			cfg:              cfg,
+			targetInfoGetter: targetInfoGetter,
+			dbMetas:          dbMetas,
+		}
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB())
+		rc := &Controller{
+			cfg:                 cfg,
+			tls:                 tls,
+			taskMgr:             mockTaskMetaMgr{},
+			checkTemplate:       template,
+			preInfoGetter:       preInfoGetter,
+			dbInfos:             make(map[string]*checkpoints.TidbDBInfo),
+			precheckItemBuilder: theCheckBuilder,
+		}
+
+		ctx := WithPreInfoGetterTableStructuresCache(context.Background(), rc.dbInfos)
+		err := rc.checkClusterRegion(ctx)
 		require.NoError(s.T(), err)
 		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(Critical))
 		require.Equal(s.T(), ca.expectResult, template.Success())
@@ -1288,12 +1361,20 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	mockStore, err := storage.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
-		rc := &Controller{cfg: cfg, checkTemplate: template, store: mockStore}
-		err := rc.HasLargeCSV(ca.dbMetas)
-		require.NoError(s.T(), err)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil)
+		rc := &Controller{
+			cfg:                 cfg,
+			checkTemplate:       template,
+			store:               mockStore,
+			dbMetas:             ca.dbMetas,
+			precheckItemBuilder: theCheckBuilder,
+		}
+		rc.HasLargeCSV(ctx)
 		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(Warn))
 		require.Equal(s.T(), ca.expectResult, template.Success())
 		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
@@ -1310,41 +1391,59 @@ func (s *tableRestoreSuite) TestEstimate() {
 	require.NoError(s.T(), err)
 
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
 		SQLMode:        s.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		AutoRandomSeed: 0,
-	})).AnyTimes()
+	}, nil, log.L())).AnyTimes()
 	importer := backend.MakeBackend(mockBackend)
 	s.cfg.TikvImporter.Backend = config.BackendLocal
 
 	template := NewSimpleTemplate()
-	rc := &Controller{
-		cfg:           s.cfg,
-		checkTemplate: template,
-		store:         s.store,
-		backend:       importer,
-		dbMetas: []*mydump.MDDatabaseMeta{
-			{
-				Name:   "db1",
-				Tables: []*mydump.MDTableMeta{s.tableMeta},
-			},
+	dbMetas := []*mydump.MDDatabaseMeta{
+		{
+			Name:   "db1",
+			Tables: []*mydump.MDTableMeta{s.tableMeta},
 		},
-		dbInfos: map[string]*checkpoints.TidbDBInfo{
-			"db1": s.dbInfo,
-		},
-		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
 	}
-	source, err := rc.estimateSourceData(ctx)
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
+		"db1": s.dbInfo,
+	}
+	ioWorkers := worker.NewPool(context.Background(), 1, "io")
+	mockTarget := restoremock.NewMockTargetInfo()
+
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:              s.cfg,
+		srcStorage:       s.store,
+		encBuilder:       importer,
+		ioWorkers:        ioWorkers,
+		dbMetas:          dbMetas,
+		targetInfoGetter: mockTarget,
+	}
+	preInfoGetter.Init()
+	theCheckBuilder := NewPrecheckItemBuilder(s.cfg, dbMetas, preInfoGetter, nil)
+	rc := &Controller{
+		cfg:                 s.cfg,
+		checkTemplate:       template,
+		store:               s.store,
+		backend:             importer,
+		dbMetas:             dbMetas,
+		dbInfos:             dbInfos,
+		ioWorkers:           ioWorkers,
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
+	}
+	ctx = WithPreInfoGetterTableStructuresCache(ctx, dbInfos)
+	source, _, _, err := rc.estimateSourceData(ctx)
 	// Because this file is small than region split size so we does not sample it.
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), s.tableMeta.TotalSize, source)
 	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
-	source, err = rc.estimateSourceData(ctx)
+	source, _, _, err = rc.estimateSourceData(ctx)
 	require.NoError(s.T(), err)
 	require.Greater(s.T(), source, s.tableMeta.TotalSize)
 	rc.cfg.TikvImporter.Backend = config.BackendTiDB
-	source, err = rc.estimateSourceData(ctx)
+	source, _, _, err = rc.estimateSourceData(ctx)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), s.tableMeta.TotalSize, source)
 }
@@ -1399,11 +1498,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 									},
 									{
 										// colB doesn't have the default value
-										Name: model.NewCIStr("colB"),
-										FieldType: types.FieldType{
-											// not null flag
-											Flag: 1,
-										},
+										Name:      model.NewCIStr("colB"),
+										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
 							},
@@ -1554,10 +1650,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 									},
 									{
 										// colC doesn't have the default value
-										Name: model.NewCIStr("colC"),
-										FieldType: types.FieldType{
-											Flag: 1,
-										},
+										Name:      model.NewCIStr("colC"),
+										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
 							},
@@ -1607,10 +1701,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB doesn't have the default value
-										Name: model.NewCIStr("colB"),
-										FieldType: types.FieldType{
-											Flag: 1,
-										},
+										Name:      model.NewCIStr("colB"),
+										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 									{
 										// colC has the default value
@@ -1735,7 +1827,6 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 	}
 
 	for _, ca := range cases {
-		template := NewSimpleTemplate()
 		cfg := &config.Config{
 			Mydumper: config.MydumperRuntime{
 				ReadBlockSize: config.ReadBlockSize,
@@ -1751,14 +1842,14 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 				IgnoreColumns: ca.ignoreColumns,
 			},
 		}
-		rc := &Controller{
-			cfg:           cfg,
-			checkTemplate: template,
-			store:         mockStore,
-			dbInfos:       ca.dbInfos,
-			ioWorkers:     worker.NewPool(context.Background(), 1, "io"),
+		ioWorkers := worker.NewPool(context.Background(), 1, "io")
+		preInfoGetter := &PreRestoreInfoGetterImpl{
+			cfg:        cfg,
+			srcStorage: mockStore,
+			ioWorkers:  ioWorkers,
 		}
-		msgs, err := rc.SchemaIsValid(ctx, ca.tableMeta)
+		ci := NewSchemaCheckItem(cfg, preInfoGetter, nil, nil).(*schemaCheckItem)
+		msgs, err := ci.SchemaIsValid(WithPreInfoGetterTableStructuresCache(ctx, ca.dbInfos), ca.tableMeta)
 		require.NoError(s.T(), err)
 		require.Len(s.T(), msgs, ca.MsgNum)
 		if len(msgs) > 0 {
@@ -1797,41 +1888,38 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	err = mockStore.WriteFile(ctx, csvFile, []byte(csvContent))
 	require.NoError(s.T(), err)
 
-	rc := &Controller{
-		cfg:           cfg,
-		checkTemplate: NewSimpleTemplate(),
-		store:         mockStore,
-		dbInfos: map[string]*checkpoints.TidbDBInfo{
-			"db1": {
-				Name: "db1",
-				Tables: map[string]*checkpoints.TidbTableInfo{
-					"gbk_table": {
-						ID:   1,
-						DB:   "db1",
-						Name: "gbk_table",
-						Core: &model.TableInfo{
-							Columns: []*model.ColumnInfo{
-								{
-									Name: model.NewCIStr("colA"),
-									FieldType: types.FieldType{
-										Flag: 1,
-									},
-								},
-								{
-									Name: model.NewCIStr("colB"),
-									FieldType: types.FieldType{
-										Flag: 1,
-									},
-								},
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
+		"db1": {
+			Name: "db1",
+			Tables: map[string]*checkpoints.TidbTableInfo{
+				"gbk_table": {
+					ID:   1,
+					DB:   "db1",
+					Name: "gbk_table",
+					Core: &model.TableInfo{
+						Columns: []*model.ColumnInfo{
+							{
+								Name:      model.NewCIStr("colA"),
+								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
+							},
+							{
+								Name:      model.NewCIStr("colB"),
+								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 							},
 						},
 					},
 				},
 			},
 		},
-		ioWorkers: worker.NewPool(ctx, 1, "io"),
 	}
-	msgs, err := rc.SchemaIsValid(ctx, &mydump.MDTableMeta{
+	ioWorkers := worker.NewPool(ctx, 1, "io")
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:        cfg,
+		srcStorage: mockStore,
+		ioWorkers:  ioWorkers,
+	}
+	ci := NewSchemaCheckItem(cfg, preInfoGetter, nil, nil).(*schemaCheckItem)
+	msgs, err := ci.SchemaIsValid(WithPreInfoGetterTableStructuresCache(ctx, dbInfos), &mydump.MDTableMeta{
 		DB:   "db1",
 		Name: "gbk_table",
 		DataFiles: []mydump.FileInfo{

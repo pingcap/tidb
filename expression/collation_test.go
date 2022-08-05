@@ -27,7 +27,7 @@ import (
 )
 
 func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll string) Expression {
-	constant := &Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Charset: chs, Collate: coll}}
+	constant := &Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(chs).SetCollate(coll).BuildP()}
 	constant.SetCoercibility(coercibility)
 	constant.SetRepertoire(repertoire)
 	return constant
@@ -83,7 +83,7 @@ func TestInferCollation(t *testing.T) {
 		// binary charset with non-binary charset.
 		{
 			[]Expression{
-				newExpression(CoercibilityNumeric, UNICODE, charset.CharsetBinary, charset.CollationBin),
+				newExpression(CoercibilityNumeric, UNICODE, charset.CharsetBin, charset.CollationBin),
 				newExpression(CoercibilityCoercible, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
 			},
 			false,
@@ -92,7 +92,7 @@ func TestInferCollation(t *testing.T) {
 		{
 			[]Expression{
 				newExpression(CoercibilityCoercible, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
-				newExpression(CoercibilityNumeric, UNICODE, charset.CharsetBinary, charset.CollationBin),
+				newExpression(CoercibilityNumeric, UNICODE, charset.CharsetBin, charset.CollationBin),
 			},
 			false,
 			&ExprCollation{CoercibilityCoercible, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
@@ -100,10 +100,10 @@ func TestInferCollation(t *testing.T) {
 		{
 			[]Expression{
 				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
-				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetBinary, charset.CollationBin),
+				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetBin, charset.CollationBin),
 			},
 			false,
-			&ExprCollation{CoercibilityExplicit, UNICODE, charset.CharsetBinary, charset.CollationBin},
+			&ExprCollation{CoercibilityExplicit, UNICODE, charset.CharsetBin, charset.CollationBin},
 		},
 		// different charset, one of them is utf8mb4
 		{
@@ -235,14 +235,18 @@ func newConstString(s string, coercibility Coercibility, chs, coll string) *Cons
 			repe = UNICODE
 		}
 	}
-	constant := &Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Charset: chs, Collate: coll}, Value: types.NewDatum(s)}
+	constant := &Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(chs).SetCollate(coll).BuildP(), Value: types.NewDatum(s)}
 	constant.SetCoercibility(coercibility)
 	constant.SetRepertoire(repe)
 	return constant
 }
 
 func newColString(chs, coll string) *Column {
-	column := &Column{RetType: &types.FieldType{Tp: mysql.TypeString, Charset: chs, Collate: coll}}
+	ft := types.FieldType{}
+	ft.SetType(mysql.TypeString)
+	ft.SetCharset(chs)
+	ft.SetCollate(coll)
+	column := &Column{RetType: &ft}
 	column.SetCoercibility(CoercibilityImplicit)
 	column.SetRepertoire(UNICODE)
 	if chs == charset.CharsetASCII {
@@ -252,19 +256,31 @@ func newColString(chs, coll string) *Column {
 }
 
 func newColJSON() *Column {
-	column := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON, Charset: charset.CharsetBinary, Collate: charset.CollationBin}}
+	ft := types.FieldType{}
+	ft.SetType(mysql.TypeJSON)
+	ft.SetCharset(charset.CharsetBin)
+	ft.SetCollate(charset.CollationBin)
+	column := &Column{RetType: &ft}
 	return column
 }
 
 func newConstInt(coercibility Coercibility) *Constant {
-	constant := &Constant{RetType: &types.FieldType{Tp: mysql.TypeLong, Charset: charset.CharsetBin, Collate: charset.CollationBin}, Value: types.NewDatum(1)}
+	ft := types.FieldType{}
+	ft.SetType(mysql.TypeLong)
+	ft.SetCharset(charset.CharsetBin)
+	ft.SetCollate(charset.CollationBin)
+	constant := &Constant{RetType: &ft, Value: types.NewDatum(1)}
 	constant.SetCoercibility(coercibility)
 	constant.SetRepertoire(ASCII)
 	return constant
 }
 
 func newColInt(coercibility Coercibility) *Column {
-	column := &Column{RetType: &types.FieldType{Tp: mysql.TypeLong, Charset: charset.CharsetBin, Collate: charset.CollationBin}}
+	ft := types.FieldType{}
+	ft.SetType(mysql.TypeLong)
+	ft.SetCharset(charset.CharsetBin)
+	ft.SetCollate(charset.CollationBin)
+	column := &Column{RetType: &ft}
 	column.SetCoercibility(coercibility)
 	column.SetRepertoire(ASCII)
 	return column
@@ -543,12 +559,12 @@ func TestDeriveCollation(t *testing.T) {
 			},
 			[]Expression{
 				newColJSON(),
-				newColString(charset.CharsetBinary, charset.CharsetBinary),
+				newColString(charset.CharsetBin, charset.CharsetBin),
 			},
 			[]types.EvalType{types.ETJson, types.ETString},
 			types.ETString,
 			false,
-			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBinary, charset.CharsetBinary},
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBin, charset.CharsetBin},
 		},
 		{
 			[]string{

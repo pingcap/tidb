@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "bitmap",
+    srcs = ["concurrent.go"],
+    importpath = "github.com/pingcap/tidb/util/bitmap",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "bitmap_test",
+    timeout = "short",
+    srcs = [
+        "concurrent_test.go",
+        "main_test.go",
+    ],
+    embed = [":bitmap"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//assert",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

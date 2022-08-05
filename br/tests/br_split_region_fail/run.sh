@@ -45,14 +45,14 @@ done
 echo "restore start..."
 
 unset BR_LOG_TO_TERM
-GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/not-leader-error=1*return(true)->1*return(false);\
-github.com/pingcap/tidb/br/pkg/restore/somewhat-retryable-error=3*return(true)" \
+GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/split/not-leader-error=1*return(true)->1*return(false);\
+github.com/pingcap/tidb/br/pkg/restore/split/somewhat-retryable-error=3*return(true)" \
 run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --ratelimit 1024 --log-file $LOG || true
 BR_LOG_TO_TERM=1
 
 grep "a error occurs on split region" $LOG && \
 grep "split region meet not leader error" $LOG && \
-grep "Full restore success" $LOG && \
+grep "Full Restore success" $LOG && \
 grep "find new leader" $LOG
 
 if [ $? -ne 0 ]; then

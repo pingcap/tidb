@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
@@ -43,7 +43,7 @@ func TestRowDecoder(t *testing.T) {
 	c5 := &model.ColumnInfo{ID: 5, Name: model.NewCIStr("c5"), State: model.StatePublic, Offset: 4, FieldType: *types.NewFieldType(mysql.TypeDuration), OriginDefaultValue: "02:00:02"}
 	c6 := &model.ColumnInfo{ID: 6, Name: model.NewCIStr("c6"), State: model.StatePublic, Offset: 5, FieldType: *types.NewFieldType(mysql.TypeTimestamp), GeneratedExprString: "c4+c5"}
 	c7 := &model.ColumnInfo{ID: 7, Name: model.NewCIStr("c7"), State: model.StatePublic, Offset: 6, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
-	c7.Flag |= mysql.PriKeyFlag
+	c7.AddFlag(mysql.PriKeyFlag)
 
 	cols := []*model.ColumnInfo{c1, c2, c3, c4, c5, c6, c7}
 
@@ -69,8 +69,6 @@ func TestRowDecoder(t *testing.T) {
 	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
 	deWithNoGenCols := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap2)
 
-	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
-	require.NoError(t, err)
 	time1 := types.NewTime(types.FromDate(2019, 01, 01, 8, 01, 01, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	t1 := types.NewTimeDatum(time1)
 	d1 := types.NewDurationDatum(types.Duration{
@@ -78,15 +76,11 @@ func TestRowDecoder(t *testing.T) {
 	})
 
 	time2, err := time1.Add(sc, d1.GetMysqlDuration())
-	require.NoError(t, err)
-	err = time2.ConvertTimeZone(timeZoneIn8, time.UTC)
-	require.NoError(t, err)
+	require.Nil(t, err)
 	t2 := types.NewTimeDatum(time2)
 
 	time3, err := time1.Add(sc, types.Duration{Duration: time.Hour*2 + time.Second*2})
-	require.NoError(t, err)
-	err = time3.ConvertTimeZone(timeZoneIn8, time.UTC)
-	require.NoError(t, err)
+	require.Nil(t, err)
 	t3 := types.NewTimeDatum(time3)
 
 	testRows := []struct {
@@ -114,14 +108,14 @@ func TestRowDecoder(t *testing.T) {
 	for i, row := range testRows {
 		// test case for pk is unsigned.
 		if i > 0 {
-			c7.Flag |= mysql.UnsignedFlag
+			c7.AddFlag(mysql.UnsignedFlag)
 		}
 		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
 		require.NoError(t, err)
 		require.NotNil(t, bs)
 
-		r, err := de.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
-		require.NoError(t, err)
+		r, err := de.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, nil)
+		require.Nil(t, err)
 		// Last column is primary-key column, and the table primary-key is handle, then the primary-key value won't be
 		// stored in raw data, but store in the raw key.
 		// So when decode, we can't get the primary-key value from raw data, then ignore check the value of the
@@ -138,8 +132,8 @@ func TestRowDecoder(t *testing.T) {
 			}
 		}
 		// test decode with no generated column.
-		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
-		require.NoError(t, err)
+		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, nil)
+		require.Nil(t, err)
 		for k, v := range r2 {
 			v1, ok := r[k]
 			require.True(t, ok)
@@ -154,8 +148,8 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &model.ColumnInfo{ID: 3, Name: model.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeNewDecimal)}
-	c1.Flag |= mysql.PriKeyFlag
-	c2.Flag |= mysql.PriKeyFlag
+	c1.AddFlag(mysql.PriKeyFlag)
+	c2.AddFlag(mysql.PriKeyFlag)
 	pk := &model.IndexInfo{ID: 1, Name: model.NewCIStr("primary"), State: model.StatePublic, Primary: true, Columns: []*model.IndexColumn{
 		{Name: model.NewCIStr("c1"), Offset: 0},
 		{Name: model.NewCIStr("c2"), Offset: 1},
@@ -177,9 +171,6 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 	}
 	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
 
-	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
-	require.NoError(t, err)
-
 	testRows := []struct {
 		cols   []int64
 		input  []types.Datum
@@ -197,8 +188,8 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, bs)
 
-		r, err := de.DecodeAndEvalRowWithMap(ctx, testkit.MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, timeZoneIn8, nil)
-		require.NoError(t, err)
+		r, err := de.DecodeAndEvalRowWithMap(ctx, testutil.MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, nil)
+		require.Nil(t, err)
 
 		for i, col := range cols {
 			v, ok := r[col.ID]

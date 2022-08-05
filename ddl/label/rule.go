@@ -18,11 +18,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"golang.org/x/exp/slices"
 	"gopkg.in/yaml.v2"
 )
 
@@ -141,11 +141,11 @@ func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
 	}
 	r.RuleType = ruleType
 	r.Data = []interface{}{}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	for i := 0; i < len(ids); i++ {
 		data := map[string]string{
-			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]))),
-			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]+1))),
+			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]))),
+			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]+1))),
 		}
 		r.Data = append(r.Data, data)
 	}

@@ -43,7 +43,7 @@ type lightningServerSuite struct {
 	taskRunCh chan struct{}
 }
 
-func createSuite(t *testing.T) (s *lightningServerSuite, clean func()) {
+func createSuite(t *testing.T) *lightningServerSuite {
 	initProgressOnce.Do(web.EnableCurrentProgress)
 
 	cfg := config.NewGlobalConfig()
@@ -56,7 +56,7 @@ func createSuite(t *testing.T) (s *lightningServerSuite, clean func()) {
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = t.TempDir()
 
-	s = new(lightningServerSuite)
+	s := new(lightningServerSuite)
 	s.lightning = New(cfg)
 	s.taskRunCh = make(chan struct{}, 1)
 	s.taskCfgCh = make(chan *config.Config)
@@ -65,17 +65,16 @@ func createSuite(t *testing.T) (s *lightningServerSuite, clean func()) {
 	_ = s.lightning.GoServe()
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/SkipRunTask", "return"))
-	clean = func() {
+	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/SkipRunTask"))
 		s.lightning.Stop()
-	}
+	})
 
-	return
+	return s
 }
 
 func TestRunServer(t *testing.T) {
-	s, clean := createSuite(t)
-	defer clean()
+	s := createSuite(t)
 
 	url := "http://" + s.lightning.serverAddr.String() + "/tasks"
 
@@ -147,8 +146,7 @@ func TestRunServer(t *testing.T) {
 }
 
 func TestGetDeleteTask(t *testing.T) {
-	s, clean := createSuite(t)
-	defer clean()
+	s := createSuite(t)
 
 	url := "http://" + s.lightning.serverAddr.String() + "/tasks"
 
@@ -304,8 +302,7 @@ func TestGetDeleteTask(t *testing.T) {
 }
 
 func TestHTTPAPIOutsideServerMode(t *testing.T) {
-	s, clean := createSuite(t)
-	defer clean()
+	s := createSuite(t)
 
 	s.lightning.globalCfg.App.ServerMode = false
 
@@ -317,7 +314,7 @@ func TestHTTPAPIOutsideServerMode(t *testing.T) {
 	err := cfg.LoadFromGlobal(s.lightning.globalCfg)
 	require.NoError(t, err)
 	go func() {
-		errCh <- s.lightning.RunOnce(s.lightning.ctx, cfg, nil)
+		errCh <- s.lightning.RunOnceWithOptions(s.lightning.ctx, cfg)
 	}()
 	time.Sleep(600 * time.Millisecond)
 

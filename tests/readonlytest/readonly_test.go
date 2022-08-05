@@ -28,8 +28,8 @@ import (
 
 var (
 	tidbRootPassword       = flag.String("passwd", "", "tidb root password")
-	tidbAPort              = flag.Int("tidb_a_port", 4000, "first tidb server listening port")
-	tidbBPort              = flag.Int("tidb_b_port", 4001, "second tidb server listening port")
+	tidbAPort              = flag.Int("tidb_a_port", 4001, "first tidb server listening port")
+	tidbBPort              = flag.Int("tidb_b_port", 4002, "second tidb server listening port")
 	ReadOnlyErrMsg         = "Error 1836: Running in read-only mode"
 	ConflictErrMsg         = "Error 1105: can't turn off tidb_super_read_only when tidb_restricted_read_only is on"
 	PriviledgedErrMsg      = "Error 1227: Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation"
@@ -64,13 +64,13 @@ func setVariableNoError(t *testing.T, db *sql.DB, variable string, status int) {
 	require.NoError(t, err)
 }
 
-func setVariable(t *testing.T, db *sql.DB, variable string, status int) error {
+func setVariable(_ *testing.T, db *sql.DB, variable string, status int) error {
 	_, err := db.Exec(fmt.Sprintf("set global %s=%d", variable, status))
 	return err
 }
 
-func createReadOnlySuite(t *testing.T) (s *ReadOnlySuite, clean func()) {
-	s = new(ReadOnlySuite)
+func createReadOnlySuite(t *testing.T) *ReadOnlySuite {
+	s := new(ReadOnlySuite)
 	var err error
 	s.db, err = sql.Open("mysql", fmt.Sprintf("root:%s@(%s:%d)/test", *tidbRootPassword, "127.0.0.1", *tidbAPort))
 	require.NoError(t, err)
@@ -96,19 +96,28 @@ func createReadOnlySuite(t *testing.T) (s *ReadOnlySuite, clean func()) {
 	require.NoError(t, err)
 	s.rdb, err = sql.Open("mysql", fmt.Sprintf("r1:password@(%s:%d)/test", "127.0.0.1", *tidbBPort))
 	require.NoError(t, err)
-	clean = func() {
+	t.Cleanup(func() {
 		require.NoError(t, s.db.Close())
 		require.NoError(t, s.rdb.Close())
 		require.NoError(t, s.udb.Close())
-	}
-	return
+	})
+	return s
 }
 
 func TestRestriction(t *testing.T) {
-	s, clean := createReadOnlySuite(t)
-	defer clean()
-	setVariable(t, s.db, TiDBRestrictedReadOnly, 1)
+	s := createReadOnlySuite(t)
 
+	var err error
+	_, err = s.db.Exec("drop table if exists t")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("create table t (a int primary key, b int)")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("insert into t values (1, 1)")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("update t set b = 2 where a = 1")
+	require.NoError(t, err)
+
+	setVariable(t, s.db, TiDBRestrictedReadOnly, 1)
 	time.Sleep(1)
 
 	checkVariable(t, s.udb, TiDBRestrictedReadOnly, true)
@@ -117,7 +126,18 @@ func TestRestriction(t *testing.T) {
 	checkVariable(t, s.rdb, TiDBRestrictedReadOnly, true)
 	checkVariable(t, s.rdb, TiDBSuperReadOnly, true)
 
-	_, err := s.udb.Exec("create table t(a int)")
+	// can't create table
+	_, err = s.udb.Exec("create table t(a int)")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), ReadOnlyErrMsg)
+
+	// can't do point update when tidb_restricted_read_only is on
+	_, err = s.udb.Exec("update t set b = 2 where a = 1")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), ReadOnlyErrMsg)
+
+	// can't insert
+	_, err = s.udb.Exec("insert into t values (2, 3)")
 	require.Error(t, err)
 	require.Equal(t, err.Error(), ReadOnlyErrMsg)
 
@@ -155,8 +175,7 @@ func TestRestriction(t *testing.T) {
 }
 
 func TestRestrictionWithConnectionPool(t *testing.T) {
-	s, clean := createReadOnlySuite(t)
-	defer clean()
+	s := createReadOnlySuite(t)
 	var err error
 	_, err = s.db.Exec("drop table if exists t")
 	require.NoError(t, err)
@@ -197,8 +216,7 @@ func TestRestrictionWithConnectionPool(t *testing.T) {
 }
 
 func TestReplicationWriter(t *testing.T) {
-	s, clean := createReadOnlySuite(t)
-	defer clean()
+	s := createReadOnlySuite(t)
 	_, err := s.db.Exec("set global tidb_restricted_read_only=0")
 	require.NoError(t, err)
 	_, err = s.db.Exec("drop table if exists t")

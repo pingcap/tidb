@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "selection",
+    srcs = ["selection.go"],
+    importpath = "github.com/pingcap/tidb/util/selection",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "selection_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "selection_test.go",
+    ],
+    embed = [":selection"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

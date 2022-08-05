@@ -24,25 +24,20 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestIssue17727(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -81,8 +76,7 @@ func TestIssue17727(t *testing.T) {
 }
 
 func TestIssue17891(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -93,8 +87,7 @@ func TestIssue17891(t *testing.T) {
 }
 
 func TestIssue31174(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -113,8 +106,7 @@ func TestIssue31174(t *testing.T) {
 }
 
 func TestIssue20268(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -125,8 +117,7 @@ func TestIssue20268(t *testing.T) {
 }
 
 func TestCollationBasic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -200,8 +191,7 @@ func TestCollationBasic(t *testing.T) {
 }
 
 func TestWeightString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -273,8 +263,7 @@ func TestWeightString(t *testing.T) {
 }
 
 func TestCollationCreateIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -306,8 +295,7 @@ func TestCollationCreateIndex(t *testing.T) {
 }
 
 func TestCollateConstantPropagation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -376,8 +364,7 @@ func TestCollateConstantPropagation(t *testing.T) {
 }
 
 func TestMixCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -471,8 +458,7 @@ func prepare4Join(tk *testkit.TestKit) {
 }
 
 func TestCollateHashJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Join(tk)
@@ -495,8 +481,7 @@ func TestCollateHashJoin(t *testing.T) {
 }
 
 func TestCollateHashJoin2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Join2(tk)
@@ -515,8 +500,7 @@ func prepare4Join2(tk *testkit.TestKit) {
 }
 
 func TestCollateMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Join(tk)
@@ -539,8 +523,7 @@ func TestCollateMergeJoin(t *testing.T) {
 }
 
 func TestCollateMergeJoin2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Join2(tk)
@@ -549,8 +532,7 @@ func TestCollateMergeJoin2(t *testing.T) {
 }
 
 func TestCollateIndexMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -564,8 +546,7 @@ func TestCollateIndexMergeJoin(t *testing.T) {
 }
 
 func TestNewCollationCheckClusterIndexTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -591,8 +572,7 @@ func prepare4Collation(tk *testkit.TestKit, hasIndex bool) {
 }
 
 func TestCollateSelection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, false)
@@ -603,8 +583,7 @@ func TestCollateSelection(t *testing.T) {
 }
 
 func TestCollateSort(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, false)
@@ -622,8 +601,7 @@ func TestCollateSort(t *testing.T) {
 }
 
 func TestCollateHashAgg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, false)
@@ -648,8 +626,7 @@ func TestCollateHashAgg(t *testing.T) {
 }
 
 func TestCollateStreamAgg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, true)
@@ -664,8 +641,7 @@ func TestCollateStreamAgg(t *testing.T) {
 }
 
 func TestCollateIndexReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, true)
@@ -680,8 +656,7 @@ func TestCollateIndexReader(t *testing.T) {
 }
 
 func TestCollateIndexLookup(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, true)
@@ -697,8 +672,7 @@ func TestCollateIndexLookup(t *testing.T) {
 }
 
 func TestIssue16668(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -709,8 +683,7 @@ func TestIssue16668(t *testing.T) {
 }
 
 func TestIssue27091(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -726,8 +699,7 @@ func TestIssue27091(t *testing.T) {
 }
 
 func TestCollateStringFunction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -816,9 +788,16 @@ func TestCollateStringFunction(t *testing.T) {
 	tk.MustQuery("select locate('S', 'a' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
 	// MySQL return 0 here, I believe it is a bug in MySQL since 'ß' == 's' under utf8mb4_general_ci collation.
 	tk.MustQuery("select locate('ß', 's' collate utf8mb4_general_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('world', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("7"))
+	tk.MustQuery("select locate(' ', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("6"))
+	tk.MustQuery("select locate('  ', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
+
 	tk.MustQuery("select locate('S', 's' collate utf8mb4_unicode_ci);").Check(testkit.Rows("1"))
 	tk.MustQuery("select locate('S', 'a' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
 	tk.MustQuery("select locate('ß', 'ss' collate utf8mb4_unicode_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('world', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("7"))
+	tk.MustQuery("select locate(' ', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("6"))
+	tk.MustQuery("select locate('  ', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
 
 	tk.MustExec("truncate table t1;")
 	tk.MustExec("insert into t1 (a) values (1);")
@@ -851,8 +830,7 @@ func TestCollateStringFunction(t *testing.T) {
 }
 
 func TestCollateLike(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
@@ -884,8 +862,7 @@ func TestCollateLike(t *testing.T) {
 }
 
 func TestCollateSubQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, false)
@@ -900,8 +877,7 @@ func TestCollateSubQuery(t *testing.T) {
 }
 
 func TestCollateDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database t;")
@@ -910,8 +886,7 @@ func TestCollateDDL(t *testing.T) {
 }
 
 func TestNewCollationWithClusterIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -923,8 +898,7 @@ func TestNewCollationWithClusterIndex(t *testing.T) {
 }
 
 func TestNewCollationBinaryFlag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -966,8 +940,7 @@ func TestNewCollationBinaryFlag(t *testing.T) {
 }
 
 func TestIssue17176(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -981,8 +954,7 @@ func TestIssue17176(t *testing.T) {
 }
 
 func TestIssue18638(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -994,8 +966,7 @@ func TestIssue18638(t *testing.T) {
 }
 
 func TestCollationText(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1008,8 +979,7 @@ func TestCollationText(t *testing.T) {
 }
 
 func TestIssue18662(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1023,8 +993,7 @@ func TestIssue18662(t *testing.T) {
 }
 
 func TestIssue19116(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1047,8 +1016,7 @@ func TestIssue19116(t *testing.T) {
 }
 
 func TestIssue17063(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1064,8 +1032,7 @@ func TestIssue17063(t *testing.T) {
 }
 
 func TestIssue11177(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;").Check(testkit.Rows("0"))
@@ -1079,8 +1046,7 @@ func TestIssue11177(t *testing.T) {
 }
 
 func TestIssue19804(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1098,8 +1064,7 @@ func TestIssue19804(t *testing.T) {
 }
 
 func TestIssue20209(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1109,8 +1074,7 @@ func TestIssue20209(t *testing.T) {
 }
 
 func TestIssue18949(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1124,8 +1088,7 @@ func TestIssue18949(t *testing.T) {
 }
 
 func TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1138,49 +1101,49 @@ func TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(t *testing.T) {
 
 	tk.MustExec("insert into t values (1, '啊  ', '啊  ', '啊  ', '啊  ', '啊  ', '啊  ')")
 	// Single Read.
-	tk.MustQuery("select * from t ").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t ").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
 
-	tk.MustQuery("select * from t use index(a)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(ua)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(b)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(ub)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(c)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(uc)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(d)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(ud)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(e)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(ue)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(f)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(uf)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(g)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(ug)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(a)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ua)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(b)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ub)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(c)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(uc)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(d)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ud)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(e)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ue)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(f)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(uf)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(g)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ug)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
 
 	tk.MustExec("alter table t add column h varchar(10) collate utf8mb4_general_ci default '🐸'")
 	tk.MustExec("alter table t add column i varchar(10) collate utf8mb4_general_ci default '🐸'")
 	tk.MustExec("alter table t add index h(h)")
 	tk.MustExec("alter table t add unique index uh(h)")
 
-	tk.MustQuery("select * from t use index(h)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(uh)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(h)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(uh)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
 
 	// Double read.
-	tk.MustQuery("select * from t use index(a)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ua)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(b)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ub)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(c)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(uc)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(d)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ud)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(e)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ue)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(a)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ua)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(b)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ub)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(c)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(uc)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(d)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ud)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(e)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ue)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("admin recover index t a")
 	tk.MustExec("alter table t add column n char(10) COLLATE utf8mb4_unicode_ci")
 	tk.MustExec("alter table t add index n(n)")
 	tk.MustExec("update t set n = '吧';")
-	tk.MustQuery("select * from t").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
-	tk.MustQuery("select * from t use index(n)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
+	tk.MustQuery("select * from t").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
+	tk.MustQuery("select * from t use index(n)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
 	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t;")
@@ -1194,8 +1157,7 @@ func TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(t *testing.T) {
 }
 
 func TestClusteredIndexAndNewCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1225,16 +1187,14 @@ func TestClusteredIndexAndNewCollation(t *testing.T) {
 }
 
 func TestIssue20608(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
 }
 
 func TestIssue20161(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1246,8 +1206,7 @@ func TestIssue20161(t *testing.T) {
 }
 
 func TestCollationIndexJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1281,8 +1240,7 @@ func TestCollationIndexJoin(t *testing.T) {
 }
 
 func TestCollationMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1308,8 +1266,7 @@ func TestCollationMergeJoin(t *testing.T) {
 }
 
 func TestIssue20876(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1328,8 +1285,7 @@ func TestIssue20876(t *testing.T) {
 }
 
 func TestLikeWithCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_unicode_ci;`).Check(testkit.Rows("1"))
@@ -1341,8 +1297,7 @@ func TestLikeWithCollation(t *testing.T) {
 }
 
 func TestCollationPrefixClusteredIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1356,8 +1311,7 @@ func TestCollationPrefixClusteredIndex(t *testing.T) {
 }
 
 func TestIssue23805(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1376,8 +1330,7 @@ func TestIssue23805(t *testing.T) {
 }
 
 func TestIssue26662(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1389,8 +1342,7 @@ func TestIssue26662(t *testing.T) {
 }
 
 func TestIssue30245(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
@@ -1399,8 +1351,7 @@ func TestIssue30245(t *testing.T) {
 }
 
 func TestCollationForBinaryLiteral(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1414,8 +1365,7 @@ func TestCollationForBinaryLiteral(t *testing.T) {
 func TestMathBuiltin(t *testing.T) {
 	t.Skip("it has been broken. Please fix it as soon as possible.")
 	ctx := context.Background()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1805,8 +1755,7 @@ func TestMathBuiltin(t *testing.T) {
 }
 
 func TestTimeBuiltin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	originSQLMode := tk.Session().GetSessionVars().StrictSQLMode
@@ -1847,7 +1796,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`) // with zero date
 	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
 	_, err = tk.Exec(`insert into t select year("0000-00-00 00:00:00");`)
 	require.Error(t, err)
@@ -1879,7 +1828,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec(`insert into t select month("0000-00-00 00:00:00")`)
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`)
 	tk.MustExec(`insert into t select month("0000-00-00 00:00:00")`)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
 	_, err = tk.Exec(`insert into t select month("0000-00-00 00:00:00");`)
 	require.Error(t, err)
@@ -2116,6 +2065,13 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQuery("select subtime(cast('10:10:10' as time), cast('9:10:10' as time))").Check(testkit.Rows("01:00:00"))
 	tk.MustQuery("select subtime('10:10:10', cast('9:10:10' as time))").Check(testkit.Rows("01:00:00"))
 
+	// SUBTIME issue #31868
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a DATETIME(6))")
+	tk.MustExec(`insert into t values ("1000-01-01 01:00:00.000000"), ("1000-01-01 01:00:00.000001")`)
+	tk.MustQuery(`SELECT SUBTIME(a, '00:00:00.000001') FROM t ORDER BY a;`).Check(testkit.Rows("1000-01-01 00:59:59.999999", "1000-01-01 01:00:00.000000"))
+	tk.MustQuery(`SELECT SUBTIME(a, '10:00:00.000001') FROM t ORDER BY a;`).Check(testkit.Rows("0999-12-31 14:59:59.999999", "0999-12-31 15:00:00.000000"))
+
 	// ADDTIME & SUBTIME issue #5966
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime, b timestamp, c time, d date, e bit(1))")
@@ -2136,34 +2092,34 @@ func TestTimeBuiltin(t *testing.T) {
 
 	result = tk.MustQuery("select addtime(-32073, 0), addtime(0, -32073);")
 	result.Check(testkit.Rows("<nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
 	result = tk.MustQuery("select addtime(-32073, c), addtime(c, -32073) from t;")
 	result.Check(testkit.Rows("<nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
 	result = tk.MustQuery("select addtime(a, -32073), addtime(b, -32073), addtime(d, -32073) from t;")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
 
 	result = tk.MustQuery("select subtime(-32073, 0), subtime(0, -32073);")
 	result.Check(testkit.Rows("<nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
 	result = tk.MustQuery("select subtime(-32073, c), subtime(c, -32073) from t;")
 	result.Check(testkit.Rows("<nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
 	result = tk.MustQuery("select subtime(a, -32073), subtime(b, -32073), subtime(d, -32073) from t;")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
@@ -2303,11 +2259,11 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("Friday November 13 2015 10:20:19 AM 15"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("<nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT('0', '%W %M %e %Y %r %y'), DATE_FORMAT('0.0', '%W %M %e %Y %r %y'), DATE_FORMAT(0, 0);`)
 	result.Check(testkit.Rows("<nil> <nil> 0"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect time value: '0'",
 		"Warning|1292|Incorrect datetime value: '0.0'"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT(0, '%W %M %e %Y %r %y'), DATE_FORMAT(0.0, '%W %M %e %Y %r %y');`)
@@ -2355,7 +2311,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE';")
 	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE,STRICT_TRANS_TABLES';")
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
@@ -2377,6 +2333,12 @@ func TestTimeBuiltin(t *testing.T) {
 
 	// for unix_timestamp
 	tk.MustExec("SET time_zone = '+00:00';")
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00.000001');").Check(testkit.Rows("0.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00.999999');").Check(testkit.Rows("0.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:01.000000');").Check(testkit.Rows("1.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:07.999999');").Check(testkit.Rows("2147483647.999999"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:08.000000');").Check(testkit.Rows("0.000000"))
+
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113);")
 	result.Check(testkit.Rows("1447372800"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(20151113);")
@@ -2444,7 +2406,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec(`update t set a = monthname("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
 	tk.MustExec("insert into t value(monthname('0000-00-00'))")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`update t set a = monthname("0000-00-00")`)
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert into t value(monthname('0000-00-00'))")
@@ -2455,7 +2417,7 @@ func TestTimeBuiltin(t *testing.T) {
 	require.NoError(t, err)
 	result = tk.MustQuery(`select monthname("2017-12-01"), monthname("0000-00-00"), monthname("0000-01-00"), monthname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("December <nil> January January"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 
 	// for dayname
 	tk.MustExec(`drop table if exists t`)
@@ -2471,7 +2433,7 @@ func TestTimeBuiltin(t *testing.T) {
 	require.NoError(t, err)
 	result = tk.MustQuery(`select dayname("2017-12-01"), dayname("0000-00-00"), dayname("0000-01-00"), dayname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("Friday <nil> <nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
 		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'",
 		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'"))
@@ -2523,7 +2485,7 @@ func TestTimeBuiltin(t *testing.T) {
 	// TODO: MySQL returns "<nil> <nil>".
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
 	result = tk.MustQuery("show warnings")
-	result.Sort().Check(testutil.RowsWithSep("|",
+	result.Sort().Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'",
 		"Warning|1292|Truncated incorrect datetime value: '01-01-2017'"))
 
@@ -2533,7 +2495,7 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select str_to_date('2020-07-04 11:22:33 PM c', '%Y-%m-%d %r')")
 	result.Check(testkit.Rows("2020-07-04 23:22:33"))
 	result = tk.MustQuery("show warnings")
-	result.Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect datetime value: '2020-07-04 11:22:33 PM c'"))
+	result.Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect datetime value: '2020-07-04 11:22:33 PM c'"))
 
 	result = tk.MustQuery("select str_to_date('11:22:33 PM', ' %r')")
 	result.Check(testkit.Rows("23:22:33"))
@@ -2596,6 +2558,10 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("112 36 12 24"))
 	result = tk.MustQuery("select extract(day_microsecond from cast('2017-01-01 12:12:12' as datetime)), extract(day_second from cast('2017-01-01 12:12:12' as datetime)), extract(day_minute from cast('2017-01-01 12:12:12' as datetime)), extract(day_hour from cast('2017-01-01 12:12:12' as datetime))")
 	result.Check(testkit.Rows("1121212000000 1121212 11212 112"))
+	result = tk.MustQuery("select extract(day_microsecond from cast(20010101020304.050607 as decimal(20,6))), extract(day_second from cast(20010101020304.050607 as decimal(20,6))), extract(day_minute from cast(20010101020304.050607 as decimal(20,6))), extract(day_hour from cast(20010101020304.050607 as decimal(20,6))), extract(day from cast(20010101020304.050607 as decimal(20,6)))")
+	result.Check(testkit.Rows("1020304050607 1020304 10203 102 1"))
+	result = tk.MustQuery("select extract(day_microsecond from cast(1020304.050607 as decimal(20,6))), extract(day_second from cast(1020304.050607 as decimal(20,6))), extract(day_minute from cast(1020304.050607 as decimal(20,6))), extract(day_hour from cast(1020304.050607 as decimal(20,6))), extract(day from cast(1020304.050607 as decimal(20,6)))")
+	result.Check(testkit.Rows("1020304050607 1020304 10203 102 4"))
 
 	// for adddate, subdate
 	dateArithmeticalTests := []struct {
@@ -2654,6 +2620,7 @@ func TestTimeBuiltin(t *testing.T) {
 		{"\"2011-11-11 00:00:00\"", "10", "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00"},
 		{"\"2011-11-11 00:00:00\"", "10", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
 		{"\"2011-11-11 00:00:00\"", "10", "SECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50"},
+		{"\"2011-11-11 00:00:00.500\"", "500000", "MICROSECOND", "2011-11-11 00:00:01", "2011-11-11 00:00:00"},
 
 		{"\"2011-11-11\"", "\"abc1000\"", "MICROSECOND", "2011-11-11 00:00:00", "2011-11-11 00:00:00"},
 		{"\"20111111 10:10:10\"", "\"1\"", "DAY", "<nil>", "<nil>"},
@@ -2662,6 +2629,7 @@ func TestTimeBuiltin(t *testing.T) {
 		{"\"2011-11-11\"", "\"10:10:10\"", "MINUTE_MICROSECOND", "2011-11-11 00:10:10.100000", "2011-11-10 23:49:49.900000"},
 
 		{"cast(\"2011-11-11\" as datetime)", "\"10:10:10\"", "MINUTE_MICROSECOND", "2011-11-11 00:10:10.100000", "2011-11-10 23:49:49.900000"},
+		{"cast(\"2011-11-11\" as datetime)", "\"1000000\"", "MICROSECOND", "2011-11-11 00:00:01.000000", "2011-11-10 23:59:59.000000"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "1", "DAY", "2011-11-12 00:00:00", "2011-11-10 00:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "10", "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "10", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
@@ -2670,9 +2638,10 @@ func TestTimeBuiltin(t *testing.T) {
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "\"1\"", "DAY", "2011-11-12 00:00:00", "2011-11-10 00:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "\"10\"", "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "\"10\"", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
-		{"cast(\"2011-11-11 00:00:00\" as datetime)", "\"10\"", "SECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50"},
+		{"cast(\"2011-11-11 00:00:00\" as datetime)", "\"10\"", "SECOND", "2011-11-11 00:00:10.000000", "2011-11-10 23:59:50.000000"},
 
 		{"cast(\"2011-11-11\" as date)", "\"10:10:10\"", "MINUTE_MICROSECOND", "2011-11-11 00:10:10.100000", "2011-11-10 23:49:49.900000"},
+		{"cast(\"2011-11-11\" as date)", "\"1000000\"", "MINUTE_MICROSECOND", "2011-11-11 00:00:01.000000", "2011-11-10 23:59:59.000000"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "1", "DAY", "2011-11-12", "2011-11-10"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "10", "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "10", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
@@ -2681,7 +2650,7 @@ func TestTimeBuiltin(t *testing.T) {
 		{"cast(\"2011-11-11 00:00:00\" as date)", "\"1\"", "DAY", "2011-11-12", "2011-11-10"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "\"10\"", "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "\"10\"", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
-		{"cast(\"2011-11-11 00:00:00\" as date)", "\"10\"", "SECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50"},
+		{"cast(\"2011-11-11 00:00:00\" as date)", "\"10\"", "SECOND", "2011-11-11 00:00:10.000000", "2011-11-10 23:59:50.000000"},
 
 		// interval decimal support
 		{"\"2011-01-01 00:00:00\"", "10.10", "YEAR_MONTH", "2021-11-01 00:00:00", "2000-03-01 00:00:00"},
@@ -2705,6 +2674,9 @@ func TestTimeBuiltin(t *testing.T) {
 		{"\"2011-01-01 00:00:00\"", "10.10", "SECOND", "2011-01-01 00:00:10.100000", "2010-12-31 23:59:49.900000"},
 		{"\"2011-01-01 00:00:00\"", "10.10", "MICROSECOND", "2011-01-01 00:00:00.000010", "2010-12-31 23:59:59.999990"},
 		{"\"2011-01-01 00:00:00\"", "10.90", "MICROSECOND", "2011-01-01 00:00:00.000011", "2010-12-31 23:59:59.999989"},
+		{"cast(\"2011-01-01\" as date)", "1.1", "SECOND", "2011-01-01 00:00:01.1", "2010-12-31 23:59:58.9"},
+		{"cast(\"2011-01-01\" as datetime)", "1.1", "SECOND", "2011-01-01 00:00:01.1", "2010-12-31 23:59:58.9"},
+		{"cast(\"2011-01-01\" as datetime(3))", "1.1", "SECOND", "2011-01-01 00:00:01.100", "2010-12-31 23:59:58.900"},
 
 		{"\"2009-01-01\"", "6/4", "HOUR_MINUTE", "2009-01-04 12:20:00", "2008-12-28 11:40:00"},
 		{"\"2009-01-01\"", "6/0", "HOUR_MINUTE", "<nil>", "<nil>"},
@@ -2723,6 +2695,65 @@ func TestTimeBuiltin(t *testing.T) {
 		result = tk.MustQuery(subDate)
 		result.Check(testkit.Rows(tc.SubResult))
 	}
+
+	// Customized check for the cases of adddate(time, ...) - it returns datetime with current date padded.
+	// 1. Check if the result contains space, that is, it must contain YMD part.
+	// 2. Check if the result's suffix matches expected, that is, the HMS part is an exact match.
+	checkHmsMatch := func(actual []string, expected []interface{}) bool {
+		return strings.Contains(actual[0], " ") && strings.HasSuffix(actual[0], expected[0].(string))
+	}
+
+	// for date_add/sub(duration, ...)
+	dateAddSubDurationAnyTests := []struct {
+		Date         string
+		Interval     string
+		Unit         string
+		AddResult    string
+		SubResult    string
+		checkHmsOnly bool // Duration + day returns datetime with current date padded, only check HMS part for them.
+	}{
+		{"cast('01:02:03' as time)", "'1000'", "MICROSECOND", "01:02:03.001000", "01:02:02.999000", false},
+		{"cast('01:02:03' as time)", "1000", "MICROSECOND", "01:02:03.001000", "01:02:02.999000", false},
+		{"cast('01:02:03' as time)", "'1'", "SECOND", "01:02:04.000000", "01:02:02.000000", false},
+		{"cast('01:02:03' as time)", "1", "SECOND", "01:02:04", "01:02:02", false},
+		{"cast('01:02:03' as time)", "'1.1'", "SECOND", "01:02:04.100000", "01:02:01.900000", false},
+		{"cast('01:02:03' as time)", "1.1", "SECOND", "01:02:04.1", "01:02:01.9", false},
+		{"cast('01:02:03' as time(3))", "1.1", "SECOND", "01:02:04.100", "01:02:01.900", false},
+		{"cast('01:02:03' as time)", "cast(1.1 as decimal(10, 3))", "SECOND", "01:02:04.100", "01:02:01.900", false},
+		{"cast('01:02:03' as time)", "cast('1.5' as double)", "SECOND", "01:02:04.500000", "01:02:01.500000", false},
+		{"cast('01:02:03' as time)", "1", "DAY_MICROSECOND", "01:02:03.100000", "01:02:02.900000", false},
+		{"cast('01:02:03' as time)", "1.1", "DAY_MICROSECOND", "01:02:04.100000", "01:02:01.900000", false},
+		{"cast('01:02:03' as time)", "100", "DAY_MICROSECOND", "01:02:03.100000", "01:02:02.900000", false},
+		{"cast('01:02:03' as time)", "1000000", "DAY_MICROSECOND", "01:02:04.000000", "01:02:02.000000", false},
+		{"cast('01:02:03' as time)", "1", "DAY_SECOND", "01:02:04", "01:02:02", true},
+		{"cast('01:02:03' as time)", "1.1", "DAY_SECOND", "01:03:04", "01:01:02", true},
+		{"cast('01:02:03' as time)", "1", "DAY_MINUTE", "01:03:03", "01:01:03", true},
+		{"cast('01:02:03' as time)", "1.1", "DAY_MINUTE", "02:03:03", "00:01:03", true},
+		{"cast('01:02:03' as time)", "1", "DAY_HOUR", "02:02:03", "00:02:03", true},
+		{"cast('01:02:03' as time)", "1.1", "DAY_HOUR", "02:02:03", "00:02:03", true},
+		{"cast('01:02:03' as time)", "1", "DAY", "01:02:03", "01:02:03", true},
+		{"cast('01:02:03' as time)", "1", "WEEK", "01:02:03", "01:02:03", true},
+		{"cast('01:02:03' as time)", "1", "MONTH", "01:02:03", "01:02:03", true},
+		{"cast('01:02:03' as time)", "1", "QUARTER", "01:02:03", "01:02:03", true},
+		{"cast('01:02:03' as time)", "1", "YEAR", "01:02:03", "01:02:03", true},
+		{"cast('01:02:03' as time)", "1", "YEAR_MONTH", "01:02:03", "01:02:03", true},
+	}
+	for _, tc := range dateAddSubDurationAnyTests {
+		addDate := fmt.Sprintf("select date_add(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
+		subDate := fmt.Sprintf("select date_sub(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
+		if tc.checkHmsOnly {
+			result = tk.MustQuery(addDate)
+			result.CheckWithFunc(testkit.Rows(tc.AddResult), checkHmsMatch)
+			result = tk.MustQuery(subDate)
+			result.CheckWithFunc(testkit.Rows(tc.SubResult), checkHmsMatch)
+		} else {
+			result = tk.MustQuery(addDate)
+			result.Check(testkit.Rows(tc.AddResult))
+			result = tk.MustQuery(subDate)
+			result.Check(testkit.Rows(tc.SubResult))
+		}
+	}
+
 	tk.MustQuery(`select subdate(cast("2000-02-01" as datetime), cast(1 as decimal))`).Check(testkit.Rows("2000-01-31 00:00:00"))
 	tk.MustQuery(`select subdate(cast("2000-02-01" as datetime), cast(null as decimal))`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select subdate(cast(null as datetime), cast(1 as decimal))`).Check(testkit.Rows("<nil>"))
@@ -2744,8 +2775,8 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQuery(`select adddate(cast("2000-02-01" as datetime), cast("xxx" as SIGNED))`).Check(testkit.Rows("2000-02-01 00:00:00"))
 	tk.MustQuery(`select adddate(cast("xxx" as datetime), cast(1 as SIGNED))`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select adddate(20100101, cast(1 as decimal))`).Check(testkit.Rows("2010-01-02"))
-	tk.MustQuery(`select adddate(cast('10:10:10' as time), 1)`).Check(testkit.Rows("34:10:10"))
-	tk.MustQuery(`select adddate(cast('10:10:10' as time), cast(1 as decimal))`).Check(testkit.Rows("34:10:10"))
+	tk.MustQuery(`select adddate(cast('10:10:10' as time), 1)`).CheckWithFunc(testkit.Rows("10:10:10"), checkHmsMatch)
+	tk.MustQuery(`select adddate(cast('10:10:10' as time), cast(1 as decimal))`).CheckWithFunc(testkit.Rows("10:10:10"), checkHmsMatch)
 
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
@@ -2891,8 +2922,7 @@ func TestTimeBuiltin(t *testing.T) {
 }
 
 func TestBuiltin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3350,8 +3380,11 @@ func TestBuiltin(t *testing.T) {
 
 	// test case decimal precision less than the scale.
 	_, err = tk.Exec("select cast(12.1 as decimal(3, 4));")
-	require.Error(t, err)
 	require.Error(t, err, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1').")
+
+	// test case cast(EXPR as datetime(x)) precision more than the scale(6).
+	_, err = tk.Exec("SELECT CAST(1 AS DATETIME(7));")
+	require.Error(t, err, "[types:1427]Too big precision 7 specified for column 'CAST'. Maximum is 6.")
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
@@ -3659,8 +3692,7 @@ func TestBuiltin(t *testing.T) {
 }
 
 func TestSetVariables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Exec("set sql_mode='adfasdfadsfdasd';")
@@ -3736,21 +3768,25 @@ func TestSetVariables(t *testing.T) {
 	tk.MustExec("set global tidb_enable_noop_functions=1")
 
 	_, err = tk.Exec("set @@global.max_user_connections='';")
-	require.NoError(t, err)
-	//require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
+	require.Error(t, err)
+	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
 	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
 	require.Error(t, err)
 	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
+
+	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=1")
+	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("1"))
+	require.True(t, variable.EnableConcurrentDDL.Load())
+	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=0")
+	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
+	require.False(t, variable.EnableConcurrentDDL.Load())
+	testkit.NewTestKit(t, store).MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
 }
 
 func TestPreparePlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-
-	// Plan cache should now be off by default
-	require.False(t, plannercore.PreparedPlanCacheEnabled())
 
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -3776,8 +3812,7 @@ func TestPreparePlanCache(t *testing.T) {
 }
 
 func TestPreparePlanCacheOnCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3803,6 +3838,7 @@ func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 			readFromTableCache = true
 			break
 		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	require.True(t, readFromTableCache)
 	// already read cache after reading first time
@@ -3817,8 +3853,7 @@ func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 }
 
 func TestIssue16205(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -3843,8 +3878,7 @@ func TestIssue16205(t *testing.T) {
 }
 
 func TestRowCountPlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -3874,8 +3908,7 @@ func TestRowCountPlanCache(t *testing.T) {
 }
 
 func TestCacheRegexpr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -3902,8 +3935,7 @@ func TestCacheRegexpr(t *testing.T) {
 }
 
 func TestCacheRefineArgs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -3939,8 +3971,7 @@ func TestCacheRefineArgs(t *testing.T) {
 }
 
 func TestCacheConstEval(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -3975,8 +4006,7 @@ func TestCacheConstEval(t *testing.T) {
 }
 
 func TestIssue24502(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -3996,8 +4026,7 @@ func TestIssue24502(t *testing.T) {
 }
 
 func TestIssue17233(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4080,8 +4109,7 @@ func TestIssue17233(t *testing.T) {
 }
 
 func TestIssue17989(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4095,8 +4123,7 @@ func TestIssue17989(t *testing.T) {
 }
 
 func TestNullValueRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4117,8 +4144,7 @@ func TestNullValueRange(t *testing.T) {
 }
 
 func TestIssue18652(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4129,8 +4155,7 @@ func TestIssue18652(t *testing.T) {
 }
 
 func TestIssue19045(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4162,8 +4187,7 @@ func TestIssue19045(t *testing.T) {
 
 // issues 14448, 19383, 17734
 func TestNoopFunctions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4177,8 +4201,6 @@ func TestNoopFunctions(t *testing.T) {
 		"SELECT * FROM t1 LOCK IN SHARE MODE",
 		"SELECT * FROM t1 GROUP BY a DESC",
 		"SELECT * FROM t1 GROUP BY a ASC",
-		"SELECT GET_LOCK('acdc', 10)",
-		"SELECT RELEASE_LOCK('acdc')",
 	}
 
 	for _, stmt := range stmts {
@@ -4229,8 +4251,7 @@ func TestNoopFunctions(t *testing.T) {
 }
 
 func TestIssue19315(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4245,8 +4266,7 @@ func TestIssue19315(t *testing.T) {
 }
 
 func TestIssue18674(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select -1.0 % -1.0").Check(testkit.Rows("0.0"))
@@ -4262,8 +4282,7 @@ func TestIssue18674(t *testing.T) {
 }
 
 func TestJsonObjectCompare(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4278,8 +4297,7 @@ func TestJsonObjectCompare(t *testing.T) {
 }
 
 func TestIssue21290(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4291,8 +4309,7 @@ func TestIssue21290(t *testing.T) {
 
 // for issue 20128
 func TestIssue20128(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4306,51 +4323,29 @@ func TestIssue20128(t *testing.T) {
 }
 
 func TestCrossDCQuery(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("create placement policy p1 leader_constraints='[+zone=sh]'")
+	tk.MustExec("create placement policy p2 leader_constraints='[+zone=bj]'")
 	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))
 PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (6),
-	PARTITION p1 VALUES LESS THAN (11)
+	PARTITION p0 VALUES LESS THAN (6) placement policy p1,
+	PARTITION p1 VALUES LESS THAN (11) placement policy p2
 );`)
-	defer tk.MustExec("drop table if exists t1")
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop placement policy if exists p1")
+		tk.MustExec("drop placement policy if exists p2")
+	}()
 
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (3,5,7);`)
-
-	is := dom.InfoSchema()
-
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
-	setBundle := func(parName, dc string) {
-		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
-		require.NoError(t, err)
-		groupID := placement.GroupID(pid)
-		is.SetBundle(&placement.Bundle{
-			ID: groupID,
-			Rules: []*placement.Rule{
-				{
-					GroupID: groupID,
-					Role:    placement.Leader,
-					Count:   1,
-					Constraints: []placement.Constraint{
-						{
-							Key:    placement.DCLabelKey,
-							Op:     placement.In,
-							Values: []string{dc},
-						},
-					},
-				},
-			},
-		})
-	}
-	setBundle("p0", "sh")
-	setBundle("p1", "bj")
 
 	testcases := []struct {
 		name      string
@@ -4455,8 +4450,7 @@ PARTITION BY RANGE (c) (
 
 func TestCollationUnion2(t *testing.T) {
 	// For issue 22179
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4485,8 +4479,7 @@ func TestPartitionPruningRelaxOP(t *testing.T) {
 	// We can't say:
 	// datetime < 2020-02-11 16:18:42 => to_days(datetime) < to_days(2020-02-11)
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

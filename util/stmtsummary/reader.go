@@ -103,11 +103,7 @@ func (ssr *stmtSummaryReader) GetStmtSummaryHistoryRows() [][]types.Datum {
 	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
-		ssbd := value.(*stmtSummaryByDigest)
-		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
-			continue
-		}
-		records := ssr.getStmtByDigestHistoryRow(ssbd, historySize)
+		records := ssr.getStmtByDigestHistoryRow(value.(*stmtSummaryByDigest), historySize)
 		rows = append(rows, records...)
 	}
 
@@ -133,11 +129,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestRow(ssbd *stmtSummaryByDigest, begi
 
 	// `ssElement` is lazy expired, so expired elements could also be read.
 	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
-	isAuthed := true
-	if ssr.user != nil && !ssr.hasProcessPriv && ssElement != nil {
-		_, isAuthed = ssElement.authUsers[ssr.user.Username]
-	}
-	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval || !isAuthed {
+	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval {
 		return nil
 	}
 	return ssr.getStmtByDigestElementRow(ssElement, ssbd)
@@ -146,6 +138,14 @@ func (ssr *stmtSummaryReader) getStmtByDigestRow(ssbd *stmtSummaryByDigest, begi
 func (ssr *stmtSummaryReader) getStmtByDigestElementRow(ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) []types.Datum {
 	ssElement.Lock()
 	defer ssElement.Unlock()
+	isAuthed := true
+	if ssr.user != nil && !ssr.hasProcessPriv {
+		_, isAuthed = ssElement.authUsers[ssr.user.Username]
+	}
+	if !isAuthed {
+		return nil
+	}
+
 	datums := make([]types.Datum, len(ssr.columnValueFactories))
 	for i, factory := range ssr.columnValueFactories {
 		datums[i] = types.NewDatum(factory(ssr, ssElement, ssbd))
@@ -155,16 +155,13 @@ func (ssr *stmtSummaryReader) getStmtByDigestElementRow(ssElement *stmtSummaryBy
 
 func (ssr *stmtSummaryReader) getStmtByDigestHistoryRow(ssbd *stmtSummaryByDigest, historySize int) [][]types.Datum {
 	// Collect all history summaries to an array.
-	ssElements := ssbd.collectHistorySummaries(historySize)
+	ssElements := ssbd.collectHistorySummaries(ssr.checker, historySize)
 
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
-		isAuthed := true
-		if ssr.user != nil && !ssr.hasProcessPriv {
-			_, isAuthed = ssElement.authUsers[ssr.user.Username]
-		}
-		if isAuthed {
-			rows = append(rows, ssr.getStmtByDigestElementRow(ssElement, ssbd))
+		record := ssr.getStmtByDigestElementRow(ssElement, ssbd)
+		if record != nil {
+			rows = append(rows, record)
 		}
 	}
 	return rows
@@ -195,7 +192,10 @@ func (ssr *stmtSummaryReader) getStmtEvictedOtherHistoryRow(ssbde *stmtSummaryBy
 
 	ssbd := new(stmtSummaryByDigest)
 	for _, seElement := range seElements {
-		rows = append(rows, ssr.getStmtByDigestElementRow(seElement.otherSummary, ssbd))
+		record := ssr.getStmtByDigestElementRow(seElement.otherSummary, ssbd)
+		if record != nil {
+			rows = append(rows, record)
+		}
 	}
 	return rows
 }
@@ -309,6 +309,7 @@ const (
 	PrevSampleTextStr                 = "PREV_SAMPLE_TEXT"
 	PlanDigestStr                     = "PLAN_DIGEST"
 	PlanStr                           = "PLAN"
+	BinaryPlan                        = "BINARY_PLAN"
 )
 
 type columnValueFactory func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) interface{}
@@ -317,11 +318,19 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	ClusterTableInstanceColumnNameStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) interface{} {
 		return reader.instanceAddr
 	},
-	SummaryBeginTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
-		return types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0)
+	SummaryBeginTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		beginTime := time.Unix(ssElement.beginTime, 0)
+		if beginTime.Location() != reader.tz {
+			beginTime = beginTime.In(reader.tz)
+		}
+		return types.NewTime(types.FromGoTime(beginTime), mysql.TypeTimestamp, 0)
 	},
-	SummaryEndTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
-		return types.NewTime(types.FromGoTime(time.Unix(ssElement.endTime, 0)), mysql.TypeTimestamp, 0)
+	SummaryEndTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		endTime := time.Unix(ssElement.endTime, 0)
+		if endTime.Location() != reader.tz {
+			endTime = endTime.In(reader.tz)
+		}
+		return types.NewTime(types.FromGoTime(endTime), mysql.TypeTimestamp, 0)
 	},
 	StmtTypeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) interface{} {
 		return ssbd.stmtType
@@ -607,5 +616,8 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 			plan = ""
 		}
 		return plan
+	},
+	BinaryPlan: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return ssElement.sampleBinaryPlan
 	},
 }

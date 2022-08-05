@@ -786,7 +786,7 @@ func TestEval(t *testing.T) {
 		result, err := expr.Eval(row)
 		require.NoError(t, err)
 		require.Equal(t, tt.result.Kind(), result.Kind())
-		cmp, err := result.Compare(sc, &tt.result, collate.GetCollator(fieldTps[0].Collate))
+		cmp, err := result.Compare(sc, &tt.result, collate.GetCollator(fieldTps[0].GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -816,7 +816,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 
 	for _, cs := range cases {
 		ft := types.NewFieldType(mysql.TypeString)
-		ft.Collate = cs.name
+		ft.SetCollate(cs.name)
 		expr := new(tipb.Expr)
 		expr.Tp = tipb.ExprType_String
 		expr.FieldType = toPBFieldType(ft)
@@ -833,7 +833,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 
 	for _, cs := range cases {
 		ft := types.NewFieldType(mysql.TypeString)
-		ft.Collate = cs.name
+		ft.SetCollate(cs.name)
 		expr := new(tipb.Expr)
 		expr.Tp = tipb.ExprType_String
 		expr.FieldType = toPBFieldType(ft)
@@ -844,6 +844,28 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 		cons, ok := e.(*Constant)
 		require.True(t, ok)
 		require.Equal(t, cs.expName, cons.Value.Collation())
+	}
+}
+
+// Test convert various scalar functions.
+func TestPBToScalarFuncExpr(t *testing.T) {
+	sc := new(stmtctx.StatementContext)
+	fieldTps := make([]*types.FieldType, 1)
+	exprs := []*tipb.Expr{
+		{
+			Tp:        tipb.ExprType_ScalarFunc,
+			Sig:       tipb.ScalarFuncSig_RegexpSig,
+			FieldType: ToPBFieldType(newStringFieldType()),
+		},
+		{
+			Tp:        tipb.ExprType_ScalarFunc,
+			Sig:       tipb.ScalarFuncSig_RegexpUTF8Sig,
+			FieldType: ToPBFieldType(newStringFieldType()),
+		},
+	}
+	for _, expr := range exprs {
+		_, err := PBToExpr(expr, fieldTps, sc)
+		require.NoError(t, err)
 	}
 }
 
@@ -916,13 +938,13 @@ func columnExpr(columnID int64) *tipb.Expr {
 // toPBFieldType converts *types.FieldType to *tipb.FieldType.
 func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	return &tipb.FieldType{
-		Tp:      int32(ft.Tp),
-		Flag:    uint32(ft.Flag),
-		Flen:    int32(ft.Flen),
-		Decimal: int32(ft.Decimal),
-		Charset: ft.Charset,
-		Collate: collate.CollationToProto(ft.Collate),
-		Elems:   ft.Elems,
+		Tp:      int32(ft.GetType()),
+		Flag:    uint32(ft.GetFlag()),
+		Flen:    int32(ft.GetFlen()),
+		Decimal: int32(ft.GetDecimal()),
+		Charset: ft.GetCharset(),
+		Collate: collate.CollationToProto(ft.GetCollate()),
+		Elems:   ft.GetElems(),
 	}
 }
 
@@ -946,96 +968,47 @@ func newDateTime(t *testing.T, s string) types.Time {
 }
 
 func newDateFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp: mysql.TypeDate,
-	}
+	return types.NewFieldType(mysql.TypeDate)
 }
 
 func newIntFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp:      mysql.TypeLonglong,
-		Flen:    mysql.MaxIntWidth,
-		Decimal: 0,
-		Flag:    mysql.BinaryFlag,
-	}
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).BuildP()
 }
 
 func newDurFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp:      mysql.TypeDuration,
-		Decimal: types.DefaultFsp,
-	}
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetDecimal(types.DefaultFsp).BuildP()
 }
 
 func newStringFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp:   mysql.TypeVarString,
-		Flen: types.UnspecifiedLength,
-	}
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlen(types.UnspecifiedLength).BuildP()
 }
 
 func newRealFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp:   mysql.TypeFloat,
-		Flen: types.UnspecifiedLength,
-	}
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).SetFlen(types.UnspecifiedLength).BuildP()
 }
 
 func newDecimalFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp:   mysql.TypeNewDecimal,
-		Flen: types.UnspecifiedLength,
-	}
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(types.UnspecifiedLength).BuildP()
 }
 
 func newJSONFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp:      mysql.TypeJSON,
-		Flen:    types.UnspecifiedLength,
-		Decimal: 0,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	}
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 }
 
 func newFloatFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp:      mysql.TypeFloat,
-		Flen:    types.UnspecifiedLength,
-		Decimal: 0,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	}
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 }
 
 func newBinaryLiteralFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp:      mysql.TypeBit,
-		Flen:    types.UnspecifiedLength,
-		Decimal: 0,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	}
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeBit).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 }
 
 func newBlobFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp:      mysql.TypeBlob,
-		Flen:    types.UnspecifiedLength,
-		Decimal: 0,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	}
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeBlob).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 }
 
 func newEnumFieldType() *types.FieldType {
-	return &types.FieldType{
-		Tp:      mysql.TypeEnum,
-		Flen:    types.UnspecifiedLength,
-		Decimal: 0,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	}
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 }
 
 func scalarFunctionExpr(sigCode tipb.ScalarFuncSig, retType *tipb.FieldType, args ...*tipb.Expr) *tipb.Expr {
