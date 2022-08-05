@@ -38,7 +38,6 @@ import (
 	log "github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
-
 	"go.uber.org/zap"
 )
 

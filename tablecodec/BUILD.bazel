@@ -18,9 +18,11 @@ go_library(
         "//util/codec",
         "//util/collate",
         "//util/dbterror",
+        "//util/logutil",
         "//util/rowcodec",
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
