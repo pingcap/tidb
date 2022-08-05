@@ -180,7 +180,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jonboulle/clockwork v0.2.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.15.1 // indirect
+	github.com/klauspost/compress v1.15.1
 	github.com/klauspost/cpuid v1.3.1 // indirect
 	github.com/kr/pretty v0.3.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -242,4 +242,4 @@ replace github.com/pingcap/tidb/parser => ./parser
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
-replace github.com/pingcap/kvproto v0.0.0-20220711062932-08b02befd813 => github.com/leavrth/kvproto v0.0.0-20220804063923-599889f66918
+replace github.com/pingcap/kvproto v0.0.0-20220804022843-f006036b1277 => github.com/leavrth/kvproto v0.0.0-20220805073240-0a92681f049c
