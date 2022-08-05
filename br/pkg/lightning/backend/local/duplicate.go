@@ -543,7 +543,7 @@ type dupTask struct {
 	tidbkv.KeyRange
 	tableID   int64
 	indexInfo *model.IndexInfo
-	indexID   int64 // This is only used by add index by ligthning.
+	indexID   int64 // This is only used by add index by lightning.
 }
 
 func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
