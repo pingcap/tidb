@@ -33,8 +33,15 @@ import (
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
-func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
-	otherConds []expression.Expression, joinTypes []JoinType, hintInfo []*tableHintInfo, hasOuterJoin bool) {
+func extractJoinGroup(p LogicalPlan) (
+	group []LogicalPlan,
+	eqEdges []*expression.ScalarFunction,
+	otherConds []expression.Expression,
+	joinTypes []JoinType,
+	hintInfo []*tableHintInfo,
+	hasOuterJoin bool,
+	hasCartesian bool,
+) {
 	join, isJoin := p.(*LogicalJoin)
 	if isJoin && join.preferJoinOrder {
 		// When there is a leading hint, the hint may not take effect for other reasons.
@@ -49,15 +56,16 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			// The leading hint can not work for some reasons. So clear it in the join node.
 			join.hintInfo = nil
 		}
-		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false
+		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false, false
 	}
 	// If the session var is set to off, we will still reject the outer joins.
 	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) {
-		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false
+		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false, false
 	}
 	hasOuterJoin = hasOuterJoin || (join.JoinType != InnerJoin)
+	hasCartesian = len(join.EqualConditions) == 0
 	if join.JoinType != RightOuterJoin {
-		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsHintInfo, lhsHasOuterJoin := extractJoinGroup(join.children[0])
+		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsHintInfo, lhsHasOuterJoin, lhsHasCartesian := extractJoinGroup(join.children[0])
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == LeftOuterJoin {
@@ -78,10 +86,12 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 					break
 				}
 			}
+			noExpand = noExpand || lhsHasCartesian
 		}
 		if noExpand {
-			return []LogicalPlan{p}, nil, nil, nil, nil, false
+			return []LogicalPlan{p}, nil, nil, nil, nil, false, false
 		}
+		hasCartesian = hasCartesian || lhsHasCartesian
 		group = append(group, lhsGroup...)
 		eqEdges = append(eqEdges, lhsEqualConds...)
 		otherConds = append(otherConds, lhsOtherConds...)
@@ -93,7 +103,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	}
 
 	if join.JoinType != LeftOuterJoin {
-		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsHintInfo, rhsHasOuterJoin := extractJoinGroup(join.children[1])
+		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsHintInfo, rhsHasOuterJoin, rhsHasCartesian := extractJoinGroup(join.children[1])
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == RightOuterJoin {
@@ -114,10 +124,12 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 					break
 				}
 			}
+			noExpand = noExpand || rhsHasCartesian
 		}
 		if noExpand {
-			return []LogicalPlan{p}, nil, nil, nil, nil, false
+			return []LogicalPlan{p}, nil, nil, nil, nil, false, false
 		}
+		hasCartesian = hasCartesian || rhsHasCartesian
 		group = append(group, rhsGroup...)
 		eqEdges = append(eqEdges, rhsEqualConds...)
 		otherConds = append(otherConds, rhsOtherConds...)
@@ -135,7 +147,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	for range join.EqualConditions {
 		joinTypes = append(joinTypes, join.JoinType)
 	}
-	return group, eqEdges, otherConds, joinTypes, hintInfo, hasOuterJoin
+	return group, eqEdges, otherConds, joinTypes, hintInfo, hasOuterJoin, hasCartesian
 }
 
 type joinReOrderSolver struct {
@@ -159,7 +171,7 @@ func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logi
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	var err error
 
-	curJoinGroup, eqEdges, otherConds, joinTypes, hintInfo, hasOuterJoin := extractJoinGroup(p)
+	curJoinGroup, eqEdges, otherConds, joinTypes, hintInfo, hasOuterJoin, _ := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
