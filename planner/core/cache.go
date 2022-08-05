@@ -15,8 +15,8 @@
 package core
 
 import (
-	"bytes"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -71,6 +71,9 @@ type planCacheKey struct {
 	isolationReadEngines     map[kv.StoreType]struct{}
 	selectLimit              uint64
 	bindSQL                  string
+	inRestrictedSQL          bool
+	restrictedReadOnly       bool
+	TiDBSuperReadOnly        bool
 
 	hash []byte
 }
@@ -103,6 +106,9 @@ func (key *planCacheKey) Hash() []byte {
 		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
 		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 	}
 	return key.hash
 }
@@ -152,6 +158,9 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		isolationReadEngines:     make(map[kv.StoreType]struct{}),
 		selectLimit:              sessionVars.SelectLimit,
 		bindSQL:                  bindSQL,
+		inRestrictedSQL:          sessionVars.InRestrictedSQL,
+		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
+		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -196,21 +205,16 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	TxtVarTypes       FieldSlice // variable types under text protocol
-	BinVarTypes       []byte     // variable types under binary protocol
-	IsBinProto        bool       // whether this plan is under binary protocol
+	TxtVarTypes       FieldSlice
 }
 
-func (v *PlanCacheValue) varTypesUnchanged(binVarTps []byte, txtVarTps []*types.FieldType) bool {
-	if v.IsBinProto {
-		return bytes.Equal(v.BinVarTypes, binVarTps)
-	}
+func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
 	return v.TxtVarTypes.CheckTypesCompatibility4PC(txtVarTps)
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	isBinProto bool, binVarTypes []byte, txtVarTps []*types.FieldType) *PlanCacheValue {
+	txtVarTps []*types.FieldType) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -224,8 +228,6 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
 		TxtVarTypes:       userVarTypes,
-		BinVarTypes:       binVarTypes,
-		IsBinProto:        isBinProto,
 	}
 }
 
