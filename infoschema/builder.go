@@ -349,6 +349,9 @@ func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSche
 			return err
 		}
 		err = t.GetAutoIDAccessors(ntSchemaID, ntID).Put(newAutoIDs)
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 
