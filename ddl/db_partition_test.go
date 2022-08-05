@@ -2389,6 +2389,43 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
 }
 
+func TestExchangePartitionAutoID(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int primary key auto_increment) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 values less than (9),
+        PARTITION p3 values less than (50000000)
+		);`)
+	tk.MustExec(`create table nt(a int primary key auto_increment);`)
+
+	tk.MustExec(`insert into pt values (0), (4)`)
+	tk.MustExec("insert into nt values (1)")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	dom.DDL().SetHook(hook)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `return(true)`))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
+
+	hookFunc := func(job *model.Job) {
+		if job.Type == model.ActionExchangeTablePartition && job.State == model.JobStateRunning {
+			tk.MustExec(`insert into pt values (40000000)`)
+		}
+	}
+	hook.OnJobUpdatedExported = hookFunc
+
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustExec("insert into nt values (NULL)")
+	tk.MustQuery("select * from nt").Check(testkit.Rows("1", "42000001"))
+	tk.MustQuery("select * from pt").Sort().Check(testkit.Rows("1", "4", "40000000"))
+}
+
 func TestExchangePartitionExpressIndex(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()

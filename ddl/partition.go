@@ -1483,6 +1483,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	failpoint.Inject("exchangePartitionAutoID", func(val failpoint.Value) {
+		if val.(bool) {
+			d.mu.RLock()
+			d.mu.hook.OnJobUpdated(job)
+			d.mu.RUnlock()
+		}
+	})
+
 	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
 	if err != nil {
 		job.State = model.JobStateCancelled

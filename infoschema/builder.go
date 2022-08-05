@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -190,7 +192,7 @@ type Builder struct {
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
-func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) ApplyDiff(store kv.Storage, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
 	switch diff.Type {
 	case model.ActionCreateSchema:
@@ -214,13 +216,15 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionRecoverTable:
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
-		return b.applyCreateTables(m, diff)
+		return b.applyCreateTables(store, m, diff)
+	case model.ActionExchangeTablePartition:
+		return b.applyExchangeTablePartition(store, m, diff)
 	default:
-		return b.applyDefaultAction(m, diff)
+		return b.applyDefaultAction(store, m, diff)
 	}
 }
 
-func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyCreateTables(store kv.Storage, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs := make([]int64, 0, len(diff.AffectedOpts))
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
@@ -232,7 +236,7 @@ func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int
 				OldSchemaID: opt.OldSchemaID,
 				OldTableID:  opt.OldTableID,
 			}
-			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+			affectedIDs, err := b.ApplyDiff(store, m, affectedDiff)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -287,7 +291,71 @@ func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyExchangeTablePartition(store kv.Storage, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, opt := range diff.AffectedOpts {
+		affectedDiff := &model.SchemaDiff{
+			Version:     diff.Version,
+			Type:        diff.Type,
+			SchemaID:    opt.SchemaID,
+			TableID:     opt.TableID,
+			OldSchemaID: opt.OldSchemaID,
+			OldTableID:  opt.OldTableID,
+		}
+		affectedIDs, err := b.ApplyDiff(store, m, affectedDiff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tblIDs = append(tblIDs, affectedIDs...)
+
+		// handle partition table and table AutoID
+		err = updateAutoIDForExchangePartition(store, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.TableID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	return tblIDs, nil
+}
+
+func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
+	// partition table auto IDs.
+
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
+		if err != nil {
+			return err
+		}
+
+		// non-partition table auto IDs.
+		ntAutoIDs, err := t.GetAutoIDAccessors(ntSchemaID, ntID).Get()
+		if err != nil {
+			return err
+		}
+
+		// Set both tables to the maximum auto IDs between normal table and partitioned table.
+		newAutoIDs := meta.AutoIDGroup{
+			RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+			IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+			RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+		}
+		err = t.GetAutoIDAccessors(ptSchemaID, ptID).Put(newAutoIDs)
+		if err != nil {
+			return err
+		}
+		err = t.GetAutoIDAccessors(ntSchemaID, ntID).Put(newAutoIDs)
+		return nil
+	})
+
+	return err
+}
+
+func (b *Builder) applyDefaultAction(store kv.Storage, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -303,7 +371,7 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 			OldSchemaID: opt.OldSchemaID,
 			OldTableID:  opt.OldTableID,
 		}
-		affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+		affectedIDs, err := b.ApplyDiff(store, m, affectedDiff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
