@@ -142,7 +142,7 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcac
 	stmtCtx := sessVars.StmtCtx
 
 	if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-		if err := checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
+		if err := CheckPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 			return nil, nil, false, err
 		}
 		cachedVals := cacheValue.([]*PlanCacheValue)
@@ -537,7 +537,7 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 	return
 }
 
-func checkPreparedPriv(_ context.Context, sctx sessionctx.Context,
+func CheckPreparedPriv(_ context.Context, sctx sessionctx.Context,
 	preparedObj *CachedPrepareStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		visitInfo := VisitInfo4PrivCheck(is, preparedObj.PreparedAst.Stmt, preparedObj.VisitInfos)
