@@ -701,6 +701,11 @@ func (c *cachedTableRenewLease) stop(ctx context.Context) {
 func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
 	for i := 0; i < len(c.lease); i++ {
 		lease := atomic.LoadUint64(&c.lease[i])
+		logutil.BgLogger().Info(">> commitTSCheck",
+			zap.Uint64("commitTS", commitTS),
+			zap.Uint64("lease", lease),
+			zap.Uint64("ts", c.ts),
+			zap.Bool("succ", commitTS >= lease))
 		if commitTS >= lease {
 			// Txn fails to commit because the write lease is expired.
 			return false
