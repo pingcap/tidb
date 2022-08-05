@@ -8,7 +8,6 @@ linters:
     - unused
     - structcheck
     - deadcode
-    - bodyclose
     - rowserrcheck
     - prealloc
 
