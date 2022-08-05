@@ -392,6 +392,9 @@ type ddlHookHandler struct {
 type valueHandler struct {
 }
 
+// labelHandler is the handler for set labels
+type labelHandler struct{}
+
 const (
 	opTableRegions     = "regions"
 	opTableRanges      = "ranges"
@@ -2157,4 +2160,33 @@ func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	ctx := req.Context()
 	logutil.Logger(ctx).Info("change ddl hook success", zap.String("to_ddl_hook", req.FormValue("ddl_hook")))
+}
+
+// ServeHTTP handles request of set server labels.
+func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	labels := make(map[string]string)
+	err := json.NewDecoder(req.Body).Decode(&labels)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	if len(labels) > 0 {
+		cfg := *config.GetGlobalConfig()
+		if cfg.Labels == nil {
+			cfg.Labels = make(map[string]string, len(labels))
+		}
+		for k, v := range labels {
+			cfg.Labels[k] = v
+		}
+		config.StoreGlobalConfig(&cfg)
+		logutil.BgLogger().Info("update server labels", zap.Any("labels", cfg.Labels))
+	}
+
+	writeData(w, config.GetGlobalConfig().Labels)
 }
