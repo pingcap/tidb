@@ -178,6 +178,7 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	case model.StateNone:
 		var referTableInfo *model.TableInfo
 		for _, fkInfo := range tbInfo.ForeignKeys {
+			fkInfo.ID = allocateFKIndexID(tbInfo)
 			if referTableInfo == nil || referTableInfo.Name.L != fkInfo.RefTable.L {
 				_, referTableInfo, err = fkc.getParentTableFromStorage(d, t, fkInfo.RefSchema, fkInfo.RefTable)
 				if err != nil {

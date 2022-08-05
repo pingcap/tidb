@@ -1377,6 +1377,11 @@ func allocateIndexID(tblInfo *model.TableInfo) int64 {
 	return tblInfo.MaxIndexID
 }
 
+func allocateFKIndexID(tblInfo *model.TableInfo) int64 {
+	tblInfo.MaxFKIndexID++
+	return tblInfo.MaxFKIndexID
+}
+
 func getIndexInfoByNameAndColumn(oldTableInfo *model.TableInfo, newOne *model.IndexInfo) *model.IndexInfo {
 	for _, oldOne := range oldTableInfo.Indices {
 		if newOne.Name.L == oldOne.Name.L && indexColumnSliceEqual(newOne.Columns, oldOne.Columns) {

@@ -1699,7 +1699,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	// Set empty constraint names.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
-			setEmptyConstraintName(fkNames, constr, true)
+			continue
 		} else {
 			setEmptyConstraintName(constrNames, constr, false)
 		}
@@ -1822,12 +1822,13 @@ func BuildTableInfo(
 			return nil, dbterror.ErrUnsupportedClusteredSecondaryKey
 		}
 		if constr.Tp == ast.ConstraintForeignKey {
+			fkName := constr.GetForeignKeyName(tbInfo)
 			for _, fk := range tbInfo.ForeignKeys {
-				if fk.Name.L == strings.ToLower(constr.Name) {
+				if fk.Name.L == fkName {
 					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
-			fk, err := buildFKInfo(model.NewCIStr(constr.Name), constr.Keys, constr.Refer, cols, tbInfo)
+			fk, err := buildFKInfo(model.NewCIStr(fkName), constr.Keys, constr.Refer, cols, tbInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -3215,7 +3216,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			case ast.ConstraintForeignKey:
 				// NOTE: we do not handle `symbol` and `index_name` well in the parser and we do not check ForeignKey already exists,
 				// so we just also ignore the `if not exists` check.
-				err = d.CreateForeignKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
+				err = d.CreateForeignKey(sctx, ident, constr)
 			case ast.ConstraintPrimaryKey:
 				err = d.CreatePrimaryKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintFulltext:
@@ -6005,7 +6006,6 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 	}
 
 	fkInfo := &model.FKInfo{
-		ID:        allocateIndexID(tbInfo),
 		Name:      fkName,
 		RefSchema: refer.Table.Schema,
 		RefTable:  refer.Table.Name,
@@ -6132,7 +6132,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	return nil
 }
 
-func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef) error {
+func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, constraint *ast.Constraint) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -6148,13 +6148,14 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	}
 
 	// Check the uniqueness of the FK.
+	fkName := model.NewCIStr(constraint.GetForeignKeyName(t.Meta()))
 	for _, fk := range t.Meta().ForeignKeys {
 		if fk.Name.L == fkName.L {
 			return dbterror.ErrFkDupName.GenWithStackByArgs(fkName.O)
 		}
 	}
 
-	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
+	fkInfo, err := buildFKInfo(fkName, constraint.Keys, constraint.Refer, t.Cols(), t.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}

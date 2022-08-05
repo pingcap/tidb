@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -67,7 +68,7 @@ func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			fkInfo.State = model.StateWriteReorganization
 			job.SchemaState = model.StateWriteReorganization
 		}
-		fkInfo.ID = allocateIndexID(tblInfo)
+		fkInfo.ID = allocateFKIndexID(tblInfo)
 		tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
@@ -212,22 +213,53 @@ func onDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 	}
 	tblInfo.ForeignKeys = nfks
 
-	originalState := fkInfo.State
-	switch fkInfo.State {
-	case model.StatePublic:
-		// We just support record the foreign key, so we just make it none.
-		// public -> none
-		fkInfo.State = model.StateNone
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != fkInfo.State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		job.SchemaState = fkInfo.State
-		return ver, nil
-	default:
-		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("foreign key", fkInfo.State)
+	tblInfos, err := adjustReferTableInfoAfterDropForeignKey(d, t, job, tblInfo, &fkInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
+	ver, err = updateVersionAndMultiTableInfosWithCheck(t, job, tblInfos, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// Finish this job.
+	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	job.SchemaState = fkInfo.State
+	return ver, nil
+}
+
+func adjustReferTableInfoAfterDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, fk *model.FKInfo) ([]schemaIDAndTableInfo, error) {
+	InfoList := []schemaIDAndTableInfo{{schemaID: job.SchemaID, tblInfo: tblInfo}}
+	fkc := ForeignKeyHelper{
+		schemaID: job.SchemaID,
+		tbInfo:   tblInfo,
+	}
+	infos := make(map[int64]schemaIDAndTableInfo)
+	infos[tblInfo.ID] = schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: tblInfo}
+
+	referDBInfo, referTblInfo, err := fkc.getParentTableFromStorage(d, t, fk.RefSchema, fk.RefTable)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+			return InfoList, nil
+		}
+		return nil, err
+	}
+	for i, referredFK := range referTblInfo.ReferredForeignKeys {
+		if referredFK.ChildSchema.L == job.SchemaName && referredFK.ChildTable.L == tblInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
+			referTblInfo.ReferredForeignKeys = append(referTblInfo.ReferredForeignKeys[:i], referTblInfo.ReferredForeignKeys[i+1:]...)
+			break
+		}
+	}
+	infos[referTblInfo.ID] = schemaIDAndTableInfo{
+		schemaID: referDBInfo.ID,
+		tblInfo:  referTblInfo,
+	}
+	InfoList = InfoList[:0]
+	for _, info := range infos {
+		InfoList = append(InfoList, info)
+	}
+	sort.Slice(InfoList, func(i, j int) bool {
+		return InfoList[i].tblInfo.ID < InfoList[j].tblInfo.ID
+	})
+	return InfoList, nil
 }

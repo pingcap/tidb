@@ -432,6 +432,7 @@ type TableInfo struct {
 	AutoRandID      int64  `json:"auto_rand_id"`
 	MaxColumnID     int64  `json:"max_col_id"`
 	MaxIndexID      int64  `json:"max_idx_id"`
+	MaxFKIndexID    int64  `json:"max_fk_idx_id"`
 	MaxConstraintID int64  `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
 	// These changing schema operations don't include 'truncate table' and 'rename table'.

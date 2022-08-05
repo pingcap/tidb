@@ -259,7 +259,7 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 0, len(tb3Info.ReferredForeignKeys))
 	require.Equal(t, 1, len(tb3Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
-		ID:        2,
+		ID:        1,
 		Name:      model.NewCIStr("fk_b"),
 		RefSchema: model.NewCIStr("test2"),
 		RefTable:  model.NewCIStr("t2"),
@@ -273,6 +273,29 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 1, len(tb3Info.Indices))
 	require.Equal(t, "idx_b", tb3Info.Indices[0].Name.L)
 	require.Equal(t, "`test2`.`t3`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `t2` (`id`) ON DELETE NO ACTION ON UPDATE SET NULL", tb3Info.ForeignKeys[0].String("test2", "t3"))
+
+	tk.MustExec("create table t5 (id int key, a int, b int, foreign key (a) references t5(id));")
+	tb5Info := getTableInfo(t, dom, "test2", "t5")
+	require.Equal(t, 1, len(tb5Info.ForeignKeys))
+	require.Equal(t, 1, len(tb5Info.ReferredForeignKeys))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("t5"),
+		ChildFKName: model.NewCIStr("fk_1"),
+	}, *tb5Info.ReferredForeignKeys[0])
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk_1"),
+		RefSchema: model.NewCIStr("test2"),
+		RefTable:  model.NewCIStr("t5"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("a")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tb5Info.ForeignKeys[0])
+	require.Equal(t, 1, len(tb5Info.Indices))
+	require.Equal(t, "fk_1", tb5Info.Indices[0].Name.L)
 }
 
 func TestAlterTableAddForeignKeyMetaInfo(t *testing.T) {
@@ -298,7 +321,7 @@ func TestAlterTableAddForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 0, len(tb2Info.ReferredForeignKeys))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
-		ID:        3,
+		ID:        1,
 		Name:      model.NewCIStr("fk"),
 		RefSchema: model.NewCIStr("test"),
 		RefTable:  model.NewCIStr("t1"),
@@ -320,7 +343,7 @@ func TestAlterTableAddForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 2, len(tb2Info.ForeignKeys))
 	require.Equal(t, 0, len(tb2Info.ReferredForeignKeys))
 	require.Equal(t, model.FKInfo{
-		ID:        4,
+		ID:        2,
 		Name:      model.NewCIStr("fk_b"),
 		RefSchema: model.NewCIStr("test2"),
 		RefTable:  model.NewCIStr("t3"),
@@ -342,6 +365,48 @@ func TestAlterTableAddForeignKeyMetaInfo(t *testing.T) {
 	// no need to auto add index.
 	require.Equal(t, 2, len(tb2Info.Indices))
 	require.Equal(t, "`test2`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `t3` (`id`) ON DELETE NO ACTION ON UPDATE SET NULL", tb2Info.ForeignKeys[1].String("test2", "t2"))
+
+	tk.MustExec("create table t5 (id int key, a int, b int);")
+	tk.MustExec("alter table t5 add foreign key (a) references t5(id)")
+	tk.MustExec("alter table t5 add foreign key (b) references t5(id)")
+	tb5Info := getTableInfo(t, dom, "test2", "t5")
+	require.Equal(t, 2, len(tb5Info.ForeignKeys))
+	require.Equal(t, 2, len(tb5Info.ReferredForeignKeys))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("t5"),
+		ChildFKName: model.NewCIStr("fk_1"),
+	}, *tb5Info.ReferredForeignKeys[0])
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("t5"),
+		ChildFKName: model.NewCIStr("fk_2"),
+	}, *tb5Info.ReferredForeignKeys[1])
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk_1"),
+		RefSchema: model.NewCIStr("test2"),
+		RefTable:  model.NewCIStr("t5"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("a")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tb5Info.ForeignKeys[0])
+	require.Equal(t, model.FKInfo{
+		ID:        2,
+		Name:      model.NewCIStr("fk_2"),
+		RefSchema: model.NewCIStr("test2"),
+		RefTable:  model.NewCIStr("t5"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("b")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tb5Info.ForeignKeys[1])
+	require.Equal(t, 2, len(tb5Info.Indices))
+	require.Equal(t, "fk_1", tb5Info.Indices[0].Name.L)
+	require.Equal(t, "fk_2", tb5Info.Indices[1].Name.L)
 }
 
 func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
@@ -791,6 +856,28 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 	err = tk.ExecToErr("delete from t1")
 	require.Error(t, err)
 	require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+}
+
+func TestDropForeignKeyMetaInfo(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, a int, b int, CONSTRAINT fk foreign key (a) references t1(id))")
+	tk.MustExec("alter table t1 drop foreign key fk")
+	tbl1Info := getTableInfo(t, dom, "test", "t1")
+	require.Equal(t, 0, len(tbl1Info.ForeignKeys))
+	require.Equal(t, 0, len(tbl1Info.ReferredForeignKeys))
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, b int, index(b))")
+	tk.MustExec("create table t2 (a int, b int, foreign key fk (a) references t1(b));")
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tbl1Info = getTableInfo(t, dom, "test", "t1")
+	require.Equal(t, 0, len(tbl1Info.ReferredForeignKeys))
+	tbl2Info := getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tbl2Info.ForeignKeys))
 }
 
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {

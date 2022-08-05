@@ -1416,12 +1416,7 @@ func adjustTableInfoAfterModifyColumn(
 }
 
 func adjustReferTableInfoAfterModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo) ([]schemaIDAndTableInfo, error) {
-	InfoList := []schemaIDAndTableInfo{
-		{
-			schemaID: job.SchemaID,
-			tblInfo:  tblInfo,
-		},
-	}
+	InfoList := []schemaIDAndTableInfo{{schemaID: job.SchemaID, tblInfo: tblInfo}}
 	if newCol.Name.L == oldCol.Name.L || len(tblInfo.ReferredForeignKeys) == 0 {
 		return InfoList, nil
 	}
