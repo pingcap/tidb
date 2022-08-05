@@ -92,7 +92,6 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				sessionVars.UnsetUserVar(name)
 			} else {
 				sessionVars.Users[name] = value
-				sessionVars.UserVarTypes[name] = v.Expr.GetType()
 			}
 			sessionVars.UsersLock.Unlock()
 			continue

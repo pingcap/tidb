@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
@@ -1363,7 +1362,6 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                       make(map[string]types.Datum),
-		UserVarTypes:                make(map[string]*types.FieldType),
 		systems:                     make(map[string]string),
 		stmtVars:                    make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
@@ -1643,7 +1641,6 @@ func (s *SessionVars) SetUserVar(varName string, svalue string, collation string
 func (s *SessionVars) UnsetUserVar(varName string) {
 	varName = strings.ToLower(varName)
 	delete(s.Users, varName)
-	delete(s.UserVarTypes, varName)
 }
 
 // SetLastInsertID saves the last insert id to the session context.
@@ -2005,10 +2002,6 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	for name, userVar := range s.Users {
 		sessionStates.UserVars[name] = userVar.Clone()
 	}
-	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.UserVarTypes))
-	for name, userVarType := range s.UserVarTypes {
-		sessionStates.UserVarTypes[name] = userVarType.Clone()
-	}
 	s.UsersLock.RUnlock()
 
 	// Encode other session contexts.
@@ -2042,10 +2035,6 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	s.Users = make(map[string]types.Datum, len(sessionStates.UserVars))
 	for name, userVar := range sessionStates.UserVars {
 		s.Users[name] = *userVar.Clone()
-	}
-	s.UserVarTypes = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
-	for name, userVarType := range sessionStates.UserVarTypes {
-		s.UserVarTypes[name] = userVarType.Clone()
 	}
 	s.UsersLock.Unlock()
 
