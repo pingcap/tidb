@@ -750,6 +750,11 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("1"))
 	tk.MustExec("set session tidb_enable_analyze_snapshot = 0")
 	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+
+	// test variables `init_connect'
+	tk.MustGetErrCode("set global init_connect = '-1'", mysql.ErrWrongTypeForVar)
+	tk.MustGetErrCode("set global init_connect = 'invalidstring'", mysql.ErrWrongTypeForVar)
+	tk.MustExec("set global init_connect = 'select now(); select timestamp()'")
 }
 
 func TestGetSetNoopVars(t *testing.T) {

@@ -15,7 +15,6 @@
 package core
 
 import (
-	"bytes"
 	"math"
 	"strconv"
 	"time"
@@ -206,21 +205,16 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	TxtVarTypes       FieldSlice // variable types under text protocol
-	BinVarTypes       []byte     // variable types under binary protocol
-	IsBinProto        bool       // whether this plan is under binary protocol
+	TxtVarTypes       FieldSlice
 }
 
-func (v *PlanCacheValue) varTypesUnchanged(binVarTps []byte, txtVarTps []*types.FieldType) bool {
-	if v.IsBinProto {
-		return bytes.Equal(v.BinVarTypes, binVarTps)
-	}
+func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
 	return v.TxtVarTypes.CheckTypesCompatibility4PC(txtVarTps)
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	isBinProto bool, binVarTypes []byte, txtVarTps []*types.FieldType) *PlanCacheValue {
+	txtVarTps []*types.FieldType) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -234,8 +228,6 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
 		TxtVarTypes:       userVarTypes,
-		BinVarTypes:       binVarTypes,
-		IsBinProto:        isBinProto,
 	}
 }
 

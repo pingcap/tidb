@@ -939,10 +939,19 @@ ForColumnsTag:
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
-			if ft.GetType() == mysql.TypeBit {
-				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
-				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
-				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+			switch col.GetDefaultValue() {
+			case "CURRENT_TIMESTAMP":
+			default:
+				if ft.GetType() == mysql.TypeTimestamp && columnDefault != types.ZeroDatetimeStr {
+					timeValue, err := table.GetColDefaultValue(sctx, col)
+					if err == nil {
+						columnDefault = timeValue.GetMysqlTime().String()
+					}
+				}
+				if ft.GetType() == mysql.TypeBit && !col.DefaultIsExpr {
+					defaultValBinaryLiteral := types.BinaryLiteral(columnDefault.(string))
+					columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+				}
 			}
 		}
 		record := types.MakeDatums(
