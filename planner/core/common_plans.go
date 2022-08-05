@@ -188,12 +188,12 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name           string
-	TxtProtoParams []expression.Expression
-	ExecID         uint32
-	Stmt           ast.StmtNode
-	StmtType       string
-	Plan           Plan
+	Name     string
+	Params   []expression.Expression
+	ExecID   uint32
+	Stmt     ast.StmtNode
+	StmtType string
+	Plan     Plan
 }
 
 // Check if result of GetVar expr is BinaryLiteral
@@ -229,11 +229,11 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	vars.StmtCtx.StmtType = prepared.StmtType
 
 	// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
-	if len(prepared.Params) != len(e.TxtProtoParams) {
+	if len(prepared.Params) != len(e.Params) {
 		return errors.Trace(ErrWrongParamCount)
 	}
 
-	for i, usingParam := range e.TxtProtoParams {
+	for i, usingParam := range e.Params {
 		val, err := usingParam.Eval(chunk.Row{})
 		if err != nil {
 			return err
@@ -282,7 +282,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		prepared.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
-	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.TxtProtoParams)
+	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.Params)
 	if err != nil {
 		return err
 	}
