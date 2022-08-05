@@ -51,11 +51,11 @@ const (
 	// Below sub states are only used for add index in lightning ways,
 	// if you want to use them in other place, you have to use it carefully.
 
-	// StateBackfillSync means syncrhronize all TiDB into ready to backfill state.
+	// StateBackfillSync means synchronize all TiDB into ready to backfill state.
 	StateBackfillSync
 	// StateBackfill means now we are in backfill stage.
 	StateBackfill
-	// StateMergeSync means syncrhronize all TiDB into ready to merge delta index change state..
+	// StateMergeSync means synchronize all TiDB into ready to merge delta index change state.
 	StateMergeSync
 	// StateMerge means start merge delta change part of index into full copy index.
 	StateMerge

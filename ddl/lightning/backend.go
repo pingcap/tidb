@@ -120,7 +120,7 @@ func adjustImportMemory(cfg *config.Config) {
 	log.L().Info(LitInfoInitMemSetting,
 		zap.String("LocalWriterMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
 		zap.String("EngineMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
-		zap.String("rangecounrrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
+		zap.String("range concurrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
 
 	if defaultMemSize > GlobalEnv.LitMemRoot.maxLimit {
 		scale = defaultMemSize / GlobalEnv.LitMemRoot.maxLimit
@@ -132,14 +132,14 @@ func adjustImportMemory(cfg *config.Config) {
 
 	cfg.TikvImporter.LocalWriterMemCacheSize /= config.ByteSize(scale)
 	cfg.TikvImporter.EngineMemCacheSize /= config.ByteSize(scale)
-	// ToDo adjust rangecourrency nubmer to control total concurrency in future.
+	// TODO: adjust range concurrency number to control total concurrency in future.
 	log.L().Info(LitInfoChgMemSetting,
 		zap.String("LocalWriterMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
 		zap.String("EngineMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
-		zap.String("rangecounrrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
+		zap.String("range concurrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
 }
 
-// tryAggressiveMemory lightning memory parameters according memory root's max limitation
+// tryAggressiveMemory lightning memory parameters according memory root's max limitation.
 func tryAggressiveMemory(cfg *config.Config) bool {
 	var defaultMemSize int64
 	defaultMemSize = int64(int(cfg.TikvImporter.LocalWriterMemCacheSize) * cfg.TikvImporter.RangeConcurrency)
@@ -151,53 +151,53 @@ func tryAggressiveMemory(cfg *config.Config) bool {
 	log.L().Info(LitInfoChgMemSetting,
 		zap.String("LocalWriterMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
 		zap.String("EngineMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
-		zap.String("rangecounrrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
+		zap.String("range concurrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
 	return true
 }
 
 type glueLit struct{}
 
-// OwnsSQLExecutor Implement interface OwnsSQLExecutor
+// OwnsSQLExecutor Implement interface OwnsSQLExecutor.
 func (g glueLit) OwnsSQLExecutor() bool {
 	return false
 }
 
-// GetSQLExecutor Implement interface GetSQLExecutor
+// GetSQLExecutor Implement interface GetSQLExecutor.
 func (g glueLit) GetSQLExecutor() glue.SQLExecutor {
 	return nil
 }
 
-// GetDB Implement interface GetDB
+// GetDB Implement interface GetDB.
 func (g glueLit) GetDB() (*sql.DB, error) {
 	return nil, nil
 }
 
-// GetParser Implement interface GetParser
+// GetParser Implement interface GetParser.
 func (g glueLit) GetParser() *parser.Parser {
 	return nil
 }
 
-// GetTables Implement interface GetTables
+// GetTables Implement interface GetTables.
 func (g glueLit) GetTables(context.Context, string) ([]*model.TableInfo, error) {
 	return nil, nil
 }
 
-// GetSession Implement interface GetSession
+// GetSession Implement interface GetSession.
 func (g glueLit) GetSession(context.Context) (checkpoints.Session, error) {
 	return nil, nil
 }
 
-// OpenCheckpointsDB Implement interface OpenCheckpointsDB
+// OpenCheckpointsDB Implement interface OpenCheckpointsDB.
 func (g glueLit) OpenCheckpointsDB(context.Context, *config.Config) (checkpoints.DB, error) {
 	return nil, nil
 }
 
-// Record is used to report some information (key, value) to host TiDB, including progress, stage currently
+// Record is used to report some information (key, value) to host TiDB, including progress, stage currently.
 func (g glueLit) Record(string, uint64) {
 
 }
 
-// IsEngineLightningBackfill show if lightning backend env is set up
+// IsEngineLightningBackfill show if lightning backend env is set up.
 func IsEngineLightningBackfill(id int64) bool {
 	bcKey := GenBackendContextKey(id)
 	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey, false)
@@ -216,7 +216,7 @@ func SetEnable(id int64, value bool) {
 	}
 }
 
-// NeedRestore shows if engine is created
+// NeedRestore shows if engine is created.
 func NeedRestore(id int64) bool {
 	bcKey := GenBackendContextKey(id)
 	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey, false)

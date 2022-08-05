@@ -121,8 +121,8 @@ func (m *MemoryRoot) checkMemoryUsage(t defaultType) error {
 	return nil
 }
 
-// RegistBackendContext check if exist backend or will create one backend
-func (m *MemoryRoot) RegistBackendContext(ctx context.Context, unique bool, key string, sqlMode mysql.SQLMode) error {
+// RegisterBackendContext checks if exist backend or will create one backend.
+func (m *MemoryRoot) RegisterBackendContext(ctx context.Context, unique bool, key string, sqlMode mysql.SQLMode) error {
 	var (
 		err   error
 		bd    backend.Backend
@@ -139,7 +139,7 @@ func (m *MemoryRoot) RegistBackendContext(ctx context.Context, unique bool, key 
 	// to continue the task.
 	if !exist {
 		// Firstly, update real time memory usage, check if memory is enough.
-		m.totalMemoryConsume()
+		m.updateTotalMemoryConsumption()
 		err = m.checkMemoryUsage(AllocBackendContext)
 		if err != nil {
 			log.L().Warn(LitErrAllocMemFail, zap.String("backend key", key),
@@ -255,7 +255,7 @@ func (m *MemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, engineKey st
 			return 0, errors.New(LitErrCleanEngineErr)
 		}
 		// Firstly, update and check the current memory usage
-		m.totalMemoryConsume()
+		m.updateTotalMemoryConsumption()
 		err = m.checkMemoryUsage(AllocEngineInfo)
 		if err != nil {
 			log.L().Warn(LitErrAllocMemFail, zap.String("Backend key", bcKey),
@@ -299,7 +299,7 @@ func (m *MemoryRoot) RegistWorkerContext(engineInfoKey string, id int) (*WorkerC
 		m.mLock.Unlock()
 	}()
 	// First to check the memory usage
-	m.totalMemoryConsume()
+	m.updateTotalMemoryConsumption()
 	err = m.checkMemoryUsage(AllocWorkerContext)
 	if err != nil {
 		log.L().Error(LitErrAllocMemFail, zap.String("Engine key", engineInfoKey),
@@ -378,8 +378,8 @@ func (m *MemoryRoot) getBackendContext(bcKey string, needLog bool) (*BackendCont
 	return bc, exist
 }
 
-// totalMemoryConsume caculate current total memory consumption.
-func (m *MemoryRoot) totalMemoryConsume() {
+// updateTotalMemoryConsumption calculates and updates the current total memory consumption.
+func (m *MemoryRoot) updateTotalMemoryConsumption() {
 	var diffSize int64 = 0
 	for _, bc := range m.backendCache {
 		curSize := bc.Backend.TotalMemoryConsume()
@@ -482,7 +482,7 @@ var defaultImportVariablesTiDB = map[string]string{
 }
 
 func obtainImportantVariables() map[string]string {
-	// convert result into a map. fill in any missing variables with default values.
+	// Convert the result into a map. Fill the missing variables with default values.
 	result := make(map[string]string, len(defaultImportantVariables)+len(defaultImportVariablesTiDB))
 	for key, value := range defaultImportantVariables {
 		result[key] = value

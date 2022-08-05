@@ -612,7 +612,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
-	// Caculate worker count for lightning.
+	// Calculate worker count for lightning.
 	// if litWorkerCnt is 0 or err exist, means no resource for lightning execution,
 	// then go back use kernel way to backfill index.
 	var litWorkerCnt int

@@ -61,7 +61,7 @@ func IsEnableFastReorg() bool {
 	return false
 }
 
-// Check if PiTR is enable in cluster.
+// Check if PiTR is enabled in cluster.
 func isPiTREnable(w *worker) bool {
 	ctx, err := w.sessPool.get()
 	if err != nil {
@@ -93,8 +93,8 @@ func setNeedRestoreJob(id int64, value bool) {
 
 func prepareBackend(ctx context.Context, unique bool, job *model.Job, sqlMode mysql.SQLMode) (err error) {
 	bcKey := lit.GenBackendContextKey(job.ID)
-	// Create and regist backend of lightning
-	err = lit.GlobalEnv.LitMemRoot.RegistBackendContext(ctx, unique, bcKey, sqlMode)
+	// Create and register the backend of lightning.
+	err = lit.GlobalEnv.LitMemRoot.RegisterBackendContext(ctx, unique, bcKey, sqlMode)
 	if err != nil {
 		lit.GlobalEnv.LitMemRoot.DeleteBackendContext(bcKey)
 		return err
@@ -152,8 +152,8 @@ func cleanUpLightningEngines(reorg *reorgInfo) error {
 }
 
 // Disk quota checking and ingest data.
-func importPartialDataToTiKV(jobID int64, indexIDs int64) error {
-	return lit.UnsafeImportEngineData(jobID, indexIDs)
+func importPartialDataToTiKV(jobID int64, indexID int64) error {
+	return lit.UnsafeImportEngineData(jobID, indexID)
 }
 
 // Check if this reorg is a restore reorg task
