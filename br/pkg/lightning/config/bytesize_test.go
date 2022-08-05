@@ -89,7 +89,7 @@ func TestByteSizeTOMLDecode(t *testing.T) {
 		},
 		{
 			input: "x = ['100000']",
-			err:   "toml: incompatible types:.*",
+			err:   "toml: line 1 (last key \"x\"): incompatible types:.*",
 		},
 		{
 			input: "x = { size = '100000' }",
