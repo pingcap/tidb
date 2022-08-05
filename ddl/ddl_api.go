@@ -6024,7 +6024,7 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 			if col.IsGenerated() {
 				// Check foreign key on virtual generated columns
 				if !col.GeneratedStored {
-					return nil, infoschema.ErrCannotAddForeign
+					return nil, infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name.O, col.Name.O)
 				}
 
 				// Check wrong reference options of foreign key on stored generated columns
@@ -6268,6 +6268,10 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = checkIndexUsedByForeignKey(t.Meta(), indexInfo)
+	if err != nil {
+		return err
+	}
 
 	jobTp := model.ActionDropIndex
 	if isPK {
@@ -6288,6 +6292,56 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
+}
+
+func checkIndexUsedByForeignKey(tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
+	if len(tbInfo.ForeignKeys) == 0 && len(tbInfo.ReferredForeignKeys) == 0 {
+		return nil
+	}
+	remainIdxs := make([]*model.IndexInfo, 0, len(tbInfo.Indices))
+	for _, idx := range tbInfo.Indices {
+		if idx.ID == idxInfo.ID {
+			continue
+		}
+		remainIdxs = append(remainIdxs, idx)
+	}
+	checkFn := func(cols []model.CIStr) error {
+		if !model.IsIdxPrefixCovered(tbInfo, idxInfo, cols...) {
+			return nil
+		}
+		if tbInfo.PKIsHandle && len(cols) == 1 {
+			refColInfo := model.FindColumnInfo(tbInfo.Columns, cols[0].L)
+			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+				return nil
+			}
+		}
+		if findIndexCoveredCols(tbInfo, remainIdxs, cols...) == nil {
+			return dbterror.ErrDropIndexFk.GenWithStackByArgs(idxInfo.Name)
+		}
+		return nil
+	}
+	for _, fk := range tbInfo.ForeignKeys {
+		err := checkFn(fk.Cols)
+		if err != nil {
+			return err
+		}
+	}
+	for _, referredFK := range tbInfo.ReferredForeignKeys {
+		err := checkFn(referredFK.Cols)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func findIndexCoveredCols(tbInfo *model.TableInfo, indexs []*model.IndexInfo, cols ...model.CIStr) *model.IndexInfo {
+	for _, index := range indexs {
+		if model.IsIdxPrefixCovered(tbInfo, index, cols...) {
+			return index
+		}
+	}
+	return nil
 }
 
 func checkIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t table.Table) (bool, error) {

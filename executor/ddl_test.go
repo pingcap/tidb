@@ -486,6 +486,89 @@ func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
 	}
 }
 
+func TestDropIndexUsedByForeignKey(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		prepares []string
+		drops    []string
+		err      string
+	}{
+		{
+			prepares: []string{
+				"create table t1 (id int key, b int, index idx (b))",
+				"create table t2 (a int, b int, index idx (b), foreign key fk_b(b) references t1(b));",
+			},
+			drops: []string{
+				"alter table t1 drop index idx",
+				"alter table t2 drop index idx",
+			},
+			err: "[ddl:1553]Cannot drop index 'idx': needed in a foreign key constraint",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, b int, index idx (id, b))",
+				"create table t2 (a int, b int, index idx (b, a), foreign key fk_b(b) references t1(id));",
+			},
+			drops: []string{
+				"alter table t1 drop index idx",
+				"alter table t2 drop index idx",
+			},
+			err: "[ddl:1553]Cannot drop index 'idx': needed in a foreign key constraint",
+		},
+	}
+
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca.prepares {
+			tk.MustExec(sql)
+		}
+		for _, drop := range ca.drops {
+			// even disable foreign key check, still can't drop the index used by foreign key.
+			tk.MustExec("set @@foreign_key_checks=0;")
+			err := tk.ExecToErr(drop)
+			require.Error(t, err)
+			require.Equal(t, ca.err, err.Error())
+			tk.MustExec("set @@foreign_key_checks=1;")
+			err = tk.ExecToErr(drop)
+			require.Error(t, err)
+			require.Equal(t, ca.err, err.Error())
+		}
+	}
+	passCases := [][]string{
+		{
+			"create table t1 (id int key, b int, index idxb (b))",
+			"create table t2 (a int, b int key, index idxa (a),index idxb (b), foreign key fk_b(b) references t1(id));",
+			"alter table t1 drop index idxb",
+			"alter table t2 drop index idxa",
+			"alter table t2 drop index idxb",
+		},
+		{
+			"create table t1 (id int key, b int, index idxb (b), unique index idx(b, id))",
+			"create table t2 (a int, b int key, index idx (b, a),index idxb (b), index idxab(a, b), foreign key fk_b(b) references t1(b));",
+			"alter table t1 drop index idxb",
+			"alter table t1 add index idxb (b)",
+			"alter table t1 drop index idx",
+			"alter table t2 drop index idx",
+			"alter table t2 add index idx (b, a)",
+			"alter table t2 drop index idxb",
+			"alter table t2 drop index idxab",
+		},
+	}
+	tk.MustExec("set @@foreign_key_checks=1;")
+	for _, ca := range passCases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca {
+			tk.MustExec(sql)
+		}
+	}
+}
+
 func TestCreateTableWithForeignKeyError(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -525,6 +608,11 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 		{
 			refer: "create table t1 (id int key, a int, b int as (a) virtual, index(b));",
 			child: "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
+			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
+		},
+		{
+			refer: "create table t1 (id int key, a int, b int, index(b));",
+			child: "create table t2 (a int, b int as (a) virtual, foreign key fk_b(b) references t1(b));",
 			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
 		},
 		{
@@ -661,6 +749,14 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 			prepares: []string{
 				"create table t1 (id int key, a int, b int as (a) virtual, index(b));",
 				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b)",
+			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int, index(b));",
+				"create table t2 (a int, b int as (a) virtual);",
 			},
 			alter: "alter  table t2 add foreign key fk_b(b) references t1(b)",
 			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",

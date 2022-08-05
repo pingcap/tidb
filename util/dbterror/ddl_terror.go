@@ -395,4 +395,5 @@ var (
 	ErrNoReferencedRow2           = ClassDDL.NewStd(mysql.ErrNoReferencedRow2)
 	ErrTruncateIllegalFk          = ClassDDL.NewStd(mysql.ErrTruncateIllegalFk)
 	ErrForeignKeyCannotDropParent = ClassDDL.NewStd(mysql.ErrForeignKeyCannotDropParent)
+	ErrDropIndexFk                = ClassDDL.NewStd(mysql.ErrDropIndexFk)
 )
