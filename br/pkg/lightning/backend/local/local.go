@@ -504,7 +504,7 @@ func (local *local) TotalMemoryConsume() int64 {
 		}
 		return true
 	})
-	return memConsume
+	return memConsume + local.bufferPool.TotalSize()
 }
 
 func (local *local) checkMultiIngestSupport(ctx context.Context) error {

@@ -219,7 +219,7 @@ type AbstractBackend interface {
 	// according to the required algorithm.
 	ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error
 
-	// TotalMemoryConsume is only used for local backend to cacul memory consumption.
+	// TotalMemoryConsume counts total memory usage. This is only used for local backend.
 	TotalMemoryConsume() int64
 }
 
