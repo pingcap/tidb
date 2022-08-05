@@ -1190,6 +1190,9 @@ type SessionVars struct {
 
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
+
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
