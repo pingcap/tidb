@@ -1127,3 +1127,36 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
 	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
 }
+
+func TestSetLabels(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testUpdateLabels := func(labels, expected map[string]string) {
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.postStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, expected)
+	}
+
+	labels := map[string]string{
+		"zone": "us-west-1",
+		"test": "123",
+	}
+	testUpdateLabels(labels, labels)
+
+	updated := map[string]string{
+		"zone": "bj-1",
+	}
+	labels["zone"] = "bj-1"
+	testUpdateLabels(updated, labels)
+
+	// reset the global variable
+	config.GetGlobalConfig().Labels = map[string]string{}
+}
