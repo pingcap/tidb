@@ -17,10 +17,13 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"math/rand"
+	"strconv"
 	"strings"
 	"testing"
 
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -1136,4 +1139,175 @@ func TestIssue27532(t *testing.T) {
 	tk.MustQuery(`select * from t2`).Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 2", "3 3 3 3", "4 4 4 4"))
 	tk.MustQuery(`select * from t2`).Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 2", "3 3 3 3", "4 4 4 4"))
 	tk.MustExec(`drop table t2`)
+}
+
+func TestRangeColumnsMultiColumn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RangeColumnsMulti")
+	tk.MustExec("use RangeColumnsMulti")
+	// TODO: Add experimental flag like tidb_enable_multi_column_range_columns_partitioning ?
+
+	tk.MustGetErrCode(`create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)`+
+		`(partition p0 values less than (NULL,NULL,NULL))`,
+		mysql.ErrWrongTypeColumnValue)
+	tk.MustGetErrCode(`create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)`+
+		`(partition p1 values less than (`+strconv.FormatInt(math.MinInt32-1, 10)+`,'0000-00-00',""))`,
+		mysql.ErrWrongTypeColumnValue)
+	tk.MustExec(`create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)` +
+		`(partition p1 values less than (` + strconv.FormatInt(math.MinInt32, 10) + `,'0000-00-00',""),` +
+		`partition p2 values less than (10,'2022-01-01',"Wow"),` +
+		`partition p3 values less than (11,'2022-01-01',MAXVALUE),` +
+		`partition p4 values less than (MAXVALUE,'2022-01-01',"Wow"))`)
+	tk.MustGetErrCode(`insert into t values (`+strconv.FormatInt(math.MinInt32, 10)+`,'0000-00-00',null)`, mysql.ErrTruncatedWrongValue)
+	tk.MustExec(`insert into t values (NULL,NULL,NULL)`)
+	tk.MustExec(`set @@sql_mode = ''`)
+	tk.MustExec(`insert into t values (` + strconv.FormatInt(math.MinInt32, 10) + `,'0000-00-00',null)`)
+	tk.MustExec(`insert into t values (` + strconv.FormatInt(math.MinInt32, 10) + `,'0000-00-00',"")`)
+	tk.MustExec(`insert into t values (5,'0000-00-00',null)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`insert into t values (5,'0000-00-00',"Hi")`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`set @@sql_mode = DEFAULT`)
+	tk.MustExec(`insert into t values (10,'2022-01-01',"Hi")`)
+	tk.MustExec(`insert into t values (10,'2022-01-01',"Wow")`)
+	tk.MustExec(`insert into t values (10,'2022-01-01',"Wowe")`)
+	tk.MustExec(`insert into t values (11,'2022-01-01',"Wow")`)
+	tk.MustExec(`insert into t values (1,null,"Wow")`)
+	tk.MustExec(`insert into t values (NULL,'2022-01-01',"Wow")`)
+	tk.MustExec(`insert into t values (11,null,"Wow")`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select a,b,c from t partition(p1)`).Sort().Check(testkit.Rows(
+		"-2147483648 0000-00-00 00:00:00 <nil>",
+		"<nil> 2022-01-01 00:00:00 Wow",
+		"<nil> <nil> <nil>"))
+	tk.MustQuery(`select a,b,c from t partition(p2)`).Sort().Check(testkit.Rows(
+		"-2147483648 0000-00-00 00:00:00 ",
+		"1 <nil> Wow",
+		"10 2022-01-01 00:00:00 Hi",
+		"5 0000-00-00 00:00:00 <nil>",
+		"5 0000-00-00 00:00:00 Hi"))
+	tk.MustQuery(`select a,b,c from t partition(p3)`).Sort().Check(testkit.Rows(
+		"10 2022-01-01 00:00:00 Wow",
+		"10 2022-01-01 00:00:00 Wowe",
+		"11 2022-01-01 00:00:00 Wow",
+		"11 <nil> Wow"))
+	tk.MustQuery(`select * from t where a = 10 and b = "2022-01-01" and c = "Wow"`).Sort().Check(testkit.Rows(
+		"10 2022-01-01 00:00:00 Wow"))
+	tk.MustQuery(`select * from t where a = 10 and b = "2022-01-01" and c <= "Wow"`).Sort().Check(testkit.Rows(
+		"10 2022-01-01 00:00:00 Hi",
+		"10 2022-01-01 00:00:00 Wow"))
+	tk.MustQuery(`select * from t where a = 10 and b = "2022-01-01" and c < "Wow"`).Sort().Check(testkit.Rows(
+		"10 2022-01-01 00:00:00 Hi"))
+	tk.MustQuery(`select * from t where a = 10 and b = "2022-01-01" and c > "Wow"`).Sort().Check(testkit.Rows(
+		"10 2022-01-01 00:00:00 Wowe"))
+	tk.MustQuery(`select * from t where a = 10 and b = "2022-01-01" and c >= "Wow"`).Sort().Check(testkit.Rows(
+		"10 2022-01-01 00:00:00 Wow",
+		"10 2022-01-01 00:00:00 Wowe"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c = "Wow"`).Check(testkit.Rows(
+		"TableReader 0.52 root partition:p3 data:Selection",
+		`└─Selection 0.52 cop[tikv]  eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), eq(rangecolumnsmulti.t.c, "Wow")`,
+		`  └─TableFullScan 12.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c <= "Wow"`).Check(testkit.Rows(
+		`TableReader 0.83 root partition:p2,p3 data:Selection`,
+		`└─Selection 0.83 cop[tikv]  eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")`,
+		`  └─TableFullScan 12.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c < "Wow"`).Check(testkit.Rows(
+		`TableReader 0.31 root partition:p2 data:Selection`,
+		`└─Selection 0.31 cop[tikv]  eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")`,
+		`  └─TableFullScan 12.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c > "Wow"`).Check(testkit.Rows(
+		`TableReader 0.10 root partition:p3 data:Selection`,
+		`└─Selection 0.10 cop[tikv]  eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), gt(rangecolumnsmulti.t.c, "Wow")`,
+		`  └─TableFullScan 12.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c >= "Wow"`).Check(testkit.Rows(
+		`TableReader 0.62 root partition:p3 data:Selection`,
+		`└─Selection 0.62 cop[tikv]  eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), ge(rangecolumnsmulti.t.c, "Wow")`,
+		`  └─TableFullScan 12.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow"`).Sort().Check(testkit.Rows(
+		"-2147483648 0000-00-00 00:00:00 ",
+		"10 2022-01-01 00:00:00 Hi",
+		"5 0000-00-00 00:00:00 Hi"))
+	tk.MustQuery(`select * from t where a = 10 and b = "2022-01-01" and c = "Wow"`).Sort().Check(testkit.Rows(
+		"10 2022-01-01 00:00:00 Wow"))
+	tk.MustQuery(`select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow"`).Sort().Check(testkit.Rows(
+		"-2147483648 0000-00-00 00:00:00 ",
+		"10 2022-01-01 00:00:00 Hi",
+		"10 2022-01-01 00:00:00 Wow",
+		"5 0000-00-00 00:00:00 Hi"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow"`).Check(testkit.Rows(
+		`TableReader 1.50 root partition:p1,p2,p3 data:Selection`,
+		`└─Selection 1.50 cop[tikv]  le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")`,
+		`  └─TableFullScan 12.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`select * from t where a <= 11 and b <= '2022-01-01' and c < "Wow"`).Sort().Check(testkit.Rows(
+		"-2147483648 0000-00-00 00:00:00 ",
+		"10 2022-01-01 00:00:00 Hi",
+		"5 0000-00-00 00:00:00 Hi"))
+	// TODO: p3 should not be included!!! The range optimizer will just use a <= 10 here :(
+	tk.MustQuery(`explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow"`).Check(testkit.Rows(
+		`TableReader 1.50 root partition:p1,p2,p3 data:Selection`,
+		`└─Selection 1.50 cop[tikv]  le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")`,
+		`  └─TableFullScan 12.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow"`).Check(testkit.Rows(
+		`TableReader 4.00 root partition:p1,p2,p3 data:Selection`,
+		`└─Selection 4.00 cop[tikv]  le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")`,
+		`  └─TableFullScan 12.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`select * from t where a = 2 and b = "2022-01-02" and c = "Hi" or b = '2022-01-01' and c = "Wow"`).Sort().Check(testkit.Rows(
+		"10 2022-01-01 00:00:00 Wow",
+		"11 2022-01-01 00:00:00 Wow",
+		"<nil> 2022-01-01 00:00:00 Wow"))
+	tk.MustQuery(`select * from t where a = 2 and b = "2022-01-02" and c = "Hi" or a = 10 and b = '2022-01-01' and c = "Wow"`).Sort().Check(testkit.Rows("10 2022-01-01 00:00:00 Wow"))
+	tk.MustQuery(`select * from t where a = 2 and b = "2022-01-02" and c = "Hi"`).Sort().Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a = 2 and b = "2022-01-02" and c < "Hi"`).Sort().Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a < 2`).Sort().Check(testkit.Rows(
+		"-2147483648 0000-00-00 00:00:00 ",
+		"-2147483648 0000-00-00 00:00:00 <nil>",
+		"1 <nil> Wow"))
+	tk.MustQuery(`select * from t where a <= 2 and b <= "2022-01-02" and c < "Hi"`).Sort().Check(testkit.Rows(
+		"-2147483648 0000-00-00 00:00:00 "))
+	tk.MustQuery(`explain format = 'brief' select * from t where a < 2`).Check(testkit.Rows(
+		"TableReader 3.00 root partition:p1,p2 data:Selection",
+		"└─Selection 3.00 cop[tikv]  lt(rangecolumnsmulti.t.a, 2)",
+		"  └─TableFullScan 12.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from t where a < 2 and a > -22`).Sort().Check(testkit.Rows(
+		"1 <nil> Wow"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a < 2 and a > -22`).Check(testkit.Rows(
+		"TableReader 1.00 root partition:p2 data:Selection",
+		"└─Selection 1.00 cop[tikv]  gt(rangecolumnsmulti.t.a, -22), lt(rangecolumnsmulti.t.a, 2)",
+		"  └─TableFullScan 12.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from t where c = ""`).Sort().Check(testkit.Rows("-2147483648 0000-00-00 00:00:00 "))
+	tk.MustQuery(`explain format = 'brief' select * from t where c = ""`).Check(testkit.Rows(
+		"TableReader 1.00 root partition:all data:Selection",
+		`└─Selection 1.00 cop[tikv]  eq(rangecolumnsmulti.t.c, "")`,
+		"  └─TableFullScan 12.00 cop[tikv] table:t keep order:false"))
+}
+
+func TestRangeColumnsTemp(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RColumnsMulti")
+	tk.MustExec("use RColumnsMulti")
+	tk.MustExec(`create table t (a int, b datetime, c varchar(255), key (a,b,c))`)
+	tk.MustGetErrCode(`insert into t values (`+strconv.FormatInt(math.MinInt32, 10)+`,'0000-00-00',null)`, mysql.ErrTruncatedWrongValue)
+	tk.MustExec(`insert into t values (NULL,NULL,NULL)`)
+	tk.MustExec(`set @@sql_mode = ''`)
+	tk.MustExec(`insert into t values (` + strconv.FormatInt(math.MinInt32, 10) + `,'0000-00-00',null)`)
+	tk.MustExec(`insert into t values (` + strconv.FormatInt(math.MinInt32, 10) + `,'0000-00-00',"")`)
+	tk.MustExec(`insert into t values (5,'0000-00-00',null)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`insert into t values (5,'0000-00-00',"Hi")`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`set @@sql_mode = DEFAULT`)
+	tk.MustExec(`insert into t values (10,'2022-01-01',"Hi")`)
+	tk.MustExec(`insert into t values (10,'2022-01-01',"Wow")`)
+	tk.MustExec(`insert into t values (11,'2022-01-01',"Wow")`)
+	tk.MustExec(`insert into t values (1,null,"Wow")`)
+	tk.MustExec(`insert into t values (NULL,'2022-01-01',"Wow")`)
+	tk.MustExec(`insert into t values (11,null,"Wow")`)
+	tk.MustExec(`select a,b from t where b = '2022-01-01'`)
+	tk.MustExec(`select a,b,c from t where a = 1`)
 }

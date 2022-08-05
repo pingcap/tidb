@@ -115,6 +115,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 }
 
 func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
+	// a partitioned table cannot rely on session context/sql modes, so use a default one!
 	ctx := mock.NewContext()
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
@@ -1013,14 +1014,14 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 
 func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
 	var err error
-	var isNull bool
 	partitionExprs := t.partitionExpr.UpperBounds
 	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		evalBuffer.SetDatums(r...)
-		ret, isNull, err := partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
-		if err != nil {
+		ret, isNull, err2 := partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
+		if err2 != nil {
+			err = err2
 			return true // Break the search.
 		}
 		if isNull {
@@ -1033,10 +1034,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if isNull {
-		idx = 0
-	}
-	if idx < 0 || idx >= len(partitionExprs) {
+	if idx >= len(partitionExprs) {
 		// The data does not belong to any of the partition returns `table has no partition for value %s`.
 		var valueMsg string
 		if pi.Expr != "" {

@@ -1609,7 +1609,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 		// For range expression and range columns
 		if len(pi.Columns) == 0 {
 			sql, paramList = buildCheckSQLForRangeExprPartition(pi, index, schemaName, tableName)
-		} else if len(pi.Columns) == 1 {
+		} else {
 			sql, paramList = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
 		}
 	case model.PartitionTypeList:
@@ -1742,7 +1742,7 @@ func getInValues(pi *model.PartitionInfo, index int) []string {
 }
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
-	if piDefs > uint64(PartitionCountLimit) {
+	if piDefs > PartitionCountLimit {
 		return errors.Trace(dbterror.ErrTooManyPartitions)
 	}
 	return nil

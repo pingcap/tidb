@@ -15,6 +15,8 @@
 package core
 
 import (
+	"math"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -72,11 +74,7 @@ func TestCanBePrune(t *testing.T) {
 
 	queryExpr = tc.expr("report_updated > unix_timestamp('2008-05-01 00:00:00')")
 	partitionRangeForCNFExpr(tc.sctx, queryExpr, pruner, fullRange(len(lessThan.data)))
-	// TODO: Uncomment the check after fixing issue https://github.com/pingcap/tidb/issues/12028
-	// require.True(t, equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}))
-	// report_updated > unix_timestamp('2008-05-01 00:00:00') is converted to gt(t.t.report_updated, <nil>)
-	// Because unix_timestamp('2008-05-01 00:00:00') is fold to constant int 1564761600, and compare it with timestamp (report_updated)
-	// need to convert 1564761600 to a timestamp, during that step, an error happen and the result is set to <nil>
+	require.True(t, equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}))
 }
 
 func TestPruneUseBinarySearch(t *testing.T) {
@@ -160,7 +158,7 @@ func (tc *testCtx) expr(expr string) []expression.Expression {
 func TestPartitionRangeForExpr(t *testing.T) {
 	tc := prepareTestCtx(t, "create table t (a int)", "a")
 	lessThan := lessThanDataInt{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true}
-	prunner := &rangePruner{lessThan, tc.columns[0], nil, monotoneModeInvalid}
+	pruner := &rangePruner{lessThan, tc.columns[0], nil, monotoneModeInvalid}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
@@ -183,7 +181,7 @@ func TestPartitionRangeForExpr(t *testing.T) {
 		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
 		require.NoError(t, err)
 		result := fullRange(lessThan.length())
-		result = partitionRangeForExpr(tc.sctx, expr[0], prunner, result)
+		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v", ca.input)
 	}
 }
@@ -408,5 +406,65 @@ func TestPartitionRangePruner2Date(t *testing.T) {
 		result := fullRange(len(lessThan))
 		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v", ca.input)
+	}
+}
+
+func TestPartitionRangeColumnsForExpr(t *testing.T) {
+	tc := prepareTestCtx(t, "create table t (a int unsigned, b int, c int)", "a,b")
+	lessThan := make([][]*expression.Expression, 0, 6)
+	partDefs := [][]int64{{3, -99}, {4, math.MinInt64}, {4, 1}, {4, 4}, {4, 7}, {4, 11}, {4, 14}, {4, 17}, {4, -99}, {7, 0}, {11, -99}, {14, math.MinInt64}, {17, 17}, {-99, math.MinInt64}}
+	for i := range partDefs {
+		l := make([]*expression.Expression, 0, 2)
+		for j := range []int{0, 1} {
+			v := partDefs[i][j]
+			var e *expression.Expression
+			if v == -99 {
+				e = nil // MAXVALUE
+			} else {
+				expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, strconv.FormatInt(v, 10), tc.schema, tc.names)
+				require.NoError(t, err)
+				tmp := expr[0]
+				e = &tmp
+			}
+			l = append(l, e)
+		}
+		lessThan = append(lessThan, l)
+	}
+	pruner := &rangeColumnsPruner{lessThan, tc.columns}
+	cases := []struct {
+		input  string
+		result partitionRangeOR
+	}{
+		{"c = 3", partitionRangeOR{{0, len(partDefs)}}},
+		{"b > 3 AND c = 3", partitionRangeOR{{0, len(partDefs)}}},
+		{"a = 5 AND c = 3", partitionRangeOR{{8, 9}}},
+		// Should really be 2..8 ?!? it is equal!?!
+		{"a = 4 AND c = 3", partitionRangeOR{{1, 9}}},
+		{"b > 3", partitionRangeOR{{0, len(partDefs)}}},
+		{"a > 3", partitionRangeOR{{0, len(partDefs)}}},
+		{"a < 3", partitionRangeOR{{0, 1}}},
+		{"a >= 11", partitionRangeOR{{3, 6}}},
+		{"a > 11", partitionRangeOR{{3, 6}}},
+		{"a < 11", partitionRangeOR{{0, 3}}},
+		{"a = 16", partitionRangeOR{{4, 5}}},
+		{"a > 66", partitionRangeOR{{5, 6}}},
+		{"a > 2 and a < 10", partitionRangeOR{{0, 3}}},
+		{"a < 2 or a >= 15", partitionRangeOR{{0, 1}, {4, 6}}},
+		{"a is null", partitionRangeOR{{0, 1}}},
+		{"12 > a", partitionRangeOR{{0, 4}}},
+		{"4 <= a", partitionRangeOR{{1, 6}}},
+		{"(a,b) < (4,4)", partitionRangeOR{{0, 3}}},
+		{"a < 4 OR (a = 4 AND b < 4)", partitionRangeOR{{0, 3}}},
+		{"(a,b,c) < (4,4,4)", partitionRangeOR{{0, 4}}},
+		{"a < 4 OR (a = 4 AND b < 4) OR (a = 4 AND b = 4 AND c < 4)", partitionRangeOR{{0, 4}}},
+		{"(a,b,c) >= (4,7,4)", partitionRangeOR{{4, len(partDefs)}}},
+	}
+
+	for _, ca := range cases {
+		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
+		require.NoError(t, err)
+		result := fullRange(len(lessThan))
+		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
+		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
