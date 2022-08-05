@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
-	"github.com/pingcap/tidb/types"
 )
 
 var (
@@ -78,20 +77,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	})
 
 	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
-	var (
-		finalPlan plannercore.Plan
-		names     types.NameSlice
-	)
-	if execAST, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		finalPlan, names, err = planner.OptimizeExecStmt(ctx, c.Ctx, execAST, is)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		finalPlan, names, err = planner.Optimize(ctx, c.Ctx, stmtNode, is)
-		if err != nil {
-			return nil, err
-		}
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
+	if err != nil {
+		return nil, err
 	}
 
 	failpoint.Inject("assertStmtCtxIsStaleness", func(val failpoint.Value) {

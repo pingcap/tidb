@@ -97,6 +97,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}()
 	}
 
+	// handle the execute statement
+	if execAST, ok := node.(*ast.ExecuteStmt); ok {
+		p, names, err := OptimizeExecStmt(ctx, sctx, execAST, is)
+		return p, names, err
+	}
+
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	originStmtHints, originStmtHintsOffs, warns := handleStmtHints(tableHints)
 	sessVars.StmtCtx.StmtHints = originStmtHints
@@ -362,16 +368,6 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 		return nil, nil, err
 	}
 	if execPlan, ok := p.(*core.Execute); ok {
-		// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
-		// engine in not read only stmt.
-		sessVars := sctx.GetSessionVars()
-		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(execAst, sessVars) {
-			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			defer func() {
-				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-			}()
-		}
-
 		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
 		return execPlan, execPlan.OutputNames(), err
 	}
