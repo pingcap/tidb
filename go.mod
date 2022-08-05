@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/storage v1.21.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v0.12.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v0.2.0
-	github.com/BurntSushi/toml v1.1.0
+	github.com/BurntSushi/toml v1.2.0
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/Shopify/sarama v1.29.0
@@ -99,9 +99,9 @@ require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/ashanbrown/makezero v1.1.1
 	github.com/charithe/durationcheck v0.0.9
-	github.com/daixiang0/gci v0.4.3
+	github.com/daixiang0/gci v0.5.0
 	github.com/golangci/gofmt v0.0.0-20190930125516-244bba706f1a
-	github.com/golangci/golangci-lint v1.47.2
+	github.com/golangci/golangci-lint v1.47.3
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
 	github.com/golangci/misspell v0.3.5
 	github.com/golangci/unconvert v0.0.0-20180507085042-28b1c447d1f4
@@ -112,7 +112,7 @@ require (
 	github.com/nishanths/predeclared v0.2.2
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
 	github.com/tdakkota/asciicheck v0.1.1
-	honnef.co/go/tools v0.3.2
+	honnef.co/go/tools v0.3.3
 )
 
 require (
@@ -204,7 +204,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20190707220628-8d4bc4ba7749 // indirect
-	github.com/sirupsen/logrus v1.8.1 // indirect
+	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/stathat/consistent v1.0.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.10 // indirect
 	github.com/tklauser/numcpus v0.4.0 // indirect
@@ -241,5 +241,3 @@ replace github.com/pingcap/tidb/parser => ./parser
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
-
-replace honnef.co/go/tools => honnef.co/go/tools v0.3.3
