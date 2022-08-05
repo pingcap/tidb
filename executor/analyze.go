@@ -265,6 +265,7 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 			}
 		}
+		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 	}
 	return err
 }

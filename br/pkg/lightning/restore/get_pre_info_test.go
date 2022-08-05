@@ -509,6 +509,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	lnConfig.TikvImporter.Backend = config.BackendLocal
 	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db)
 	require.NoError(t, err)
+	require.Equal(t, lnConfig, targetGetter.cfg)
 
 	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
 		WillReturnError(&mysql_sql_driver.MySQLError{

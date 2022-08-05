@@ -46,7 +46,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20220711062932-08b02befd813
+	github.com/pingcap/kvproto v0.0.0-20220804022843-f006036b1277
 	github.com/pingcap/log v1.1.0
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -97,6 +97,7 @@ require (
 
 require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+	github.com/ashanbrown/makezero v1.1.1
 	github.com/charithe/durationcheck v0.0.9
 	github.com/daixiang0/gci v0.4.3
 	github.com/golangci/gofmt v0.0.0-20190930125516-244bba706f1a
