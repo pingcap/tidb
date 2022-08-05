@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "addindexlittest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "adindex_test.go",
+        "common.go"
+        "workload.go",
+        "workload_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//statistics/handle",
+        "//testkit",
+        "//tests/realtikvtest",
+        "@com_github_stretchr_testify//require",
+    ],
+)
