@@ -750,6 +750,11 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("1"))
 	tk.MustExec("set session tidb_enable_analyze_snapshot = 0")
 	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+
+	// test variables `init_connect'
+	tk.MustGetErrCode("set global init_connect = '-1'", mysql.ErrWrongTypeForVar)
+	tk.MustGetErrCode("set global init_connect = 'invalidstring'", mysql.ErrWrongTypeForVar)
+	tk.MustExec("set global init_connect = 'select now(); select timestamp()'")
 }
 
 func TestGetSetNoopVars(t *testing.T) {
@@ -1657,6 +1662,7 @@ func TestSetClusterConfig(t *testing.T) {
 	require.EqualError(t, tk.ExecToErr("set config 'example.com:1111' log.level='info'"), "instance example.com:1111 is not found in this cluster") // name resolves.
 	require.EqualError(t, tk.ExecToErr("set config tikv log.level=null"), "can't set config to null")
 	require.EqualError(t, tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), "instance 1.1.1.1:1111 is not found in this cluster")
+	require.EqualError(t, tk.ExecToErr("set config tikv `raftstore.max-peer-down-duration`=DEFAULT"), "Unknown DEFAULT for SET CONFIG")
 
 	httpCnt := 0
 	tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
