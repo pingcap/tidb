@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -879,15 +880,12 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
-	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
-	metas := restore.StreamMetadataSet{
-		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
-			log.Info("Updating metadata.", zap.String("file", path),
-				zap.Int("data-file-before", len(last.GetFiles())),
-				zap.Int("data-file-after", len(current.GetFiles())))
-			return cfg.DryRun
-		},
-	}
+	metas := restore.StreamMetadataSet{}
+	readMetaDone := console.ShowTask("Reading Metadata... ",
+		glue.WithTimeCost(),
+		glue.WithCallbackExtraField("meta-count", func() string {
+			return strconv.Itoa(metas.MetaLen())
+		}))
 	if err := metas.LoadUntil(ctx, storage, cfg.Until); err != nil {
 		return err
 	}
@@ -930,21 +928,32 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		glue.WithConstExtraField("kv-count", kvCount),
 		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
 	)
+	defer p.Close()
 	worker := utils.NewWorkerPool(128, "delete files")
 	const keepFirstNFailure = 16
 	var notDeleted []string
 	for _, f := range removed {
 		worker.Apply(func() {
+			// NOTE: We cannot get the returned value from deleting, so polling the context here again.
+			//       Maybe we'd better use an `ErrGroup` and fail fast for some types of error (or if len(notDeleted) > N)?
+			//       (It would be a disaster if we have waiting for 6hrs and eventually found out nothing deleted :| )
+			if ctx.Err() != nil {
+				p.Close()
+				return
+			}
 			defer p.Inc()
-			if !cfg.DryRun {
-				if err := storage.DeleteFile(ctx, f.Path); err != nil {
-					log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-					notDeleted = append(notDeleted, f.Path)
-				}
+			if cfg.DryRun {
+				return
+			}
+			if err := storage.DeleteFile(ctx, f.Path); err != nil {
+				log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
+				notDeleted = append(notDeleted, f.Path)
 			}
 		})
 	}
-	p.Wait()
+	if err := p.Wait(ctx); err != nil {
+		return err
+	}
 	if len(notDeleted) > 0 {
 		console.Println("Files below are not deleted due to error, you may clear it manually, check log for detail error:")
 		console.Println("- Total", em(len(notDeleted)), "items.")
@@ -958,16 +967,20 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
-
 	// remove metadata
-	removeMetaDone := console.ShowTask("Removing metadata... ", glue.WithTimeCost())
-	if !cfg.DryRun {
-		if err := metas.DoWriteBack(ctx, storage); err != nil {
-			return err
-		}
+	pw := console.StartProgressBar("Removing Metadata", metas.PendingMeta(), glue.WithTimeCost(), glue.WithConstExtraField("metas", metas.PendingMeta()))
+	defer pw.Close()
+	metas.BeforeDoWriteBack = func(path string, last, current *backuppb.Metadata) (skip bool) {
+		log.Info("Updating metadata.", zap.String("file", path),
+			zap.Int("data-file-before", len(last.GetFiles())),
+			zap.Int("data-file-after", len(current.GetFiles())))
+		pw.Inc()
+		return cfg.DryRun
 	}
-	removeMetaDone()
-	return nil
+	if err := metas.DoWriteBack(ctx, storage); err != nil {
+		return err
+	}
+	return pw.Wait(ctx)
 }
 
 // RunStreamRestore restores stream log.

@@ -3,6 +3,7 @@
 package glue
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -49,6 +50,13 @@ func WithConstExtraField(key string, value interface{}) ExtraField {
 	}
 }
 
+// WithCallbackExtraField adds an extra field with the callback.
+func WithCallbackExtraField(key string, value func() string) ExtraField {
+	return func() [2]string {
+		return [2]string{key, value()}
+	}
+}
+
 type pbProgress struct {
 	bar      *mpb.Bar
 	progress *mpb.Progress
@@ -62,7 +70,7 @@ func printFinalMessage(extraFields []ExtraField) func() string {
 			field := fieldFunc()
 			fields = append(fields, fmt.Sprintf("%s = %s", field[0], color.New(color.Bold).Sprint(field[1])))
 		}
-		return fmt.Sprintf("%s; %s\n", color.HiGreenString("DONE"), strings.Join(fields, ", "))
+		return fmt.Sprintf("%s; %s", color.HiGreenString("DONE"), strings.Join(fields, ", "))
 	}
 }
 
@@ -75,19 +83,32 @@ func (p pbProgress) Inc() {
 // Close marks the progress as 100% complete and that Inc() can no longer be
 // called.
 func (p pbProgress) Close() {
+	if p.bar.Completed() || p.bar.Aborted() {
+		return
+	}
 	p.bar.Abort(false)
 }
 
 // Wait implements the ProgressWaiter interface.
-func (p pbProgress) Wait() {
-	p.progress.Wait()
+func (p pbProgress) Wait(ctx context.Context) error {
+	ch := make(chan struct{})
+	go func() {
+		p.progress.Wait()
+		close(ch)
+	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-ch:
+		return nil
+	}
 }
 
 // ProgressWaiter is the extended `Progress``: which provides a `wait` method to
 // allow caller wait until all unit in the progress finished.
 type ProgressWaiter interface {
 	Progress
-	Wait()
+	Wait(context.Context) error
 }
 
 // cbOnComplete like `decor.OnComplete`, however allow the message provided by a function.
@@ -116,7 +137,7 @@ func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFiel
 		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").Tip("-", "/", "-", "\\", "|", "/").TipOnComplete("-"),
 		mpb.BarFillerClearOnComplete(),
 		mpb.PrependDecorators(decor.OnComplete(decor.Name(greenTitle), fmt.Sprintf("%s...", title))),
-		mpb.AppendDecorators(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"), printFinalMessage(extraFields)))),
+		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"), printFinalMessage(extraFields))), color.RedString("ABORT"))),
 	)
 
 	// If total is zero, finish right now.
