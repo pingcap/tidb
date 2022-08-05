@@ -211,6 +211,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
 	e.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
+	// We should set IsReadonlyStmt to true for plan builder phase.
+	vars.StmtCtx.IsReadonlyStmt = true
 	destBuilder, _ := plannercore.NewPlanBuilder().Init(e.ctx, ret.InfoSchema, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {

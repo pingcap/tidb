@@ -39,7 +39,7 @@ func IsReadOnly(node Node) bool {
 		return checker.readOnly
 	case *ExplainStmt:
 		return !st.Analyze || IsReadOnly(st.Stmt)
-	case *DoStmt, *ShowStmt, *PrepareStmt:
+	case *DoStmt, *ShowStmt:
 		return true
 	case *SetOprStmt:
 		for _, sel := range node.(*SetOprStmt).SelectList.Selects {
