@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -615,85 +616,119 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return
 	}
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	var viewSchema *expression.Schema
+	var viewOutputNames types.NameSlice
+	if tbl.IsView() {
+		var viewLogicalPlan plannercore.Plan
+		// Build plan is not thread safe, there will be concurrency on sessionctx.
+		if err := runWithSystemSession(sctx, func(s sessionctx.Context) error {
+			planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
+			var err error
+			viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}); err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return
+		}
+
+		viewSchema = viewLogicalPlan.Schema()
+		viewOutputNames = viewLogicalPlan.OutputNames()
+	}
+
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
 		}
+
+		ft := &col.FieldType
+		if viewSchema != nil {
+			// If this is a view, replace the column with the view column.
+			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
+			if idx >= 0 {
+				col1 := viewSchema.Columns[idx]
+				ft = col1.GetType()
+			}
+		}
+
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
-		colLen, decimal := col.Flen, col.Decimal
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
+		colLen, decimal := ft.Flen, ft.Decimal
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.Tp)
 		if decimal == types.UnspecifiedLength {
 			decimal = defaultDecimal
 		}
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen
 		}
-		if col.Tp == mysql.TypeSet {
+		if ft.Tp == mysql.TypeSet {
 			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
 			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.Elems {
+			for _, ele := range ft.Elems {
 				colLen += len(ele)
 			}
-			if len(col.Elems) != 0 {
-				colLen += (len(col.Elems) - 1)
+			if len(ft.Elems) != 0 {
+				colLen += (len(ft.Elems) - 1)
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if col.Tp == mysql.TypeEnum {
+			charOctLen = calcCharOctLength(colLen, ft.Charset)
+		} else if ft.Tp == mysql.TypeEnum {
 			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
 			// the longest string in the enum is 'cdef'
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.Elems {
+			for _, ele := range ft.Elems {
 				if len(ele) > colLen {
 					colLen = len(ele)
 				}
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if types.IsString(col.Tp) {
+			charOctLen = calcCharOctLength(colLen, ft.Charset)
+		} else if types.IsString(ft.Tp) {
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if types.IsTypeFractionable(col.Tp) {
+			charOctLen = calcCharOctLength(colLen, ft.Charset)
+		} else if types.IsTypeFractionable(ft.Tp) {
 			datetimePrecision = decimal
-		} else if types.IsTypeNumeric(col.Tp) {
+		} else if types.IsTypeNumeric(ft.Tp) {
 			numericPrecision = colLen
-			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
+			if ft.Tp != mysql.TypeFloat && ft.Tp != mysql.TypeDouble {
 				numericScale = decimal
 			} else if decimal != -1 {
 				numericScale = decimal
 			}
 		}
-		columnType := col.FieldType.InfoSchemaStr()
+		columnType := ft.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
 		}
 		record := types.MakeDatums(
-			infoschema.CatalogVal,                // TABLE_CATALOG
-			schema.Name.O,                        // TABLE_SCHEMA
-			tbl.Name.O,                           // TABLE_NAME
-			col.Name.O,                           // COLUMN_NAME
-			i+1,                                  // ORIGINAL_POSITION
-			columnDefault,                        // COLUMN_DEFAULT
-			columnDesc.Null,                      // IS_NULLABLE
-			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
-			charMaxLen,                           // CHARACTER_MAXIMUM_LENGTH
-			charOctLen,                           // CHARACTER_OCTET_LENGTH
-			numericPrecision,                     // NUMERIC_PRECISION
-			numericScale,                         // NUMERIC_SCALE
-			datetimePrecision,                    // DATETIME_PRECISION
-			columnDesc.Charset,                   // CHARACTER_SET_NAME
-			columnDesc.Collation,                 // COLLATION_NAME
-			columnType,                           // COLUMN_TYPE
-			columnDesc.Key,                       // COLUMN_KEY
-			columnDesc.Extra,                     // EXTRA
-			"select,insert,update,references",    // PRIVILEGES
-			columnDesc.Comment,                   // COLUMN_COMMENT
-			col.GeneratedExprString,              // GENERATION_EXPRESSION
+			infoschema.CatalogVal,              // TABLE_CATALOG
+			schema.Name.O,                      // TABLE_SCHEMA
+			tbl.Name.O,                         // TABLE_NAME
+			col.Name.O,                         // COLUMN_NAME
+			i+1,                                // ORIGINAL_POSITION
+			columnDefault,                      // COLUMN_DEFAULT
+			columnDesc.Null,                    // IS_NULLABLE
+			types.TypeToStr(ft.Tp, ft.Charset), // DATA_TYPE
+			charMaxLen,                         // CHARACTER_MAXIMUM_LENGTH
+			charOctLen,                         // CHARACTER_OCTET_LENGTH
+			numericPrecision,                   // NUMERIC_PRECISION
+			numericScale,                       // NUMERIC_SCALE
+			datetimePrecision,                  // DATETIME_PRECISION
+			columnDesc.Charset,                 // CHARACTER_SET_NAME
+			columnDesc.Collation,               // COLLATION_NAME
+			columnType,                         // COLUMN_TYPE
+			columnDesc.Key,                     // COLUMN_KEY
+			columnDesc.Extra,                   // EXTRA
+			"select,insert,update,references",  // PRIVILEGES
+			columnDesc.Comment,                 // COLUMN_COMMENT
+			col.GeneratedExprString,            // GENERATION_EXPRESSION
 		)
 		e.rows = append(e.rows, record)
 	}
