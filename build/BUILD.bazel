@@ -127,6 +127,7 @@ nogo(
                "//build/linter/gci:gci",
                "//build/linter/gosec:gosec",
                "//build/linter/ineffassign:ineffassign",
+               "//build/linter/makezero:makezero",
                "//build/linter/misspell:misspell",
                "//build/linter/prealloc:prealloc",
                "//build/linter/predeclared:predeclared",
@@ -134,6 +135,7 @@ nogo(
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
+                   "//build/linter/allrevive:allrevive",
                    "//build/linter/errcheck:errcheck",
                    "//build/linter/revive:revive",
                ],

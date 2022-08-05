@@ -70,14 +70,16 @@ var (
 	ErrCreatePDClient = errors.Normalize("create pd client error", errors.RFCCodeText("Lightning:PD:ErrCreatePDClient"))
 	ErrPauseGC        = errors.Normalize("pause gc error", errors.RFCCodeText("Lightning:PD:ErrPauseGC"))
 
-	ErrCheckKVVersion      = errors.Normalize("check tikv version error", errors.RFCCodeText("Lightning:KV:ErrCheckKVVersion"))
-	ErrCreateKVClient      = errors.Normalize("create kv client error", errors.RFCCodeText("Lightning:KV:ErrCreateKVClient"))
-	ErrCheckMultiIngest    = errors.Normalize("check multi-ingest support error", errors.RFCCodeText("Lightning:KV:ErrCheckMultiIngest"))
-	ErrKVEpochNotMatch     = errors.Normalize("epoch not match", errors.RFCCodeText("Lightning:KV:EpochNotMatch"))
-	ErrKVNotLeader         = errors.Normalize("not leader", errors.RFCCodeText("Lightning:KV:NotLeader"))
-	ErrKVServerIsBusy      = errors.Normalize("server is busy", errors.RFCCodeText("Lightning:KV:ServerIsBusy"))
-	ErrKVRegionNotFound    = errors.Normalize("region not found", errors.RFCCodeText("Lightning:KV:RegionNotFound"))
-	ErrKVReadIndexNotReady = errors.Normalize("read index not ready", errors.RFCCodeText("Lightning:KV:ReadIndexNotReady"))
+	ErrCheckKVVersion        = errors.Normalize("check tikv version error", errors.RFCCodeText("Lightning:KV:ErrCheckKVVersion"))
+	ErrCreateKVClient        = errors.Normalize("create kv client error", errors.RFCCodeText("Lightning:KV:ErrCreateKVClient"))
+	ErrCheckMultiIngest      = errors.Normalize("check multi-ingest support error", errors.RFCCodeText("Lightning:KV:ErrCheckMultiIngest"))
+	ErrKVEpochNotMatch       = errors.Normalize("epoch not match", errors.RFCCodeText("Lightning:KV:EpochNotMatch"))
+	ErrKVNotLeader           = errors.Normalize("not leader", errors.RFCCodeText("Lightning:KV:NotLeader"))
+	ErrKVServerIsBusy        = errors.Normalize("server is busy", errors.RFCCodeText("Lightning:KV:ServerIsBusy"))
+	ErrKVRegionNotFound      = errors.Normalize("region not found", errors.RFCCodeText("Lightning:KV:RegionNotFound"))
+	ErrKVReadIndexNotReady   = errors.Normalize("read index not ready", errors.RFCCodeText("Lightning:KV:ReadIndexNotReady"))
+	ErrKVIngestFailed        = errors.Normalize("ingest tikv failed", errors.RFCCodeText("Lightning:KV:ErrKVIngestFailed"))
+	ErrKVRaftProposalDropped = errors.Normalize("raft proposal dropped", errors.RFCCodeText("Lightning:KV:ErrKVRaftProposalDropped"))
 
 	ErrUnknownBackend     = errors.Normalize("unknown backend %s", errors.RFCCodeText("Lightning:Restore:ErrUnknownBackend"))
 	ErrCheckLocalFile     = errors.Normalize("cannot find local file for table: %s engineDir: %s", errors.RFCCodeText("Lightning:Restore:ErrCheckLocalFile"))
@@ -210,7 +212,6 @@ func NormalizeOrWrapErr(rfcErr *errors.Error, err error, args ...interface{}) er
 	normalizedErr := NormalizeError(err)
 	if berrors.Is(normalizedErr, ErrUnknown) {
 		return rfcErr.Wrap(err).GenWithStackByArgs(args...)
-	} else {
-		return normalizedErr
 	}
+	return normalizedErr
 }

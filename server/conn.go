@@ -402,7 +402,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 			return err
 		}
 	}
-	defAuthPlugin, err := variable.GetGlobalSystemVar(cc.ctx.GetSessionVars(), variable.DefaultAuthPlugin)
+	defAuthPlugin, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(variable.DefaultAuthPlugin)
 	if err != nil {
 		return err
 	}
@@ -782,7 +782,6 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 
 // authSha implements the caching_sha2_password specific part of the protocol.
 func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
-
 	const (
 		ShaCommand       = 1
 		RequestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
@@ -1009,7 +1008,7 @@ func (cc *clientConn) skipInitConnect() bool {
 
 // initResultEncoder initialize the result encoder for current connection.
 func (cc *clientConn) initResultEncoder(ctx context.Context) {
-	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetResults)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetResults)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
@@ -1018,7 +1017,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
-	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetClient)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetClient)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
@@ -1508,17 +1507,17 @@ func (cc *clientConn) flush(ctx context.Context) error {
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
 	msg := cc.ctx.LastMessage()
-	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount())
+	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.OKHeader)
 }
 
-func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16) error {
+func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16, header byte) error {
 	enclen := 0
 	if len(msg) > 0 {
 		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
 	}
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
-	data = append(data, mysql.OKHeader)
+	data = append(data, header)
 	data = dumpLengthEncodedInt(data, affectedRows)
 	data = dumpLengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -1536,6 +1535,9 @@ func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows,
 		return err
 	}
 
+	if header == mysql.EOFHeader {
+		return nil
+	}
 	return cc.flush(ctx)
 }
 
@@ -1583,6 +1585,11 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 // serverStatus, a flag bit represents server information
 // in the packet.
 func (cc *clientConn) writeEOF(serverStatus uint16) error {
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		logutil.Logger(context.Background()).Error(
+			"Attempt to write EOF to client that has the ClientDeprecateEOF flag set", zap.Stack("stack"))
+	}
+
 	data := cc.alloc.AllocWithLen(4, 9)
 
 	data = append(data, mysql.EOFHeader)
@@ -1873,7 +1880,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 
 	var pointPlans []plannercore.Plan
 	if len(stmts) > 1 {
-
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
 		// by early terminating the first statement, and then running an entirely
@@ -2135,7 +2141,7 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
-	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
+	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount(), mysql.OKHeader)
 }
 
 // handleFieldList returns the field list for a table.
@@ -2161,6 +2167,15 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
+	}
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
+			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.EOFHeader)
+		if err != nil {
+			return err
+		}
+		err = cc.pkt.flush()
+		return err
 	}
 	if err := cc.writeEOF(0); err != nil {
 		return err
@@ -2216,6 +2231,9 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
+	}
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		return nil
 	}
 	return cc.writeEOF(serverStatus)
 }
@@ -2296,10 +2314,19 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
+
 	if stmtDetail != nil {
 		start = time.Now()
 	}
-	err := cc.writeEOF(serverStatus)
+
+	var err error
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
+			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.EOFHeader)
+	} else {
+		err = cc.writeEOF(serverStatus)
+	}
+
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
 	}

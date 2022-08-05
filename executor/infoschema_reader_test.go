@@ -37,8 +37,7 @@ import (
 
 func TestInspectionTables(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210624")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	instances := []string{
 		"pd,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,0",
@@ -78,8 +77,7 @@ func TestInspectionTables(t *testing.T) {
 }
 
 func TestProfiling(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows())
 	tk.MustExec("set @@profiling=1")
@@ -87,8 +85,7 @@ func TestProfiling(t *testing.T) {
 }
 
 func TestSchemataTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
@@ -119,8 +116,7 @@ func TestSchemataTables(t *testing.T) {
 }
 
 func TestTableIDAndIndexID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop table if exists test.t")
 	tk.MustExec("create table test.t (a int, b int, primary key(a), key k1(b))")
@@ -131,8 +127,7 @@ func TestTableIDAndIndexID(t *testing.T) {
 }
 
 func TestSchemataCharacterSet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE `foo` DEFAULT CHARACTER SET = 'utf8mb4'")
 	tk.MustQuery("select default_character_set_name, default_collation_name FROM information_schema.SCHEMATA  WHERE schema_name = 'foo'").Check(
@@ -141,8 +136,7 @@ func TestSchemataCharacterSet(t *testing.T) {
 }
 
 func TestViews(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DEFINER='root'@'localhost' VIEW test.v1 AS SELECT 1")
 	tk.MustQuery("select TABLE_COLLATION is null from INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='VIEW'").Check(testkit.Rows("1"))
@@ -151,8 +145,7 @@ func TestViews(t *testing.T) {
 }
 
 func TestColumnsTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -160,19 +153,29 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't'").Check(testkit.Rows(
 		"def test t bit 1 b'100' YES bit <nil> <nil> 10 0 <nil> <nil> <nil> bit(10) unsigned   select,insert,update,references  "))
 	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("set time_zone='+08:00'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (b timestamp(3) NOT NULL DEFAULT '1970-01-01 08:00:01.000')")
+	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("1970-01-01 08:00:01.000"))
+	tk.MustExec("set time_zone='+04:00'")
+	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("1970-01-01 04:00:01.000"))
+	tk.MustExec("set time_zone=default")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bit DEFAULT (rand()))")
+	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("rand()"))
 }
 
 func TestEngines(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
 }
 
 // https://github.com/pingcap/tidb/issues/25467.
 func TestDataTypesMaxLengthAndOctLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_oct_length;")
 	tk.MustExec("create database test_oct_length;")
@@ -206,8 +209,7 @@ func TestDataTypesMaxLengthAndOctLength(t *testing.T) {
 }
 
 func TestDDLJobs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_ddl_jobs")
 	tk.MustQuery("select db_name, job_type from information_schema.DDL_JOBS limit 1").Check(
@@ -251,8 +253,7 @@ func TestDDLJobs(t *testing.T) {
 }
 
 func TestKeyColumnUsage(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';").Check(
@@ -278,8 +279,7 @@ func TestKeyColumnUsage(t *testing.T) {
 }
 
 func TestUserPrivileges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// test the privilege of new user for information_schema.table_constraints
 	tk.MustExec("create user constraints_tester")
@@ -346,8 +346,7 @@ func TestUserPrivileges(t *testing.T) {
 }
 
 func TestUserPrivilegesTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
 
@@ -370,8 +369,7 @@ func TestUserPrivilegesTable(t *testing.T) {
 }
 
 func TestDataForTableStatsField(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
@@ -419,8 +417,7 @@ func TestDataForTableStatsField(t *testing.T) {
 }
 
 func TestPartitionsTable(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
@@ -489,9 +486,33 @@ func TestPartitionsTable(t *testing.T) {
 	tk.MustExec("drop table test_partitions")
 }
 
+// https://github.com/pingcap/tidb/issues/32693.
+func TestPartitionTablesStatsCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`
+CREATE TABLE e ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30)) PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (50),
+        PARTITION p1 VALUES LESS THAN (100),
+        PARTITION p2 VALUES LESS THAN (150),
+        PARTITION p3 VALUES LESS THAN (MAXVALUE));`)
+	tk.MustExec(`CREATE TABLE e2 ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30));`)
+	// Load the stats cache.
+	tk.MustQuery(`SELECT PARTITION_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'e';`)
+	// p0: 1 row, p3: 3 rows
+	tk.MustExec(`INSERT INTO e VALUES (1669, "Jim", "Smith"), (337, "Mary", "Jones"), (16, "Frank", "White"), (2005, "Linda", "Black");`)
+	tk.MustExec(`set tidb_enable_exchange_partition='on';`)
+	tk.MustExec(`ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2;`)
+	// p0: 1 rows, p3: 3 rows
+	tk.MustExec(`INSERT INTO e VALUES (41, "Michael", "Green");`)
+	tk.MustExec(`analyze table e;`) // The stats_meta should be effective immediately.
+	tk.MustQuery(`SELECT PARTITION_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'e';`).
+		Check(testkit.Rows("p0 1", "p1 0", "p2 0", "p3 3"))
+}
+
 func TestMetricTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use information_schema")
 	tk.MustQuery("select count(*) > 0 from `METRICS_TABLES`").Check(testkit.Rows("1"))
@@ -500,22 +521,19 @@ func TestMetricTables(t *testing.T) {
 }
 
 func TestTableConstraintsTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
 }
 
 func TestTableSessionVar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
 }
 
 func TestForAnalyzeStatus(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	analyzeStatusTable := "CREATE TABLE `ANALYZE_STATUS` (\n" +
 		"  `TABLE_SCHEMA` varchar(64) DEFAULT NULL,\n" +
@@ -580,8 +598,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 }
 
 func TestForServersInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO").Rows()
 	require.Len(t, rows, 1)
@@ -606,8 +623,7 @@ func TestForTableTiFlashReplica(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -623,8 +639,7 @@ func TestForTableTiFlashReplica(t *testing.T) {
 }
 
 func TestSequences(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE SEQUENCE test.seq maxvalue 10000000")
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 1000 0 1 10000000 1 1 "))
@@ -637,16 +652,14 @@ func TestSequences(t *testing.T) {
 }
 
 func TestTiFlashSystemTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("select * from information_schema.TIFLASH_TABLES;")
 	tk.MustExec("select * from information_schema.TIFLASH_SEGMENTS;")
 }
 
 func TestTablesPKType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_int (a int primary key, b int)")
@@ -662,8 +675,7 @@ func TestTablesPKType(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/32459.
 func TestJoinSystemTableContainsView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a timestamp, b int);")
@@ -720,8 +732,7 @@ SELECT
 
 // https://github.com/pingcap/tidb/issues/36426.
 func TestShowColumnsWithSubQueryView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 

@@ -196,10 +196,7 @@ func swapAndOverrideFile(ctx context.Context, s storage.ExternalStorage, path st
 	if err := s.WriteFile(ctx, path, data); err != nil {
 		return err
 	}
-	if err := s.DeleteFile(ctx, backup); err != nil {
-		return err
-	}
-	return nil
+	return s.DeleteFile(ctx, backup)
 }
 
 const (

@@ -369,9 +369,13 @@ type Request struct {
 	// ResourceGroupTagger indicates the kv request task group tagger.
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
-	Paging bool
-	// MinPagingSize is used when Paging is true.
-	MinPagingSize uint64
+	Paging struct {
+		Enable bool
+		// MinPagingSize is used when Paging is true.
+		MinPagingSize uint64
+		// MaxPagingSize is used when Paging is true.
+		MaxPagingSize uint64
+	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
 }

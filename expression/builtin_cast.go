@@ -519,11 +519,13 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 		return res, isNull, err
 	}
 	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()); !mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 {
+		//revive:disable:empty-lines
 		res = types.NewDecFromInt(val)
 		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
 		// NOTE: the following expressions are equal (so choose the more efficient one):
 		// `b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 && val < 0`
 		// `b.inUnion && !unsignedArgs0 && val < 0`
+		//revive:enable:empty-lines
 	} else if b.inUnion && !unsignedArgs0 && val < 0 {
 		res = &types.MyDecimal{}
 	} else {
@@ -1786,8 +1788,7 @@ const inUnionCastContext inCastContext = 0
 func CanImplicitEvalInt(expr Expression) bool {
 	switch f := expr.(type) {
 	case *ScalarFunction:
-		switch f.FuncName.L {
-		case ast.DayName:
+		if f.FuncName.L == ast.DayName {
 			return true
 		}
 	}
@@ -1941,7 +1942,9 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
 
 	if expr.GetType().EvalType() == types.ETInt {
+		// todo set the flen returned by minimalDecimalLenForHoldingInteger
 		tp.SetFlen(mysql.MaxIntWidth)
+		tp.SetDecimal(0)
 	}
 	if tp.GetFlen() == types.UnspecifiedLength || tp.GetFlen() > mysql.MaxDecimalWidth {
 		tp.SetFlen(mysql.MaxDecimalWidth)
