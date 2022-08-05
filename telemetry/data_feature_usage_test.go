@@ -466,8 +466,7 @@ func TestTxnSavepointUsageInfo(t *testing.T) {
 }
 
 func TestAddIndexLightning(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	lit.GlobalEnv.SetMinQuota()
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
