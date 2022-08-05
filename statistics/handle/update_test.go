@@ -2307,8 +2307,7 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 		func(planCache bool) {
 			store, dom := testkit.CreateMockStoreAndDomain(t)
 			tmp := testkit.NewTestKit(t, store)
-			defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
-			tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(planCache))
+			tmp.MustExec("set tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(planCache))
 			tk := testkit.NewTestKit(t, store)
 
 			originalVal2 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
