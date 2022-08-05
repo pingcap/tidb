@@ -307,8 +307,9 @@ func TestFlushPlanCache(t *testing.T) {
 func TestFlushPlanCacheWithoutPCEnable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
 	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
+	tk2.MustExec(`set tidb_enable_prepared_plan_cache=0`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
