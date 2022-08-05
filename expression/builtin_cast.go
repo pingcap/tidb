@@ -1931,6 +1931,25 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+func minimalDecimalLenForHoldingInteger(tp byte) int {
+	switch tp {
+	case mysql.TypeTiny:
+		return 3
+	case mysql.TypeShort:
+		return 5
+	case mysql.TypeInt24:
+		return 8
+	case mysql.TypeLong:
+		return 10
+	case mysql.TypeLonglong:
+		return 20
+	case mysql.TypeYear:
+		return 4
+	default:
+		return mysql.MaxIntWidth
+	}
+}
+
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type of expr is
 // not type decimal, otherwise, returns `expr` directly.
 func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
@@ -1942,8 +1961,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
 
 	if expr.GetType().EvalType() == types.ETInt {
-		// todo set the flen returned by minimalDecimalLenForHoldingInteger
-		tp.SetFlen(mysql.MaxIntWidth)
+		tp.SetFlen(minimalDecimalLenForHoldingInteger(expr.GetType().GetType()))
 		tp.SetDecimal(0)
 	}
 	if tp.GetFlen() == types.UnspecifiedLength || tp.GetFlen() > mysql.MaxDecimalWidth {
