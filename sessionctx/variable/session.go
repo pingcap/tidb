@@ -1590,6 +1590,7 @@ func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
 	s.replicaRead = val
 }
 
+// IsReplicaReadClosestAdaptive returns whether adaptive closest replica can be enabled.
 func (s *SessionVars) IsReplicaReadClosestAdaptive() bool {
 	return s.replicaRead == kv.ReplicaReadClosestAdaptive && IsAdaptiveReplicaReadEnabled()
 }
