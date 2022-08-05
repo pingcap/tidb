@@ -2422,8 +2422,8 @@ func TestExchangePartitionAutoID(t *testing.T) {
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustExec("insert into nt values (NULL)")
-	tk.MustQuery("select * from nt").Check(testkit.Rows("1", "42000001"))
-	tk.MustQuery("select * from pt").Sort().Check(testkit.Rows("1", "4", "40000000"))
+	tk.MustQuery("select count(*) from nt where a >= 4000000").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from pt where a >= 4000000").Check(testkit.Rows("1"))
 }
 
 func TestExchangePartitionExpressIndex(t *testing.T) {
