@@ -34,7 +34,6 @@ def go_deps():
         name = "co_honnef_go_tools",
         build_file_proto_mode = "disable_global",
         importpath = "honnef.co/go/tools",
-        replace = "honnef.co/go/tools",
         sum = "h1:oDx7VAwstgpYpb3wv0oxiZlxY+foCpRAwY7Vk6XpAgA=",
         version = "v0.3.3",
     )
@@ -85,8 +84,8 @@ def go_deps():
         name = "com_github_alingse_asasalint",
         build_file_proto_mode = "disable",
         importpath = "github.com/alingse/asasalint",
-        sum = "h1:qqGPDTV0ff0tWHN/nnIlSdjlU/EwRPaUY4SfpE1rnms=",
-        version = "v0.0.10",
+        sum = "h1:SFwnQXJ49Kx/1GghOFz1XGqHYKp21Kq1nHad/0WQRnw=",
+        version = "v0.0.11",
     )
 
     go_repository(
@@ -318,8 +317,8 @@ def go_deps():
         name = "com_github_burntsushi_toml",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/BurntSushi/toml",
-        sum = "h1:ksErzDEI1khOiGPgpwuI7x2ebx/uXQNw7xJpn9Eq1+I=",
-        version = "v1.1.0",
+        sum = "h1:Rt8g24XnyGTyglgET/PRUNlrUeu9F5L+7FilkXfZgs0=",
+        version = "v1.2.0",
     )
     go_repository(
         name = "com_github_burntsushi_xgb",
@@ -672,8 +671,8 @@ def go_deps():
         name = "com_github_daixiang0_gci",
         build_file_proto_mode = "disable",
         importpath = "github.com/daixiang0/gci",
-        sum = "h1:wf7x0xRjQqTlA2dzHTI0A/xPyp7VcBatBG9nwGatwbQ=",
-        version = "v0.4.3",
+        sum = "h1:3+Z8nb/4dhJQYjpEbG4wt5na+KFJJTZ++PVEq/MVKX4=",
+        version = "v0.5.0",
     )
 
     go_repository(
@@ -982,8 +981,8 @@ def go_deps():
         name = "com_github_gaijinentertainment_go_exhaustruct_v2",
         build_file_proto_mode = "disable",
         importpath = "github.com/GaijinEntertainment/go-exhaustruct/v2",
-        sum = "h1:V9xVvhKbLt7unNEGAruK1xXglyc668Pq3Xx0MNTNqpo=",
-        version = "v2.2.0",
+        sum = "h1:DGdS4FlsdM6OkluXOhgkvwx05ZjD3Idm9WqtYnOmSuY=",
+        version = "v2.2.2",
     )
 
     go_repository(
@@ -1336,8 +1335,8 @@ def go_deps():
         name = "com_github_golangci_golangci_lint",
         build_file_proto_mode = "disable",
         importpath = "github.com/golangci/golangci-lint",
-        sum = "h1:qvMDVv49Hrx3PSEXZ0bD/yhwSbhsOihQjFYCKieegIw=",
-        version = "v1.47.2",
+        sum = "h1:ri7A2DgtFpxgqcMSsU3qIT0IBm/SCdYgXlvmJx4szUU=",
+        version = "v1.47.3",
     )
     go_repository(
         name = "com_github_golangci_gosec",
@@ -2976,8 +2975,8 @@ def go_deps():
         name = "com_github_ryancurrah_gomodguard",
         build_file_proto_mode = "disable",
         importpath = "github.com/ryancurrah/gomodguard",
-        sum = "h1:ww2fsjqocGCAFamzvv/b8IsRduuHHeK2MHTcTxZTQX8=",
-        version = "v1.2.3",
+        sum = "h1:CpMSDKan0LtNGGhPrvupAoLeObRFjND8/tU1rEOtBp4=",
+        version = "v1.2.4",
     )
     go_repository(
         name = "com_github_ryanrolds_sqlclosecheck",
@@ -3129,8 +3128,8 @@ def go_deps():
         name = "com_github_sirupsen_logrus",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/sirupsen/logrus",
-        sum = "h1:dJKuHgqk1NNQlqoA6BTlM1Wf9DOH3NBjQyu0h9+AZZE=",
-        version = "v1.8.1",
+        sum = "h1:trlNQbNUG3OdDrDil03MCb1H2o9nJ1x4/5LYw7byDE0=",
+        version = "v1.9.0",
     )
     go_repository(
         name = "com_github_sivchari_containedctx",
@@ -3143,8 +3142,8 @@ def go_deps():
         name = "com_github_sivchari_nosnakecase",
         build_file_proto_mode = "disable",
         importpath = "github.com/sivchari/nosnakecase",
-        sum = "h1:ZBvAu1H3uteN0KQ0IsLpIFOwYgPEhKLyv2ahrVkub6M=",
-        version = "v1.5.0",
+        sum = "h1:7QkpWIRMe8x25gckkFd2A5Pi6Ymo0qgr4JrhGt95do8=",
+        version = "v1.7.0",
     )
 
     go_repository(
@@ -3619,8 +3618,8 @@ def go_deps():
         name = "com_gitlab_bosi_decorder",
         build_file_proto_mode = "disable",
         importpath = "gitlab.com/bosi/decorder",
-        sum = "h1:LRfb3lP6mZWjUzpMOCLTVjcnl/SqZWBWmKNqQvMocQs=",
-        version = "v0.2.2",
+        sum = "h1:gX4/RgK16ijY8V+BRQHAySfQAb354T7/xQpDB2n10P0=",
+        version = "v0.2.3",
     )
 
     go_repository(
