@@ -306,12 +306,11 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	// build logical plan
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
-
+	node.Accept(hintProcessor)
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	builder.Init(sctx, is, hintProcessor)
-
-	p, err := buildLogicalPlan(ctx, sctx, node, hintProcessor, builder)
+	p, err := buildLogicalPlan(ctx, sctx, node, builder)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -364,14 +363,13 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	builder.Init(sctx, is, nil)
 
-	p, err := buildLogicalPlan(ctx, sctx, execAst, nil, builder)
+	p, err := buildLogicalPlan(ctx, sctx, execAst, builder)
 	if err != nil {
 		return nil, nil, err
 	}
 	if execPlan, ok := p.(*core.Execute); ok {
 		// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
 		// engine in not read only stmt.
-		// TODO: this part will be removed later
 		sessVars := sctx.GetSessionVars()
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(execAst, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -387,13 +385,10 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	return nil, nil, err
 }
 
-func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, hintProcessor *hint.BlockHintProcessor, builder *core.PlanBuilder) (core.Plan, error) {
+func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
-	if hintProcessor != nil {
-		node.Accept(hintProcessor)
-	}
 
 	failpoint.Inject("mockRandomPlanID", func() {
 		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec

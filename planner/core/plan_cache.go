@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -59,13 +58,13 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
 	var latestSchemaVersion int64
 
-	if prepared.UseCache {
-		txnManger := sessiontxn.GetTxnManager(sctx)
-		if err = txnManger.AdviseWarmup(); err != nil {
-			return nil, nil, err
+	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // for point query plan
+		if plan, names, ok, err := getPointQueryPlan(prepared, sessVars, stmtCtx); ok {
+			return plan, names, err
 		}
+	}
 
-		// generate the plan cache key
+	if prepared.UseCache {
 		bindSQL, ignorePlanCache = GetBindSQL4PlanCache(sctx, preparedStmt)
 		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
 			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
@@ -81,12 +80,6 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 
 	isBinProtocol := len(binProtoVars) > 0
 	varsNum, binVarTypes, txtVarTypes := parseParamTypes(sctx, isBinProtocol, binProtoVars, txtProtoVars)
-
-	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // for point query plan
-		if plan, names, ok, err := getPointQueryPlan(prepared, sessVars, stmtCtx); ok {
-			return plan, names, err
-		}
-	}
 
 	if prepared.UseCache && !ignorePlanCache { // for general plans
 		if plan, names, ok, err := getGeneralPlan(ctx, sctx, cacheKey, bindSQL, is, preparedStmt,
