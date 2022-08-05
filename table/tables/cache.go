@@ -116,6 +116,8 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 		logutil.BgLogger().Info(">> read from cache",
 			zap.Int64("tid", c.tableID),
 			zap.Uint64("ts", ts),
+			zap.Uint64("cache.start_ts", data.Start),
+			zap.Uint64("cache.lease", data.Lease),
 			zap.Bool("loading", data.MemBuffer == nil))
 		return data.MemBuffer, data.MemBuffer == nil
 	}
@@ -313,8 +315,11 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts, leaseDuration)
 	newLease, err := handle.RenewReadLease(context.Background(), tid, data.Lease, lease)
-	if err != nil && !kv.IsTxnRetryableError(err) {
-		log.Warn("Renew read lease error", zap.Error(err))
+	if err != nil {
+		if !kv.IsTxnRetryableError(err) {
+			log.Warn("Renew read lease error", zap.Error(err))
+		}
+		return
 	}
 	if newLease > 0 {
 		logutil.BgLogger().Info(">> update cache data (renew lease)",
