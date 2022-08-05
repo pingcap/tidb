@@ -189,8 +189,7 @@ type Execute struct {
 	baseSchemaProducer
 
 	Name         string
-	TxtProtoVars []expression.Expression // parsed variables under text protocol
-	BinProtoVars []types.Datum           // parsed variables under binary protocol
+	TxtProtoVars []expression.Expression
 	ExecID       uint32
 	Stmt         ast.StmtNode
 	StmtType     string
@@ -229,41 +228,27 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
 
-	paramLen := len(e.BinProtoVars)
-	if paramLen > 0 {
-		// for binary protocol execute, argument is placed in vars.BinProtoVars
-		if len(prepared.Params) != paramLen {
-			return errors.Trace(ErrWrongParamCount)
-		}
-		vars.PreparedParams = e.BinProtoVars
-		for i, val := range vars.PreparedParams {
-			param := prepared.Params[i].(*driver.ParamMarkerExpr)
-			param.Datum = val
-			param.InExecute = true
-		}
-	} else {
-		// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
-		if len(prepared.Params) != len(e.TxtProtoVars) {
-			return errors.Trace(ErrWrongParamCount)
-		}
+	// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
+	if len(prepared.Params) != len(e.TxtProtoVars) {
+		return errors.Trace(ErrWrongParamCount)
+	}
 
-		for i, usingVar := range e.TxtProtoVars {
-			val, err := usingVar.Eval(chunk.Row{})
-			if err != nil {
-				return err
-			}
-			param := prepared.Params[i].(*driver.ParamMarkerExpr)
-			if isGetVarBinaryLiteral(sctx, usingVar) {
-				binVal, convErr := val.ToBytes()
-				if convErr != nil {
-					return convErr
-				}
-				val.SetBinaryLiteral(binVal)
-			}
-			param.Datum = val
-			param.InExecute = true
-			vars.PreparedParams = append(vars.PreparedParams, val)
+	for i, usingVar := range e.TxtProtoVars {
+		val, err := usingVar.Eval(chunk.Row{})
+		if err != nil {
+			return err
 		}
+		param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		if isGetVarBinaryLiteral(sctx, usingVar) {
+			binVal, convErr := val.ToBytes()
+			if convErr != nil {
+				return convErr
+			}
+			val.SetBinaryLiteral(binVal)
+		}
+		param.Datum = val
+		param.InExecute = true
+		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
 
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
@@ -297,7 +282,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		prepared.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
-	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.BinProtoVars, e.TxtProtoVars)
+	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.TxtProtoVars)
 	if err != nil {
 		return err
 	}
