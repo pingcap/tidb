@@ -223,7 +223,7 @@ func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.Scalar
 
 - Function Process
   - Extract evrey binary expression from `condition` to a expression.Expression slice `dnfItems`.
-  - Make a new expression.Expression slice `newAccessItems` to store new conditions  after processing tidb_shard prefix.
+  - Make a new expression.Expression slice `newAccessItems` to store new conditions after processing tidb_shard prefix.
   - Traverse every `item` in slice `dnfItems`, if it's a `LogicAnd` expression, extracts every binary expression from it to a slice `cnfItems` and calls function `addExprPrefix4CNFCond(cnfItems)`  to add tidb_shard prefix if need; if it's a `ast.EQ` or a `ast.In` expression, calls function `addExprPrefix4CNFCond([]Expression{item})` to add tidb_shard prefix if need.
   - Make a new `LogicOR` condition by `newAccessItems`, return it.
 
