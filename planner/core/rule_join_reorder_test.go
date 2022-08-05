@@ -339,7 +339,7 @@ func TestLeadingJoinHint4OuterJoin(t *testing.T) {
 	runJoinReorderTestData(t, tk, "TestLeadingJoinHint4OuterJoin")
 }
 
-func TestOuterJoinWIthAInnerJoinGroupContainsCartesianProd(t *testing.T) {
+func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
