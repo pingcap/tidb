@@ -2113,8 +2113,8 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	tk.MustExec("insert into pt values (2)")
 
 	tk.MustExec("alter table e18 exchange partition p0 with table e17")
-	tk.MustQuery("select * /*+ read_from_storage(tiflash[pt]) */ from e18").Check(testkit.Rows("1"))
-	tk.MustQuery("select * /*+ read_from_storage(tiflash[pt]) */ from e17").Check(testkit.Rows("2"))
+	tk.MustQuery("select * /*+ read_from_storage(tiflash[e18]) */ from e18").Check(testkit.Rows("1"))
+	tk.MustQuery("select * /*+ read_from_storage(tiflash[e17]) */ from e17").Check(testkit.Rows("2"))
 }
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
