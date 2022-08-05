@@ -16,6 +16,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -53,6 +54,7 @@ func NewDebugCommand() *cobra.Command {
 	meta.AddCommand(decodeBackupMetaCommand())
 	meta.AddCommand(encodeBackupMetaCommand())
 	meta.AddCommand(setPDConfigCommand())
+	meta.AddCommand(searchStreamBackupCommand())
 	meta.Hidden = true
 
 	return meta
@@ -88,6 +90,9 @@ func newCheckSumCommand() *cobra.Command {
 				err = json.Unmarshal(schema.Db, dbInfo)
 				if err != nil {
 					return errors.Trace(err)
+				}
+				if schema.Table == nil {
+					continue
 				}
 				tblInfo := &model.TableInfo{}
 				err = json.Unmarshal(schema.Table, tblInfo)
@@ -216,6 +221,10 @@ func newBackupMetaValidateCommand() *cobra.Command {
 			tableIDMap := make(map[int64]int64)
 			// Simulate to create table
 			for _, table := range tables {
+				if table.Info == nil {
+					// empty database.
+					continue
+				}
 				indexIDAllocator := mockid.NewIDAllocator()
 				newTable := new(model.TableInfo)
 				tableID, _ := tableIDAllocator.Alloc()
@@ -229,7 +238,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 						Name: indexInfo.Name,
 					}
 				}
-				rules := restore.GetRewriteRules(newTable, table.Info, 0)
+				rules := restore.GetRewriteRules(newTable, table.Info, 0, true)
 				rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
 				tableIDMap[table.Info.ID] = int64(tableID)
 			}
@@ -322,7 +331,7 @@ func encodeBackupMetaCommand() *cobra.Command {
 			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
 				return errors.Trace(err)
 			}
-			_, s, err := task.GetStorage(ctx, &cfg)
+			_, s, err := task.GetStorage(ctx, cfg.Storage, &cfg)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -376,7 +385,7 @@ func setPDConfigCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 
-			mgr, err := task.NewMgr(ctx, tidbGlue, cfg.PD, cfg.TLS, task.GetKeepalive(&cfg), cfg.CheckRequirements, false)
+			mgr, err := task.NewMgr(ctx, tidbGlue, cfg.PD, cfg.TLS, task.GetKeepalive(&cfg), cfg.CheckRequirements, false, conn.NormalVersionChecker)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -390,4 +399,72 @@ func setPDConfigCommand() *cobra.Command {
 		},
 	}
 	return pdConfigCmd
+}
+
+func searchStreamBackupCommand() *cobra.Command {
+	searchBackupCMD := &cobra.Command{
+		Use:   "search-log-backup",
+		Short: "search log backup by key",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithCancel(GetDefaultContext())
+			defer cancel()
+
+			searchKey, err := cmd.Flags().GetString("search-key")
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if searchKey == "" {
+				return errors.New("key param can't be empty")
+			}
+			keyBytes, err := hex.DecodeString(searchKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			startTs, err := cmd.Flags().GetUint64("start-ts")
+			if err != nil {
+				return errors.Trace(err)
+			}
+			endTs, err := cmd.Flags().GetUint64("end-ts")
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			var cfg task.Config
+			if err = cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return errors.Trace(err)
+			}
+			_, s, err := task.GetStorage(ctx, cfg.Storage, &cfg)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			comparator := restore.NewStartWithComparator()
+			bs := restore.NewStreamBackupSearch(s, comparator, keyBytes)
+			bs.SetStartTS(startTs)
+			bs.SetEndTs(endTs)
+
+			kvs, err := bs.Search(ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			kvsBytes, err := json.MarshalIndent(kvs, "", "  ")
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			cmd.Println("search result")
+			cmd.Println(string(kvsBytes))
+
+			return nil
+		},
+	}
+
+	flags := searchBackupCMD.Flags()
+	flags.String("search-key", "", "hex encoded key")
+	flags.Uint64("start-ts", 0, "search from start TSO, default is no start TSO limit")
+	flags.Uint64("end-ts", 0, "search to end TSO, default is no end TSO limit")
+
+	return searchBackupCMD
 }

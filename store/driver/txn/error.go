@@ -53,7 +53,7 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 
 	if handle.IsInt() {
 		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
-			if mysql.HasUnsignedFlag(pkInfo.Flag) {
+			if mysql.HasUnsignedFlag(pkInfo.GetFlag()) {
 				handleStr := strconv.FormatUint(uint64(handle.IntValue()), 10)
 				return genKeyExistsError(name, handleStr, nil)
 			}
@@ -72,7 +72,7 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 
 	cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
 	for _, col := range tblInfo.Columns {
-		cols[col.ID] = &col.FieldType
+		cols[col.ID] = &(col.FieldType)
 	}
 	handleColIDs := make([]int64, 0, len(idxInfo.Columns))
 	for _, col := range idxInfo.Columns {

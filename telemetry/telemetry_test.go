@@ -25,13 +25,14 @@ import (
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 func TestTrackingID(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+	integration.BeforeTest(t)
 
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
@@ -53,11 +54,11 @@ func TestPreview(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+	integration.BeforeTest(t)
 
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
@@ -106,11 +107,11 @@ func TestReport(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+	integration.BeforeTest(t)
 
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()

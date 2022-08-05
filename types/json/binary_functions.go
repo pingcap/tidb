@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
+	"golang.org/x/exp/slices"
 )
 
 // Type returns type of BinaryJSON as string.
@@ -221,6 +222,10 @@ func (bj BinaryJSON) Extract(pathExprList []PathExpression) (ret BinaryJSON, fou
 		// even if len(pathExprList) equals to 1.
 		found = true
 		ret = buf[0]
+		// Fix https://github.com/pingcap/tidb/issues/30352
+		if pathExprList[0].ContainsAnyAsterisk() {
+			ret = buildBinaryArray(buf)
+		}
 	} else {
 		found = true
 		ret = buildBinaryArray(buf)
@@ -854,8 +859,8 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 		for key := range keyValMap {
 			keys = append(keys, []byte(key))
 		}
-		sort.Slice(keys, func(i, j int) bool {
-			return bytes.Compare(keys[i], keys[j]) < 0
+		slices.SortFunc(keys, func(i, j []byte) bool {
+			return bytes.Compare(i, j) < 0
 		})
 		length = len(keys)
 		values := make([]BinaryJSON, 0, len(keys))
@@ -937,8 +942,8 @@ func mergeBinaryObject(objects []BinaryJSON) BinaryJSON {
 			}
 		}
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return bytes.Compare(keys[i], keys[j]) < 0
+	slices.SortFunc(keys, func(i, j []byte) bool {
+		return bytes.Compare(i, j) < 0
 	})
 	values := make([]BinaryJSON, len(keys))
 	for i, key := range keys {
@@ -988,8 +993,8 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 	switch obj.TypeCode {
 	case TypeCodeObject:
 		if target.TypeCode == TypeCodeObject {
-			len := target.GetElemCount()
-			for i := 0; i < len; i++ {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
 				key := target.objectGetKey(i)
 				val := target.objectGetVal(i)
 				if exp, exists := obj.objectSearchKey(key); !exists || !ContainsBinary(exp, val) {
@@ -1001,16 +1006,16 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 		return false
 	case TypeCodeArray:
 		if target.TypeCode == TypeCodeArray {
-			len := target.GetElemCount()
-			for i := 0; i < len; i++ {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
 				if !ContainsBinary(obj, target.arrayGetElem(i)) {
 					return false
 				}
 			}
 			return true
 		}
-		len := obj.GetElemCount()
-		for i := 0; i < len; i++ {
+		elemCount := obj.GetElemCount()
+		for i := 0; i < elemCount; i++ {
 			if ContainsBinary(obj.arrayGetElem(i), target) {
 				return true
 			}
@@ -1034,9 +1039,9 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 func (bj BinaryJSON) GetElemDepth() int {
 	switch bj.TypeCode {
 	case TypeCodeObject:
-		len := bj.GetElemCount()
+		elemCount := bj.GetElemCount()
 		maxDepth := 0
-		for i := 0; i < len; i++ {
+		for i := 0; i < elemCount; i++ {
 			obj := bj.objectGetVal(i)
 			depth := obj.GetElemDepth()
 			if depth > maxDepth {
@@ -1045,9 +1050,9 @@ func (bj BinaryJSON) GetElemDepth() int {
 		}
 		return maxDepth + 1
 	case TypeCodeArray:
-		len := bj.GetElemCount()
+		elemCount := bj.GetElemCount()
 		maxDepth := 0
-		for i := 0; i < len; i++ {
+		for i := 0; i < elemCount; i++ {
 			obj := bj.arrayGetElem(i)
 			depth := obj.GetElemDepth()
 			if depth > maxDepth {
@@ -1098,7 +1103,6 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 	default:
 		return CreateBinary(result), false, nil
 	}
-
 }
 
 // extractCallbackFn the type of CALLBACK function for extractToCallback

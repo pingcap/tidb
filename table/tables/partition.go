@@ -247,12 +247,24 @@ func (item *btreeListColumnItem) Less(other btree.Item) bool {
 	return item.key < other.(*btreeListColumnItem).key
 }
 
+func lessBtreeListColumnItem(a, b *btreeListColumnItem) bool {
+	return a.key < b.key
+}
+
 // ForListColumnPruning is used for list columns partition pruning.
 type ForListColumnPruning struct {
 	ExprCol  *expression.Column
 	valueTp  *types.FieldType
 	valueMap map[string]ListPartitionLocation
-	sorted   *btree.BTree
+	sorted   *btree.BTreeG[*btreeListColumnItem]
+
+	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
+	// The following fields are used to delay building valueMap.
+	ctx     sessionctx.Context
+	tblInfo *model.TableInfo
+	schema  *expression.Schema
+	names   types.NameSlice
+	colIdx  int
 }
 
 // ListPartitionGroup indicate the group index of the column value in a partition.
@@ -661,12 +673,17 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 			return table.ErrUnknownColumn.GenWithStackByArgs(pi.Columns[colIdx].L)
 		}
 		colPrune := &ForListColumnPruning{
+			ctx:      ctx,
+			tblInfo:  tblInfo,
+			schema:   schema,
+			names:    names,
+			colIdx:   colIdx,
 			ExprCol:  columns[idx],
 			valueTp:  &colInfo.FieldType,
 			valueMap: make(map[string]ListPartitionLocation),
-			sorted:   btree.New(btreeDegree),
+			sorted:   btree.NewG[*btreeListColumnItem](btreeDegree, lessBtreeListColumnItem),
 		}
-		err := colPrune.buildPartitionValueMapAndSorted(ctx, tblInfo, colIdx, schema, names, p)
+		err := colPrune.buildPartitionValueMapAndSorted(p)
 		if err != nil {
 			return err
 		}
@@ -750,16 +767,31 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 	return location[0].PartIdx, nil
 }
 
-// buildListPartitionValueMapAndSorted builds list columns partition value map for the specified column.
-// it also builds list columns partition value btree for the specified column.
+// buildPartitionValueMapAndSorted builds list columns partition value map for the specified column.
+// It also builds list columns partition value btree for the specified column.
 // colIdx is the specified column index in the list columns.
-func (lp *ForListColumnPruning) buildPartitionValueMapAndSorted(ctx sessionctx.Context, tblInfo *model.TableInfo, colIdx int,
-	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
-	pi := tblInfo.GetPartitionInfo()
-	sc := ctx.GetSessionVars().StmtCtx
+func (lp *ForListColumnPruning) buildPartitionValueMapAndSorted(p *parser.Parser) error {
+	l := len(lp.valueMap)
+	if l != 0 {
+		return nil
+	}
+
+	return lp.buildListPartitionValueMapAndSorted(p)
+}
+
+// RebuildPartitionValueMapAndSorted rebuilds list columns partition value map for the specified column.
+func (lp *ForListColumnPruning) RebuildPartitionValueMapAndSorted(p *parser.Parser) error {
+	lp.valueMap = make(map[string]ListPartitionLocation, len(lp.valueMap))
+	lp.sorted.Clear(false)
+	return lp.buildListPartitionValueMapAndSorted(p)
+}
+
+func (lp *ForListColumnPruning) buildListPartitionValueMapAndSorted(p *parser.Parser) error {
+	pi := lp.tblInfo.GetPartitionInfo()
+	sc := lp.ctx.GetSessionVars().StmtCtx
 	for partitionIdx, def := range pi.Definitions {
 		for groupIdx, vs := range def.InValues {
-			keyBytes, err := lp.genConstExprKey(ctx, sc, vs[colIdx], schema, names, p)
+			keyBytes, err := lp.genConstExprKey(lp.ctx, sc, vs[lp.colIdx], lp.schema, lp.names, p)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -805,7 +837,8 @@ func (lp *ForListColumnPruning) genKey(sc *stmtctx.StatementContext, v types.Dat
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return codec.EncodeKey(sc, nil, v)
+	valByte, err := codec.EncodeKey(sc, nil, v)
+	return valByte, err
 }
 
 // LocatePartition locates partition by the column value
@@ -823,8 +856,8 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 
 // LocateRanges locates partition ranges by the column range
 func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range) ([]ListPartitionLocation, error) {
-	var err error
 	var lowKey, highKey []byte
+	var err error
 	lowVal := r.LowVal[0]
 	if r.LowVal[0].Kind() == types.KindMinNotNull {
 		lowVal = types.GetMinValue(lp.ExprCol.GetType())
@@ -862,8 +895,8 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	}
 
 	locations := make([]ListPartitionLocation, 0, lp.sorted.Len())
-	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(hack.String(lowKey))), newBtreeListColumnSearchItem(string(hack.String(highKey))), func(item btree.Item) bool {
-		locations = append(locations, item.(*btreeListColumnItem).location)
+	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(hack.String(lowKey))), newBtreeListColumnSearchItem(string(hack.String(highKey))), func(item *btreeListColumnItem) bool {
+		locations = append(locations, item.location)
 		return true
 	})
 	return locations, nil
@@ -906,10 +939,44 @@ func (t *partitionedTable) PartitionExpr() (*PartitionExpr, error) {
 	return t.partitionExpr, nil
 }
 
+func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
+	// PARTITION BY {LIST|RANGE} COLUMNS uses columns directly without expressions
+	pi := t.Meta().Partition
+	if len(pi.Columns) > 0 {
+		return pi.Columns
+	}
+
+	partitionCols := expression.ExtractColumns(t.partitionExpr.Expr)
+	colIDs := make([]int64, 0, len(partitionCols))
+	for _, col := range partitionCols {
+		colIDs = append(colIDs, col.ID)
+	}
+	colNames := make([]model.CIStr, 0, len(partitionCols))
+	for _, colID := range colIDs {
+		for _, col := range t.Cols() {
+			if col.ID == colID {
+				colNames = append(colNames, col.Name)
+			}
+		}
+	}
+	return colNames
+}
+
 // PartitionRecordKey is exported for test.
 func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
 	return tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(handle))
+}
+
+func (t *partitionedTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error {
+	defID, err := t.locatePartition(ctx, pi, r)
+	if err != nil {
+		return err
+	}
+	if defID != pid {
+		return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+	}
+	return nil
 }
 
 // locatePartition returns the partition ID of the input record.
@@ -1009,7 +1076,7 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		}
 		ret = val
 	}
-	unsigned := mysql.HasUnsignedFlag(t.partitionExpr.Expr.GetType().Flag)
+	unsigned := mysql.HasUnsignedFlag(t.partitionExpr.Expr.GetType().GetFlag())
 	ranges := t.partitionExpr.ForRangePruning
 	length := len(ranges.LessThan)
 	pos := sort.Search(length, func(i int) bool {

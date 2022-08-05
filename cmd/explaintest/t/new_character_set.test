@@ -46,8 +46,6 @@ create table t (b blob, d json);
 insert into t values ('你好', '{"测试": "你好"}');
 select b, d from t;
 select hex(b), hex(d) from t;
-show charset;
-show collation;
 
 set names utf8mb4;
 drop table if exists t;

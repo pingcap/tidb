@@ -75,7 +75,7 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 		}
 	}
 	require.Equal(t, col.nullCount(), nullCnt)
-	require.Equal(t, len(sel), col.length)
+	require.Len(t, sel, col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -85,7 +85,7 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, len(sel)+128, col.length)
+	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -131,7 +131,7 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 		}
 	}
 	require.Equal(t, col.nullCount(), nullCnt)
-	require.Equal(t, len(sel), col.length)
+	require.Len(t, sel, col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -141,7 +141,7 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, len(sel)+128, col.length)
+	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -271,7 +271,6 @@ func TestMyDecimal(t *testing.T) {
 
 		types.DecimalAdd(&ds[i], d, &ds[i])
 		require.NoError(t, err)
-
 	}
 
 	it := NewIterator4Chunk(chk)
@@ -465,7 +464,7 @@ func TestReconstructFixedLen(t *testing.T) {
 		}
 	}
 	require.Equal(t, col.nullCount(), nullCnt)
-	require.Equal(t, len(sel), col.length)
+	require.Len(t, sel, col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -475,7 +474,7 @@ func TestReconstructFixedLen(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, len(sel)+128, col.length)
+	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -521,7 +520,7 @@ func TestReconstructVarLen(t *testing.T) {
 		}
 	}
 	require.Equal(t, col.nullCount(), nullCnt)
-	require.Equal(t, len(sel), col.length)
+	require.Len(t, sel, col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -531,7 +530,7 @@ func TestReconstructVarLen(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, len(sel)+128, col.length)
+	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -559,7 +558,7 @@ func TestPreAllocInt64(t *testing.T) {
 
 func TestPreAllocUint64(t *testing.T) {
 	tll := types.NewFieldType(mysql.TypeLonglong)
-	tll.Flag |= mysql.UnsignedFlag
+	tll.AddFlag(mysql.UnsignedFlag)
 	col := NewColumn(tll, 128)
 	col.ResizeUint64(256, true)
 	u64s := col.Uint64s()
@@ -680,7 +679,7 @@ func TestSetNulls(t *testing.T) {
 		}
 		col.SetNulls(begin, end, true)
 
-		require.Equal(t, len(nullMap), col.nullCount())
+		require.Len(t, nullMap, col.nullCount())
 		for k := range nullMap {
 			require.True(t, col.IsNull(k))
 		}
@@ -780,7 +779,7 @@ func TestResize(t *testing.T) {
 
 	col = NewColumn(types.NewFieldType(mysql.TypeDuration), 1024)
 	for i := 0; i < 1024; i++ {
-		col.AppendDuration(types.Duration{Duration: time.Duration(i), Fsp: int8(i)})
+		col.AppendDuration(types.Duration{Duration: time.Duration(i), Fsp: i})
 	}
 	col.ResizeGoDuration(1024, false)
 	for i := 0; i < 1024; i++ {
@@ -971,4 +970,27 @@ func BenchmarkMergeNullsNonVectorized(b *testing.B) {
 			cols[0].SetNull(i, cols[1].IsNull(i) || cols[2].IsNull(i))
 		}
 	}
+}
+
+func TestColumnResizeInt64(t *testing.T) {
+	var col = NewColumn(types.NewFieldType(mysql.TypeLonglong), 2)
+	col.AppendUint64(11)
+	col.AppendUint64(11)
+
+	col.ResizeInt64(4, false)
+	require.Equal(t, col.nullBitmap, []byte{0b1111})
+	col.AppendUint64(11)
+	require.Equal(t, col.nullBitmap, []byte{0b11111})
+	col.AppendNull()
+	require.Equal(t, col.nullBitmap, []byte{0b011111})
+
+	col.ResizeUint64(11, false)
+	require.Equal(t, col.nullBitmap, []byte{0b11111111, 0b111})
+
+	col.ResizeUint64(7, true)
+	require.Equal(t, col.nullBitmap, []byte{0})
+
+	col.AppendUint64(32)
+	col.AppendUint64(32)
+	require.Equal(t, col.nullBitmap, []byte{0b10000000, 0b1})
 }

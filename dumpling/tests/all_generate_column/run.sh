@@ -17,10 +17,10 @@ export DUMPLING_TEST_PORT=3306
 run_sql "drop database if exists $DB_NAME;"
 
 # build data on mysql
-run_sql "create database $DB_NAME;"
+run_sql "create database $DB_NAME DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 
 # build data with generate column full_name
-run_sql "create table $DB_NAME.$TABLE_NAME(a int as (1), b int as (2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+run_sql "create table $DB_NAME.$TABLE_NAME(a int as (1), b int as (2)) ENGINE=InnoDB;"
 
 # insert 100 records
 run_sql "insert into $DB_NAME.$TABLE_NAME values $(seq -s, 100 | sed 's/,*$//g' | sed "s/[0-9]*/()/g");"

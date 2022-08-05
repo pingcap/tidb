@@ -37,13 +37,10 @@ func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Chu
 }
 
 // LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
-func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), true, "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist")
-	if err != nil {
-		return err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist")
 	if err != nil {
 		return err
 	}

@@ -30,6 +30,10 @@ type mockTxn struct {
 	valid bool
 }
 
+func (t *mockTxn) SetAssertion(_ []byte, _ ...FlagsOp) error {
+	return nil
+}
+
 // Commit always returns a retryable error.
 func (t *mockTxn) Commit(ctx context.Context) error {
 	return ErrTxnRetryable
@@ -138,6 +142,14 @@ func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
 }
 
 func (t *mockTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	// TODO nothing
+}
+
+func (t *mockTxn) GetMemDBCheckpoint() *tikv.MemDBCheckpoint {
+	return nil
+}
+
+func (t *mockTxn) RollbackMemDBToCheckpoint(_ *tikv.MemDBCheckpoint) {
 	// TODO nothing
 }
 

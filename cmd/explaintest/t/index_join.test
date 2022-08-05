@@ -1,3 +1,4 @@
+use test;
 drop table if exists t1, t2;
 create table t1(a bigint, b bigint, index idx(a));
 create table t2(a bigint, b bigint, index idx(a));

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2019 PingCAP, Inc.
 #
@@ -48,22 +48,18 @@ SET character_set_results = @PREV_CHARACTER_SET_RESULTS;
 SET collation_connection = @PREV_COLLATION_CONNECTION;
 _EOF_
 
-for BACKEND in local importer; do
-  if [ "$BACKEND" = 'local' ]; then
-    check_cluster_version 4 0 0 'local backend' || continue
-  fi
+ check_cluster_version 4 0 0 'local backend'
 
-  run_sql 'DROP DATABASE IF EXISTS fr'
+run_sql 'DROP DATABASE IF EXISTS fr'
 
-  # Start importing the tables.
-  run_lightning -d "$DBPATH" --backend $BACKEND 2> /dev/null
+# Start importing the tables.
+run_lightning -d "$DBPATH" 2> /dev/null
 
-  run_sql 'SELECT count(*) FROM `fr`.tbl'
-  check_contains "count(*): 10"
-  run_sql 'SELECT sum(j) FROM `fr`.tbl'
-  check_contains "sum(j): 55"
+run_sql 'SELECT count(*) FROM `fr`.tbl'
+check_contains "count(*): 10"
+run_sql 'SELECT sum(j) FROM `fr`.tbl'
+check_contains "sum(j): 55"
 
-  run_sql 'SELECT sum(i), count(*) FROM `fr`.v'
-  check_contains "sum(i): 15"
-  check_contains "count(*): 5"
-done
+run_sql 'SELECT sum(i), count(*) FROM `fr`.v'
+check_contains "sum(i): 15"
+check_contains "count(*): 5"

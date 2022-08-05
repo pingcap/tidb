@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
+	"golang.org/x/exp/slices"
 )
 
 func (b *builtinDatabaseSig) vectorized() bool {
@@ -145,7 +145,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	for _, r := range data.ActiveRoles {
 		sortedRes = append(sortedRes, r.String())
 	}
-	sort.Strings(sortedRes)
+	slices.Sort(sortedRes)
 	res := strings.Join(sortedRes, ",")
 	for i := 0; i < n; i++ {
 		result.AppendString(res)
@@ -179,9 +179,8 @@ func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
 
 func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	ddlOwnerChecker := b.ctx.DDLOwnerChecker()
 	var res int64
-	if ddlOwnerChecker.IsOwner() {
+	if b.ctx.IsDDLOwner() {
 		res = 1
 	}
 	result.ResizeInt64(n, false)

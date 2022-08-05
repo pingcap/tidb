@@ -35,7 +35,7 @@ func TestExternalFileWriter(t *testing.T) {
 			p := []byte(str)
 			written, err2 := writer.Write(ctx, p)
 			require.Nil(t, err2)
-			require.Equal(t, len(p), written)
+			require.Len(t, p, written)
 		}
 		err = writer.Close(ctx)
 		require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestCompressReaderWriter(t *testing.T) {
 			p := []byte(str)
 			written, err2 := writer.Write(ctx, p)
 			require.Nil(t, err2)
-			require.Equal(t, len(p), written)
+			require.Len(t, p, written)
 		}
 		err = writer.Close(ctx)
 		require.NoError(t, err)

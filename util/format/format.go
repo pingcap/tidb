@@ -49,6 +49,7 @@ var replace = map[rune]string{
 	'\'':   "''",
 	'\n':   "\\n",
 	'\r':   "\\r",
+	'\\':   "\\\\",
 }
 
 // IndentFormatter returns a new Formatter which interprets %i and %u in the

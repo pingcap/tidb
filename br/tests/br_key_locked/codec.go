@@ -31,13 +31,13 @@ type codecPDClient struct {
 
 // GetRegion encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
+func (c *codecPDClient) GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes(nil, key)
 	region, err := c.Client.GetRegion(ctx, encodedKey)
 	return processRegionResult(region, err)
 }
 
-func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
+func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes(nil, key)
 	region, err := c.Client.GetPrevRegion(ctx, encodedKey)
 	return processRegionResult(region, err)
@@ -45,7 +45,7 @@ func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Regi
 
 // GetRegionByID encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
+func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64, opts ...pd.GetRegionOption) (*pd.Region, error) {
 	region, err := c.Client.GetRegionByID(ctx, regionID)
 	return processRegionResult(region, err)
 }

@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type datum struct {
@@ -75,8 +75,8 @@ func (d *datum) nextInt64() int64 {
 	defer d.Unlock()
 
 	if d.useRange {
-		d.intValue = mathutil.MinInt64(d.intValue, d.maxIntValue)
-		d.intValue = mathutil.MaxInt64(d.intValue, d.minIntValue)
+		d.intValue = mathutil.Min(d.intValue, d.maxIntValue)
+		d.intValue = mathutil.Max(d.intValue, d.minIntValue)
 	}
 	d.updateRemains()
 	return d.intValue

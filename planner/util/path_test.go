@@ -71,9 +71,9 @@ func TestCompareCol2Len(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		res, comparable := util.CompareCol2Len(tt.c1, tt.c2)
+		res, comparable1 := util.CompareCol2Len(tt.c1, tt.c2)
 		require.Equal(t, tt.res, res)
-		require.Equal(t, tt.comparable, comparable)
+		require.Equal(t, tt.comparable, comparable1)
 	}
 }
 

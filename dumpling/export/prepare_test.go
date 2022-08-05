@@ -9,9 +9,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/stretchr/testify/require"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPrepareDumpingDatabases(t *testing.T) {
@@ -308,21 +307,21 @@ func TestValidateResolveAutoConsistency(t *testing.T) {
 		confSnapshot    string
 		err             bool
 	}{
-		{consistencyTypeAuto, "", true},
-		{consistencyTypeAuto, "123", false},
-		{consistencyTypeFlush, "", true},
-		{consistencyTypeFlush, "456", false},
-		{consistencyTypeLock, "", true},
-		{consistencyTypeLock, "789", false},
-		{consistencyTypeSnapshot, "", true},
-		{consistencyTypeSnapshot, "456", true},
-		{consistencyTypeNone, "", true},
-		{consistencyTypeNone, "123", false},
+		{ConsistencyTypeAuto, "", true},
+		{ConsistencyTypeAuto, "123", false},
+		{ConsistencyTypeFlush, "", true},
+		{ConsistencyTypeFlush, "456", false},
+		{ConsistencyTypeLock, "", true},
+		{ConsistencyTypeLock, "789", false},
+		{ConsistencyTypeSnapshot, "", true},
+		{ConsistencyTypeSnapshot, "456", true},
+		{ConsistencyTypeNone, "", true},
+		{ConsistencyTypeNone, "123", false},
 	}
 	for _, testCase := range testCases {
 		conf.Consistency = testCase.confConsistency
 		conf.Snapshot = testCase.confSnapshot
-		if testCase.err == true {
+		if testCase.err {
 			require.NoError(t, validateResolveAutoConsistency(d))
 		} else {
 			require.EqualError(t, validateResolveAutoConsistency(d), fmt.Sprintf("can't specify --snapshot when --consistency isn't snapshot, resolved consistency: %s", conf.Consistency))

@@ -23,12 +23,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -52,19 +50,8 @@ func createMockTiKVStoreOptions(tiflashNum int) []mockstore.MockTiKVStoreOption 
 	}
 }
 
-func testGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	require.NoError(t, err)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	require.NoError(t, err)
-	return tbl
-}
-
 func TestStoreErr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t, createMockTiKVStoreOptions(1)...)
-	defer clean()
+	store := testkit.CreateMockStore(t, createMockTiKVStoreOptions(1)...)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
@@ -75,7 +62,7 @@ func TestStoreErr(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := testGetTableByName(t, tk.Session(), "test", "t")
+	tb := external.GetTableByName(t, tk, "test", "t")
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
@@ -99,8 +86,7 @@ func TestStoreErr(t *testing.T) {
 }
 
 func TestStoreSwitchPeer(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t, createMockTiKVStoreOptions(2)...)
-	defer clean()
+	store := testkit.CreateMockStore(t, createMockTiKVStoreOptions(2)...)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
@@ -111,7 +97,7 @@ func TestStoreSwitchPeer(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := testGetTableByName(t, tk.Session(), "test", "t")
+	tb := external.GetTableByName(t, tk, "test", "t")
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)

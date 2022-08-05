@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -32,8 +31,7 @@ import (
 )
 
 func TestChangeVerTo2Behavior(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
 	defer func() {
@@ -112,8 +110,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 }
 
 func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
 	defer func() {
@@ -167,7 +164,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.")) // since fallback to ver2 path, should do samplerate adjustment
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t")) // since fallback to ver2 path, should do samplerate adjustment
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
@@ -176,7 +173,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t."))
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t"))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
@@ -194,8 +191,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 }
 
 func TestFastAnalyzeOnVer2(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
@@ -204,7 +200,7 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
 	_, err := tk.Exec("analyze table t")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently", err.Error())
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 0")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
@@ -222,14 +218,14 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
 	err = tk.ExecToErr("analyze table t index idx")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently", err.Error())
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	_, err = tk.Exec("analyze table t index idx")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1", err.Error())
 	_, err = tk.Exec("analyze table t index")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1", err.Error())
 	tk.MustExec("analyze table t")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
@@ -242,8 +238,7 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 }
 
 func TestIncAnalyzeOnVer2(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
@@ -269,8 +264,7 @@ func TestIncAnalyzeOnVer2(t *testing.T) {
 }
 
 func TestExpBackoffEstimation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table exp_backoff(a int, b int, c int, d int, index idx(a, b, c, d))")
@@ -282,7 +276,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 		output [][]string
 	)
 	integrationSuiteData := statistics.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	inputLen := len(input)
 	// The test cases are:
 	// Query a = 1, b = 1, c = 1, d >= 3 and d <= 5 separately. We got 5, 3, 2, 3.
@@ -305,8 +299,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 }
 
 func TestGlobalStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -401,8 +394,7 @@ func TestGlobalStats(t *testing.T) {
 }
 
 func TestNULLOnFullSampling(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -425,7 +417,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 		require.Equal(t, int64(3), col.NullCount)
 	}
 	integrationSuiteData := statistics.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	// Check the topn and buckets contains no null values.
 	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {
@@ -436,8 +428,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 }
 
 func TestAnalyzeSnapshot(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -465,8 +456,7 @@ func TestAnalyzeSnapshot(t *testing.T) {
 }
 
 func TestHistogramsWithSameTxnTS(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -486,8 +476,7 @@ func TestHistogramsWithSameTxnTS(t *testing.T) {
 }
 
 func TestAnalyzeLongString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -499,9 +488,7 @@ func TestAnalyzeLongString(t *testing.T) {
 }
 
 func TestOutdatedStatsCheck(t *testing.T) {
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
@@ -558,4 +545,87 @@ func hasPseudoStats(rows [][]interface{}) bool {
 		}
 	}
 	return false
+}
+
+// TestNotLoadedStatsOnAllNULLCol makes sure that stats on a column that only contains NULLs can be used even when it's
+// not loaded. This is reasonable because it makes no difference whether it's loaded or not.
+func TestNotLoadedStatsOnAllNULLCol(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1000)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(null), (null), (null), (null)")
+	tk.MustExec("insert into t2 values(null), (null)")
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("analyze table t2;")
+
+	res := tk.MustQuery("explain format = 'brief' select * from t1 left join t2 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 4.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 4.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		// If we are not using stats on this column (which means we use pseudo estimation), the row count for the Selection will become 2.
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t2.a))",
+		"  │   └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false",
+		"  └─TableReader(Probe) 4.00 root  data:TableFullScan",
+		"    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"))
+
+	res = tk.MustQuery("explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 2.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 2.00 root  left outer join, equal:[eq(test.t2.a, test.t1.a)]",
+		// If we are not using stats on this column, the build side will become t2 because of smaller row count.
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		// If we are not using stats on this column, the row count for the Selection will become 4.
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t1.a))",
+		"  │   └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
+		"  └─TableReader(Probe) 2.00 root  data:TableFullScan",
+		"    └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false"))
+
+	res = tk.MustQuery("explain format = 'brief' select * from t1 right join t2 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 2.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 2.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t1.a))",
+		"  │   └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
+		"  └─TableReader(Probe) 2.00 root  data:TableFullScan",
+		"    └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false"))
+
+	res = tk.MustQuery("explain format = 'brief' select * from t2 right join t1 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 4.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 4.00 root  right outer join, equal:[eq(test.t2.a, test.t1.a)]",
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t2.a))",
+		"  │   └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false",
+		"  └─TableReader(Probe) 4.00 root  data:TableFullScan",
+		"    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"))
+}
+
+func TestCrossValidationSelectivity(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("create table t (a int, b int, c int, primary key (a, b) clustered)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1,2,3), (1,4,5)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 0 and b < 1000 and c > 1000").Check(testkit.Rows(
+		"TableReader 0.00 root  data:Selection",
+		"└─Selection 0.00 cop[tikv]  gt(test.t.c, 1000)",
+		"  └─TableRangeScan 2.00 cop[tikv] table:t range:(1 0,1 1000), keep order:false"))
 }

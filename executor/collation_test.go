@@ -21,16 +21,12 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestVecGroupChecker(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	tp := &types.FieldType{Tp: mysql.TypeVarchar}
+	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP()
 	col0 := &expression.Column{
 		RetType: tp,
 		Index:   0,
@@ -47,7 +43,7 @@ func TestVecGroupChecker(t *testing.T) {
 	chk.Column(0).AppendString("À")
 	chk.Column(0).AppendString("A")
 
-	tp.Collate = "bin"
+	tp.SetCollate("bin")
 	groupChecker.reset()
 	_, err := groupChecker.splitIntoGroups(chk)
 	require.NoError(t, err)
@@ -58,7 +54,7 @@ func TestVecGroupChecker(t *testing.T) {
 	}
 	require.True(t, groupChecker.isExhausted())
 
-	tp.Collate = "utf8_general_ci"
+	tp.SetCollate("utf8_general_ci")
 	groupChecker.reset()
 	_, err = groupChecker.splitIntoGroups(chk)
 	require.NoError(t, err)
@@ -69,7 +65,7 @@ func TestVecGroupChecker(t *testing.T) {
 	}
 	require.True(t, groupChecker.isExhausted())
 
-	tp.Collate = "utf8_unicode_ci"
+	tp.SetCollate("utf8_unicode_ci")
 	groupChecker.reset()
 	_, err = groupChecker.splitIntoGroups(chk)
 	require.NoError(t, err)
@@ -81,8 +77,8 @@ func TestVecGroupChecker(t *testing.T) {
 	require.True(t, groupChecker.isExhausted())
 
 	// test padding
-	tp.Collate = "utf8_bin"
-	tp.Flen = 6
+	tp.SetCollate("utf8_bin")
+	tp.SetFlen(6)
 	chk.Reset()
 	chk.Column(0).AppendString("a")
 	chk.Column(0).AppendString("a  ")

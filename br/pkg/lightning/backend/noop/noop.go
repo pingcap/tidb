@@ -67,7 +67,7 @@ func (b noopBackend) ShouldPostProcess() bool {
 }
 
 // NewEncoder creates an encoder of a TiDB table.
-func (b noopBackend) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+func (b noopBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
 	return noopEncoder{}, nil
 }
 
@@ -79,7 +79,7 @@ func (b noopBackend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig,
 	return nil
 }
 
-func (b noopBackend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize int64) error {
+func (b noopBackend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	return nil
 }
 
@@ -153,6 +153,10 @@ func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.T
 
 func (b noopBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
 	return nil
+}
+
+func (b noopBackend) TotalMemoryConsume() int64 {
+	return 0
 }
 
 type noopEncoder struct{}

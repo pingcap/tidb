@@ -23,14 +23,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	dto "github.com/prometheus/client_model/go"
@@ -38,8 +39,7 @@ import (
 )
 
 func TestPrepared(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -100,7 +100,7 @@ func TestPrepared(t *testing.T) {
 		query := "select c1, c2 from prepare_test where c1 = ?"
 		stmtID, _, _, err := tk.Session().PrepareStmt(query)
 		require.NoError(t, err)
-		rs, err := tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+		rs, err := tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 <nil>"))
 
@@ -118,7 +118,7 @@ func TestPrepared(t *testing.T) {
 
 		tk1.MustExec("use test")
 		tk1.MustExec("insert prepare_test (c1) values (3)")
-		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(3))
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3"))
 
@@ -126,11 +126,11 @@ func TestPrepared(t *testing.T) {
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
 		stmtID, _, _, err = tk.Session().PrepareStmt(query)
 		require.NoError(t, err)
-		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(3))
 		require.NoError(t, err)
 		require.NoError(t, rs.Close())
 		tk1.MustExec("insert prepare_test (c1) values (3)")
-		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(3))
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3"))
 
@@ -138,11 +138,11 @@ func TestPrepared(t *testing.T) {
 		query = "select c1 from prepare_test where c1 in (select c1 from prepare_test where c1 = ?)"
 		stmtID, _, _, err = tk.Session().PrepareStmt(query)
 		require.NoError(t, err)
-		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(3))
 		require.NoError(t, err)
 		require.NoError(t, rs.Close())
 		tk1.MustExec("insert prepare_test (c1) values (3)")
-		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(3))
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3"))
 
@@ -152,13 +152,14 @@ func TestPrepared(t *testing.T) {
 		stmtID, _, _, err = tk.Session().PrepareStmt(query)
 		require.NoError(t, err)
 		tk.MustExec("rollback")
-		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(4)})
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(4))
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 
+		execStmt := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: expression.Args2Expressions4Test(1)}
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), stmtID,
-			tk.Session().GetInfoSchema().(infoschema.InfoSchema), 0, []types.Datum{types.NewDatum(1)})
+		stmt, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), execStmt,
+			tk.Session().GetInfoSchema().(infoschema.InfoSchema))
 		require.NoError(t, err)
 		require.Equal(t, query, stmt.OriginText())
 
@@ -180,7 +181,7 @@ func TestPrepared(t *testing.T) {
 		require.NoError(t, err)
 
 		// Should success as the changed schema do not affect the prepared statement.
-		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		if rs != nil {
 			require.NoError(t, rs.Close())
@@ -192,11 +193,11 @@ func TestPrepared(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustExec("alter table prepare_test drop column c2")
 
-		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
 		require.True(t, plannercore.ErrUnknownColumn.Equal(err))
 
 		tk.MustExec("drop table prepare_test")
-		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
 		require.True(t, plannercore.ErrSchemaChanged.Equal(err))
 
 		// issue 3381
@@ -281,18 +282,17 @@ func TestPrepared(t *testing.T) {
 		// issue 8065
 		stmtID, _, _, err = tk.Session().PrepareStmt("select ? from dual")
 		require.NoError(t, err)
-		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		stmtID, _, _, err = tk.Session().PrepareStmt("update prepare1 set a = ? where a = ?")
 		require.NoError(t, err)
-		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1), types.NewDatum(1)})
+		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1, 1))
 		require.NoError(t, err)
 	}
 }
 
 func TestPreparedLimitOffset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -327,14 +327,14 @@ func TestPreparedLimitOffset(t *testing.T) {
 
 		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
 		require.NoError(t, err)
-		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+		rs, err := tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
+		rs.Close()
 	}
 }
 
 func TestPreparedNullParam(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -375,8 +375,7 @@ func TestPreparedNullParam(t *testing.T) {
 }
 
 func TestPrepareWithAggregation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -408,8 +407,7 @@ func TestPrepareWithAggregation(t *testing.T) {
 }
 
 func TestPreparedIssue7579(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -457,8 +455,7 @@ func TestPreparedIssue7579(t *testing.T) {
 }
 
 func TestPreparedInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -544,8 +541,7 @@ func TestPreparedInsert(t *testing.T) {
 }
 
 func TestPreparedUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -605,8 +601,7 @@ func TestPreparedUpdate(t *testing.T) {
 }
 
 func TestIssue21884(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -631,8 +626,7 @@ func TestIssue21884(t *testing.T) {
 }
 
 func TestPreparedDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -692,8 +686,7 @@ func TestPreparedDelete(t *testing.T) {
 }
 
 func TestPrepareDealloc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -713,11 +706,11 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
 
 	require.Equal(t, 0, tk.Session().PreparedPlanCache().Size())
-	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt1 from 'select id from prepare_test'`)
 	tk.MustExec("execute stmt1")
-	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt2 from 'select c1 from prepare_test'`)
 	tk.MustExec("execute stmt2")
-	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt3 from 'select id, c1 from prepare_test'`)
 	tk.MustExec("execute stmt3")
 	tk.MustExec(`prepare stmt4 from 'select * from prepare_test'`)
 	tk.MustExec("execute stmt4")
@@ -729,11 +722,24 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("deallocate prepare stmt3")
 	tk.MustExec("deallocate prepare stmt4")
 	require.Equal(t, 0, tk.Session().PreparedPlanCache().Size())
+
+	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt1`)
+	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt2`)
+	require.Equal(t, 1, tk.Session().PreparedPlanCache().Size()) // use the same cached plan since they have the same statement
+
+	tk.MustExec(`drop database if exists plan_cache`)
+	tk.MustExec(`create database plan_cache`)
+	tk.MustExec(`use plan_cache`)
+	tk.MustExec(`create table prepare_test (id int PRIMARY KEY, c1 int)`)
+	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt3`)
+	require.Equal(t, 2, tk.Session().PreparedPlanCache().Size()) // stmt3 has different DB
 }
 
 func TestPreparedIssue8153(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -788,8 +794,7 @@ func TestPreparedIssue8153(t *testing.T) {
 }
 
 func TestPreparedIssue8644(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -873,9 +878,18 @@ func (msm *mockSessionManager1) ServerID() uint64 {
 
 func (msm *mockSessionManager1) UpdateTLSConfig(_ *tls.Config) {}
 
+func (msm *mockSessionManager1) StoreInternalSession(se interface{}) {
+}
+
+func (msm *mockSessionManager1) DeleteInternalSession(se interface{}) {
+}
+
+func (msm *mockSessionManager1) GetInternalSessionStartTSList() []uint64 {
+	return nil
+}
+
 func TestPreparedIssue17419(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
 
@@ -896,7 +910,7 @@ func TestPreparedIssue17419(t *testing.T) {
 	tk1.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
 
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1", "2", "3"))
 	tk1.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)

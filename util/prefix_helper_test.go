@@ -35,42 +35,42 @@ const (
 
 func TestPrefix(t *testing.T) {
 	s, err := mockstore.NewMockStore()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		err := s.Close()
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 
 	ctx := &mockContext{10000000, make(map[fmt.Stringer]interface{}), s, nil}
 	err = ctx.fillTxn()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	txn, err := ctx.GetTxn()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = util.DelKeyWithPrefix(txn, encodeInt(ctx.prefix))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = ctx.CommitTxn()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	txn, err = s.Begin()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	k := []byte("key100jfowi878230")
 	err = txn.Set(k, []byte(`val32dfaskli384757^*&%^`))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
 		return true
 	})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
 		return false
 	})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = util.DelKeyWithPrefix(txn, []byte("key"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	_, err = txn.Get(context.TODO(), k)
 	assert.True(t, terror.ErrorEqual(kv.ErrNotExist, err))
 
 	err = txn.Commit(context.Background())
-	require.Nil(t, err)
+	require.NoError(t, err)
 }
 
 func TestPrefixFilter(t *testing.T) {

@@ -100,6 +100,6 @@ func TestFlattenLogicalPlanTrace(t *testing.T) {
 			ChildrenID:  []int{2, 3},
 		},
 	}
-	require.EqualValues(t, toFlattenLogicalPlanTrace(root1), expect1)
-	require.EqualValues(t, toFlattenLogicalPlanTrace(root2), expect2)
+	require.EqualValues(t, toFlattenPlanTrace(root1), expect1)
+	require.EqualValues(t, toFlattenPlanTrace(root2), expect2)
 }

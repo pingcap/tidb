@@ -25,15 +25,14 @@ import (
 	. "github.com/pingcap/tidb/ddl"
 	. "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/etcdserver"
-	"go.etcd.io/etcd/integration"
-	"go.etcd.io/etcd/mvcc/mvccpb"
+	"go.etcd.io/etcd/api/v3/mvccpb"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -45,6 +44,7 @@ func TestSyncerSimple(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+	integration.BeforeTestExternal(t)
 
 	origin := CheckVersFirstWaitTime
 	CheckVersFirstWaitTime = 0
@@ -70,15 +70,17 @@ func TestSyncerSimple(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic),
 	)
-	require.NoError(t, d.Start(nil))
-	defer func() {
-		require.NoError(t, d.Stop())
+	go func() {
+		require.NoError(t, d.OwnerManager().CampaignOwner())
 	}()
+	defer d.OwnerManager().Cancel()
 
 	// for init function
 	require.NoError(t, d.SchemaSyncer().Init(ctx))
 	resp, err := cli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
 	require.NoError(t, err)
+
+	defer d.SchemaSyncer().Close()
 
 	key := DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
 	checkRespKV(t, 1, key, InitialVersion, resp.Kvs...)
@@ -101,11 +103,13 @@ func TestSyncerSimple(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic2),
 	)
-	require.NoError(t, d1.Start(nil))
-	defer func() {
-		require.NoError(t, d1.Stop())
+
+	go func() {
+		require.NoError(t, d1.OwnerManager().CampaignOwner())
 	}()
+	defer d1.OwnerManager().Cancel()
 	require.NoError(t, d1.SchemaSyncer().Init(ctx))
+	defer d.SchemaSyncer().Close()
 
 	// for watchCh
 	var wg util.WaitGroupWrapper
@@ -154,42 +158,6 @@ func TestSyncerSimple(t *testing.T) {
 	defer cancel()
 	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
 	require.True(t, isTimeoutError(err))
-
-	// for StartCleanWork
-	ttl := 10
-	// Make sure NeededCleanTTL > ttl, then we definitely clean the ttl.
-	NeededCleanTTL = int64(11)
-	ttlKey := "session_ttl_key"
-	ttlVal := "session_ttl_val"
-	session, err := owner.NewSession(ctx, "", cli, owner.NewSessionDefaultRetryCnt, ttl)
-	require.NoError(t, err)
-	require.NoError(t, PutKVToEtcd(context.Background(), cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease())))
-
-	// Make sure the ttlKey is existing in etcd.
-	resp, err = cli.Get(ctx, ttlKey)
-	require.NoError(t, err)
-	checkRespKV(t, 1, ttlKey, ttlVal, resp.Kvs...)
-	d.SchemaSyncer().NotifyCleanExpiredPaths()
-	// Make sure the clean worker is done.
-	notifiedCnt := 1
-	for i := 0; i < 100; i++ {
-		isNotified := d.SchemaSyncer().NotifyCleanExpiredPaths()
-		if isNotified {
-			notifiedCnt++
-		}
-		// notifyCleanExpiredPathsCh's length is 1,
-		// so when notifiedCnt is 3, we can make sure the clean worker is done at least once.
-		if notifiedCnt == 3 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	require.Equal(t, 3, notifiedCnt)
-
-	// Make sure the ttlKey is removed in etcd.
-	resp, err = cli.Get(ctx, ttlKey)
-	require.NoError(t, err)
-	checkRespKV(t, 0, ttlKey, "", resp.Kvs...)
 
 	// for Close
 	resp, err = cli.Get(context.Background(), key)

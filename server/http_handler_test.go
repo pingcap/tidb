@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
@@ -699,7 +701,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	bin := base64.StdEncoding.EncodeToString(bs)
 
 	unitTest := func(col *column) {
-		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
+		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.GetType(), col.tp.GetFlag(), col.tp.GetFlen(), bin)
 		resp, err := ts.fetchStatus(path)
 		require.NoErrorf(t, err, "url: %v", ts.statusURL(path))
 		decoder := json.NewDecoder(resp.Body)
@@ -847,8 +849,11 @@ func TestGetSchema(t *testing.T) {
 	}
 	sort.Strings(names)
 	require.Equal(t, expects, names)
+	store := testkit.CreateMockStore(t)
 
-	resp, err = ts.fetchStatus("/schema?table_id=5")
+	tk := testkit.NewTestKit(t, store)
+	userTbl := external.GetTableByName(t, tk, "mysql", "user")
+	resp, err = ts.fetchStatus(fmt.Sprintf("/schema?table_id=%d", userTbl.Meta().ID))
 	require.NoError(t, err)
 	var ti *model.TableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -894,7 +899,7 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/db-table/5")
+	resp, err = ts.fetchStatus(fmt.Sprintf("/db-table/%d", userTbl.Meta().ID))
 	require.NoError(t, err)
 	var dbtbl *dbTableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -965,14 +970,32 @@ func TestAllHistory(t *testing.T) {
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
 	txnMeta := meta.NewMeta(txn)
-	_, err = txnMeta.GetAllHistoryDDLJobs()
+	data, err := ddl.GetAllHistoryDDLJobs(txnMeta)
 	require.NoError(t, err)
-	data, _ := txnMeta.GetAllHistoryDDLJobs()
 	err = decoder.Decode(&jobs)
 
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, data, jobs)
+
+	// Cover the start_job_id parameter.
+	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41&limit=3")
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&jobs)
+	require.NoError(t, err)
+
+	// The result is in descending order
+	lastID := int64(42)
+	for _, job := range jobs {
+		require.Less(t, job.ID, lastID)
+		lastID = job.ID
+	}
+	require.NoError(t, resp.Body.Close())
 }
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {
@@ -1103,4 +1126,37 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
 	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
 	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
+}
+
+func TestSetLabels(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testUpdateLabels := func(labels, expected map[string]string) {
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.postStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, expected)
+	}
+
+	labels := map[string]string{
+		"zone": "us-west-1",
+		"test": "123",
+	}
+	testUpdateLabels(labels, labels)
+
+	updated := map[string]string{
+		"zone": "bj-1",
+	}
+	labels["zone"] = "bj-1"
+	testUpdateLabels(updated, labels)
+
+	// reset the global variable
+	config.GetGlobalConfig().Labels = map[string]string{}
 }

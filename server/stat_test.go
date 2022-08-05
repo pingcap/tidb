@@ -52,6 +52,8 @@ func TestUptime(t *testing.T) {
 	tidbdrv := NewTiDBDriver(store)
 	cfg := newTestConfig()
 	cfg.Socket = ""
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
 

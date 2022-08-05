@@ -17,18 +17,18 @@ package executor_test
 import (
 	"fmt"
 	"math/rand"
-	"sort"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestBasicCTE(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -76,8 +76,7 @@ func TestBasicCTE(t *testing.T) {
 }
 
 func TestUnionDistinct(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -103,8 +102,7 @@ func TestUnionDistinct(t *testing.T) {
 }
 
 func TestCTEMaxRecursionDepth(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -144,8 +142,7 @@ func TestCTEMaxRecursionDepth(t *testing.T) {
 }
 
 func TestCTEWithLimit(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -352,15 +349,11 @@ func TestCTEWithLimit(t *testing.T) {
 }
 
 func TestSpillToDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
-
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET GLOBAL tidb_enable_tmp_storage_on_oom = 1")
+	defer tk.MustExec("SET GLOBAL tidb_enable_tmp_storage_on_oom = 0")
 	tk.MustExec("use test;")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testCTEStorageSpill", "return(true)"))
@@ -401,10 +394,58 @@ func TestSpillToDisk(t *testing.T) {
 	require.Greater(t, memTracker.MaxConsumed(), int64(0))
 	require.Greater(t, diskTracker.MaxConsumed(), int64(0))
 
-	sort.Ints(vals)
+	slices.Sort(vals)
 	resRows := make([]string, 0, rowNum)
 	for i := vals[0]; i <= rowNum; i++ {
 		resRows = append(resRows, fmt.Sprintf("%d", i))
 	}
 	rows.Check(testkit.Rows(resRows...))
+}
+
+func TestCTEExecError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists src;")
+	tk.MustExec("create table src(first int, second int);")
+
+	insertStr := fmt.Sprintf("insert into src values (%d, %d)", rand.Intn(1000), rand.Intn(1000))
+	for i := 0; i < 1000; i++ {
+		insertStr += fmt.Sprintf(",(%d, %d)", rand.Intn(1000), rand.Intn(1000))
+	}
+	insertStr += ";"
+	tk.MustExec(insertStr)
+
+	// Increase projection concurrency and decrease chunk size
+	// to increase the probability of reproducing the problem.
+	tk.MustExec("set tidb_max_chunk_size = 32")
+	tk.MustExec("set tidb_projection_concurrency = 20")
+	for i := 0; i < 10; i++ {
+		err := tk.QueryToErr("with recursive cte(iter, first, second, result) as " +
+			"(select 1, first, second, first+second from src " +
+			" union all " +
+			"select iter+1, second, result, second+result from cte where iter < 80 )" +
+			"select * from cte")
+		require.True(t, terror.ErrorEqual(err, types.ErrOverflow))
+	}
+}
+
+// https://github.com/pingcap/tidb/issues/33965.
+func TestCTEsInView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create database if not exists test1;")
+	tk.MustExec("create table test.t (a int);")
+	tk.MustExec("create table test1.t (a int);")
+	tk.MustExec("insert into test.t values (1);")
+	tk.MustExec("insert into test1.t values (2);")
+
+	tk.MustExec("use test;")
+	tk.MustExec("create definer='root'@'localhost' view test.v as with tt as (select * from t) select * from tt;")
+	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
+	tk.MustExec("use test1;")
+	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
 }
