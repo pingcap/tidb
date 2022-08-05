@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -46,6 +46,7 @@ type plugins struct {
 }
 
 // clone deep copies plugins info.
+// nolint: unused
 func (p *plugins) clone() *plugins {
 	np := &plugins{
 		plugins:      make(map[Kind][]Plugin, len(p.plugins)),

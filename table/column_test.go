@@ -37,48 +37,48 @@ func TestString(t *testing.T) {
 		FieldType: *types.NewFieldType(mysql.TypeTiny),
 		State:     model.StatePublic,
 	})
-	col.Flen = 2
-	col.Decimal = 1
-	col.Charset = mysql.DefaultCharset
-	col.Collate = mysql.DefaultCollationName
-	col.Flag |= mysql.ZerofillFlag | mysql.UnsignedFlag | mysql.BinaryFlag | mysql.AutoIncrementFlag | mysql.NotNullFlag
+	col.SetFlen(2)
+	col.SetDecimal(1)
+	col.SetCharset(mysql.DefaultCharset)
+	col.SetCollate(mysql.DefaultCollationName)
+	col.AddFlag(mysql.ZerofillFlag | mysql.UnsignedFlag | mysql.BinaryFlag | mysql.AutoIncrementFlag | mysql.NotNullFlag)
 
 	require.Equal(t, "tinyint(2) unsigned zerofill", col.GetTypeDesc())
 	col.ToInfo()
 	tbInfo := &model.TableInfo{}
 	require.False(t, col.IsPKHandleColumn(tbInfo))
 	tbInfo.PKIsHandle = true
-	col.Flag |= mysql.PriKeyFlag
+	col.AddFlag(mysql.PriKeyFlag)
 	require.True(t, col.IsPKHandleColumn(tbInfo))
 
 	cs := col.String()
 	require.Greater(t, len(cs), 0)
 
-	col.Tp = mysql.TypeEnum
-	col.Flag = 0
-	col.Elems = []string{"a", "b"}
+	col.SetType(mysql.TypeEnum)
+	col.SetFlag(0)
+	col.SetElems([]string{"a", "b"})
 
 	require.Equal(t, "enum('a','b')", col.GetTypeDesc())
 
-	col.Elems = []string{"'a'", "b"}
+	col.SetElems([]string{"'a'", "b"})
 	require.Equal(t, "enum('''a''','b')", col.GetTypeDesc())
 
-	col.Tp = mysql.TypeFloat
-	col.Flen = 8
-	col.Decimal = -1
+	col.SetType(mysql.TypeFloat)
+	col.SetFlen(8)
+	col.SetDecimal(-1)
 	require.Equal(t, "float", col.GetTypeDesc())
 
-	col.Decimal = 1
+	col.SetDecimal(1)
 	require.Equal(t, "float(8,1)", col.GetTypeDesc())
 
-	col.Tp = mysql.TypeDatetime
-	col.Decimal = 6
+	col.SetType(mysql.TypeDatetime)
+	col.SetDecimal(6)
 	require.Equal(t, "datetime(6)", col.GetTypeDesc())
 
-	col.Decimal = 0
+	col.SetDecimal(0)
 	require.Equal(t, "datetime", col.GetTypeDesc())
 
-	col.Decimal = -1
+	col.SetDecimal(-1)
 	require.Equal(t, "datetime", col.GetTypeDesc())
 }
 
@@ -96,21 +96,21 @@ func TestFind(t *testing.T) {
 	require.Nil(t, c1)
 	require.Equal(t, "d", s1)
 
-	cols[0].Flag |= mysql.OnUpdateNowFlag
+	cols[0].AddFlag(mysql.OnUpdateNowFlag)
 	c2 := FindOnUpdateCols(cols)
 	require.Equal(t, cols[:1], c2)
 }
 
 func TestCheck(t *testing.T) {
 	col := newCol("a")
-	col.Flag = mysql.AutoIncrementFlag
+	col.SetFlag(mysql.AutoIncrementFlag)
 	cols := []*Column{col, col}
 	err := CheckOnce(cols)
 	require.Error(t, err)
 	cols = cols[:1]
 	err = CheckNotNull(cols, types.MakeDatums(nil))
 	require.NoError(t, err)
-	cols[0].Flag |= mysql.NotNullFlag
+	cols[0].AddFlag(mysql.NotNullFlag)
 	err = CheckNotNull(cols, types.MakeDatums(nil))
 	require.Error(t, err)
 	err = CheckOnce([]*Column{})
@@ -127,7 +127,7 @@ func TestHandleBadNull(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
-	col.Flag |= mysql.NotNullFlag
+	col.AddFlag(mysql.NotNullFlag)
 	err = col.HandleBadNull(&types.Datum{}, sc)
 	require.Error(t, err)
 
@@ -138,14 +138,14 @@ func TestHandleBadNull(t *testing.T) {
 
 func TestDesc(t *testing.T) {
 	col := newCol("a")
-	col.Flag = mysql.AutoIncrementFlag | mysql.NotNullFlag | mysql.PriKeyFlag
+	col.SetFlag(mysql.AutoIncrementFlag | mysql.NotNullFlag | mysql.PriKeyFlag)
 	NewColDesc(col)
-	col.Flag = mysql.MultipleKeyFlag
+	col.SetFlag(mysql.MultipleKeyFlag)
 	NewColDesc(col)
-	col.Flag = mysql.UniqueKeyFlag | mysql.OnUpdateNowFlag
+	col.SetFlag(mysql.UniqueKeyFlag | mysql.OnUpdateNowFlag)
 	desc := NewColDesc(col)
 	require.Equal(t, "DEFAULT_GENERATED on update CURRENT_TIMESTAMP", desc.Extra)
-	col.Flag = 0
+	col.SetFlag(0)
 	col.GeneratedExprString = "test"
 	col.GeneratedStored = true
 	desc = NewColDesc(col)
@@ -158,6 +158,22 @@ func TestDesc(t *testing.T) {
 }
 
 func TestGetZeroValue(t *testing.T) {
+	tp1 := &types.FieldType{}
+	tp1.SetType(mysql.TypeLonglong)
+	tp1.SetFlag(mysql.UnsignedFlag)
+
+	tp2 := &types.FieldType{}
+	tp2.SetType(mysql.TypeString)
+	tp2.SetFlen(2)
+	tp2.SetCharset(charset.CharsetBin)
+	tp2.SetCollate(charset.CollationBin)
+
+	tp3 := &types.FieldType{}
+	tp3.SetType(mysql.TypeString)
+	tp3.SetFlen(2)
+	tp3.SetCharset(charset.CharsetUTF8MB4)
+	tp3.SetCollate(charset.CollationBin)
+
 	tests := []struct {
 		ft    *types.FieldType
 		value types.Datum
@@ -167,10 +183,7 @@ func TestGetZeroValue(t *testing.T) {
 			types.NewIntDatum(0),
 		},
 		{
-			&types.FieldType{
-				Tp:   mysql.TypeLonglong,
-				Flag: mysql.UnsignedFlag,
-			},
+			tp1,
 			types.NewUintDatum(0),
 		},
 		{
@@ -222,21 +235,11 @@ func TestGetZeroValue(t *testing.T) {
 			types.NewDatum(types.Enum{}),
 		},
 		{
-			&types.FieldType{
-				Tp:      mysql.TypeString,
-				Flen:    2,
-				Charset: charset.CharsetBin,
-				Collate: charset.CollationBin,
-			},
+			tp2,
 			types.NewDatum(make([]byte, 2)),
 		},
 		{
-			&types.FieldType{
-				Tp:      mysql.TypeString,
-				Flen:    2,
-				Charset: charset.CharsetUTF8MB4,
-				Collate: charset.CollationBin,
-			},
+			tp3,
 			types.NewDatum(""),
 		},
 		{
@@ -250,7 +253,7 @@ func TestGetZeroValue(t *testing.T) {
 			colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 			zv := GetZeroValue(colInfo)
 			require.Equal(t, tt.value.Kind(), zv.Kind())
-			cmp, err := zv.Compare(sc, &tt.value, collate.GetCollator(tt.ft.Collate))
+			cmp, err := zv.Compare(sc, &tt.value, collate.GetCollator(tt.ft.GetCollate()))
 			require.NoError(t, err)
 			require.Equal(t, 0, cmp)
 		})
@@ -263,7 +266,7 @@ func TestCastValue(t *testing.T) {
 		FieldType: *types.NewFieldType(mysql.TypeLong),
 		State:     model.StatePublic,
 	}
-	colInfo.Charset = mysql.UTF8Charset
+	colInfo.SetCharset(mysql.UTF8Charset)
 	val, err := CastValue(ctx, types.Datum{}, &colInfo, false, false)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), val.GetInt64())
@@ -280,32 +283,32 @@ func TestCastValue(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, val)
 
-	colInfoS.Charset = mysql.UTF8Charset
+	colInfoS.SetCharset(mysql.UTF8Charset)
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false, false)
 	require.Error(t, err)
 
-	colInfoS.Charset = mysql.UTF8Charset
+	colInfoS.SetCharset(mysql.UTF8Charset)
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false, true)
 	require.NoError(t, err)
 
-	colInfoS.Charset = mysql.UTF8MB4Charset
+	colInfoS.SetCharset(mysql.UTF8MB4Charset)
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false, false)
 	require.Error(t, err)
 
-	colInfoS.Charset = mysql.UTF8MB4Charset
+	colInfoS.SetCharset(mysql.UTF8MB4Charset)
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false, true)
 	require.NoError(t, err)
 
-	colInfoS.Charset = charset.CharsetASCII
+	colInfoS.SetCharset(charset.CharsetASCII)
 	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, false)
 	require.Error(t, err)
 
-	colInfoS.Charset = charset.CharsetASCII
+	colInfoS.SetCharset(charset.CharsetASCII)
 	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, true)
 	require.NoError(t, err)
 
-	colInfoS.Charset = charset.CharsetUTF8MB4
-	colInfoS.Collate = "utf8mb4_general_ci"
+	colInfoS.SetCharset(charset.CharsetUTF8MB4)
+	colInfoS.SetCollate("utf8mb4_general_ci")
 	val, err = CastValue(ctx, types.NewBinaryLiteralDatum([]byte{0xE5, 0xA5, 0xBD}), &colInfoS, false, false)
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4_general_ci", val.Collation())
@@ -323,6 +326,28 @@ func TestGetDefaultValue(t *testing.T) {
 	ctx := mock.NewContext()
 	zeroTimestamp := types.ZeroTimestamp
 	timestampValue := types.NewTime(types.FromDate(2019, 5, 6, 12, 48, 49, 0), mysql.TypeTimestamp, types.DefaultFsp)
+
+	tp0 := types.FieldType{}
+	tp0.SetType(mysql.TypeLonglong)
+
+	tp1 := types.FieldType{}
+	tp1.SetType(mysql.TypeLonglong)
+	tp1.SetFlag(mysql.NotNullFlag)
+
+	tp2 := types.FieldType{}
+	tp2.SetType(mysql.TypeEnum)
+	tp2.SetFlag(mysql.NotNullFlag)
+	tp2.SetElems([]string{"abc", "def"})
+	tp2.SetCollate(mysql.DefaultCollationName)
+
+	tp3 := types.FieldType{}
+	tp3.SetType(mysql.TypeTimestamp)
+	tp3.SetFlag(mysql.TimestampFlag)
+
+	tp4 := types.FieldType{}
+	tp4.SetType(mysql.TypeLonglong)
+	tp4.SetFlag(mysql.NotNullFlag | mysql.AutoIncrementFlag)
+
 	tests := []struct {
 		colInfo *model.ColumnInfo
 		strict  bool
@@ -331,10 +356,7 @@ func TestGetDefaultValue(t *testing.T) {
 	}{
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
-					Tp:   mysql.TypeLonglong,
-					Flag: mysql.NotNullFlag,
-				},
+				FieldType:          tp1,
 				OriginDefaultValue: 1.0,
 				DefaultValue:       1.0,
 			},
@@ -344,10 +366,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
-					Tp:   mysql.TypeLonglong,
-					Flag: mysql.NotNullFlag,
-				},
+				FieldType: tp1,
 			},
 			false,
 			types.NewIntDatum(0),
@@ -355,9 +374,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
-					Tp: mysql.TypeLonglong,
-				},
+				FieldType: tp0,
 			},
 			false,
 			types.Datum{},
@@ -365,12 +382,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
-					Tp:      mysql.TypeEnum,
-					Flag:    mysql.NotNullFlag,
-					Elems:   []string{"abc", "def"},
-					Collate: mysql.DefaultCollationName,
-				},
+				FieldType: tp2,
 			},
 			false,
 			types.NewMysqlEnumDatum(types.Enum{Name: "abc", Value: 1}),
@@ -378,10 +390,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
-					Tp:   mysql.TypeTimestamp,
-					Flag: mysql.TimestampFlag,
-				},
+				FieldType:          tp3,
 				OriginDefaultValue: "0000-00-00 00:00:00",
 				DefaultValue:       "0000-00-00 00:00:00",
 			},
@@ -391,10 +400,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
-					Tp:   mysql.TypeTimestamp,
-					Flag: mysql.TimestampFlag,
-				},
+				FieldType:          tp3,
 				OriginDefaultValue: timestampValue.String(),
 				DefaultValue:       timestampValue.String(),
 			},
@@ -404,10 +410,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
-					Tp:   mysql.TypeTimestamp,
-					Flag: mysql.TimestampFlag,
-				},
+				FieldType:          tp3,
 				OriginDefaultValue: "not valid date",
 				DefaultValue:       "not valid date",
 			},
@@ -417,10 +420,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
-					Tp:   mysql.TypeLonglong,
-					Flag: mysql.NotNullFlag,
-				},
+				FieldType: tp1,
 			},
 			true,
 			types.NewDatum(zeroTimestamp),
@@ -428,10 +428,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
-					Tp:   mysql.TypeLonglong,
-					Flag: mysql.NotNullFlag | mysql.AutoIncrementFlag,
-				},
+				FieldType: tp4,
 			},
 			true,
 			types.NewIntDatum(0),
@@ -439,10 +436,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
-					Tp:   mysql.TypeLonglong,
-					Flag: mysql.NotNullFlag,
-				},
+				FieldType:     tp1,
 				DefaultIsExpr: true,
 				DefaultValue:  "1",
 			},

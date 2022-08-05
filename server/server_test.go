@@ -400,10 +400,11 @@ func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(t *testing.T, 
 }
 
 func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *Server) {
-	path := "/tmp/load_data_test.csv"
-	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	t.Skip("unstable test")
+	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	require.NotNil(t, fp)
+	path := fp.Name()
 	defer func() {
 		err = fp.Close()
 		require.NoError(t, err)
@@ -460,28 +461,28 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *Ser
 	})
 }
 
-func (cli *testServerClient) prepareLoadDataFile(t *testing.T, path string, rows ...string) {
-	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+func (cli *testServerClient) prepareLoadDataFile(t *testing.T, fp *os.File, rows ...string) {
+	err := fp.Truncate(0)
 	require.NoError(t, err)
-	require.NotNil(t, fp)
-	defer func() {
-		err = fp.Close()
-		require.NoError(t, err)
-	}()
+	_, err = fp.Seek(0, 0)
+	require.NoError(t, err)
+
 	for _, row := range rows {
 		fields := strings.Split(row, " ")
 		_, err = fp.WriteString(strings.Join(fields, "\t"))
+		require.NoError(t, err)
 		_, err = fp.WriteString("\n")
+		require.NoError(t, err)
 	}
-	require.NoError(t, err)
+	require.NoError(t, fp.Sync())
 }
 
 func (cli *testServerClient) runTestLoadDataAutoRandom(t *testing.T) {
-	path := "/tmp/load_data_txn_error.csv"
-
-	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	fp, err := os.CreateTemp("", "load_data_txn_error.csv")
 	require.NoError(t, err)
 	require.NotNil(t, fp)
+
+	path := fp.Name()
 
 	defer func() {
 		_ = os.Remove(path)
@@ -534,11 +535,10 @@ func (cli *testServerClient) runTestLoadDataAutoRandom(t *testing.T) {
 }
 
 func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
-	path := "/tmp/load_data_txn_error_term.csv"
-
-	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	fp, err := os.CreateTemp("", "load_data_txn_error_term.csv")
 	require.NoError(t, err)
 	require.NotNil(t, fp)
+	path := fp.Name()
 
 	defer func() {
 		_ = os.Remove(path)
@@ -591,10 +591,10 @@ func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(t *testing
 }
 
 func (cli *testServerClient) runTestLoadDataForListPartition(t *testing.T) {
-	path := "/tmp/load_data_list_partition.csv"
-	defer func() {
-		_ = os.Remove(path)
-	}()
+	f, err := os.CreateTemp("", "load_data_list_partition.csv")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	path := f.Name()
 
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
@@ -609,20 +609,20 @@ func (cli *testServerClient) runTestLoadDataForListPartition(t *testing.T) {
     	partition p3 values in (7,8,15,16,null)
 	);`)
 		// Test load data into 1 partition.
-		cli.prepareLoadDataFile(t, path, "1 a", "2 b")
+		cli.prepareLoadDataFile(t, f, "1 a", "2 b")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		rows := dbt.MustQuery("select * from t partition(p1) order by id")
 		cli.checkRows(t, rows, "1 a", "2 b")
 		// Test load data into multi-partitions.
 		dbt.MustExec("delete from t")
-		cli.prepareLoadDataFile(t, path, "1 a", "3 c", "4 e")
+		cli.prepareLoadDataFile(t, f, "1 a", "3 c", "4 e")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "1 a", "3 c", "4 e")
 		require.NoError(t, rows.Close())
 		// Test load data meet duplicate error.
-		cli.prepareLoadDataFile(t, path, "1 x", "2 b", "2 x", "7 a")
+		cli.prepareLoadDataFile(t, f, "1 x", "2 b", "2 x", "7 a")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		rows = dbt.MustQuery("show warnings")
 		cli.checkRows(t, rows,
@@ -632,7 +632,7 @@ func (cli *testServerClient) runTestLoadDataForListPartition(t *testing.T) {
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		// Test load data meet no partition warning.
-		cli.prepareLoadDataFile(t, path, "5 a", "100 x")
+		cli.prepareLoadDataFile(t, f, "5 a", "100 x")
 		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t", path))
 		require.NoError(t, err)
 		rows = dbt.MustQuery("show warnings")
@@ -645,10 +645,10 @@ func (cli *testServerClient) runTestLoadDataForListPartition(t *testing.T) {
 }
 
 func (cli *testServerClient) runTestLoadDataForListPartition2(t *testing.T) {
-	path := "/tmp/load_data_list_partition.csv"
-	defer func() {
-		_ = os.Remove(path)
-	}()
+	f, err := os.CreateTemp("", "load_data_list_partition.csv")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	path := f.Name()
 
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
@@ -663,19 +663,19 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(t *testing.T) {
     	partition p3 values in (7,8,15,16,null)
 	);`)
 		// Test load data into 1 partition.
-		cli.prepareLoadDataFile(t, path, "1 a", "2 b")
+		cli.prepareLoadDataFile(t, f, "1 a", "2 b")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
 		rows := dbt.MustQuery("select id,name from t partition(p1) order by id")
 		cli.checkRows(t, rows, "1 a", "2 b")
 		// Test load data into multi-partitions.
 		dbt.MustExec("delete from t")
-		cli.prepareLoadDataFile(t, path, "1 a", "3 c", "4 e")
+		cli.prepareLoadDataFile(t, f, "1 a", "3 c", "4 e")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select id,name from t order by id")
 		cli.checkRows(t, rows, "1 a", "3 c", "4 e")
 		// Test load data meet duplicate error.
-		cli.prepareLoadDataFile(t, path, "1 x", "2 b", "2 x", "7 a")
+		cli.prepareLoadDataFile(t, f, "1 x", "2 b", "2 x", "7 a")
 		require.NoError(t, rows.Close())
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
 		rows = dbt.MustQuery("show warnings")
@@ -687,7 +687,7 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(t *testing.T) {
 		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		require.NoError(t, rows.Close())
 		// Test load data meet no partition warning.
-		cli.prepareLoadDataFile(t, path, "5 a", "100 x")
+		cli.prepareLoadDataFile(t, f, "5 a", "100 x")
 		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
 		require.NoError(t, err)
 		rows = dbt.MustQuery("show warnings")
@@ -700,10 +700,10 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(t *testing.T) {
 }
 
 func (cli *testServerClient) runTestLoadDataForListColumnPartition(t *testing.T) {
-	path := "/tmp/load_data_list_partition.csv"
-	defer func() {
-		_ = os.Remove(path)
-	}()
+	f, err := os.CreateTemp("", "load_data_list_partition.csv")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	path := f.Name()
 
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
@@ -718,20 +718,20 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(t *testing.T)
     	partition p3 values in (7,8,15,16,null)
 	);`)
 		// Test load data into 1 partition.
-		cli.prepareLoadDataFile(t, path, "1 a", "2 b")
+		cli.prepareLoadDataFile(t, f, "1 a", "2 b")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		rows := dbt.MustQuery("select * from t partition(p1) order by id")
 		cli.checkRows(t, rows, "1 a", "2 b")
 		// Test load data into multi-partitions.
 		dbt.MustExec("delete from t")
-		cli.prepareLoadDataFile(t, path, "1 a", "3 c", "4 e")
+		cli.prepareLoadDataFile(t, f, "1 a", "3 c", "4 e")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "1 a", "3 c", "4 e")
 		require.NoError(t, rows.Close())
 		// Test load data meet duplicate error.
-		cli.prepareLoadDataFile(t, path, "1 x", "2 b", "2 x", "7 a")
+		cli.prepareLoadDataFile(t, f, "1 x", "2 b", "2 x", "7 a")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		rows = dbt.MustQuery("show warnings")
 		cli.checkRows(t, rows,
@@ -741,7 +741,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(t *testing.T)
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		// Test load data meet no partition warning.
-		cli.prepareLoadDataFile(t, path, "5 a", "100 x")
+		cli.prepareLoadDataFile(t, f, "5 a", "100 x")
 		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t", path))
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
@@ -755,10 +755,10 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(t *testing.T)
 }
 
 func (cli *testServerClient) runTestLoadDataForListColumnPartition2(t *testing.T) {
-	path := "/tmp/load_data_list_partition.csv"
-	defer func() {
-		_ = os.Remove(path)
-	}()
+	f, err := os.CreateTemp("", "load_data_list_partition.csv")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	path := f.Name()
 
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
@@ -772,19 +772,19 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(t *testing.T
     	partition p_south values in (('s',13),('s',14),('s',15),('s',16))
 	);`)
 		// Test load data into 1 partition.
-		cli.prepareLoadDataFile(t, path, "w 1 1", "w 2 2")
+		cli.prepareLoadDataFile(t, f, "w 1 1", "w 2 2")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		rows := dbt.MustQuery("select * from t partition(p_west) order by id")
 		cli.checkRows(t, rows, "w 1 1", "w 2 2")
 		// Test load data into multi-partitions.
 		dbt.MustExec("delete from t")
-		cli.prepareLoadDataFile(t, path, "w 1 1", "e 5 5", "n 9 9")
+		cli.prepareLoadDataFile(t, f, "w 1 1", "e 5 5", "n 9 9")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "w 1 1", "e 5 5", "n 9 9")
 		// Test load data meet duplicate error.
-		cli.prepareLoadDataFile(t, path, "w 1 2", "w 2 2")
+		cli.prepareLoadDataFile(t, f, "w 1 2", "w 2 2")
 		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t", path))
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
@@ -794,13 +794,13 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(t *testing.T
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
 		// Test load data meet no partition warning.
-		cli.prepareLoadDataFile(t, path, "w 3 3", "w 5 5", "e 8 8")
+		cli.prepareLoadDataFile(t, f, "w 3 3", "w 5 5", "e 8 8")
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t", path))
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("show warnings")
 		cli.checkRows(t, rows, "Warning 1526 Table has no partition for value from column_list")
-		cli.prepareLoadDataFile(t, path, "x 1 1", "w 1 1")
+		cli.prepareLoadDataFile(t, f, "x 1 1", "w 1 1")
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t", path))
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
@@ -850,11 +850,148 @@ func (cli *testServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRow
 	require.Equal(t, strings.Join(expectedRows, "\n"), strings.Join(result, "\n"))
 }
 
-func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
-	// create a file and write data.
-	path := "/tmp/load_data_test.csv"
-	fp, err := os.Create(path)
+func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *Server) {
+	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
+	path := fp.Name()
+	require.NotNil(t, fp)
+	defer func() {
+		err = fp.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+
+	_, err = fp.WriteString("dsadasdas\n" +
+		"\"1\",\"1\",,\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"\n" +
+		"\"1\",\"2\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"\n" +
+		"\"1\",\"3\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"\n" +
+		"\"1\",\"4\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"")
+
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (k,id,c,dt,vv,ts)", path))
+		rows := db.MustQuery("select * from t66")
+		var (
+			id sql.NullString
+			k  sql.NullString
+			c  sql.NullString
+			dt sql.NullString
+			vv sql.NullString
+			ts sql.NullString
+		)
+		columns := []*sql.NullString{&k, &id, &c, &dt, &vv, &ts}
+		require.Truef(t, rows.Next(), "unexpected data")
+		err := rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,1,,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,2,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,3,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,4,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+	})
+
+	// Also test cases where column list only specifies partial columns
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (k,id,c)", path))
+		rows := db.MustQuery("select * from t66")
+		var (
+			id sql.NullString
+			k  sql.NullString
+			c  sql.NullString
+			dt sql.NullString
+			vv sql.NullString
+			ts sql.NullString
+		)
+		columns := []*sql.NullString{&k, &id, &c, &dt, &vv, &ts}
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,1,,,,", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,2,a,,,", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,3,a,,,", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,4,a,,,", ","))
+	})
+
+	// Also test for case-insensitivity
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+		// We modify the upper case and lower case in the column list to test the case-insensitivity
+		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (K,Id,c,dT,Vv,Ts)", path))
+		rows := db.MustQuery("select * from t66")
+		var (
+			id sql.NullString
+			k  sql.NullString
+			c  sql.NullString
+			dt sql.NullString
+			vv sql.NullString
+			ts sql.NullString
+		)
+		columns := []*sql.NullString{&k, &id, &c, &dt, &vv, &ts}
+		require.Truef(t, rows.Next(), "unexpected data")
+		err := rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,1,,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,2,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,3,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,4,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+	})
+}
+
+func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []string) {
+	require.Equal(t, len(columns), len(expected))
+
+	for i := 0; i < len(columns); i++ {
+		require.Equal(t, expected[i], columns[i].String)
+	}
+}
+
+func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
+	fp, err := os.CreateTemp("", "load_data_test.csv")
+	require.NoError(t, err)
+	path := fp.Name()
 	require.NotNil(t, fp)
 	defer func() {
 		err = fp.Close()
@@ -886,14 +1023,14 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		dbt.MustExec("create sequence s1")
 
 		// can't insert into views (in TiDB) or sequences. issue #20880
-		_, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table v1")
+		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table v1", path))
 		require.Error(t, err)
 		require.Equal(t, "Error 1105: can only load data into base tables", err.Error())
-		_, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table s1")
+		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table s1", path))
 		require.Error(t, err)
 		require.Equal(t, "Error 1105: can only load data into base tables", err.Error())
 
-		rs, err1 := dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table test")
+		rs, err1 := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table test", path))
 		require.NoError(t, err1)
 		lastID, err1 := rs.LastInsertId()
 		require.NoError(t, err1)
@@ -944,7 +1081,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		// specify faileds and lines
 		dbt.MustExec("delete from test")
 		dbt.MustExec("set @@tidb_dml_batch_size = 3")
-		rs, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
+		rs, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'", path))
 		require.NoError(t, err)
 		lastID, err = rs.LastInsertId()
 		require.NoError(t, err)
@@ -988,7 +1125,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 			require.NoError(t, err)
 		}
 		dbt.MustExec("set @@tidb_dml_batch_size = 3")
-		rs, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
+		rs, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'", path))
 		require.NoError(t, err)
 		lastID, err = rs.LastInsertId()
 		require.NoError(t, err)
@@ -1001,7 +1138,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		require.NoError(t, rows.Close())
 		// don't support lines terminated is ""
 		dbt.MustExec("set @@tidb_dml_batch_size = 3")
-		_, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
+		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table test lines terminated by ''", path))
 		require.NotNil(t, err)
 
 		// infile doesn't exist
@@ -1032,7 +1169,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table test (str varchar(10) default null, i int default null)")
 		dbt.MustExec("set @@tidb_dml_batch_size = 3")
-		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table test FIELDS TERMINATED BY ',' enclosed by '"'`, path))
 		require.NoError(t, err1)
 		var (
 			str string
@@ -1081,7 +1218,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table test (a date, b date, c date not null, d date)")
 		dbt.MustExec("set @@tidb_dml_batch_size = 3")
-		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ','`)
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table test FIELDS TERMINATED BY ','`, path))
 		require.NoError(t, err1)
 		var (
 			a sql.NullString
@@ -1138,7 +1275,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table test (a varchar(20), b varchar(20))")
 		dbt.MustExec("set @@tidb_dml_batch_size = 3")
-		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table test FIELDS TERMINATED BY ',' enclosed by '"'`, path))
 		require.NoError(t, err1)
 		var (
 			a sql.NullString
@@ -1185,7 +1322,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table test (id INT NOT NULL PRIMARY KEY,  b INT,  c varchar(10))")
 		dbt.MustExec("set @@tidb_dml_batch_size = 3")
-		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' IGNORE 1 LINES`)
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table test FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' IGNORE 1 LINES`, path))
 		require.NoError(t, err1)
 		var (
 			a int
@@ -1211,7 +1348,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		dbt.MustExec("set @@tidb_dml_batch_size = 3")
-		_, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table test")
+		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table test", path))
 		require.Error(t, err)
 		checkErrorCode(t, err, errno.ErrNotAllowedCommand)
 	})
@@ -1239,7 +1376,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		dbt.MustExec("drop table if exists pn")
 		dbt.MustExec("create table pn (c1 int, c2 int)")
 		dbt.MustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ','`, path))
 		require.NoError(t, err1)
 		var (
 			a int
@@ -1260,7 +1397,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		require.NoError(t, rows.Close())
 		// fail error processing test
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/commitOneTaskErr", "return"))
-		_, err1 = dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
+		_, err1 = dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ','`, path))
 		mysqlErr, ok := err1.(*mysql.MySQLError)
 		require.True(t, ok)
 		require.Equal(t, "mock commit one task error", mysqlErr.Message)
@@ -1291,7 +1428,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		dbt.MustExec("drop table if exists pn")
 		dbt.MustExec("create table pn (c1 int, c2 int)")
 		dbt.MustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, c2)`)
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, c2)`, path))
 		require.NoError(t, err1)
 		var (
 			a int
@@ -1335,7 +1472,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		dbt.MustExec("drop table if exists pn")
 		dbt.MustExec("create table pn (c1 int, c2 int, c3 int)")
 		dbt.MustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @dummy)`)
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, @dummy)`, path))
 		require.NoError(t, err1)
 		var (
 			a int
@@ -1382,7 +1519,40 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		dbt.MustExec("drop table if exists pn")
 		dbt.MustExec("create table pn (c1 int, c2 int, c3 int)")
 		dbt.MustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @val1, @val2) SET c3 = @val2 * 100, c2 = CAST(@val1 AS UNSIGNED)`)
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, @val1, @val2) SET c3 = @val2 * 100, c2 = CAST(@val1 AS UNSIGNED)`, path))
+		require.NoError(t, err1)
+		var (
+			a int
+			b int
+			c int
+		)
+		rows := dbt.MustQuery("select * from pn")
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&a, &b, &c)
+		require.NoError(t, err)
+		require.Equal(t, 1, a)
+		require.Equal(t, 2, b)
+		require.Equal(t, 300, c)
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&a, &b, &c)
+		require.NoError(t, err)
+		require.Equal(t, 4, a)
+		require.Equal(t, 5, b)
+		require.Equal(t, 600, c)
+		require.Falsef(t, rows.Next(), "unexpected data")
+		require.NoError(t, rows.Close())
+		dbt.MustExec("drop table if exists pn")
+	})
+
+	// Test with upper case variables.
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists pn")
+		dbt.MustExec("create table pn (c1 int, c2 int, c3 int)")
+		dbt.MustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, @VAL1, @VAL2) SET c3 = @VAL2 * 100, c2 = CAST(@VAL1 AS UNSIGNED)`, path))
 		require.NoError(t, err1)
 		var (
 			a int
@@ -1465,6 +1635,7 @@ func (cli *testServerClient) runTestExplainForConn(t *testing.T) {
 
 func (cli *testServerClient) runTestErrorCode(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "ErrorCode", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@tidb_txn_mode=''")
 		dbt.MustExec("create table test (c int PRIMARY KEY);")
 		dbt.MustExec("insert into test values (1);")
 		txn1, err := dbt.GetDB().Begin()
@@ -1702,7 +1873,6 @@ func (cli *testServerClient) runTestStatusAPI(t *testing.T) {
 
 func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "FailedMultiStatements", func(dbt *testkit.DBTestKit) {
-
 		// Default is now OFF in new installations.
 		// It is still WARN in upgrade installations (for now)
 		_, err := dbt.GetDB().Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
@@ -1763,7 +1933,6 @@ func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 }
 
 func (cli *testServerClient) runTestMultiStatements(t *testing.T) {
-
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.Params["multiStatements"] = "true"
 	}, "MultiStatements", func(dbt *testkit.DBTestKit) {
@@ -1862,6 +2031,21 @@ func (cli *testServerClient) runTestTLSConnection(t *testing.T, overrider config
 		require.NoError(t, err)
 	}()
 	_, err = db.Exec("USE test")
+	if err != nil {
+		return errors.Annotate(err, "dsn:"+dsn)
+	}
+	return err
+}
+
+func (cli *testServerClient) runTestEnableSecureTransport(t *testing.T, overrider configOverrider) error {
+	dsn := cli.getDSN(overrider)
+	db, err := sql.Open("mysql", dsn)
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	_, err = db.Exec("SET GLOBAL require_secure_transport = 1")
 	if err != nil {
 		return errors.Annotate(err, "dsn:"+dsn)
 	}
@@ -1981,7 +2165,6 @@ func (cli *testServerClient) waitUntilServerOnline() {
 }
 
 func (cli *testServerClient) runTestInitConnect(t *testing.T) {
-
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());SET @a=1;"`)
 		dbt.MustExec(`CREATE USER init_nonsuper`)
@@ -2015,8 +2198,6 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "", a)
 		require.NoError(t, rows.Close())
-		// change the init-connect to invalid.
-		dbt.MustExec(`SET GLOBAL init_connect="invalidstring"`)
 	})
 	// set global init_connect to empty to avoid fail other tests
 	defer cli.runTests(t, func(config *mysql.Config) {
@@ -2029,17 +2210,14 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "init_nonsuper"
 	}))
-	require.NoError(t, err)      // doesn't fail because of lazy loading
-	defer db.Close()             // may already be closed
-	_, err = db.Exec("SELECT 1") // fails because of init sql
-	require.Error(t, err)
+	require.NoError(t, err) // doesn't fail because of lazy loading
+	defer db.Close()        // may already be closed
 }
 
 // Client errors are only incremented when using the TiDB Server protocol,
 // and not internal SQL statements. Thus, this test is in the server-test suite.
 func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "clientErrors", func(dbt *testkit.DBTestKit) {
-
 		clientErrors := []struct {
 			stmt              string
 			incrementWarnings bool
@@ -2058,9 +2236,10 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 				errCode:           1068, // multiple pkeys
 			},
 			{
-				stmt:            "gibberish",
-				incrementErrors: true,
-				errCode:         1064, // parse error
+				stmt:              "gibberish",
+				incrementWarnings: true,
+				incrementErrors:   true,
+				errCode:           1064, // parse error
 			},
 		}
 
@@ -2068,7 +2247,6 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 
 		for _, test := range clientErrors {
 			for _, tbl := range sources {
-
 				var errors, warnings int
 				rows := dbt.MustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
 				if rows.Next() {
@@ -2103,6 +2281,5 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 				require.Equalf(t, warnings, newWarnings, "source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt)
 			}
 		}
-
 	})
 }

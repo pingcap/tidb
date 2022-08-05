@@ -181,7 +181,12 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	for i := range e.fields {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: mysql.DefaultCharset, Collate: mysql.DefaultCollationName}
+		ft := types.FieldType{}
+		ft.SetType(mysql.TypeBlob)
+		ft.SetFlen(mysql.MaxBlobWidth)
+		ft.SetCharset(mysql.DefaultCharset)
+		ft.SetCollate(mysql.DefaultCollationName)
+		rf.Column.FieldType = ft
 		e.fields[i] = rf
 	}
 
@@ -198,7 +203,7 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 		ft := fieldTypeFromPBColumn(col)
 		fts[i] = ft
 		if ft.EvalType() == types.ETString {
-			collators[i] = collate.GetCollator(ft.Collate)
+			collators[i] = collate.GetCollator(ft.GetCollate())
 		}
 	}
 	colReq := analyzeReq.ColReq

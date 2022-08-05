@@ -18,14 +18,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSet(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	elems := []string{"a", "b", "c", "d"}
 
 	t.Run("ParseSet", func(t *testing.T) {

@@ -189,7 +189,7 @@ func (b *builtinGEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfGE(result.Int64s())
 	return nil
@@ -309,7 +309,7 @@ func (b *builtinEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfEQ(result.Int64s())
 	return nil
@@ -341,7 +341,7 @@ func (b *builtinNEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfNE(result.Int64s())
 	return nil
@@ -373,7 +373,7 @@ func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfGT(result.Int64s())
 	return nil
@@ -402,7 +402,7 @@ func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
 		isNull0 := buf0.IsNull(i)
@@ -436,9 +436,9 @@ func (b *builtinIntervalIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 		if b.hasNullable {
-			idx, err = b.linearSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+			idx, err = b.linearSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), b.args[1:], input.GetRow(i))
 		} else {
-			idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+			idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), b.args[1:], input.GetRow(i))
 		}
 		if err != nil {
 			return err
@@ -511,7 +511,7 @@ func (b *builtinLEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfLE(result.Int64s())
 	return nil
@@ -543,7 +543,7 @@ func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfLT(result.Int64s())
 	return nil

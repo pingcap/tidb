@@ -50,10 +50,8 @@ There are currently ~20 hidden system variables:
 | tidb_track_aggregate_memory_usage | Track memory usage of aggregate executor | #1 Stable |
 | tidb_enable_top_sql | Top SQL (Sprint3) 总设计文档  | #2 Experimental |
 | tidb_top_sql_agent_address | Parameters for Top SQL | #4 Non-boolean Experimental |
-| tidb_top_sql_precision_seconds | "" | #4 Non-boolean Experimental  |
-| tidb_top_sql_max_statement_count | "" | #4 Non-boolean Experimental |
-| tidb_top_sql_max_collect | "" | #4 Non-boolean Experimental |
-| tidb_top_sql_report_interval_seconds | "" | #4 Non-boolean Experimental |
+| tidb_top_sql_max_time_series_count | "" | #4 Non-boolean Experimental |
+| tidb_top_sql_max_meta_count | "" | #4 Non-boolean Experimental |
 
 
 ## Detailed Design

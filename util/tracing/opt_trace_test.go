@@ -21,11 +21,11 @@ import (
 )
 
 func TestFlattenLogicalPlanTrace(t *testing.T) {
-	root1 := &LogicalPlanTrace{
+	root1 := &PlanTrace{
 		ID:          1,
 		TP:          "foo1",
 		ExplainInfo: "bar1",
-		Children: []*LogicalPlanTrace{
+		Children: []*PlanTrace{
 			{
 				ID:          2,
 				TP:          "foo2",
@@ -34,11 +34,11 @@ func TestFlattenLogicalPlanTrace(t *testing.T) {
 			},
 		},
 	}
-	root2 := &LogicalPlanTrace{
+	root2 := &PlanTrace{
 		ID:          1,
 		TP:          "foo1",
 		ExplainInfo: "bar1",
-		Children: []*LogicalPlanTrace{
+		Children: []*PlanTrace{
 			{
 				ID:          2,
 				TP:          "foo2",
@@ -49,7 +49,7 @@ func TestFlattenLogicalPlanTrace(t *testing.T) {
 				ID:          3,
 				TP:          "foo3",
 				ExplainInfo: "bar3",
-				Children: []*LogicalPlanTrace{
+				Children: []*PlanTrace{
 					{
 						ID:          4,
 						TP:          "foo4",
@@ -60,46 +60,46 @@ func TestFlattenLogicalPlanTrace(t *testing.T) {
 			},
 		},
 	}
-	expect1 := []FlattenLogicalPlanTrace{
+	expect1 := []*PlanTrace{
 		{
 			ID:          2,
 			TP:          "foo2",
 			ExplainInfo: "bar2",
-			Children:    []int{},
+			ChildrenID:  []int{},
 		},
 		{
 			ID:          1,
 			TP:          "foo1",
 			ExplainInfo: "bar1",
-			Children:    []int{2},
+			ChildrenID:  []int{2},
 		},
 	}
-	expect2 := []FlattenLogicalPlanTrace{
+	expect2 := []*PlanTrace{
 		{
 			ID:          2,
 			TP:          "foo2",
 			ExplainInfo: "bar2",
-			Children:    []int{},
+			ChildrenID:  []int{},
 		},
 		{
 			ID:          4,
 			TP:          "foo4",
 			ExplainInfo: "bar4",
-			Children:    []int{},
+			ChildrenID:  []int{},
 		},
 		{
 			ID:          3,
 			TP:          "foo3",
 			ExplainInfo: "bar3",
-			Children:    []int{4},
+			ChildrenID:  []int{4},
 		},
 		{
 			ID:          1,
 			TP:          "foo1",
 			ExplainInfo: "bar1",
-			Children:    []int{2, 3},
+			ChildrenID:  []int{2, 3},
 		},
 	}
-	require.EqualValues(t, toFlattenLogicalPlanTrace(root1), expect1)
-	require.EqualValues(t, toFlattenLogicalPlanTrace(root2), expect2)
+	require.EqualValues(t, toFlattenPlanTrace(root1), expect1)
+	require.EqualValues(t, toFlattenPlanTrace(root2), expect2)
 }

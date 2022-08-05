@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se session.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
@@ -54,8 +56,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se session.Session, pa
 }
 
 func TestClusterConfigTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -225,12 +226,11 @@ func TestClusterConfigTableExtractor(t *testing.T) {
 func timestamp(t *testing.T, s string) int64 {
 	tt, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
 	require.NoError(t, err)
-	return tt.UnixNano() / int64(time.Millisecond)
+	return tt.UnixMilli()
 }
 
 func TestClusterLogTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -531,8 +531,7 @@ func TestClusterLogTableExtractor(t *testing.T) {
 }
 
 func TestMetricTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -657,8 +656,7 @@ func TestMetricTableExtractor(t *testing.T) {
 }
 
 func TestMetricsSummaryTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -758,8 +756,7 @@ func TestMetricsSummaryTableExtractor(t *testing.T) {
 }
 
 func TestInspectionResultTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -900,8 +897,7 @@ func TestInspectionResultTableExtractor(t *testing.T) {
 }
 
 func TestInspectionSummaryTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -1002,8 +998,7 @@ func TestInspectionSummaryTableExtractor(t *testing.T) {
 }
 
 func TestInspectionRuleTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -1043,8 +1038,7 @@ func TestInspectionRuleTableExtractor(t *testing.T) {
 }
 
 func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -1419,8 +1413,7 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 }
 
 func TestTikvRegionPeersExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -1554,8 +1547,7 @@ func TestTikvRegionPeersExtractor(t *testing.T) {
 }
 
 func TestColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -1597,23 +1589,23 @@ func TestColumns(t *testing.T) {
 		},
 		{
 			sql:              `select * from information_schema.COLUMNS where table_name like 'T%';`,
-			tableNamePattern: []string{"(?i)T.*"},
+			tableNamePattern: []string{"t%"},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'T%';`,
-			columnNamePattern: []string{"(?i)T.*"},
+			columnNamePattern: []string{"t%"},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'i%';`,
-			columnNamePattern: []string{"(?i)i.*"},
+			columnNamePattern: []string{"i%"},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' or column_name like "def%";`,
-			columnNamePattern: []string{"(?i)abc.*|def.*"},
+			columnNamePattern: []string{},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' and column_name like "%def";`,
-			columnNamePattern: []string{"(?i)abc.*", "(?i).*def"},
+			columnNamePattern: []string{"abc%", "%def"},
 		},
 	}
 	parser := parser.New()
@@ -1653,17 +1645,87 @@ func TestColumns(t *testing.T) {
 }
 
 func TestPredicateQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, abclmn int);")
-
+	tk.MustExec("create table t(id int, abctime int,DATETIME_PRECISION int);")
+	tk.MustExec("create table abclmn(a int);")
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'test' and column_name like 'i%'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'I%'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'ID'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'id'").Check(testkit.Rows("t"))
-	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'I%' or column_name like '%D')").Check(testkit.Rows("id"))
-	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'abc%' and column_name like '%lmn')").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'i%' or column_name like '%d')").Check(testkit.Rows("id"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'abc%' and column_name like '%time')").Check(testkit.Rows("abctime"))
+	result := tk.MustQuery("select TABLE_NAME, column_name from information_schema.columns where table_schema = 'TEST' and column_name like '%time';")
+	require.Len(t, result.Rows(), 1)
+	tk.MustQuery("describe t").Check(testkit.Rows("id int(11) YES  <nil> ", "abctime int(11) YES  <nil> ", "DATETIME_PRECISION int(11) YES  <nil> "))
+	tk.MustQuery("describe t id").Check(testkit.Rows("id int(11) YES  <nil> "))
+	tk.MustQuery("describe t ID").Check(testkit.Rows("id int(11) YES  <nil> "))
+	tk.MustGetErrCode("describe t 'I%'", errno.ErrParse)
+	tk.MustGetErrCode("describe t I%", errno.ErrParse)
+
+	tk.MustQuery("show columns from t like 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'ABCTIME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'abc%'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'ABC%'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like '%ime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like '%IME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t like '%ime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t like '%IME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t like '%ime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t like '%IME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+
+	tk.MustQuery("show columns from t where field like '%time'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields from t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("explain t").Check(testkit.Rows("id int(11) YES  <nil> ", "abctime int(11) YES  <nil> ", "DATETIME_PRECISION int(11) YES  <nil> "))
+
+	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)
+	tk.MustGetErrCode("show columns from t like `id`", errno.ErrBadField)
+
+	tk.MustQuery("show tables like 't'").Check(testkit.Rows("t"))
+	tk.MustQuery("show tables like 'T'").Check(testkit.Rows("t"))
+	tk.MustQuery("show tables like 'ABCLMN'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show tables like 'ABC%'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show tables like '%lmn'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
+	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
+	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
+}
+
+func TestTikvRegionStatusExtractor(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql      string
+		tableIDs []int64
+	}{
+		{
+			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id = 1",
+			tableIDs: []int64{1},
+		},
+		{
+			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id = 1 or table_id = 2",
+			tableIDs: []int64{1, 2},
+		},
+		{
+			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id in (1,2,3)",
+			tableIDs: []int64{1, 2, 3},
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+		rse := logicalMemTable.Extractor.(*plannercore.TiKVRegionStatusExtractor)
+		tableids := rse.GetTablesID()
+		slices.Sort(tableids)
+		require.Equal(t, ca.tableIDs, tableids)
+	}
 }

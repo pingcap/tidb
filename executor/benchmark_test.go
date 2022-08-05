@@ -34,19 +34,16 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -154,7 +151,7 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 
 	if order {
 		sort.Slice(results, func(i, j int) bool {
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return results[i].(int64) < results[j].(int64)
 			case mysql.TypeDouble:
@@ -171,7 +168,7 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 }
 
 func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
-	switch typ.Tp {
+	switch typ.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
 	case mysql.TypeFloat:
@@ -227,7 +224,7 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 		idx := i / m.maxChunkSize
 		retTypes := retTypes(m)
 		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
-			switch retTypes[colIdx].Tp {
+			switch retTypes[colIdx].GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				m.genData[idx].AppendInt64(colIdx, colData[colIdx][i].(int64))
 			case mysql.TypeFloat:
@@ -293,7 +290,7 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil, 0)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	hashAgg := exec.(*HashAggExec)
 	hashAgg.children[0] = src
@@ -345,7 +342,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		plan = sg
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(plan)
 }
 
@@ -528,7 +525,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		default:
 			args = append(args, partitionBy[0])
 		}
-		desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args)
+		desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args, false)
 
 		win.WindowFuncDescs = append(win.WindowFuncDescs, desc)
 		winSchema.Append(&expression.Column{
@@ -568,8 +565,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
-			Tails:        []plannercore.PhysicalPlan{tail},
-			DataSources:  []plannercore.PhysicalPlan{src},
+			Tails:        []core.PhysicalPlan{tail},
+			DataSources:  []core.PhysicalPlan{src},
 			SplitterType: core.PartitionHashSplitterType,
 			ByItemArrays: [][]expression.Expression{byItems},
 		}.Init(ctx, nil, 0)
@@ -578,7 +575,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		plan = win
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	return exec
 }
@@ -763,7 +760,6 @@ func baseBenchmarkWindowFunctionsWithFrame(b *testing.B, pipelined int) {
 			}
 		}
 	}
-
 }
 
 func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
@@ -825,7 +821,7 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		cas.ndv = ndv
 		cas.windowFunc = windowFunc.aggFunc
 		cas.frame = frame
-		cas.columns[0].RetType.Tp = windowFunc.aggColTypes
+		cas.columns[0].RetType.SetType(windowFunc.aggColTypes)
 		cas.pipelined = pipelined
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkWindowExecWithCase(b, cas)
@@ -951,7 +947,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 		rows: casTest.rows,
 		ctx:  casTest.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeVarString:
@@ -1152,7 +1148,7 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 		rows:   casTest.rows,
 		ctx:    casTest.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeVarString:
@@ -1289,7 +1285,7 @@ func (tc indexJoinTestCase) getMockDataSourceOptByRows(rows int) mockDataSourceP
 		rows:   rows,
 		ctx:    tc.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeDouble:
@@ -1303,7 +1299,7 @@ func (tc indexJoinTestCase) getMockDataSourceOptByRows(rows int) mockDataSourceP
 	}
 }
 
-func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) Executor {
+func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) (Executor, error) {
 	outerCols, innerCols := tc.columns(), tc.columns()
 	joinSchema := expression.NewSchema(outerCols...)
 	joinSchema.Append(innerCols...)
@@ -1317,6 +1313,13 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = i
 	}
+
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil).
+		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
+	if err != nil {
+		return nil, err
+	}
+
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 1, outerDS),
 		outerCtx: outerCtx{
@@ -1325,7 +1328,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			hashCols: tc.outerHashKeyIdx,
 		},
 		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope)},
+			readerBuilder: readerBuilder,
 			rowTypes:      rightTypes,
 			colLens:       colLens,
 			keyCols:       tc.innerJoinKeyIdx,
@@ -1338,21 +1341,24 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		lastColHelper: nil,
 	}
 	e.joinResult = newFirstChunk(e)
-	return e
+	return e, nil
 }
 
-func prepare4IndexOuterHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) Executor {
-	e := prepare4IndexInnerHashJoin(tc, outerDS, innerDS).(*IndexLookUpJoin)
-	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
+func prepare4IndexOuterHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) (Executor, error) {
+	e, err := prepare4IndexInnerHashJoin(tc, outerDS, innerDS)
+	if err != nil {
+		return nil, err
+	}
+	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e.(*IndexLookUpJoin)}
 	concurrency := tc.concurrency
 	idxHash.joiners = make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
-		idxHash.joiners[i] = e.joiner.Clone()
+		idxHash.joiners[i] = e.(*IndexLookUpJoin).joiner.Clone()
 	}
-	return idxHash
+	return idxHash, nil
 }
 
-func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) Executor {
+func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) (Executor, error) {
 	outerCols, innerCols := tc.columns(), tc.columns()
 	joinSchema := expression.NewSchema(outerCols...)
 	joinSchema.Append(innerCols...)
@@ -1381,6 +1387,13 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
 		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
+
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil).
+		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
+	if err != nil {
+		return nil, err
+	}
+
 	e := &IndexLookUpMergeJoin{
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 2, outerDS),
 		outerMergeCtx: outerMergeCtx{
@@ -1391,7 +1404,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 			compareFuncs:  outerCompareFuncs,
 		},
 		innerMergeCtx: innerMergeCtx{
-			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope)},
+			readerBuilder: readerBuilder,
 			rowTypes:      rightTypes,
 			joinKeys:      innerJoinKeys,
 			colLens:       colLens,
@@ -1409,7 +1422,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil)
 	}
 	e.joiners = joiners
-	return e
+	return e, nil
 }
 
 type indexJoinType int8
@@ -1431,13 +1444,18 @@ func benchmarkIndexJoinExecWithCase(
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		var exec Executor
+		var err error
 		switch execType {
 		case indexInnerHashJoin:
-			exec = prepare4IndexInnerHashJoin(tc, outerDS, innerDS)
+			exec, err = prepare4IndexInnerHashJoin(tc, outerDS, innerDS)
 		case indexOuterHashJoin:
-			exec = prepare4IndexOuterHashJoin(tc, outerDS, innerDS)
+			exec, err = prepare4IndexOuterHashJoin(tc, outerDS, innerDS)
 		case indexMergeJoin:
-			exec = prepare4IndexMergeJoin(tc, outerDS, innerDS)
+			exec, err = prepare4IndexMergeJoin(tc, outerDS, innerDS)
+		}
+
+		if err != nil {
+			b.Fatal(err)
 		}
 
 		tmpCtx := context.Background()
@@ -1446,7 +1464,7 @@ func benchmarkIndexJoinExecWithCase(
 		innerDS.prepareChunks()
 
 		b.StartTimer()
-		if err := exec.Open(tmpCtx); err != nil {
+		if err = exec.Open(tmpCtx); err != nil {
 			b.Fatal(err)
 		}
 		for {
@@ -1680,7 +1698,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		rows:   numOuterRows,
 		ctx:    tc.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeDouble:
@@ -1699,7 +1717,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		ctx:    tc.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			row = row / numInnerDup
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeDouble:
@@ -2099,11 +2117,4 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 
 func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 	b.ReportAllocs()
-
-}
-
-func TestBenchDaily(t *testing.T) {
-	benchdaily.Run(
-		BenchmarkReadLastLinesOfHugeLine,
-	)
 }

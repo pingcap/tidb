@@ -285,7 +285,7 @@ func TestCMSketchCodingTopN(t *testing.T) {
 	}
 	topN := make([]TopNMeta, 20)
 	unsignedLong := types.NewFieldType(mysql.TypeLonglong)
-	unsignedLong.Flag |= mysql.UnsignedFlag
+	unsignedLong.AddFlag(mysql.UnsignedFlag)
 	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeBlob), unsignedLong}, 20, 20)
 	var rows []chunk.Row
 	for i := 0; i < 20; i++ {

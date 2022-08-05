@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -583,7 +583,7 @@ func TestIsTrueOrFalse(t *testing.T) {
 
 		isTrue, err := evalBuiltinFunc(isTrueSig, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tc.isTrue), isTrue)
+		testutil.DatumEqual(t, types.NewDatum(tc.isTrue), isTrue)
 	}
 
 	for _, tc := range testCases {
@@ -593,7 +593,7 @@ func TestIsTrueOrFalse(t *testing.T) {
 
 		isFalse, err := evalBuiltinFunc(isFalseSig, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tc.isFalse), isFalse)
+		testutil.DatumEqual(t, types.NewDatum(tc.isFalse), isFalse)
 	}
 }
 

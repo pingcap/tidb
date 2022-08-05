@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/stretchr/testify/require"
@@ -113,8 +114,8 @@ func TestAddStatement(t *testing.T) {
 		maxLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
 		sumCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
 		maxCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
-		sumResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLockTime,
-		maxResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLockTime,
+		sumResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
+		maxResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
 		sumWriteKeys:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys),
 		maxWriteKeys:         stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys,
 		sumWriteSize:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteSize),
@@ -184,17 +185,23 @@ func TestAddStatement(t *testing.T) {
 				LocalLatchTime:  50,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime int64
-					BackoffTypes      []string
+					CommitBackoffTime   int64
+					BackoffTypes        []string
+					SlowestReqTotalTime time.Duration
+					SlowestRegion       uint64
+					SlowestStoreAddr    string
+					SlowestExecDetails  util.TiKVExecDetails
 				}{
 					CommitBackoffTime: 1000,
 					BackoffTypes:      []string{boTxnLockName},
 				},
-				ResolveLockTime:   10000,
 				WriteKeys:         100000,
 				WriteSize:         1000000,
 				PrewriteRegionNum: 100,
 				TxnRetry:          10,
+				ResolveLock: util.ResolveLockDetail{
+					ResolveLockTime: 10000,
+				},
 			},
 			ScanDetail: &util.ScanDetail{
 				TotalKeys:                 6000,
@@ -255,8 +262,8 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.sumCommitBackoffTime += stmtExecInfo2.ExecDetail.CommitDetail.Mu.CommitBackoffTime
 	expectedSummaryElement.maxCommitBackoffTime = stmtExecInfo2.ExecDetail.CommitDetail.Mu.CommitBackoffTime
 	stmtExecInfo2.ExecDetail.CommitDetail.Mu.Unlock()
-	expectedSummaryElement.sumResolveLockTime += stmtExecInfo2.ExecDetail.CommitDetail.ResolveLockTime
-	expectedSummaryElement.maxResolveLockTime = stmtExecInfo2.ExecDetail.CommitDetail.ResolveLockTime
+	expectedSummaryElement.sumResolveLockTime += stmtExecInfo2.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime
+	expectedSummaryElement.maxResolveLockTime = stmtExecInfo2.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime
 	expectedSummaryElement.sumWriteKeys += int64(stmtExecInfo2.ExecDetail.CommitDetail.WriteKeys)
 	expectedSummaryElement.maxWriteKeys = stmtExecInfo2.ExecDetail.CommitDetail.WriteKeys
 	expectedSummaryElement.sumWriteSize += int64(stmtExecInfo2.ExecDetail.CommitDetail.WriteSize)
@@ -265,7 +272,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.maxPrewriteRegionNum = stmtExecInfo2.ExecDetail.CommitDetail.PrewriteRegionNum
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummaryElement.maxTxnRetry = stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry
-	expectedSummaryElement.sumBackoffTimes += 1
+	expectedSummaryElement.sumBackoffTimes++
 	expectedSummaryElement.backoffTypes[boTxnLockName] = 1
 	expectedSummaryElement.sumMem += stmtExecInfo2.MemMax
 	expectedSummaryElement.maxMem = stmtExecInfo2.MemMax
@@ -314,17 +321,23 @@ func TestAddStatement(t *testing.T) {
 				LocalLatchTime:  5,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime int64
-					BackoffTypes      []string
+					CommitBackoffTime   int64
+					BackoffTypes        []string
+					SlowestReqTotalTime time.Duration
+					SlowestRegion       uint64
+					SlowestStoreAddr    string
+					SlowestExecDetails  util.TiKVExecDetails
 				}{
 					CommitBackoffTime: 100,
 					BackoffTypes:      []string{boTxnLockName},
 				},
-				ResolveLockTime:   1000,
 				WriteKeys:         10000,
 				WriteSize:         100000,
 				PrewriteRegionNum: 10,
 				TxnRetry:          1,
+				ResolveLock: util.ResolveLockDetail{
+					ResolveLockTime: 1000,
+				},
 			},
 			ScanDetail: &util.ScanDetail{
 				TotalKeys:                 600,
@@ -369,12 +382,12 @@ func TestAddStatement(t *testing.T) {
 	stmtExecInfo3.ExecDetail.CommitDetail.Mu.Lock()
 	expectedSummaryElement.sumCommitBackoffTime += stmtExecInfo3.ExecDetail.CommitDetail.Mu.CommitBackoffTime
 	stmtExecInfo3.ExecDetail.CommitDetail.Mu.Unlock()
-	expectedSummaryElement.sumResolveLockTime += stmtExecInfo3.ExecDetail.CommitDetail.ResolveLockTime
+	expectedSummaryElement.sumResolveLockTime += stmtExecInfo3.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime
 	expectedSummaryElement.sumWriteKeys += int64(stmtExecInfo3.ExecDetail.CommitDetail.WriteKeys)
 	expectedSummaryElement.sumWriteSize += int64(stmtExecInfo3.ExecDetail.CommitDetail.WriteSize)
 	expectedSummaryElement.sumPrewriteRegionNum += int64(stmtExecInfo3.ExecDetail.CommitDetail.PrewriteRegionNum)
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo3.ExecDetail.CommitDetail.TxnRetry)
-	expectedSummaryElement.sumBackoffTimes += 1
+	expectedSummaryElement.sumBackoffTimes++
 	expectedSummaryElement.backoffTypes[boTxnLockName] = 2
 	expectedSummaryElement.sumMem += stmtExecInfo3.MemMax
 	expectedSummaryElement.sumDisk += stmtExecInfo3.DiskMax
@@ -430,7 +443,7 @@ func TestAddStatement(t *testing.T) {
 	stmtExecInfo7 := stmtExecInfo1
 	stmtExecInfo7.PlanDigest = "plan_digest7"
 	stmtExecInfo7.PlanGenerator = func() (string, string) {
-		buf := make([]byte, maxEncodedPlanSizeInBytes+1)
+		buf := make([]byte, MaxEncodedPlanSizeInBytes+1)
 		for i := range buf {
 			buf[i] = 'a'
 		}
@@ -598,17 +611,23 @@ func generateAnyExecInfo() *StmtExecInfo {
 				LocalLatchTime:  10,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime int64
-					BackoffTypes      []string
+					CommitBackoffTime   int64
+					BackoffTypes        []string
+					SlowestReqTotalTime time.Duration
+					SlowestRegion       uint64
+					SlowestStoreAddr    string
+					SlowestExecDetails  util.TiKVExecDetails
 				}{
 					CommitBackoffTime: 200,
 					BackoffTypes:      []string{boTxnLockName},
 				},
-				ResolveLockTime:   2000,
 				WriteKeys:         20000,
 				WriteSize:         200000,
 				PrewriteRegionNum: 20,
 				TxnRetry:          2,
+				ResolveLock: util.ResolveLockDetail{
+					ResolveLockTime: 2000,
+				},
 			},
 			ScanDetail: &util.ScanDetail{
 				TotalKeys:                 1000,
@@ -740,7 +759,7 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 			Offset: i,
 		}
 	}
-	reader := NewStmtSummaryReader(nil, true, cols, "")
+	reader := NewStmtSummaryReader(nil, true, cols, "", time.UTC)
 	reader.ssMap = ssMap
 	return reader
 }
@@ -757,8 +776,8 @@ func TestToDatum(t *testing.T) {
 	reader := newStmtSummaryReaderForTest(ssMap)
 	datums := reader.GetStmtSummaryCurrentRows()
 	require.Equal(t, 1, len(datums))
-	n := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval, 0)), mysql.TypeTimestamp, types.DefaultFsp)
-	e := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval+1800, 0)), mysql.TypeTimestamp, types.DefaultFsp)
+	n := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
+	e := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval+1800, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
 	f := types.NewTime(types.FromGoTime(stmtExecInfo1.StartTime), mysql.TypeTimestamp, types.DefaultFsp)
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedDatum := []interface{}{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
@@ -780,7 +799,7 @@ func TestToDatum(t *testing.T) {
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.CommitTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.CommitTime),
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime),
 		stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime, stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
-		stmtExecInfo1.ExecDetail.CommitDetail.ResolveLockTime, stmtExecInfo1.ExecDetail.CommitDetail.ResolveLockTime,
+		stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime, stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime),
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys, stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys,
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
@@ -828,7 +847,7 @@ func TestToDatum(t *testing.T) {
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.CommitTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.CommitTime),
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime),
 		stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime, stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
-		stmtExecInfo1.ExecDetail.CommitDetail.ResolveLockTime, stmtExecInfo1.ExecDetail.CommitDetail.ResolveLockTime,
+		stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime, stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
 		int64(stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime),
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys, stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys,
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
@@ -988,11 +1007,9 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 
 	threads := 8
 	loops := 20
-	wg := sync.WaitGroup{}
-	wg.Add(threads + 1)
+	var wg tidbutil.WaitGroupWrapper
 
 	addStmtFunc := func() {
-		defer wg.Done()
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with different digest.
@@ -1002,23 +1019,25 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 		}
 	}
 	for i := 0; i < threads; i++ {
-		go addStmtFunc()
+		wg.Run(addStmtFunc)
 	}
 
 	defer func() {
-		require.Nil(t, ssMap.SetMaxStmtCount(3000))
+		require.NoError(t, ssMap.SetMaxStmtCount(3000))
 	}()
 
 	setStmtCountFunc := func() {
-		defer wg.Done()
 		// Turn down MaxStmtCount one by one.
 		for i := 10; i > 0; i-- {
-			require.Nil(t, ssMap.SetMaxStmtCount(uint(i)))
+			require.NoError(t, ssMap.SetMaxStmtCount(uint(i)))
 		}
 	}
-	go setStmtCountFunc()
+	wg.Run(setStmtCountFunc)
 
 	wg.Wait()
+
+	// add stmt again to make sure evict occurs after SetMaxStmtCount.
+	addStmtFunc()
 
 	reader := newStmtSummaryReaderForTest(ssMap)
 	datums := reader.GetStmtSummaryCurrentRows()

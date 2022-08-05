@@ -481,11 +481,11 @@ func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	if e.retTp == nil {
 		return errors.New("e.retTp of first_row should not be nil")
 	}
-	frac := e.retTp.Decimal
+	frac := e.retTp.GetDecimal()
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
-	err := p.val.Round(&p.val, frac, types.ModeHalfEven)
+	err := p.val.Round(&p.val, frac, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}

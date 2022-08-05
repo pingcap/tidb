@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "cli",
+    srcs = ["versions.go"],
+    importpath = "github.com/pingcap/tidb/dumpling/cli",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//dumpling/log",
+        "@org_uber_go_zap//:zap",
+    ],
+)

@@ -66,27 +66,6 @@ b	d
 select hex(b), hex(d) from t;
 hex(b)	hex(d)
 E4BDA0E5A5BD	7B22E6B58BE8AF95223A2022E4BDA0E5A5BD227D
-show charset;
-Charset	Description	Default collation	Maxlen
-ascii	US ASCII	ascii_bin	1
-binary	binary	binary	1
-gbk	Chinese Internal Code Specification	gbk_chinese_ci	2
-latin1	Latin1	latin1_bin	1
-utf8	UTF-8 Unicode	utf8_bin	3
-utf8mb4	UTF-8 Unicode	utf8mb4_bin	4
-show collation;
-Collation	Charset	Id	Default	Compiled	Sortlen
-ascii_bin	ascii	65	Yes	Yes	1
-binary	binary	63	Yes	Yes	1
-gbk_bin	gbk	87		Yes	1
-gbk_chinese_ci	gbk	28	Yes	Yes	1
-latin1_bin	latin1	47	Yes	Yes	1
-utf8_bin	utf8	83	Yes	Yes	1
-utf8_general_ci	utf8	33		Yes	1
-utf8_unicode_ci	utf8	192		Yes	1
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
-utf8mb4_general_ci	utf8mb4	45		Yes	1
-utf8mb4_unicode_ci	utf8mb4	224		Yes	1
 set names utf8mb4;
 drop table if exists t;
 create table t(a blob, b char(10));

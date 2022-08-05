@@ -187,18 +187,18 @@ func TestEncryptAndDecrypt(t *testing.T) {
 		if v.method == encryptionpb.EncryptionMethod_UNKNOWN {
 			require.Error(t, err)
 		} else if v.method == encryptionpb.EncryptionMethod_PLAINTEXT {
-			require.Nil(t, err)
+			require.NoError(t, err)
 			require.Equal(t, originalData, encryptData)
 
 			decryptData, err := Decrypt(encryptData, &cipher, iv)
-			require.Nil(t, err)
+			require.NoError(t, err)
 			require.Equal(t, decryptData, originalData)
 		} else {
-			require.Nil(t, err)
+			require.NoError(t, err)
 			require.NotEqual(t, originalData, encryptData)
 
 			decryptData, err := Decrypt(encryptData, &cipher, iv)
-			require.Nil(t, err)
+			require.NoError(t, err)
 			require.Equal(t, decryptData, originalData)
 
 			wrongCipher := backuppb.CipherInfo{
@@ -209,7 +209,7 @@ func TestEncryptAndDecrypt(t *testing.T) {
 			if len(v.rightKey) != len(v.wrongKey) {
 				require.Error(t, err)
 			} else {
-				require.Nil(t, err)
+				require.NoError(t, err)
 				require.NotEqual(t, decryptData, originalData)
 			}
 		}

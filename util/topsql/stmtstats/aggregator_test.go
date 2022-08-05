@@ -15,12 +15,13 @@
 package stmtstats
 
 import (
-	"sync"
+	"math/rand"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
 
@@ -49,6 +50,8 @@ func Test_RegisterUnregisterCollector(t *testing.T) {
 }
 
 func Test_aggregator_register_collect(t *testing.T) {
+	state.EnableTopSQL()
+	defer state.DisableTopSQL()
 	a := newAggregator()
 	stats := &StatementStats{
 		data:     StatementStatsMap{},
@@ -68,52 +71,56 @@ func Test_aggregator_register_collect(t *testing.T) {
 }
 
 func Test_aggregator_run_close(t *testing.T) {
-	wg := sync.WaitGroup{}
 	a := newAggregator()
 	assert.True(t, a.closed())
-	wg.Add(1)
-	go func() {
-		a.run()
-		wg.Done()
-	}()
+	a.start()
 	time.Sleep(100 * time.Millisecond)
 	assert.False(t, a.closed())
 	a.close()
-	wg.Wait()
 	assert.True(t, a.closed())
+
+	// randomly start and close
+	for i := 0; i < 100; i++ {
+		if rand.Intn(2) == 0 {
+			a.start()
+		} else {
+			a.close()
+		}
+	}
+	a.close()
 }
 
-func Test_aggregator_disable_aggregate(t *testing.T) {
+func TestAggregatorDisableAggregate(t *testing.T) {
 	total := StatementStatsMap{}
 	a := newAggregator()
 	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
 		total.Merge(data)
 	}))
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		a.run()
-		wg.Done()
-	}()
-
+	state.DisableTopSQL()
 	stats := &StatementStats{
 		data: StatementStatsMap{
-			SQLPlanDigest{SQLDigest: BinaryDigest("")}: &StatementStatsItem{},
+			SQLPlanDigest{SQLDigest: ""}: &StatementStatsItem{},
 		},
 		finished: atomic.NewBool(false),
 	}
-	state.DisableTopSQL()
 	a.register(stats)
-	time.Sleep(1500 * time.Millisecond)
-	assert.Empty(t, total)
-	state.EnableTopSQL()
-	time.Sleep(1500 * time.Millisecond)
-	assert.Len(t, total, 1)
-	state.DisableTopSQL()
+	a.aggregate()
+	require.Empty(t, stats.data) // a.aggregate() will take all data even if TopSQL is not enabled.
+	require.Empty(t, total)      // But just drop them.
 
-	a.close()
-	wg.Wait()
+	state.EnableTopSQL()
+	stats = &StatementStats{
+		data: StatementStatsMap{
+			SQLPlanDigest{SQLDigest: ""}: &StatementStatsItem{},
+		},
+		finished: atomic.NewBool(false),
+	}
+	a.register(stats)
+	a.aggregate()
+	require.Empty(t, stats.data)
+	require.Len(t, total, 1)
+	state.DisableTopSQL()
 }
 
 type mockCollector struct {

@@ -479,7 +479,7 @@ func assertUnderlyingWrite(t *testing.T, encrypt bool, f io.WriteCloser, fc func
 }
 
 func underlyingReadAt(f io.ReaderAt, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
-	var underlying io.ReaderAt = f
+	var underlying = f
 	if encrypt {
 		underlying = encrypt2.NewReader(underlying, ctrCipher)
 	}
@@ -492,7 +492,7 @@ func underlyingReadAt(f io.ReaderAt, encrypt bool, ctrCipher *encrypt2.CtrCipher
 
 func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f io.ReaderAt) {
 	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f io.ReaderAt) {
-		var underlying io.ReaderAt = f
+		var underlying = f
 		if encrypt {
 			underlying = encrypt2.NewReader(underlying, ctrCipher)
 		}

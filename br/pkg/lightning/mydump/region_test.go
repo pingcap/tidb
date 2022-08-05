@@ -18,20 +18,15 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	. "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testMydumpRegionSuite{})
-
-type testMydumpRegionSuite struct{}
-
-func (s *testMydumpRegionSuite) SetUpSuite(c *C)    {}
-func (s *testMydumpRegionSuite) TearDownSuite(c *C) {}
 
 // var expectedTuplesCount = map[string]int64{
 // 	"i":                     1,
@@ -43,7 +38,7 @@ func (s *testMydumpRegionSuite) TearDownSuite(c *C) {}
 /*
 	TODO : test with specified 'regionBlockSize' ...
 */
-func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
+func TestTableRegion(t *testing.T) {
 	cfg := newConfigWithSourceDir("./examples")
 	loader, _ := NewMyDumpLoader(context.Background(), cfg)
 	dbMeta := loader.GetDatabases()[0]
@@ -51,7 +46,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
 	for _, meta := range dbMeta.Tables {
 		regions, err := MakeTableRegions(context.Background(), meta, 1, cfg, ioWorkers, loader.GetStore())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		// check - region-size vs file-size
 		var tolFileSize int64 = 0
@@ -62,7 +57,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		for _, region := range regions {
 			tolRegionSize += region.Size()
 		}
-		c.Assert(tolRegionSize, Equals, tolFileSize)
+		require.Equal(t, tolFileSize, tolRegionSize)
 
 		// // check - rows num
 		// var tolRows int64 = 0
@@ -77,18 +72,18 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		for i := 1; i < regionNum; i++ {
 			reg := regions[i]
 			if preReg.FileMeta.Path == reg.FileMeta.Path {
-				c.Assert(reg.Offset(), Equals, preReg.Offset()+preReg.Size())
-				c.Assert(reg.RowIDMin(), Equals, preReg.RowIDMin()+preReg.Rows())
+				require.Equal(t, preReg.Offset()+preReg.Size(), reg.Offset())
+				require.Equal(t, preReg.RowIDMin()+preReg.Rows(), reg.RowIDMin())
 			} else {
-				c.Assert(reg.Offset, Equals, 0)
-				c.Assert(reg.RowIDMin(), Equals, 1)
+				require.Equal(t, 0, reg.Offset())
+				require.Equal(t, 1, reg.RowIDMin())
 			}
 			preReg = reg
 		}
 	}
 }
 
-func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
+func TestAllocateEngineIDs(t *testing.T) {
 	dataFileSizes := make([]float64, 700)
 	for i := range dataFileSizes {
 		dataFileSizes[i] = 1.0
@@ -103,7 +98,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 		for _, region := range filesRegions {
 			actual[region.EngineID]++
 		}
-		c.Assert(actual, DeepEquals, expected, Commentf("%s", what))
+		require.Equal(t, expected, actual, what)
 	}
 
 	// Batch size > Total size => Everything in the zero batch.
@@ -169,7 +164,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 	})
 }
 
-func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
+func TestSplitLargeFile(t *testing.T) {
 	meta := &MDTableMeta{
 		DB:   "csv",
 		Name: "large_csv_file",
@@ -192,7 +187,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 	}
 	filePath := "./csv/split_large_file.csv"
 	dataFileInfo, err := os.Stat(filePath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(3)
@@ -214,20 +209,20 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 		store, err := storage.NewLocalStorage(".")
-		c.Assert(err, IsNil)
+		assert.NoError(t, err)
 
 		_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
-		c.Assert(err, IsNil)
-		c.Assert(regions, HasLen, len(tc.offsets))
+		assert.NoError(t, err)
+		assert.Len(t, regions, len(tc.offsets))
 		for i := range tc.offsets {
-			c.Assert(regions[i].Chunk.Offset, Equals, tc.offsets[i][0])
-			c.Assert(regions[i].Chunk.EndOffset, Equals, tc.offsets[i][1])
-			c.Assert(regions[i].Chunk.Columns, DeepEquals, columns)
+			assert.Equal(t, tc.offsets[i][0], regions[i].Chunk.Offset)
+			assert.Equal(t, tc.offsets[i][1], regions[i].Chunk.EndOffset)
+			assert.Equal(t, columns, regions[i].Chunk.Columns)
 		}
 	}
 }
 
-func (s *testMydumpRegionSuite) TestSplitLargeFileNoNewLineAtEOF(c *C) {
+func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 	meta := &MDTableMeta{
 		DB:   "csv",
 		Name: "large_csv_file",
@@ -250,17 +245,17 @@ func (s *testMydumpRegionSuite) TestSplitLargeFileNoNewLineAtEOF(c *C) {
 		},
 	}
 
-	dir := c.MkDir()
+	dir := t.TempDir()
 
 	fileName := "test.csv"
 	filePath := filepath.Join(dir, fileName)
 
 	content := []byte("a,b\r\n123,456\r\n789,101")
 	err := os.WriteFile(filePath, content, 0o644)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	dataFileInfo, err := os.Stat(filePath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(2)
@@ -269,21 +264,21 @@ func (s *testMydumpRegionSuite) TestSplitLargeFileNoNewLineAtEOF(c *C) {
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	offsets := [][]int64{{4, 13}, {13, 21}}
 
 	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
-	c.Assert(err, IsNil)
-	c.Assert(regions, HasLen, len(offsets))
+	require.NoError(t, err)
+	require.Len(t, regions, len(offsets))
 	for i := range offsets {
-		c.Assert(regions[i].Chunk.Offset, Equals, offsets[i][0])
-		c.Assert(regions[i].Chunk.EndOffset, Equals, offsets[i][1])
-		c.Assert(regions[i].Chunk.Columns, DeepEquals, columns)
+		require.Equal(t, offsets[i][0], regions[i].Chunk.Offset)
+		require.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
+		require.Equal(t, columns, regions[i].Chunk.Columns)
 	}
 }
 
-func (s *testMydumpRegionSuite) TestSplitLargeFileWithCustomTerminator(c *C) {
+func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 	meta := &MDTableMeta{
 		DB:   "csv",
 		Name: "large_csv_with_custom_terminator",
@@ -301,17 +296,17 @@ func (s *testMydumpRegionSuite) TestSplitLargeFileWithCustomTerminator(c *C) {
 		},
 	}
 
-	dir := c.MkDir()
+	dir := t.TempDir()
 
 	fileName := "test2.csv"
 	filePath := filepath.Join(dir, fileName)
 
 	content := []byte("5|+|abc\ndef\nghi|+|6|+|\n7|+|xyz|+|8|+|\n9|+||+|10")
 	err := os.WriteFile(filePath, content, 0o644)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	dataFileInfo, err := os.Stat(filePath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(3)
@@ -319,20 +314,20 @@ func (s *testMydumpRegionSuite) TestSplitLargeFileWithCustomTerminator(c *C) {
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	offsets := [][]int64{{0, 23}, {23, 38}, {38, 47}}
 
 	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
-	c.Assert(err, IsNil)
-	c.Assert(regions, HasLen, len(offsets))
+	require.NoError(t, err)
+	require.Len(t, regions, len(offsets))
 	for i := range offsets {
-		c.Assert(regions[i].Chunk.Offset, Equals, offsets[i][0])
-		c.Assert(regions[i].Chunk.EndOffset, Equals, offsets[i][1])
+		require.Equal(t, offsets[i][0], regions[i].Chunk.Offset)
+		require.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
 	}
 }
 
-func (s *testMydumpRegionSuite) TestSplitLargeFileOnlyOneChunk(c *C) {
+func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 	meta := &MDTableMeta{
 		DB:   "csv",
 		Name: "large_csv_file",
@@ -355,17 +350,17 @@ func (s *testMydumpRegionSuite) TestSplitLargeFileOnlyOneChunk(c *C) {
 		},
 	}
 
-	dir := c.MkDir()
+	dir := t.TempDir()
 
 	fileName := "test.csv"
 	filePath := filepath.Join(dir, fileName)
 
 	content := []byte("field1,field2\r\n123,456\r\n")
 	err := os.WriteFile(filePath, content, 0o644)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	dataFileInfo, err := os.Stat(filePath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(2)
@@ -374,16 +369,16 @@ func (s *testMydumpRegionSuite) TestSplitLargeFileOnlyOneChunk(c *C) {
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	offsets := [][]int64{{14, 24}}
 
 	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
-	c.Assert(err, IsNil)
-	c.Assert(regions, HasLen, len(offsets))
+	require.NoError(t, err)
+	require.Len(t, regions, len(offsets))
 	for i := range offsets {
-		c.Assert(regions[i].Chunk.Offset, Equals, offsets[i][0])
-		c.Assert(regions[i].Chunk.EndOffset, Equals, offsets[i][1])
-		c.Assert(regions[i].Chunk.Columns, DeepEquals, columns)
+		require.Equal(t, offsets[i][0], regions[i].Chunk.Offset)
+		require.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
+		require.Equal(t, columns, regions[i].Chunk.Columns)
 	}
 }

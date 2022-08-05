@@ -15,11 +15,16 @@
 package stmtctx_test
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/stretchr/testify/require"
@@ -93,52 +98,89 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 }
 
 func TestWeakConsistencyRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	lastWeakConsistency := func(tk *testkit.TestKit) bool {
-		return tk.Session().GetSessionVars().StmtCtx.WeakConsistency
-	}
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, c int, c1 int, unique index i(c))")
+
+	execAndCheck := func(sql string, rows [][]interface{}, isolationLevel kv.IsoLevel) {
+		ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+			require.Equal(t, req.IsolationLevel, isolationLevel)
+		})
+		rss, err := tk.Session().Execute(ctx, sql)
+		require.Nil(t, err)
+		for _, rs := range rss {
+			rs.Close()
+		}
+		if rows != nil {
+			tk.MustQuery(sql).Check(rows)
+		}
+		lastWeakConsistency := tk.Session().GetSessionVars().StmtCtx.WeakConsistency
+		require.Equal(t, lastWeakConsistency, isolationLevel == kv.RC)
+	}
+
 	// strict
-	tk.MustExec("insert into t values(1, 1, 1)")
-	require.False(t, lastWeakConsistency(tk))
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
-	require.False(t, lastWeakConsistency(tk))
+	execAndCheck("insert into t values(1, 1, 1)", nil, kv.SI)
+	execAndCheck("select * from t", testkit.Rows("1 1 1"), kv.SI)
 	tk.MustExec("prepare s from 'select * from t'")
 	tk.MustExec("prepare u from 'update t set c1 = id + 1'")
-	tk.MustQuery("execute s").Check(testkit.Rows("1 1 1"))
-	require.False(t, lastWeakConsistency(tk))
-	tk.MustExec("execute u")
-	require.False(t, lastWeakConsistency(tk))
-	tk.MustExec("admin check table t")
-	require.False(t, lastWeakConsistency(tk))
+	execAndCheck("execute s", testkit.Rows("1 1 1"), kv.SI)
+	execAndCheck("execute u", nil, kv.SI)
+	execAndCheck("admin check table t", nil, kv.SI)
 	// weak
 	tk.MustExec("set tidb_read_consistency = weak")
-	tk.MustExec("insert into t values(2, 2, 2)")
-	require.False(t, lastWeakConsistency(tk))
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 2", "2 2 2"))
-	require.True(t, lastWeakConsistency(tk))
-	tk.MustQuery("execute s").Check(testkit.Rows("1 1 2", "2 2 2"))
-	require.True(t, lastWeakConsistency(tk))
-	tk.MustExec("execute u")
-	require.False(t, lastWeakConsistency(tk))
+	execAndCheck("insert into t values(2, 2, 2)", nil, kv.SI)
+	execAndCheck("select * from t", testkit.Rows("1 1 2", "2 2 2"), kv.RC)
+	execAndCheck("execute s", testkit.Rows("1 1 2", "2 2 2"), kv.RC)
+	execAndCheck("execute u", nil, kv.SI)
 	// non-read-only queries should be strict
-	tk.MustExec("admin check table t")
-	require.False(t, lastWeakConsistency(tk))
-	tk.MustExec("update t set c = c + 1 where id = 2")
-	require.False(t, lastWeakConsistency(tk))
-	tk.MustExec("delete from t where id = 2")
-	require.False(t, lastWeakConsistency(tk))
+	execAndCheck("admin check table t", nil, kv.SI)
+	execAndCheck("update t set c = c + 1 where id = 2", nil, kv.SI)
+	execAndCheck("delete from t where id = 2", nil, kv.SI)
 	// in-transaction queries should be strict
 	tk.MustExec("begin")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 2"))
-	require.False(t, lastWeakConsistency(tk))
-	tk.MustQuery("execute s").Check(testkit.Rows("1 1 2"))
-	require.False(t, lastWeakConsistency(tk))
+	execAndCheck("select * from t", testkit.Rows("1 1 2"), kv.SI)
+	execAndCheck("execute s", testkit.Rows("1 1 2"), kv.SI)
 	tk.MustExec("rollback")
+}
+
+func TestMarshalSQLWarn(t *testing.T) {
+	warns := []stmtctx.SQLWarn{
+		{
+			Level: stmtctx.WarnLevelError,
+			Err:   errors.New("any error"),
+		},
+		{
+			Level: stmtctx.WarnLevelError,
+			Err:   errors.Trace(errors.New("any error")),
+		},
+		{
+			Level: stmtctx.WarnLevelWarning,
+			Err:   variable.ErrUnknownSystemVar.GenWithStackByArgs("unknown"),
+		},
+		{
+			Level: stmtctx.WarnLevelWarning,
+			Err:   errors.Trace(variable.ErrUnknownSystemVar.GenWithStackByArgs("unknown")),
+		},
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// First query can trigger loading global variables, which produces warnings.
+	tk.MustQuery("select 1")
+	tk.Session().GetSessionVars().StmtCtx.SetWarnings(warns)
+	rows := tk.MustQuery("show warnings").Rows()
+	require.Equal(t, len(warns), len(rows))
+
+	// The unmarshalled result doesn't need to be exactly the same with the original one.
+	// We only need that the results of `show warnings` are the same.
+	bytes, err := json.Marshal(warns)
+	require.NoError(t, err)
+	var newWarns []stmtctx.SQLWarn
+	err = json.Unmarshal(bytes, &newWarns)
+	require.NoError(t, err)
+	tk.Session().GetSessionVars().StmtCtx.SetWarnings(newWarns)
+	tk.MustQuery("show warnings").Check(rows)
 }

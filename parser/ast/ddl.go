@@ -73,25 +73,16 @@ const (
 	DatabaseOptionCharset
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
-	DatabaseOptionPlacementPrimaryRegion       = DatabaseOptionType(PlacementOptionPrimaryRegion)
-	DatabaseOptionPlacementRegions             = DatabaseOptionType(PlacementOptionRegions)
-	DatabaseOptionPlacementFollowerCount       = DatabaseOptionType(PlacementOptionFollowerCount)
-	DatabaseOptionPlacementVoterCount          = DatabaseOptionType(PlacementOptionVoterCount)
-	DatabaseOptionPlacementLearnerCount        = DatabaseOptionType(PlacementOptionLearnerCount)
-	DatabaseOptionPlacementSchedule            = DatabaseOptionType(PlacementOptionSchedule)
-	DatabaseOptionPlacementConstraints         = DatabaseOptionType(PlacementOptionConstraints)
-	DatabaseOptionPlacementLeaderConstraints   = DatabaseOptionType(PlacementOptionLeaderConstraints)
-	DatabaseOptionPlacementLearnerConstraints  = DatabaseOptionType(PlacementOptionLearnerConstraints)
-	DatabaseOptionPlacementFollowerConstraints = DatabaseOptionType(PlacementOptionFollowerConstraints)
-	DatabaseOptionPlacementVoterConstraints    = DatabaseOptionType(PlacementOptionVoterConstraints)
-	DatabaseOptionPlacementPolicy              = DatabaseOptionType(PlacementOptionPolicy)
+	DatabaseSetTiFlashReplica
+	DatabaseOptionPlacementPolicy = DatabaseOptionType(PlacementOptionPolicy)
 )
 
 // DatabaseOption represents database option.
 type DatabaseOption struct {
-	Tp        DatabaseOptionType
-	Value     string
-	UintValue uint64
+	Tp             DatabaseOptionType
+	Value          string
+	UintValue      uint64
+	TiFlashReplica *TiFlashReplicaSpec
 }
 
 // Restore implements Node interface.
@@ -109,13 +100,26 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ENCRYPTION")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.Value)
-	case DatabaseOptionPlacementPrimaryRegion, DatabaseOptionPlacementRegions, DatabaseOptionPlacementFollowerCount, DatabaseOptionPlacementLeaderConstraints, DatabaseOptionPlacementLearnerCount, DatabaseOptionPlacementVoterCount, DatabaseOptionPlacementSchedule, DatabaseOptionPlacementConstraints, DatabaseOptionPlacementFollowerConstraints, DatabaseOptionPlacementVoterConstraints, DatabaseOptionPlacementLearnerConstraints, DatabaseOptionPlacementPolicy:
+	case DatabaseOptionPlacementPolicy:
 		placementOpt := PlacementOption{
-			Tp:        PlacementOptionType(n.Tp),
+			Tp:        PlacementOptionPolicy,
 			UintValue: n.UintValue,
 			StrValue:  n.Value,
 		}
 		return placementOpt.Restore(ctx)
+	case DatabaseSetTiFlashReplica:
+		ctx.WriteKeyWord("SET TIFLASH REPLICA ")
+		ctx.WritePlainf("%d", n.TiFlashReplica.Count)
+		if len(n.TiFlashReplica.Labels) == 0 {
+			break
+		}
+		ctx.WriteKeyWord(" LOCATION LABELS ")
+		for i, v := range n.TiFlashReplica.Labels {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteString(v)
+		}
 	default:
 		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
 	}
@@ -128,7 +132,7 @@ type CreateDatabaseStmt struct {
 	ddlNode
 
 	IfNotExists bool
-	Name        string
+	Name        model.CIStr
 	Options     []*DatabaseOption
 }
 
@@ -138,7 +142,7 @@ func (n *CreateDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
-	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Name.O)
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
 		err := option.Restore(ctx)
@@ -164,13 +168,16 @@ func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type AlterDatabaseStmt struct {
 	ddlNode
 
-	Name                 string
+	Name                 model.CIStr
 	AlterDefaultDatabase bool
 	Options              []*DatabaseOption
 }
 
 // Restore implements Node interface.
 func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() && n.isAllPlacementOptions() {
+		return nil
+	}
 	// If all options placement options and RestoreTiDBSpecialComment flag is on,
 	// we should restore the whole node in special comment. For example, the restore result should be:
 	// /*T![placement] ALTER DATABASE `db1` PLACEMENT POLICY = `p1` */
@@ -184,7 +191,7 @@ func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER DATABASE")
 	if !n.AlterDefaultDatabase {
 		ctx.WritePlain(" ")
-		ctx.WriteName(n.Name)
+		ctx.WriteName(n.Name.O)
 	}
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
@@ -209,7 +216,7 @@ func (n *AlterDatabaseStmt) Accept(v Visitor) (Node, bool) {
 func (n *AlterDatabaseStmt) isAllPlacementOptions() bool {
 	for _, n := range n.Options {
 		switch n.Tp {
-		case DatabaseOptionPlacementPrimaryRegion, DatabaseOptionPlacementRegions, DatabaseOptionPlacementFollowerCount, DatabaseOptionPlacementLeaderConstraints, DatabaseOptionPlacementLearnerCount, DatabaseOptionPlacementVoterCount, DatabaseOptionPlacementSchedule, DatabaseOptionPlacementConstraints, DatabaseOptionPlacementFollowerConstraints, DatabaseOptionPlacementVoterConstraints, DatabaseOptionPlacementLearnerConstraints, DatabaseOptionPlacementPolicy:
+		case DatabaseOptionPlacementPolicy:
 		default:
 			return false
 		}
@@ -223,7 +230,7 @@ type DropDatabaseStmt struct {
 	ddlNode
 
 	IfExists bool
-	Name     string
+	Name     model.CIStr
 }
 
 // Restore implements Node interface.
@@ -232,7 +239,7 @@ func (n *DropDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Name.O)
 	return nil
 }
 
@@ -1932,6 +1939,9 @@ type PlacementOption struct {
 }
 
 func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+		return nil
+	}
 	fn := func() error {
 		switch n.Tp {
 		case PlacementOptionPrimaryRegion:
@@ -2010,7 +2020,7 @@ const (
 	TableOptionEngine
 	TableOptionCharset
 	TableOptionCollate
-	TableOptionAutoIdCache
+	TableOptionAutoIdCache //nolint:revive
 	TableOptionAutoIncrement
 	TableOptionAutoRandomBase
 	TableOptionComment
@@ -2041,23 +2051,12 @@ const (
 	TableOptionTableCheckSum
 	TableOptionUnion
 	TableOptionEncryption
-	TableOptionPlacementPrimaryRegion       = TableOptionType(PlacementOptionPrimaryRegion)
-	TableOptionPlacementRegions             = TableOptionType(PlacementOptionRegions)
-	TableOptionPlacementFollowerCount       = TableOptionType(PlacementOptionFollowerCount)
-	TableOptionPlacementVoterCount          = TableOptionType(PlacementOptionVoterCount)
-	TableOptionPlacementLearnerCount        = TableOptionType(PlacementOptionLearnerCount)
-	TableOptionPlacementSchedule            = TableOptionType(PlacementOptionSchedule)
-	TableOptionPlacementConstraints         = TableOptionType(PlacementOptionConstraints)
-	TableOptionPlacementLeaderConstraints   = TableOptionType(PlacementOptionLeaderConstraints)
-	TableOptionPlacementLearnerConstraints  = TableOptionType(PlacementOptionLearnerConstraints)
-	TableOptionPlacementFollowerConstraints = TableOptionType(PlacementOptionFollowerConstraints)
-	TableOptionPlacementVoterConstraints    = TableOptionType(PlacementOptionVoterConstraints)
-	TableOptionPlacementPolicy              = TableOptionType(PlacementOptionPolicy)
-	TableOptionStatsBuckets                 = TableOptionType(StatsOptionBuckets)
-	TableOptionStatsTopN                    = TableOptionType(StatsOptionTopN)
-	TableOptionStatsColsChoice              = TableOptionType(StatsOptionColsChoice)
-	TableOptionStatsColList                 = TableOptionType(StatsOptionColList)
-	TableOptionStatsSampleRate              = TableOptionType(StatsOptionSampleRate)
+	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
+	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
+	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
+	TableOptionStatsColsChoice = TableOptionType(StatsOptionColsChoice)
+	TableOptionStatsColList    = TableOptionType(StatsOptionColList)
+	TableOptionStatsSampleRate = TableOptionType(StatsOptionSampleRate)
 )
 
 // RowFormat types
@@ -2330,9 +2329,12 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ENCRYPTION ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
-	case TableOptionPlacementPrimaryRegion, TableOptionPlacementRegions, TableOptionPlacementFollowerCount, TableOptionPlacementLeaderConstraints, TableOptionPlacementLearnerCount, TableOptionPlacementVoterCount, TableOptionPlacementSchedule, TableOptionPlacementConstraints, TableOptionPlacementFollowerConstraints, TableOptionPlacementVoterConstraints, TableOptionPlacementLearnerConstraints, TableOptionPlacementPolicy:
+	case TableOptionPlacementPolicy:
+		if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+			return nil
+		}
 		placementOpt := PlacementOption{
-			Tp:        PlacementOptionType(n.Tp),
+			Tp:        PlacementOptionPolicy,
 			UintValue: n.UintValue,
 			StrValue:  n.StrValue,
 		}
@@ -2527,7 +2529,7 @@ const (
 	AlterTableAddPartitions
 	// A tombstone for `AlterTableAlterPartition`. It will never be used anymore.
 	// Just left a tombstone here to keep the enum number unchanged.
-	__DEPRECATED_AlterTableAlterPartition
+	__DEPRECATED_AlterTableAlterPartition //nolint:revive
 	AlterTablePartitionAttributes
 	AlterTablePartitionOptions
 	AlterTableCoalescePartitions
@@ -2560,13 +2562,15 @@ const (
 	AlterTableSetTiFlashReplica
 	// A tombstone for `AlterTablePlacement`. It will never be used anymore.
 	// Just left a tombstone here to keep the enum number unchanged.
-	__DEPRECATED_AlterTablePlacement
+	__DEPRECATED_AlterTablePlacement //nolint:revive
 	AlterTableAddStatistics
 	AlterTableDropStatistics
 	AlterTableAttributes
 	AlterTableCache
 	AlterTableNoCache
 	AlterTableStatsOptions
+	// AlterTableSetTiFlashMode uses to alter the table mode of TiFlash.
+	AlterTableSetTiFlashMode
 )
 
 // LockType is the type for AlterTableSpec.
@@ -2663,6 +2667,7 @@ type AlterTableSpec struct {
 	Num              uint64
 	Visibility       IndexVisibility
 	TiFlashReplica   *TiFlashReplicaSpec
+	TiFlashMode      model.TiFlashMode
 	Writeable        bool
 	Statistics       *StatisticsSpec
 	AttributesSpec   *AttributesSpec
@@ -2692,8 +2697,25 @@ func (n *AlterOrderItem) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+func (n *AlterTableSpec) IsAllPlacementRule() bool {
+	switch n.Tp {
+	case AlterTablePartitionAttributes, AlterTablePartitionOptions, AlterTableOption, AlterTableAttributes:
+		for _, o := range n.Options {
+			if o.Tp != TableOptionPlacementPolicy {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // Restore implements Node interface.
 func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
+	if n.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+		return nil
+	}
 	switch n.Tp {
 	case AlterTableSetTiFlashReplica:
 		ctx.WriteKeyWord("SET TIFLASH REPLICA ")
@@ -2708,6 +2730,9 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteString(v)
 		}
+	case AlterTableSetTiFlashMode:
+		ctx.WriteKeyWord("SET TIFLASH MODE ")
+		ctx.WriteKeyWord(n.TiFlashMode.String())
 	case AlterTableAddStatistics:
 		ctx.WriteKeyWord("ADD STATS_EXTENDED ")
 		if n.IfNotExists {
@@ -3282,13 +3307,34 @@ type AlterTableStmt struct {
 	Specs []*AlterTableSpec
 }
 
+func (n *AlterTableStmt) HaveOnlyPlacementOptions() bool {
+	for _, n := range n.Specs {
+		if n.Tp != AlterTablePartitionOptions {
+			return false
+		}
+		if !n.IsAllPlacementRule() {
+			return false
+		}
+	}
+	return true
+}
+
 // Restore implements Node interface.
 func (n *AlterTableStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() && n.HaveOnlyPlacementOptions() {
+		return nil
+	}
 	ctx.WriteKeyWord("ALTER TABLE ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore AlterTableStmt.Table")
 	}
-	for i, spec := range n.Specs {
+	var specs []*AlterTableSpec
+	for _, spec := range n.Specs {
+		if !(spec.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag()) {
+			specs = append(specs, spec)
+		}
+	}
+	for i, spec := range specs {
 		if i == 0 || spec.Tp == AlterTablePartition || spec.Tp == AlterTableRemovePartitioning || spec.Tp == AlterTableImportTablespace || spec.Tp == AlterTableDiscardTablespace {
 			ctx.WritePlain(" ")
 		} else {
@@ -3399,15 +3445,15 @@ type PartitionDefinitionClause interface {
 
 type PartitionDefinitionClauseNone struct{}
 
-func (n *PartitionDefinitionClauseNone) restore(ctx *format.RestoreCtx) error {
+func (*PartitionDefinitionClauseNone) restore(_ *format.RestoreCtx) error {
 	return nil
 }
 
-func (n *PartitionDefinitionClauseNone) acceptInPlace(v Visitor) bool {
+func (*PartitionDefinitionClauseNone) acceptInPlace(_ Visitor) bool {
 	return true
 }
 
-func (n *PartitionDefinitionClauseNone) Validate(pt model.PartitionType, columns int) error {
+func (*PartitionDefinitionClauseNone) Validate(pt model.PartitionType, _ int) error {
 	switch pt {
 	case 0:
 	case model.PartitionTypeRange:
@@ -3557,11 +3603,11 @@ func (n *PartitionDefinitionClauseHistory) restore(ctx *format.RestoreCtx) error
 	return nil
 }
 
-func (n *PartitionDefinitionClauseHistory) acceptInPlace(v Visitor) bool {
+func (*PartitionDefinitionClauseHistory) acceptInPlace(_ Visitor) bool {
 	return true
 }
 
-func (n *PartitionDefinitionClauseHistory) Validate(pt model.PartitionType, columns int) error {
+func (*PartitionDefinitionClauseHistory) Validate(pt model.PartitionType, _ int) error {
 	switch pt {
 	case 0, model.PartitionTypeSystemTime:
 	default:
@@ -3998,6 +4044,9 @@ type AlterPlacementPolicyStmt struct {
 }
 
 func (n *AlterPlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+		return nil
+	}
 	if ctx.Flags.HasTiDBSpecialCommentFlag() {
 		return restorePlacementStmtInSpecialComment(ctx, n)
 	}

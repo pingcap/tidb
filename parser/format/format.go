@@ -195,7 +195,7 @@ func OutputFormat(s string) string {
 	return buf.String()
 }
 
-//RestoreFlag mark the Restore format
+// RestoreFlags mark the Restore format
 type RestoreFlags uint64
 
 // Mutually exclusive group of `RestoreFlags`:
@@ -224,9 +224,11 @@ const (
 	RestoreStringWithoutDefaultCharset
 
 	RestoreTiDBSpecialComment
+	SkipPlacementRuleForRestore
 )
 
 const (
+	// DefaultRestoreFlags is the default value of RestoreFlags.
 	DefaultRestoreFlags = RestoreStringSingleQuotes | RestoreKeyWordUppercase | RestoreNameBackQuotes
 )
 
@@ -284,20 +286,29 @@ func (rf RestoreFlags) HasSpacesAroundBinaryOperationFlag() bool {
 	return rf.has(RestoreSpacesAroundBinaryOperation)
 }
 
+// HasRestoreBracketAroundBinaryOperation returns a boolean indicating whether `rf` has `RestoreBracketAroundBinaryOperation` flag.
 func (rf RestoreFlags) HasRestoreBracketAroundBinaryOperation() bool {
 	return rf.has(RestoreBracketAroundBinaryOperation)
 }
 
+// HasStringWithoutDefaultCharset returns a boolean indicating whether `rf` has `RestoreStringWithoutDefaultCharset` flag.
 func (rf RestoreFlags) HasStringWithoutDefaultCharset() bool {
 	return rf.has(RestoreStringWithoutDefaultCharset)
 }
 
+// HasStringWithoutCharset returns a boolean indicating whether `rf` has `RestoreStringWithoutCharset` flag.
 func (rf RestoreFlags) HasStringWithoutCharset() bool {
 	return rf.has(RestoreStringWithoutCharset)
 }
 
+// HasTiDBSpecialCommentFlag returns a boolean indicating whether `rf` has `RestoreTiDBSpecialComment` flag.
 func (rf RestoreFlags) HasTiDBSpecialCommentFlag() bool {
 	return rf.has(RestoreTiDBSpecialComment)
+}
+
+// HasSkipPlacementRuleForRestoreFlag returns a boolean indicating whether `rf` has `SkipPlacementRuleForRestore` flag.
+func (rf RestoreFlags) HasSkipPlacementRuleForRestoreFlag() bool {
+	return rf.has(SkipPlacementRuleForRestore)
 }
 
 // RestoreCtx is `Restore` context to hold flags and writer.
@@ -305,12 +316,12 @@ type RestoreCtx struct {
 	Flags     RestoreFlags
 	In        io.Writer
 	DefaultDB string
-	CTENames  []string
+	CTERestorer
 }
 
 // NewRestoreCtx returns a new `RestoreCtx`.
 func NewRestoreCtx(flags RestoreFlags, in io.Writer) *RestoreCtx {
-	return &RestoreCtx{flags, in, "", make([]string, 0)}
+	return &RestoreCtx{Flags: flags, In: in, DefaultDB: ""}
 }
 
 // WriteKeyWord writes the `keyWord` into writer.
@@ -325,6 +336,7 @@ func (ctx *RestoreCtx) WriteKeyWord(keyWord string) {
 	fmt.Fprint(ctx.In, keyWord)
 }
 
+// WriteWithSpecialComments writes a string with a special comment wrapped.
 func (ctx *RestoreCtx) WriteWithSpecialComments(featureID string, fn func() error) error {
 	if !ctx.Flags.HasTiDBSpecialCommentFlag() {
 		return fn()
@@ -388,4 +400,36 @@ func (ctx *RestoreCtx) WritePlain(plainText string) {
 // WritePlainf write the plain text into writer without any handling.
 func (ctx *RestoreCtx) WritePlainf(format string, a ...interface{}) {
 	fmt.Fprintf(ctx.In, format, a...)
+}
+
+// CTERestorer is used by WithClause related nodes restore.
+type CTERestorer struct {
+	CTENames []string
+}
+
+// IsCTETableName returns true if the given tableName comes from CTE.
+func (c *CTERestorer) IsCTETableName(nameL string) bool {
+	for _, n := range c.CTENames {
+		if n == nameL {
+			return true
+		}
+	}
+	return false
+}
+
+// RecordCTEName records the CTE name.
+func (c *CTERestorer) RecordCTEName(nameL string) {
+	c.CTENames = append(c.CTENames, nameL)
+}
+
+// RestoreCTEFunc is used to restore CTE.
+func (c *CTERestorer) RestoreCTEFunc() func() {
+	l := len(c.CTENames)
+	return func() {
+		if l == 0 {
+			c.CTENames = nil
+		} else {
+			c.CTENames = c.CTENames[:l]
+		}
+	}
 }

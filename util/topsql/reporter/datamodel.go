@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -497,10 +498,47 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 	others.appendStmtStatsItem(timestamp, item)
 }
 
+// removeInvalidPlanRecord remove "" plan if there are only 1 valid plan in the record.
+// Basically, it should be called once at the end of the collection, currently in `getReportRecords`.
+func (c *collecting) removeInvalidPlanRecord() {
+	sql2PlansMap := make(map[string][][]byte, len(c.records)) // sql_digest => []plan_digest
+	for _, v := range c.records {
+		k := string(v.sqlDigest)
+		sql2PlansMap[k] = append(sql2PlansMap[k], v.planDigest)
+	}
+	for k, plans := range sql2PlansMap {
+		if len(plans) != 2 {
+			continue
+		}
+		if len(plans[0]) > 0 && len(plans[1]) > 0 {
+			continue
+		}
+
+		sqlDigest := []byte(k)
+		key0 := encodeKey(c.keyBuf, sqlDigest, plans[0])
+		key1 := encodeKey(c.keyBuf, sqlDigest, plans[1])
+		record0, ok0 := c.records[key0]
+		record1, ok1 := c.records[key1]
+		if !ok0 || !ok1 {
+			continue
+		}
+		if len(plans[0]) != 0 {
+			record0.merge(record1)
+			delete(c.records, key1)
+		} else {
+			record1.merge(record0)
+			delete(c.records, key0)
+		}
+	}
+}
+
 // getReportRecords returns all records, others record will be packed and appended to the end.
 func (c *collecting) getReportRecords() records {
 	others := c.records[keyOthers]
 	delete(c.records, keyOthers)
+
+	c.removeInvalidPlanRecord()
+
 	rs := make(records, 0, len(c.records))
 	for _, v := range c.records {
 		rs = append(rs, *v)
@@ -555,6 +593,13 @@ func (rs cpuRecords) topN(n int) (top, evicted cpuRecords) {
 type sqlMeta struct {
 	normalizedSQL string
 	isInternal    bool
+}
+
+// planMeta contains a binaryNormalizedPlan and a bool field isLarge to indicate
+// whether that binaryNormalizedPlan is too large to decode quickly
+type planMeta struct {
+	binaryNormalizedPlan string
+	isLarge              bool
 }
 
 // normalizedSQLMap is a wrapped map used to register normalizedSQL.
@@ -617,6 +662,10 @@ func (m *normalizedSQLMap) toProto() []tipb.SQLMeta {
 // normalizedPlanMap to protobuf representation.
 type planBinaryDecodeFunc func(string) (string, error)
 
+// planBinaryCompressFunc is used to compress large normalized plan
+// into encoded format
+type planBinaryCompressFunc func([]byte) string
+
 // normalizedSQLMap is a wrapped map used to register normalizedPlan.
 type normalizedPlanMap struct {
 	data   atomic.Value // *sync.Map
@@ -631,13 +680,16 @@ func newNormalizedPlanMap() *normalizedPlanMap {
 
 // register saves the relationship between planDigest and normalizedPlan.
 // If the internal map size exceeds the limit, the relationship will be discarded.
-func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string) {
+func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, isLarge bool) {
 	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
 		ignoreExceedPlanCounter.Inc()
 		return
 	}
 	data := m.data.Load().(*sync.Map)
-	_, loaded := data.LoadOrStore(string(planDigest), normalizedPlan)
+	_, loaded := data.LoadOrStore(string(planDigest), planMeta{
+		binaryNormalizedPlan: normalizedPlan,
+		isLarge:              isLarge,
+	})
 	if !loaded {
 		m.length.Add(1)
 	}
@@ -656,18 +708,26 @@ func (m *normalizedPlanMap) take() *normalizedPlanMap {
 }
 
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
-func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc) []tipb.PlanMeta {
+func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
 	metas := make([]tipb.PlanMeta, 0, m.length.Load())
 	m.data.Load().(*sync.Map).Range(func(k, v interface{}) bool {
-		planDecoded, errDecode := decodePlan(v.(string))
-		if errDecode != nil {
-			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
+		originalMeta := v.(planMeta)
+		protoMeta := tipb.PlanMeta{
+			PlanDigest: hack.Slice(k.(string)),
+		}
+
+		var err error
+		if originalMeta.isLarge {
+			protoMeta.EncodedNormalizedPlan = compressPlan(hack.Slice(originalMeta.binaryNormalizedPlan))
+		} else {
+			protoMeta.NormalizedPlan, err = decodePlan(originalMeta.binaryNormalizedPlan)
+		}
+		if err != nil {
+			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(err))
 			return true
 		}
-		metas = append(metas, tipb.PlanMeta{
-			PlanDigest:     []byte(k.(string)),
-			NormalizedPlan: planDecoded,
-		})
+
+		metas = append(metas, protoMeta)
 		return true
 	})
 	return metas

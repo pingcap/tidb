@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -180,7 +179,6 @@ func (e *ProjectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.unParallelExecute(ctx, req)
 	}
 	return e.parallelExecute(ctx, req)
-
 }
 
 func (e *ProjectionExec) isUnparallelExec() bool {
@@ -452,8 +450,7 @@ func recoveryProjection(output *projectionOutput, r interface{}) {
 	if output != nil {
 		output.done <- errors.Errorf("%v", r)
 	}
-	buf := util.GetStack()
-	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.String("stack", string(buf)))
+	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
 }
 
 func readProjectionInput(inputCh <-chan *projectionInput, finishCh <-chan struct{}) *projectionInput {

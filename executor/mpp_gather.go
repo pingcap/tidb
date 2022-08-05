@@ -52,7 +52,7 @@ type MPPGather struct {
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
-	dagReq, _, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
+	dagReq, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -65,7 +65,11 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
 	for _, mppTask := range pf.ExchangeSender.Tasks {
-		err := updateExecutorTableID(context.Background(), dagReq.RootExecutor, mppTask.TableID, true)
+		if mppTask.PartitionTableIDs != nil {
+			err = updateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
+		} else {
+			err = updateExecutorTableID(context.Background(), dagReq.RootExecutor, true, []int64{mppTask.TableID})
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -73,7 +77,9 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs), zap.Int64("ID", mppTask.ID), zap.String("address", mppTask.Meta.GetAddress()), zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
+		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
+			zap.Int64("ID", mppTask.ID), zap.String("address", mppTask.Meta.GetAddress()),
+			zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
 		req := &kv.MPPDispatchRequest{
 			Data:      pbData,
 			Meta:      mppTask.Meta,

@@ -20,8 +20,8 @@ import "go.uber.org/atomic"
 const (
 	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLPrecisionSeconds      = 1
-	DefTiDBTopSQLMaxStatementCount     = 100
-	DefTiDBTopSQLMaxCollect            = 5000
+	DefTiDBTopSQLMaxTimeSeriesCount    = 100
+	DefTiDBTopSQLMaxMetaCount          = 5000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 )
 
@@ -29,8 +29,8 @@ const (
 var GlobalState = State{
 	enable:                atomic.NewBool(false),
 	PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
-	MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
-	MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
+	MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxTimeSeriesCount),
+	MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxMetaCount),
 	ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 }
 

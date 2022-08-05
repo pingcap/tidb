@@ -3,8 +3,11 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -24,6 +27,12 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
+	if task.IsStreamRestore(cmdName) {
+		if err := cfg.ParseStreamRestoreFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
 		var store *appdash.MemoryStore
@@ -32,9 +41,28 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	}
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
+		printWorkaroundOnFullRestoreError(command, err)
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// print workaround when we met not fresh or incompatible cluster error on full cluster restore
+func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
+	if !errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster) &&
+		!errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys) {
+		return
+	}
+	fmt.Println("#######################################################################")
+	switch {
+	case errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster):
+		fmt.Println("# the target cluster is not fresh, br cannot restore system tables.")
+	case errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys):
+		fmt.Println("# the target cluster is not compatible with the backup data,")
+		fmt.Println("# br cannot restore system tables.")
+	}
+	fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
+	fmt.Println("#######################################################################")
 }
 
 func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
@@ -83,6 +111,7 @@ func NewRestoreCommand() *cobra.Command {
 		newDBRestoreCommand(),
 		newTableRestoreCommand(),
 		newRawRestoreCommand(),
+		newStreamRestoreCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
 
@@ -95,10 +124,10 @@ func newFullRestoreCommand() *cobra.Command {
 		Short: "restore all tables",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreCommand(cmd, "Full restore")
+			return runRestoreCommand(cmd, task.FullRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables)
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
 	return command
 }
 
@@ -108,7 +137,7 @@ func newDBRestoreCommand() *cobra.Command {
 		Short: "restore tables in a database from the backup data",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreCommand(cmd, "Database restore")
+			return runRestoreCommand(cmd, task.DBRestoreCmd)
 		},
 	}
 	task.DefineDatabaseFlags(command)
@@ -121,7 +150,7 @@ func newTableRestoreCommand() *cobra.Command {
 		Short: "restore a table from the backup data",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreCommand(cmd, "Table restore")
+			return runRestoreCommand(cmd, task.TableRestoreCmd)
 		},
 	}
 	task.DefineTableFlags(command)
@@ -134,10 +163,25 @@ func newRawRestoreCommand() *cobra.Command {
 		Short: "(experimental) restore a raw kv range to TiKV cluster",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreRawCommand(cmd, "Raw restore")
+			return runRestoreRawCommand(cmd, task.RawRestoreCmd)
 		},
 	}
 
 	task.DefineRawRestoreFlags(command)
+	return command
+}
+
+func newStreamRestoreCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "point",
+		Short: "restore data from log until specify commit timestamp",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runRestoreCommand(command, task.PointRestoreCmd)
+		},
+	}
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
+	task.DefineStreamRestoreFlags(command)
+	command.Hidden = true
 	return command
 }

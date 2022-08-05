@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2019 PingCAP, Inc.
 #
@@ -24,7 +24,7 @@ cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 # restart cluster with new collation enabled
 start_services --tidb-cfg $cur/tidb-new-collation.toml
 
-for BACKEND in local importer tidb; do
+for BACKEND in local tidb; do
   # Start importing the tables.
   run_sql 'DROP DATABASE IF EXISTS nc'
 
@@ -45,6 +45,11 @@ for BACKEND in local importer tidb; do
   run_sql "SELECT id, v2 from nc.gbk_test order by v2 limit 1;"
   check_contains "id: 1"
   check_contains "v2: 啊啊"
+
+  run_sql "SELeCT i, v from nc.ci where v = 'aa';"
+  check_contains "i: 1"
+  check_contains "v: aA"
+
 
   run_lightning --backend $BACKEND -d "tests/$TEST_NAME/data-gbk" --config "tests/$TEST_NAME/gbk.toml"
 

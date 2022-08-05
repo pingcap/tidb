@@ -17,7 +17,7 @@ set -euo pipefail
 
 exitCode=0
 
-list=$(find . -name "*_test.go" -not -path "./vendor/*" -print0 | xargs -0 grep -E "type test(.*)Suite"  | awk -F ':| ' '{print $1" "$3}')
+list=$(find . -name "*_test.go" -not -path "./vendor/*" -print0 | xargs -0 grep -E "type test(.*)Suite\s+"  | awk -F ':| ' '{print $1" "$3}')
 while read -r file testSuite; do
   # TODO: ugly regex
   # TODO: check code comment

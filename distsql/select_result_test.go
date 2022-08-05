@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
-
 	"github.com/stretchr/testify/require"
 )
 

@@ -16,7 +16,6 @@ package core_test
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"testing"
 
@@ -32,35 +31,80 @@ import (
 
 func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	p := parser.New()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t(a int primary key, b int, c int,d int,key ib (b),key ic (c))")
+	tk.MustExec("SET session tidb_enable_index_merge = ON;")
+	testcases := []struct {
+		sql          string
+		physicalList []string
+	}{
+		{
+			sql: "select * from t",
+			physicalList: []string{
+				"TableFullScan_4", "TableReader_5", "Projection_3",
+			},
+		},
+		{
+			sql: "select * from t where a = 1",
+			physicalList: []string{
+				"Point_Get_5", "Projection_4",
+			},
+		},
+		{
+			sql: "select max(b) from t",
+			physicalList: []string{
+				"IndexFullScan_19",
+				"Limit_20",
+				"IndexReader_21",
+				"Limit_14",
+				"StreamAgg_10",
+				"Projection_8",
+			},
+		},
+		{
+			sql: "select * from t where c = 3",
+			physicalList: []string{
+				"IndexRangeScan_8",
+				"TableRowIDScan_9",
+				"IndexLookUp_10",
+				"Projection_4",
+			},
+		},
+		{
+			sql: "SELECT * FROM t WHERE b = 1 OR c = 1;",
+			physicalList: []string{
+				"TableRowIDScan_10",
+				"IndexRangeScan_8",
+				"IndexRangeScan_9",
+				"IndexMerge_11",
+				"Projection_4",
+			},
+		},
+	}
 
-	sql := "select * from t where a in (1,2)"
-
-	stmt, err := p.ParseOneStmt(sql, "", "")
-	require.NoError(t, err)
-	err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
-	require.NoError(t, err)
-	sctx := core.MockContext()
-	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
-	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
-	plan, err := builder.Build(context.TODO(), stmt)
-	require.NoError(t, err)
-	flag := uint64(0)
-	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(core.LogicalPlan))
-	require.NoError(t, err)
-	otrace := sctx.GetSessionVars().StmtCtx.PhysicalOptimizeTrace
-	require.NotNil(t, otrace)
-	logicalList, physicalList, bests := getList(otrace)
-	require.True(t, checkList(logicalList, []string{"Projection_3", "Selection_2"}))
-	require.True(t, checkList(physicalList, []string{"Projection_4", "Selection_5"}))
-	require.True(t, checkList(bests, []string{"Projection_4", "Selection_5"}))
+	for _, testcase := range testcases {
+		sql := testcase.sql
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+		require.NoError(t, err)
+		sctx := core.MockContext()
+		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
+		plan, err := builder.Build(context.TODO(), stmt)
+		require.NoError(t, err)
+		_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(core.LogicalPlan))
+		require.NoError(t, err)
+		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
+		require.NotNil(t, otrace)
+		physicalList := getList(otrace)
+		require.True(t, checkList(physicalList, testcase.physicalList))
+	}
 }
 
 func checkList(d []string, s []string) bool {
@@ -75,18 +119,80 @@ func checkList(d []string, s []string) bool {
 	return true
 }
 
-func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string, bests []string) {
-	for logicalPlan, v := range otrace.State {
-		ll = append(ll, logicalPlan)
-		for _, info := range v {
-			bests = append(bests, tracing.CodecPlanName(info.BestTask.TP, info.BestTask.ID))
-			for _, task := range info.Candidates {
-				pl = append(pl, tracing.CodecPlanName(task.TP, task.ID))
-			}
+func getList(otrace *tracing.PhysicalOptimizeTracer) (pl []string) {
+	for _, v := range otrace.Final {
+		pl = append(pl, tracing.CodecPlanName(v.TP, v.ID))
+	}
+	return pl
+}
+
+// assert the case in https://github.com/pingcap/tidb/issues/34863
+func TestPhysicalOptimizerTrace(t *testing.T) {
+	p := parser.New()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	tk.MustExec("use test")
+	tk.MustExec("create table customer2(c_id bigint);")
+	tk.MustExec("create table orders2(o_id bigint, c_id bigint);")
+	tk.MustExec("insert into customer2 values(1),(2),(3),(4),(5);")
+	tk.MustExec("insert into orders2 values(1,1),(2,1),(3,2),(4,2),(5,2);")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1;")
+
+	sql := "select count(*) from customer2 c left join orders2 o on c.c_id=o.c_id;"
+
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	require.NoError(t, err)
+	sctx := core.MockContext()
+	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+	sctx.GetSessionVars().AllowAggPushDown = true
+	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
+	plan, err := builder.Build(context.TODO(), stmt)
+	require.NoError(t, err)
+	flag := uint64(0)
+	flag = flag | 1<<1 | 1<<3 | 1<<8 | 1<<12 | 1<<15
+	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(core.LogicalPlan))
+	require.NoError(t, err)
+	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
+	require.NotNil(t, otrace)
+	elements := map[int]string{
+		12: "TableReader",
+		14: "TableReader",
+		13: "TableFullScan",
+		15: "HashJoin",
+		6:  "Projection",
+		11: "TableFullScan",
+		9:  "HashJoin",
+		10: "HashJoin",
+		7:  "HashAgg",
+		16: "HashJoin",
+		8:  "StreamAgg",
+	}
+	final := map[int]struct{}{
+		11: {},
+		12: {},
+		13: {},
+		14: {},
+		9:  {},
+		7:  {},
+		6:  {},
+	}
+	for _, c := range otrace.Candidates {
+		tp, ok := elements[c.ID]
+		if !ok || tp != c.TP {
+			t.FailNow()
 		}
 	}
-	sort.Strings(ll)
-	sort.Strings(pl)
-	sort.Strings(bests)
-	return ll, pl, bests
+	require.Len(t, otrace.Candidates, len(elements))
+	for _, p := range otrace.Final {
+		_, ok := final[p.ID]
+		if !ok {
+			t.FailNow()
+		}
+	}
+	require.Len(t, otrace.Final, len(final))
 }

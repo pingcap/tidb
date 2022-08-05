@@ -211,14 +211,14 @@ func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
 
 func buildValueEvaluator(tp *types.FieldType) (ve valueEvaluator, memDelta int64) {
 	evalType := tp.EvalType()
-	if tp.Tp == mysql.TypeBit {
+	if tp.GetType() == mysql.TypeBit {
 		evalType = types.ETString
 	}
 	switch evalType {
 	case types.ETInt:
 		return &value4Int{}, DefValue4IntSize
 	case types.ETReal:
-		switch tp.Tp {
+		switch tp.GetType() {
 		case mysql.TypeFloat:
 			return &value4Float32{}, DefValue4Float32Size
 		case mysql.TypeDouble:

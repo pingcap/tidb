@@ -11,7 +11,7 @@ DB_NAME="null_unique_key"
 run_sql "drop database if exists \`$DB_NAME\`;"
 
 # build data on mysql
-run_sql "create database \`$DB_NAME\`;"
+run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create table \`$DB_NAME\`.\`t\` (a int unique key, b int);"
 run_sql "insert into \`$DB_NAME\`.\`t\` values (1, 2), (NULL, 1);"
 
