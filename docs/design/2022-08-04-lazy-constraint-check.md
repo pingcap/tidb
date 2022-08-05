@@ -136,3 +136,22 @@ INSERT INTO t1 VALUES (2); -- Acquire the lock and check constraints immediately
 ```
 
 The `INSERT ... LAZY CHECK` statement skips acquiring pessimistic locks and checking constraints during the DML even if `tidb_pessimistic_txn_allow_lazy_constraint_check` is off.
+
+### Behavior of Locking Lazy Checked Keys
+
+Consider the following scenario (from @cfzjywxk):
+
+```sql
+/* init */ CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY, value int);
+/* init */ INSERT INTO t1 VALUES (1, 1);
+
+/* s1 */ BEGIN PESSIMISTIC;
+/* s1 */ INSERT INTO t1 VALUES (1, 2) LAZY CHECK; -- Skip acquiring the lock. So the statement would succeed.
+/* s1 */ SELECT * FROM t1 FOR UPDATE; -- Here the pessimistic lock on row key '1' would be acquired
+```
+
+The `INSERT` statement puts the row with `id = 1` in the transaction write buffer of TiDB without checking the constraint. The later `SELECT FOR UPDATE` will read and lock the row with `id = 1` in TiKV. If the `SELECT FOR UPDATE` succeeded, it would be difficult to decide the result set. Returning `(1, 1), (1, 2)` breaks the unique constraint, while returning `(1, 1)` or `(1, 2)` may be all strange semantically.
+
+So, we choose to do the missing constraint check when acquiring locks. Whenever we are going to acquire the pessimistic lock of a key with a `PresumeKeyNotExists` flag that is already in the write buffer, we will bring the constraint check to TiKV immediately.
+
+This means the `SELECT FOR UPDATE` will throw a "duplicate entry" error in the case above. It may be strange that a read-only statement raises errors like this. We should make the user aware of the behavior.
