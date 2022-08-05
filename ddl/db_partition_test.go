@@ -2110,7 +2110,7 @@ func TestAlterTableExchangePartition(t *testing.T) {
 
 	tk.MustExec("create table e18 (a int) partition by range (a) (partition p0 values less than (4), partition p1 values less than (10))")
 	tk.MustExec("alter table e18 set tiflash replica 1")
-	tk.MustExec("insert into pt values (2)")
+	tk.MustExec("insert into e18 values (2)")
 
 	tk.MustExec("alter table e18 exchange partition p0 with table e17")
 	tk.MustQuery("select * /*+ read_from_storage(tiflash[e18]) */ from e18").Check(testkit.Rows("1"))
