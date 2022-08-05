@@ -113,6 +113,10 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 		}
 		// If data is not nil, but data.MemBuffer is nil, it means the data is being
 		// loading by a background goroutine.
+		logutil.BgLogger().Info(">> read from cache",
+			zap.Int64("tid", c.tableID),
+			zap.Uint64("ts", ts),
+			zap.Bool("loading", data.MemBuffer == nil))
 		return data.MemBuffer, data.MemBuffer == nil
 	}
 	return nil, false
@@ -207,6 +211,11 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 		return
 	}
 	if succ {
+		logutil.BgLogger().Info(">> update cache data (lock for read, loading)",
+			zap.Int64("tid", c.tableID),
+			zap.Uint64("ts", ts),
+			zap.Uint64("start", ts),
+			zap.Uint64("lease", lease))
 		c.cacheData.Store(&cacheData{
 			Start:     ts,
 			Lease:     lease,
@@ -226,12 +235,26 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 
 			tmp := c.cacheData.Load().(*cacheData)
 			if tmp != nil && tmp.Start == ts {
+				logutil.BgLogger().Info(">> update cache data (lock for read, loaded)",
+					zap.Int64("tid", c.tableID),
+					zap.Uint64("ts", ts),
+					zap.Uint64("start", startTS),
+					zap.Uint64("lease", tmp.Lease))
 				c.cacheData.Store(&cacheData{
 					Start:     startTS,
 					Lease:     tmp.Lease,
 					MemBuffer: mb,
 				})
 				atomic.StoreInt64(&c.totalSize, totalSize)
+			} else {
+				start := uint64(0)
+				if tmp != nil {
+					start = tmp.Start
+				}
+				logutil.BgLogger().Info(">> update cache data (lock for read, skipped)",
+					zap.Int64("tid", c.tableID),
+					zap.Uint64("ts", ts),
+					zap.Uint64("start", start))
 			}
 		}()
 	}
@@ -294,6 +317,11 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 		log.Warn("Renew read lease error", zap.Error(err))
 	}
 	if newLease > 0 {
+		logutil.BgLogger().Info(">> update cache data (renew lease)",
+			zap.Int64("tid", c.tableID),
+			zap.Uint64("ts", ts),
+			zap.Uint64("start", data.Start),
+			zap.Uint64("lease", newLease))
 		c.cacheData.Store(&cacheData{
 			Start:     data.Start,
 			Lease:     newLease,
@@ -316,6 +344,9 @@ func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struc
 		logutil.Logger(ctx).Warn("[cached table] lock for write lock fail", zap.Error(err))
 		return
 	}
+	logutil.BgLogger().Info(">> acquire write lock",
+		zap.Int64("tid", c.tableID),
+		zap.Uint64("lease", writeLockLease))
 
 	t := time.NewTicker(cacheTableWriteLease / 2)
 	defer t.Stop()
