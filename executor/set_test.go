@@ -1662,6 +1662,7 @@ func TestSetClusterConfig(t *testing.T) {
 	require.EqualError(t, tk.ExecToErr("set config 'example.com:1111' log.level='info'"), "instance example.com:1111 is not found in this cluster") // name resolves.
 	require.EqualError(t, tk.ExecToErr("set config tikv log.level=null"), "can't set config to null")
 	require.EqualError(t, tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), "instance 1.1.1.1:1111 is not found in this cluster")
+	require.EqualError(t, tk.ExecToErr("set config tikv `raftstore.max-peer-down-duration`=DEFAULT"), "Unknown DEFAULT for SET CONFIG")
 
 	httpCnt := 0
 	tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
