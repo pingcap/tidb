@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -1050,12 +1051,25 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, job.SchemaID, &oldSchemaName, &tableName)
+	oldTableName := job.TableName
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-
-	ver, err = updateSchemaVersion(d, t, job)
+	tblInfosMap, err := adjustReferTableInfoAfterRenameTable(d, t, tblInfo, oldSchemaName, model.NewCIStr(oldTableName), tableName, oldSchemaID, newSchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	ver, tblInfo, err = checkAndRenameTables(t, job, tblInfo, oldSchemaID, job.SchemaID, &oldSchemaName, &tableName)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	tblInfosMap[tblInfo.ID] = schemaIDAndTableInfo{
+		schemaID: newSchemaID,
+		tblInfo:  tblInfo,
+	}
+	tblInfos := getChangedTableInfoList(tblInfosMap)
+	ver, err = updateVersionAndMultiTableInfosWithCheck(t, job, tblInfos, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1080,7 +1094,11 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
 		job.TableName = oldTableNames[i].L
-		ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
+		tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		ver, tblInfo, err := checkAndRenameTables(t, job, tblInfo, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1095,13 +1113,89 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	return ver, nil
 }
 
-func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
-	if err != nil {
-		return ver, tblInfo, errors.Trace(err)
+func adjustReferTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName model.CIStr, oldSchemaID, newSchemaID int64) (map[int64]schemaIDAndTableInfo, error) {
+	infos := make(map[int64]schemaIDAndTableInfo)
+	if len(tblInfo.ReferredForeignKeys) == 0 && len(tblInfo.ForeignKeys) == 0 {
+		return infos, nil
 	}
+	is := d.infoCache.GetLatest()
+	newDB, ok := is.SchemaByID(newSchemaID)
+	if !ok {
+		return infos, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
+	}
+	fkc := ForeignKeyHelper{
+		schemaID: oldSchemaID,
+		tbInfo:   tblInfo,
+	}
+	for _, fk := range tblInfo.ForeignKeys {
+		var referDBInfo *model.DBInfo
+		var referTblInfo *model.TableInfo
+		if fk.RefSchema.L == oldSchemaName.L && fk.RefTable.L == oldTableName.L {
+			referDBInfo, referTblInfo = newDB, tblInfo
+		} else {
+			var err error
+			referDBInfo, referTblInfo, err = fkc.getParentTableFromStorage(d, t, fk.RefSchema, fk.RefTable)
+			if err != nil {
+				if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+					continue
+				}
+				return infos, err
+			}
+		}
+		for _, referredFK := range referTblInfo.ReferredForeignKeys {
+			if referredFK.ChildSchema.L == oldSchemaName.L && referredFK.ChildTable.L == oldTableName.L {
+				referredFK.ChildSchema = newDB.Name
+				referredFK.ChildTable = newTableName
+				break
+			}
+		}
+		infos[referTblInfo.ID] = schemaIDAndTableInfo{
+			schemaID: referDBInfo.ID,
+			tblInfo:  referTblInfo,
+		}
+	}
+	for _, referredFK := range tblInfo.ReferredForeignKeys {
+		var childDBInfo *model.DBInfo
+		var childTblInfo *model.TableInfo
+		if referredFK.ChildSchema.L == newDB.Name.L && referredFK.ChildTable.L == newTableName.L {
+			childDBInfo, childTblInfo = newDB, tblInfo
+		} else {
+			var err error
+			childDBInfo, childTblInfo, err = fkc.getParentTableFromStorage(d, t, referredFK.ChildSchema, referredFK.ChildTable)
+			if err != nil {
+				if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+					continue
+				}
+				return infos, err
+			}
+		}
+		childfkInfo := model.FindFKInfoByName(childTblInfo.ForeignKeys, referredFK.ChildFKName.L)
+		if childfkInfo == nil {
+			continue
+		}
+		childfkInfo.RefSchema = newDB.Name
+		childfkInfo.RefTable = newTableName
+		infos[childTblInfo.ID] = schemaIDAndTableInfo{
+			schemaID: childDBInfo.ID,
+			tblInfo:  childTblInfo,
+		}
+	}
+	return infos, nil
+}
 
-	err = t.DropTableOrView(oldSchemaID, tblInfo.ID)
+func getChangedTableInfoList(infos map[int64]schemaIDAndTableInfo) []schemaIDAndTableInfo {
+	InfoList := make([]schemaIDAndTableInfo, 0, len(infos))
+	for _, info := range infos {
+		InfoList = append(InfoList, info)
+	}
+	sort.Slice(InfoList, func(i, j int) bool {
+		return InfoList[i].tblInfo.ID < InfoList[j].tblInfo.ID
+	})
+	return InfoList
+}
+
+func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *model.CIStr) (ver int64, _ *model.TableInfo, _ error) {
+	err := t.DropTableOrView(oldSchemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, tblInfo, errors.Trace(err)
@@ -1502,7 +1596,7 @@ func updateVersionAndMultiTableInfos(t *meta.Meta, job *model.Job, infos []schem
 		if info.tblInfo.State == model.StatePublic {
 			info.tblInfo.UpdateTS = t.StartTS
 		}
-		err = t.UpdateTable(job.SchemaID, info.tblInfo)
+		err = t.UpdateTable(info.schemaID, info.tblInfo)
 		if err != nil {
 			return ver, err
 		}

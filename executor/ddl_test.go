@@ -954,6 +954,88 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 	require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
 }
 
+func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test2")
+	tk.MustExec("create database test3")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))")
+	tk.MustExec("rename table test.t1 to test2.t2")
+	tblInfo := getTableInfo(t, dom, "test2", "t2")
+	require.Equal(t, 1, len(tblInfo.ForeignKeys))
+	require.Equal(t, 1, len(tblInfo.ReferredForeignKeys))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("t2"),
+		ChildFKName: model.NewCIStr("fk"),
+	}, *tblInfo.ReferredForeignKeys[0])
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk"),
+		RefSchema: model.NewCIStr("test2"),
+		RefTable:  model.NewCIStr("t2"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("a")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tblInfo.ForeignKeys[0])
+
+	tk.MustExec("drop table test2.t2")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, index(b))")
+	tk.MustExec("create table t2 (a int, b int, foreign key fk(a) references t1(b));")
+	tk.MustExec("rename table test.t2 to test2.tt2")
+	tbl1Info := getTableInfo(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tbl1Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tbl1Info.ReferredForeignKeys[0].Cols))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("b")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("tt2"),
+		ChildFKName: model.NewCIStr("fk"),
+	}, *tbl1Info.ReferredForeignKeys[0])
+	tbl2Info := getTableInfo(t, dom, "test2", "tt2")
+	require.Equal(t, 0, len(tbl2Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk"),
+		RefSchema: model.NewCIStr("test"),
+		RefTable:  model.NewCIStr("t1"),
+		RefCols:   []model.CIStr{model.NewCIStr("b")},
+		Cols:      []model.CIStr{model.NewCIStr("a")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tbl2Info.ForeignKeys[0])
+
+	tk.MustExec("rename table test.t1 to test3.tt1")
+	tbl1Info = getTableInfo(t, dom, "test3", "tt1")
+	require.Equal(t, 1, len(tbl1Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tbl1Info.ReferredForeignKeys[0].Cols))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("b")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("tt2"),
+		ChildFKName: model.NewCIStr("fk"),
+	}, *tbl1Info.ReferredForeignKeys[0])
+	tbl2Info = getTableInfo(t, dom, "test2", "tt2")
+	require.Equal(t, 0, len(tbl2Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk"),
+		RefSchema: model.NewCIStr("test3"),
+		RefTable:  model.NewCIStr("tt1"),
+		RefCols:   []model.CIStr{model.NewCIStr("b")},
+		Cols:      []model.CIStr{model.NewCIStr("a")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tbl2Info.ForeignKeys[0])
+}
+
 func TestDropForeignKeyMetaInfo(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -977,6 +1059,8 @@ func TestDropForeignKeyMetaInfo(t *testing.T) {
 }
 
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
+	err := dom.Reload()
+	require.NoError(t, err)
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb))
 	require.NoError(t, err)

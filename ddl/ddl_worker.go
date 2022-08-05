@@ -1137,6 +1137,15 @@ func updateSchemaVersionWithInfos(t *meta.Meta, job *model.Job, infos []schemaID
 		TableID:  job.TableID,
 	}
 
+	switch job.Type {
+	case model.ActionRenameTable:
+		err = job.DecodeArgs(&diff.OldSchemaID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.TableID = job.TableID
+	}
+
 	diff.AffectedOpts = make([]*model.AffectedOption, 0, len(infos))
 	for _, info := range infos {
 		if info.tblInfo.ID == job.TableID {
