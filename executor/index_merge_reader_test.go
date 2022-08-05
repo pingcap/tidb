@@ -186,7 +186,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));")
 	insertStr := "insert into t1 values(0, 0, 0)"
