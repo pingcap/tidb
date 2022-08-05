@@ -154,6 +154,7 @@ func NewTargetInfoGetterImpl(
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
 	return &TargetInfoGetterImpl{
+		cfg:          cfg,
 		targetDBGlue: targetDBGlue,
 		tls:          tls,
 		backend:      backendTargetInfoGetter,
