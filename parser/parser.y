@@ -6415,7 +6415,7 @@ NotKeywordToken:
 |	"TOKUDB_SMALL"
 |	"TOKUDB_UNCOMPRESSED"
 |	"TOKUDB_ZLIB"
-|	"TOKUDB_Zstd"
+|	"TOKUDB_ZSTD"
 |	"TOP"
 |	"TRIM"
 |	"NEXT_ROW_ID"
@@ -11762,7 +11762,7 @@ RowFormat:
 	{
 		$$ = ast.TokuDBRowFormatZlib
 	}
-|	"ROW_FORMAT" EqOpt "TOKUDB_Zstd"
+|	"ROW_FORMAT" EqOpt "TOKUDB_ZSTD"
 	{
 		$$ = ast.TokuDBRowFormatZstd
 	}
