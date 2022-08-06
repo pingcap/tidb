@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
@@ -2002,12 +2001,6 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	sessionStates.UserVars = make(map[string]*types.Datum, len(s.Users))
 	for name, userVar := range s.Users {
 		sessionStates.UserVars[name] = userVar.Clone()
-	}
-	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.Users))
-	for name, userVar := range s.Users {
-		tp := new(types.FieldType)
-		types.DefaultParamTypeForValue(userVar.GetValue(), tp)
-		sessionStates.UserVarTypes[name] = tp.Clone()
 	}
 	s.UsersLock.RUnlock()
 
