@@ -606,6 +606,12 @@
       "parser/parser.go": "ignore generated code"
     }
   },
+  "SA1019": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "SA2000": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
