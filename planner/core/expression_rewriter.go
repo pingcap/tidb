@@ -1289,7 +1289,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			tp.SetFlen(mysql.MaxFieldVarCharLength)
 		} else {
-			types.DefaultParamTypeForValue(userVar, tp)
+			types.DefaultParamTypeForValue(userVar.GetValue(), tp)
 		}
 		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
 		if err != nil {

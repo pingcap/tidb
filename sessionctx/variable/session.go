@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	ptypes "github.com/pingcap/tidb/parser/types"
 	"math"
 	"math/rand"
 	"net"
@@ -2002,10 +2003,10 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	for name, userVar := range s.Users {
 		sessionStates.UserVars[name] = userVar.Clone()
 	}
-	sessionStates.UserVarTypes = make(map[string]*types.FieldType, len(s.Users))
+	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.Users))
 	for name, userVar := range s.Users {
 		tp := new(types.FieldType)
-		types.DefaultParamTypeForValue(userVar, tp)
+		types.DefaultParamTypeForValue(userVar.GetValue(), tp)
 		sessionStates.UserVarTypes[name] = tp.Clone()
 	}
 	s.UsersLock.RUnlock()

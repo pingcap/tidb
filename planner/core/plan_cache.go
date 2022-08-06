@@ -107,7 +107,7 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeNull)
 		} else {
-			types.DefaultParamTypeForValue(userVar, tp)
+			types.DefaultParamTypeForValue(userVar.GetValue(), tp)
 		}
 		paramTypes = append(paramTypes, tp)
 	}

@@ -136,13 +136,6 @@ func TestGetVar(t *testing.T) {
 	}
 	for _, kv := range sessionVars {
 		ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
-		var tp *types.FieldType
-		if _, ok := kv.val.(types.Time); ok {
-			tp = types.NewFieldType(mysql.TypeDatetime)
-		} else {
-			tp = types.NewFieldType(mysql.TypeVarString)
-		}
-		types.DefaultParamTypeForValue(kv.val, tp)
 	}
 
 	testCases := []struct {
@@ -164,7 +157,7 @@ func TestGetVar(t *testing.T) {
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		} else {
-			types.DefaultParamTypeForValue(userVar, tp)
+			types.DefaultParamTypeForValue(userVar.GetValue(), tp)
 		}
 		fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
 		require.NoError(t, err)
