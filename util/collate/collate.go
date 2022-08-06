@@ -15,6 +15,7 @@
 package collate
 
 import (
+	"fmt"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -217,7 +218,7 @@ func SubstituteMissingCollationToDefault(co string) string {
 	if _, err = GetCollationByName(co); err == nil {
 		return co
 	}
-	logutil.BgLogger().Warn(err.Error())
+	logutil.BgLogger().Warn(fmt.Sprintf("The collation %s specified on connection is not supported when new collation is enabled, switch to the default collation: %s", co, mysql.DefaultCollationName))
 	var coll *charset.Collation
 	if coll, err = GetCollationByName(charset.CollationUTF8MB4); err != nil {
 		logutil.BgLogger().Warn(err.Error())

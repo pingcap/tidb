@@ -452,9 +452,6 @@ const (
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
 
-	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
-	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
-
 	// TiDBPlacementMode is used to control the mode for placement
 	TiDBPlacementMode = "tidb_placement_mode"
 
@@ -888,7 +885,6 @@ const (
 	DefTiDBDDLReorgBatchSize                       = 256
 	DefTiDBDDLErrorCountLimit                      = 512
 	DefTiDBMaxDeltaSchemaCount                     = 1024
-	DefTiDBPointGetCache                           = false
 	DefTiDBPlacementMode                           = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated          = false
 	DefTiDBHashAggPartialConcurrency               = ConcurrencyUnset
@@ -1032,7 +1028,6 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
-	EnablePointGetCache                   = atomic.NewBool(DefTiDBPointGetCache)
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
