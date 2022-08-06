@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	ptypes "github.com/pingcap/tidb/parser/types"
 	"math"
 	"math/rand"
 	"net"
@@ -564,7 +565,7 @@ type SessionVars struct {
 	Users map[string]types.Datum
 	// UserVarTypes stores the FieldType for user variables, it cannot be inferred from Users when Users have not been set yet.
 	// It is read/write protected by UsersLock.
-	UserVarTypes map[string]*types.FieldType
+	//UserVarTypes map[string]*types.FieldType
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// stmtVars variables are temporarily set by SET_VAR hint
@@ -2001,6 +2002,12 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	sessionStates.UserVars = make(map[string]*types.Datum, len(s.Users))
 	for name, userVar := range s.Users {
 		sessionStates.UserVars[name] = userVar.Clone()
+	}
+	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.Users))
+	for name, userVar := range s.Users {
+		tp := new(types.FieldType)
+		types.DefaultParamTypeForValue(userVar, tp)
+		sessionStates.UserVarTypes[name] = tp.Clone()
 	}
 	s.UsersLock.RUnlock()
 
