@@ -350,7 +350,8 @@ func TestLeadingJoinHint4OuterJoin(t *testing.T) {
 }
 
 func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 
