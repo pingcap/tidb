@@ -57,6 +57,7 @@ type baseTxnContextProvider struct {
 	infoSchema      infoschema.InfoSchema
 	txn             kv.Transaction
 	isTxnPrepared   bool
+	constStartTS    uint64
 	enterNewTxnType sessiontxn.EnterNewTxnType
 }
 
@@ -222,6 +223,12 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
+	if p.constStartTS != 0 {
+		if err := p.replaceTxnTsFuture(sessiontxn.ConstantFuture(p.constStartTS)); err != nil {
+			return nil, err
+		}
+	}
+
 	txnFuture := p.sctx.GetPreparedTxnFuture()
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
@@ -277,7 +284,7 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 	}
 
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return p.prepareTxnWithTS(snapshotTS)
+		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}
 
 	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
@@ -296,8 +303,13 @@ func (p *baseTxnContextProvider) prepareTxnWithOracleTS() error {
 	return p.replaceTxnTsFuture(future)
 }
 
-func (p *baseTxnContextProvider) prepareTxnWithTS(ts uint64) error {
-	return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(ts))
+func (p *baseTxnContextProvider) forcePrepareConstStartTS(ts uint64) error {
+	if p.txn != nil {
+		return errors.New("cannot force prepare const start ts because txn is active")
+	}
+	p.constStartTS = ts
+	p.isTxnPrepared = true
+	return nil
 }
 
 func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error {

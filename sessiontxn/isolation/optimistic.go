@@ -30,6 +30,7 @@ import (
 // OptimisticTxnContextProvider provides txn context for optimistic transaction
 type OptimisticTxnContextProvider struct {
 	baseTxnContextProvider
+	optimizeWithMaxTS bool
 }
 
 // NewOptimisticTxnContextProvider returns a new OptimisticTxnContextProvider
@@ -89,10 +90,26 @@ func isOptimisticTxnRetryable(sessVars *variable.SessionVars, tp sessiontxn.Ente
 	return false
 }
 
+// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+func (p *OptimisticTxnContextProvider) GetStmtReadTS() (uint64, error) {
+	if p.optimizeWithMaxTS {
+		return math.MaxUint64, nil
+	}
+	return p.baseTxnContextProvider.GetStmtReadTS()
+}
+
+// GetStmtForUpdateTS returns the read timestamp used by select statement (not for select ... for update)
+func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
+	if p.optimizeWithMaxTS {
+		return math.MaxUint64, nil
+	}
+	return p.baseTxnContextProvider.GetStmtForUpdateTS()
+}
+
 // AdviseOptimizeWithPlan providers optimization according to the plan
 // It will use MaxTS as the startTS in autocommit txn for some plans.
 func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) (err error) {
-	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() || p.optimizeWithMaxTS {
 		return nil
 	}
 
@@ -116,10 +133,17 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 			zap.Uint64("conn", sessVars.ConnectionID),
 			zap.String("text", sessVars.StmtCtx.OriginalSQL),
 		)
-		if err = p.prepareTxnWithTS(math.MaxUint64); err != nil {
-			return err
+
+		if err = p.forcePrepareConstStartTS(math.MaxUint64); err != nil {
+			logutil.BgLogger().Error("failed init txnStartTS with MaxUint64",
+				zap.Error(err)
+			zap.Uint64("conn", sessVars.ConnectionID),
+				zap.String("text", sessVars.StmtCtx.OriginalSQL),
+		)
+			return nil
 		}
 
+		p.optimizeWithMaxTS = true
 		if sessVars.StmtCtx.Priority == mysql.NoPriority {
 			sessVars.StmtCtx.Priority = kv.PriorityHigh
 		}
