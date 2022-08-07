@@ -92,6 +92,8 @@ func isOptimisticTxnRetryable(sessVars *variable.SessionVars, tp sessiontxn.Ente
 
 // GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 func (p *OptimisticTxnContextProvider) GetStmtReadTS() (uint64, error) {
+	// If `math.MaxUint64` is used for point get optimization, it is not necessary to activate the txn.
+	// Just return `math.MaxUint64` to save the performance.
 	if p.optimizeWithMaxTS {
 		return math.MaxUint64, nil
 	}
