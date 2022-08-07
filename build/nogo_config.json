@@ -613,7 +613,8 @@
       ".*_generated\\.go$": "ignore generated code"
     },
      "only_files": {
-       "ddl/": "enable to ddl"
+       "ddl/": "enable to ddl",
+       "planner/": "enable to planner"
      }
   },
   "SA2000": {
