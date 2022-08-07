@@ -90,18 +90,8 @@ func (txn *LazyTxn) init() {
 // call this under lock!
 func (txn *LazyTxn) updateState(state txninfo.TxnRunningState) {
 	if txn.mu.TxnInfo.State != state {
-		lastState := txn.mu.TxnInfo.State
-		lastStateChangeTime := txn.mu.TxnInfo.LastStateChangeTime
 		txn.mu.TxnInfo.State = state
 		txn.mu.TxnInfo.LastStateChangeTime = time.Now()
-		if !lastStateChangeTime.IsZero() {
-			hasLockLbl := "false"
-			if !txn.mu.TxnInfo.BlockStartTime.IsZero() {
-				hasLockLbl = "true"
-			}
-			metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel(lastState), hasLockLbl).Observe(time.Since(lastStateChangeTime).Seconds())
-		}
-		metrics.TxnStatusEnteringCounter.WithLabelValues(txninfo.StateLabel(state)).Inc()
 	}
 }
 
