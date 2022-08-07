@@ -19,9 +19,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -362,7 +362,7 @@ func getDynamicAccessPartition(sctx sessionctx.Context, tblInfo *model.TableInfo
 		tblName = asName
 	}
 	res.Table = tblName
-	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	db, ok := is.SchemaByTable(tblInfo)
 	if ok {
 		res.Database = db.Name.O
