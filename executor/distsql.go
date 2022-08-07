@@ -755,6 +755,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		if resultTask == nil {
 			return nil
 		}
+		// The input of method is different. So make copy
 		rows := resultTask.getRows()
 		if resultTask.cursor < len(rows) {
 			numToAppend := mathutil.Min(len(rows)-resultTask.cursor, req.RequiredRows()-req.NumRows())
