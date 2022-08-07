@@ -344,7 +344,7 @@ func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
 
 // AdviseWarmup provides warmup for inner state
 func (p *baseTxnContextProvider) AdviseWarmup() error {
-	if p.isBeginStmtWithStaleRead() {
+	if p.isTxnPrepared || p.isBeginStmtWithStaleRead() {
 		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
