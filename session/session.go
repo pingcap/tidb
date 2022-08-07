@@ -2300,13 +2300,14 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		staleread.AssertStmtStaleness(s, false)
 	})
 
-	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+	txnManager := sessiontxn.GetTxnManager(s)
+	is := txnManager.GetTxnInfoSchema()
 	execPlan, err := planner.OptimizeExecStmt(ctx, s, execAst, is)
 	if err != nil {
 		return nil, false, err
 	}
 
-	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, execPlan); err != nil {
+	if err = txnManager.AdviseOptimizeWithPlan(execPlan); err != nil {
 		return nil, false, err
 	}
 
