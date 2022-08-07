@@ -153,6 +153,18 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't'").Check(testkit.Rows(
 		"def test t bit 1 b'100' YES bit <nil> <nil> 10 0 <nil> <nil> <nil> bit(10) unsigned   select,insert,update,references  "))
 	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("set time_zone='+08:00'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (b timestamp(3) NOT NULL DEFAULT '1970-01-01 08:00:01.000')")
+	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("1970-01-01 08:00:01.000"))
+	tk.MustExec("set time_zone='+04:00'")
+	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("1970-01-01 04:00:01.000"))
+	tk.MustExec("set time_zone=default")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bit DEFAULT (rand()))")
+	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("rand()"))
 }
 
 func TestEngines(t *testing.T) {
@@ -472,6 +484,31 @@ func TestPartitionsTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, pid, 0)
 	tk.MustExec("drop table test_partitions")
+}
+
+// https://github.com/pingcap/tidb/issues/32693.
+func TestPartitionTablesStatsCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`
+CREATE TABLE e ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30)) PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (50),
+        PARTITION p1 VALUES LESS THAN (100),
+        PARTITION p2 VALUES LESS THAN (150),
+        PARTITION p3 VALUES LESS THAN (MAXVALUE));`)
+	tk.MustExec(`CREATE TABLE e2 ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30));`)
+	// Load the stats cache.
+	tk.MustQuery(`SELECT PARTITION_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'e';`)
+	// p0: 1 row, p3: 3 rows
+	tk.MustExec(`INSERT INTO e VALUES (1669, "Jim", "Smith"), (337, "Mary", "Jones"), (16, "Frank", "White"), (2005, "Linda", "Black");`)
+	tk.MustExec(`set tidb_enable_exchange_partition='on';`)
+	tk.MustExec(`ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2;`)
+	// p0: 1 rows, p3: 3 rows
+	tk.MustExec(`INSERT INTO e VALUES (41, "Michael", "Green");`)
+	tk.MustExec(`analyze table e;`) // The stats_meta should be effective immediately.
+	tk.MustQuery(`SELECT PARTITION_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'e';`).
+		Check(testkit.Rows("p0 1", "p1 0", "p2 0", "p3 3"))
 }
 
 func TestMetricTables(t *testing.T) {
