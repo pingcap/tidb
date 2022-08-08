@@ -802,7 +802,14 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (Pla
 		}
 		vars = append(vars, newExpr)
 	}
-	exe := &Execute{Name: v.Name, Params: vars, ExecID: v.ExecID}
+	if v.PrepStmt == nil {
+		prepStmt, err := b.ctx.GetSessionVars().GetPreparedStmtByName(v.Name)
+		if err != nil {
+			return nil, err
+		}
+		v.PrepStmt = prepStmt
+	}
+	exe := &Execute{Name: v.Name, Params: vars, PrepStmt: v.PrepStmt.(*CachedPrepareStmt)}
 	if v.BinaryArgs != nil {
 		exe.Params = v.BinaryArgs.([]expression.Expression)
 	}

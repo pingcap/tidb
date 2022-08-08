@@ -44,18 +44,12 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/topsql"
-	"go.uber.org/zap"
 )
 
 // IsReadOnly check whether the ast.Node is a read only statement.
 func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-		prepareStmt, err := core.GetPreparedStmt(execStmt, vars)
-		if err != nil {
-			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
-			return false
-		}
-		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt)
+		return ast.IsReadOnly(execStmt.PrepStmt.(*core.CachedPrepareStmt).PreparedAst.Stmt)
 	}
 	return ast.IsReadOnly(node)
 }

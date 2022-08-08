@@ -242,22 +242,3 @@ type CachedPrepareStmt struct {
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
 }
-
-// GetPreparedStmt extract the prepared statement from the execute statement.
-func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
-	var ok bool
-	execID := stmt.ExecID
-	if stmt.Name != "" {
-		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
-			return nil, ErrStmtNotFound
-		}
-	}
-	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-		preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
-		}
-		return preparedObj, nil
-	}
-	return nil, ErrStmtNotFound
-}

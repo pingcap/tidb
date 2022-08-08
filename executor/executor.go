@@ -1948,10 +1948,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
-		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
-		if err != nil {
-			return err
-		}
+		prepareStmt := execStmt.PrepStmt.(*plannercore.CachedPrepareStmt)
 		s = prepareStmt.PreparedAst.Stmt
 		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.

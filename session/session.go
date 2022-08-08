@@ -2325,7 +2325,12 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 
-	execStmt := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
+	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
+	if err != nil {
+		return nil, err
+	}
+
+	execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
 	if err := executor.ResetContextOfStmt(s, execStmt); err != nil {
 		return nil, err
 	}
