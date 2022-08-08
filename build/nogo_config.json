@@ -154,6 +154,9 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "server/conn.go": "server/conn.go",
+      "server/conn_stmt.go": "server/conn_stmt.go",
+      "server/conn_test.go": "server/conn_test.go",
       "errno/": "only table code"
     }
   },
@@ -236,7 +239,7 @@
   "makezero": {
     "exclude_files": {
       "/cgo/": "ignore cgo code",
-       ".*_test\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore generated code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
@@ -280,6 +283,9 @@
     },
     "only_files": {
       "expression/builtin_cast.go": "expression/builtin_cast code",
+      "server/conn.go": "server/conn.go",
+      "server/conn_stmt.go": "server/conn_stmt.go",
+      "server/conn_test.go": "server/conn_test.go",
       "ddl/index.go": "ddl/index code",
       "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
       "distsql/": "ignore distsql code",
@@ -629,10 +635,13 @@
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     },
-     "only_files": {
-       "expression/builtin_cast.go": "enable expression/builtin_cast.go",
-       "ddl/": "enable to ddl"
-     }
+    "only_files": {
+      "expression/builtin_cast.go": "enable expression/builtin_cast.go",
+      "server/conn.go": "server/conn.go",
+      "server/conn_stmt.go": "server/conn_stmt.go",
+      "server/conn_test.go": "server/conn_test.go",
+      "ddl/": "enable to ddl"
+    }
   },
   "SA2000": {
     "exclude_files": {
