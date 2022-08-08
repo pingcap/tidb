@@ -101,6 +101,7 @@ func setPhysicalTableOrIndexScanCostDetail(p PhysicalPlan, opt *physicalOptimize
 func setPhysicalTableReaderCostDetail(p *PhysicalTableReader, opt *physicalOptimizeOp,
 	rowCount, rowSize, networkFactor, netSeekCost, tablePlanCost float64,
 	scanConcurrency int, storeType kv.StoreType) {
+	// tracer haven't support non tikv plan for now
 	if opt == nil || storeType != kv.TiKV {
 		return
 	}
