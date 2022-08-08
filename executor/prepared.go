@@ -190,7 +190,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		normalizedSQL4PC, digest4PC string
 		selectStmtNode              ast.StmtNode
 	)
-	if !plannercore.PreparedPlanCacheEnabled() {
+	if !e.ctx.GetSessionVars().EnablePreparedPlanCache {
 		prepared.UseCache = false
 	} else {
 		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
@@ -302,8 +302,10 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
-	if plannercore.PreparedPlanCacheEnabled() {
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion, 0)
+	if e.ctx.GetSessionVars().EnablePreparedPlanCache {
+		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.ctx, preparedObj)
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
+			0, bindSQL)
 		if err != nil {
 			return err
 		}

@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -350,14 +349,11 @@ func TestCTEWithLimit(t *testing.T) {
 }
 
 func TestSpillToDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
-
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET GLOBAL tidb_enable_tmp_storage_on_oom = 1")
+	defer tk.MustExec("SET GLOBAL tidb_enable_tmp_storage_on_oom = 0")
 	tk.MustExec("use test;")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testCTEStorageSpill", "return(true)"))
