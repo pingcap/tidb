@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	ptypes "github.com/pingcap/tidb/parser/types"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -1293,13 +1293,11 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		userVar, ok := sessionVars.UserVars.Vars[name]
 		sessionVars.UsersLock.RUnlock()
 		var tp *ptypes.FieldType
-		if !ok {
+		if v, ok1 := userVar.(expression.Constant); ok && ok1 {
+			tp = v.RetType
+		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			tp.SetFlen(mysql.MaxFieldVarCharLength)
-		} else {
-			if v, ok1 := userVar.(expression.Constant); ok1 {
-				tp = v.RetType
-			}
 		}
 		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
 		if err != nil {
