@@ -395,7 +395,6 @@ go_test(
         "//util/execdetails",
         "//util/gcutil",
         "//util/hack",
-        "//util/kvcache",
         "//util/logutil",
         "//util/logutil/consistency",
         "//util/mathutil",
