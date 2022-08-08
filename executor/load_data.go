@@ -630,13 +630,13 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		if col == nil || col.isNull() {
 			sessionVars.UnsetUserVar(name)
 		} else {
-			varName := strings.ToLower(name)
+			name = strings.ToLower(name)
 			collation := mysql.DefaultCollationName
 			if len(collation) <= 0 {
 				_, collation = sessionVars.GetCharsetInfo()
 			}
 			v := types.NewCollationStringDatum(stringutil.Copy(string(col.str)), collation)
-			sessionVars.UserVars.Vars[varName] = expression.Constant{Value: v}
+			sessionVars.UserVars.Vars[name] = expression.Constant{Value: v}
 		}
 		sessionVars.UsersLock.Unlock()
 	}
