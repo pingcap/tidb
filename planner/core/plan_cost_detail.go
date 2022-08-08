@@ -16,8 +16,8 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/tracing"
 )
 
