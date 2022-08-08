@@ -16,7 +16,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSES/QL-LICENSE file.
 
-package schematracker
+package schematracker_test
 
 import (
 	"bytes"
@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl/schematracker"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
@@ -33,7 +35,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func execCreate(t *testing.T, tracker SchemaTracker, sql string) {
+func execCreate(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 	sctx := mock.NewContext()
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
@@ -53,8 +55,8 @@ func TestNoNumLimit(t *testing.T) {
 	}
 	sql += ");"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	sql = "create table test.t_too_many_indexes ("
@@ -78,12 +80,12 @@ func TestNoNumLimit(t *testing.T) {
 func TestCreateTableLongIndex(t *testing.T) {
 	sql := "create table test.t (c1 int, c2 blob, c3 varchar(64), index idx_c2(c2(555555)));"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 }
 
-func execAlter(t *testing.T, tracker SchemaTracker, sql string) {
+func execAlter(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 	ctx := context.Background()
 	sctx := mock.NewContext()
 	p := parser.New()
@@ -96,8 +98,8 @@ func execAlter(t *testing.T, tracker SchemaTracker, sql string) {
 func TestAlterPK(t *testing.T) {
 	sql := "create table test.t (c1 int primary key, c2 blob);"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -120,8 +122,8 @@ func TestAlterPK(t *testing.T) {
 func TestDropColumn(t *testing.T) {
 	sql := "create table test.t(a int, b int auto_increment, c int, key(b))"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -145,8 +147,8 @@ func TestDropColumn(t *testing.T) {
 func TestFullTextIndex(t *testing.T) {
 	sql := "create table test.t (a text, fulltext key (a))"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 }
 
@@ -154,7 +156,7 @@ func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected strin
 	sctx := mock.NewContext()
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
+	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
 	require.NoError(t, err)
 	require.Equal(t, expected, result.String())
 }
@@ -163,8 +165,8 @@ func TestIndexLength(t *testing.T) {
 	// copy TestIndexLength in db_integration_test.go
 	sql := "create table test.t(a text, b text charset ascii, c blob, index(a(768)), index (b(3072)), index (c(3072)));"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -203,8 +205,8 @@ func TestIssue5092(t *testing.T) {
 	// copy TestIssue5092 in db_integration_test.go
 	sql := "create table test.t (a int)"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	sql = "alter table test.t add column (b int, c int)"
@@ -281,16 +283,16 @@ func TestBitDefaultValues(t *testing.T) {
     field_35 timestamp null default null
 	);`
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 }
 
 func TestAddExpressionIndex(t *testing.T) {
 	sql := "create table test.t (a int, b real);"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	sql = "alter table test.t add index idx((a+b))"
@@ -396,8 +398,8 @@ func TestAddExpressionIndex(t *testing.T) {
 func TestAtomicMultiSchemaChange(t *testing.T) {
 	sql := "create table test.t (a int);"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	sql = "alter table test.t add b int, add c int;"

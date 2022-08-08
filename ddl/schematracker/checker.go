@@ -80,7 +80,7 @@ func (d *Checker) Enable() {
 
 // CreateTestDB creates a `test` database like the default behaviour of TiDB.
 func (d Checker) CreateTestDB() {
-	d.tracker.createTestDB()
+	d.tracker.CreateTestDB()
 }
 
 func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
