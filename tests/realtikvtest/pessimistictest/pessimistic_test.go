@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/stretchr/testify/require"
@@ -2767,7 +2767,7 @@ func TestPlanCacheSchemaChange(t *testing.T) {
 
 	stmtID, _, _, err := tk2.Session().PrepareStmt("update t set vv = vv + 1 where v = ?")
 	require.NoError(t, err)
-	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 
 	tk.MustExec("begin pessimistic")
@@ -2786,11 +2786,11 @@ func TestPlanCacheSchemaChange(t *testing.T) {
 	tk.CheckExecResult(1, 0)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(4)})
+	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(4))
 	require.NoError(t, err)
 	tk2.CheckExecResult(0, 0)
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(5)})
+	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(5))
 	require.NoError(t, err)
 	tk2.CheckExecResult(1, 0)
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))

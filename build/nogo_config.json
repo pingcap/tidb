@@ -40,7 +40,8 @@
   },
   "bodyclose": {
     "exclude_files": {
-      "external/": "no need to vet third party code"
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
     }
   },
   "bools": {
@@ -212,6 +213,14 @@
   },
   "lostcancel": {
     "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "makezero": {
+    "exclude_files": {
+      "/cgo/": "ignore cgo code",
+       ".*_test\\.go$": "ignore generated code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
