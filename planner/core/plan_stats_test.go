@@ -28,6 +28,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -261,7 +262,13 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	neededColumn := model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}
 	resultCh := make(chan model.TableItemID, 1)
 	timeout := time.Duration(1<<63 - 1)
-	dom.StatsHandle().AppendNeededItem(neededColumn, resultCh, timeout) // make channel queue full
+	task := &handle.NeededItemTask{
+		TableItemID: neededColumn,
+		ResultCh:    resultCh,
+		ToTimeout:   time.Now().Local().Add(timeout),
+		Digest:      &parser.Digest{},
+	}
+	dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
 	stmt, err := p.ParseOneStmt("select * from t where c>1", "", "")
 	require.NoError(t, err)
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")

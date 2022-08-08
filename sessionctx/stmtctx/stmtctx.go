@@ -290,8 +290,6 @@ type StatementContext struct {
 	StatsLoad struct {
 		// Timeout to wait for sync-load
 		Timeout time.Duration
-		// NeededItems stores the columns/indices whose stats are needed for planner.
-		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
 		ResultCh chan model.TableItemID
 		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.

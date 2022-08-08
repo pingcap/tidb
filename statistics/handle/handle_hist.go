@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -54,6 +55,7 @@ type NeededItemTask struct {
 	TableItemID model.TableItemID
 	ToTimeout   time.Time
 	ResultCh    chan model.TableItemID
+	Digest      *parser.Digest
 }
 
 // SendLoadRequests send neededColumns requests
@@ -63,11 +65,23 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 		return nil
 	}
 	sc.StatsLoad.Timeout = timeout
-	sc.StatsLoad.NeededItems = remainedItems
 	sc.StatsLoad.ResultCh = make(chan model.TableItemID, len(remainedItems))
-	for _, col := range remainedItems {
-		err := h.AppendNeededItem(col, sc.StatsLoad.ResultCh, timeout)
+	for _, item := range remainedItems {
+		_, digest := sc.SQLDigest()
+		task := &NeededItemTask{
+			TableItemID: item,
+			ToTimeout:   time.Now().Local().Add(timeout),
+			ResultCh:    sc.StatsLoad.ResultCh,
+			Digest:      digest,
+		}
+		err := h.AppendNeededItem(task, timeout)
 		if err != nil {
+			logutil.BgLogger().Warn("SendLoadRequests failed",
+				zap.Int64("tableID", item.TableID),
+				zap.Int64("id", item.ID),
+				zap.Bool("isIndex", item.IsIndex),
+				zap.String("digest", digest.String()),
+				zap.Error(err))
 			return err
 		}
 	}
@@ -77,25 +91,19 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
 func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
-	if len(sc.StatsLoad.NeededItems) <= 0 {
+	if sc.StatsLoad.ResultCh == nil || cap(sc.StatsLoad.ResultCh) < 1 {
 		return true
 	}
-	defer func() {
-		sc.StatsLoad.NeededItems = nil
-	}()
-	resultCheckMap := map[model.TableItemID]struct{}{}
-	for _, col := range sc.StatsLoad.NeededItems {
-		resultCheckMap[col] = struct{}{}
-	}
+	cnt := 0
 	metrics.SyncLoadCounter.Inc()
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
 	defer timer.Stop()
 	for {
 		select {
-		case result, ok := <-sc.StatsLoad.ResultCh:
+		case _, ok := <-sc.StatsLoad.ResultCh:
 			if ok {
-				delete(resultCheckMap, result)
-				if len(resultCheckMap) == 0 {
+				cnt++
+				if cnt >= cap(sc.StatsLoad.ResultCh) {
 					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
 					return true
 				}
@@ -104,6 +112,8 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
+			_, digest := sc.SQLDigest()
+			logutil.BgLogger().Warn("SyncWaitStatsLoad timeout", zap.String("digest", digest.String()))
 			return false
 		}
 	}
@@ -134,9 +144,7 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 }
 
 // AppendNeededItem appends needed columns/indices to ch, if exists, do not append the duplicated one.
-func (h *Handle) AppendNeededItem(item model.TableItemID, resultCh chan model.TableItemID, timeout time.Duration) error {
-	toTimout := time.Now().Local().Add(timeout)
-	task := &NeededItemTask{TableItemID: item, ToTimeout: toTimout, ResultCh: resultCh}
+func (h *Handle) AppendNeededItem(task *NeededItemTask, timeout time.Duration) error {
 	return h.writeToChanWithTimeout(h.StatsLoad.NeededItemsCh, task, timeout)
 }
 
@@ -378,6 +386,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
+				logutil.BgLogger().Warn("")
 				h.writeToTimeoutChan(h.StatsLoad.TimeoutItemsCh, task)
 				continue
 			}

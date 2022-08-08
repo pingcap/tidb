@@ -41,8 +41,12 @@ func (c collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPl
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
+	if !histNeeded {
+		return plan, nil
+	}
 	histNeededIndices := collectSyncIndices(plan.SCtx(), histNeededColumns)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
+	// For now, RequestLoadStats won't return due to handleTimeout will cache timeout error and transfer into warning
 	if histNeeded && len(histNeededItems) > 0 {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
 		return plan, err
@@ -60,6 +64,7 @@ func (s syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ 
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
+	// For now, SyncWaitStatsLoad won't return error due to handleTimeout will handle the timeout error and transfer into warning
 	_, err := SyncWaitStatsLoad(plan)
 	return plan, err
 }
