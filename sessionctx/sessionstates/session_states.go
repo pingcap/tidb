@@ -18,9 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/errno"
-	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -65,8 +63,9 @@ type LastDDLInfo struct {
 // SessionStates contains all the states in the session that should be migrated when the session
 // is migrated to another server. It is shown by `show session_states` and recovered by `set session_states`.
 type SessionStates struct {
-	UserVars             map[string]*types.Datum      `json:"user-var-values,omitempty"`
-	UserVarTypes         map[string]*ptypes.FieldType `json:"user-var-types,omitempty"`
+	//UserVars             map[string]*types.Datum      `json:"user-var-values,omitempty"`
+	//UserVarTypes         map[string]*ptypes.FieldType `json:"user-var-types,omitempty"`
+	UserVars             map[string]interface{}       `json:"user-var-value-types,omitempty"`
 	SystemVars           map[string]string            `json:"sys-vars,omitempty"`
 	PreparedStmts        map[uint32]*PreparedStmtInfo `json:"prepared-stmts,omitempty"`
 	PreparedStmtID       uint32                       `json:"prepared-stmt-id,omitempty"`

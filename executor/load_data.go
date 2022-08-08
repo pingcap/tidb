@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -629,7 +630,13 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		if col == nil || col.isNull() {
 			sessionVars.UnsetUserVar(name)
 		} else {
-			sessionVars.SetUserVar(name, string(col.str), mysql.DefaultCollationName)
+			varName := strings.ToLower(name)
+			collation := mysql.DefaultCollationName
+			if len(collation) <= 0 {
+				_, collation = sessionVars.GetCharsetInfo()
+			}
+			v := types.NewCollationStringDatum(stringutil.Copy(string(col.str)), collation)
+			sessionVars.UserVars.Vars[varName] = expression.Constant{Value: v}
 		}
 		sessionVars.UsersLock.Unlock()
 	}

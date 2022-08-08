@@ -1357,9 +1357,11 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		if v, ok := b.ctx.GetSessionVars().Users[strings.ToLower(x.SQLVar.Name)]; ok {
+		if userVar, ok := b.ctx.GetSessionVars().UserVars.Vars[strings.ToLower(x.SQLVar.Name)]; ok {
 			var err error
-			p.SQLText, err = v.ToString()
+			if v, ok1 := userVar.(expression.Constant); ok1 {
+				p.SQLText, err = v.Value.ToString()
+			}
 			if err != nil {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				p.SQLText = "NULL"

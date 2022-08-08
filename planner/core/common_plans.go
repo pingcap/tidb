@@ -204,8 +204,10 @@ func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) 
 		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
 		if err != nil || isNull {
 			res = false
-		} else if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
-			res = dt.Kind() == types.KindBinaryLiteral
+		} else if userVar, ok2 := sctx.GetSessionVars().UserVars.Vars[name]; ok2 {
+			if dt, ok3 := userVar.(expression.Constant); ok3 {
+				res = dt.Value.Kind() == types.KindBinaryLiteral
+			}
 		}
 	}
 	return res
