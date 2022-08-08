@@ -3,14 +3,10 @@ run:
 linters:
   disable-all: true
   enable:
-    - typecheck
     - varcheck
-    - unused
     - structcheck
     - deadcode
-    - bodyclose
     - rowserrcheck
-    - makezero
     - prealloc
 
 issues:

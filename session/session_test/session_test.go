@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
@@ -2629,7 +2630,7 @@ func TestPrepare(t *testing.T) {
 	require.Equal(t, uint32(1), id)
 	require.Equal(t, 1, ps)
 	tk.MustExec(`set @a=1`)
-	rs, err := tk.Session().ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum("1")})
+	rs, err := tk.Session().ExecutePreparedStmt(ctx, id, expression.Args2Expressions4Test("1"))
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
 	err = tk.Session().DropPreparedStmt(id)
@@ -2651,10 +2652,10 @@ func TestPrepare(t *testing.T) {
 	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
 	id, _, _, err = tk.Session().PrepareStmt("select a from multiexec where b = ? order by b")
 	require.NoError(t, err)
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
 }
@@ -3393,8 +3394,7 @@ func TestQueryString(t *testing.T) {
 	tk.MustExec("show create table t")
 	id, _, _, err := tk.Session().PrepareStmt("CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
 	require.NoError(t, err)
-	var params []types.Datum
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, params)
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, expression.Args2Expressions4Test())
 	require.NoError(t, err)
 	qs := tk.Session().Value(sessionctx.QueryString)
 	require.Equal(t, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)", qs.(string))
@@ -4038,12 +4038,12 @@ func TestBinaryReadOnly(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set autocommit = 0")
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, []types.Datum{types.NewDatum(1)})
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	require.Equal(t, 0, session.GetHistory(tk.Session()).Count())
 	tk.MustExec("insert into t values (1)")
 	require.Equal(t, 1, session.GetHistory(tk.Session()).Count())
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id2, []types.Datum{types.NewDatum(2)})
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id2, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
 	tk.MustExec("commit")
