@@ -1190,6 +1190,9 @@ type SessionVars struct {
 
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
+
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1255,6 +1258,12 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
 		SkipPositionRecording:       true,
 	}
+}
+
+// AllocNewPlanID alloc new ID
+func (s *SessionVars) AllocNewPlanID() int {
+	s.PlanID++
+	return s.PlanID
 }
 
 const (
