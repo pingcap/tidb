@@ -595,16 +595,13 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
-		// Determine whether the new backfiller will be used or not.
+		// Determine whether the lightning backfill process will be used.
 		if IsEnableFastReorg() {
 			err = prepareBackend(w.ctx, indexInfo.Unique, job, job.ReorgMeta.SQLMode)
 			if err == nil {
 				setLightningEnabled(job.ID, true)
-			} else {
-				indexInfo.SubState = model.StatePublic
+				indexInfo.BackfillState = model.BackfillStateRunning
 			}
-		} else {
-			indexInfo.SubState = model.StatePublic
 		}
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
@@ -659,13 +656,13 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		indexInfo.State = model.StatePublic
-		var tmpIndexID int64
-		if indexInfo.SubState != model.StatePublic {
-			// After merge data into TiKV, then the progress is set to 100.
+		if indexInfo.BackfillState != model.BackfillStateInapplicable {
+			// After the data is merged into TiKV, the progress can be set to 100.
 			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String()).Set(100)
-			// Set sub state to stateNone to stop double write
-			indexInfo.SubState = model.StatePublic
-			tmpIndexID = tablecodec.TempIndexPrefix | indexInfo.ID
+			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
+			// Add the temporary index ID to the delete-range table.
+			tmpIndexID := tablecodec.TempIndexPrefix | indexInfo.ID
+			job.Args = []interface{}{tmpIndexID, false /*if exists*/, getPartitionIDs(tblInfo)}
 		}
 
 		// Set column index flag.
@@ -682,11 +679,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		if tmpIndexID != 0 {
-			// Clean temp index if needed
-			job.Args = job.Args[:0]
-			job.Args = []interface{}{tmpIndexID, false, getPartitionIDs(tblInfo)}
-		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
@@ -711,30 +703,12 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo,
 	elements []*meta.Element, rh *reorgHandler) (reorg bool, ver int64, err error) {
 	// When sub state is StatePublic means not go fast ddl path.
-	if indexInfo.SubState == model.StatePublic {
+	if indexInfo.BackfillState == model.BackfillStateInapplicable {
 		return false, 0, nil
 	}
-
-	// If enter this backfill flow, then we need to finish it.
-	switch indexInfo.SubState {
-	case model.StateNone:
-		logutil.BgLogger().Info("Lightning backfill start state none")
-		indexInfo.SubState = model.StateBackfillSync
-		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-		if err != nil {
-			return false, ver, errors.Trace(err)
-		}
-		return false, ver, nil
-	case model.StateBackfillSync:
-		logutil.BgLogger().Info("Lightning backfill state backfill sync")
-		indexInfo.SubState = model.StateBackfill
-		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-		if err != nil {
-			return false, ver, errors.Trace(err)
-		}
-		return false, ver, nil
-	case model.StateBackfill:
-		logutil.BgLogger().Info("Lightning backfill state backfill")
+	switch indexInfo.BackfillState {
+	case model.BackfillStateRunning:
+		logutil.BgLogger().Info("Lightning backfill state running")
 		// Restore reorg task if it interrupts during backfill state and TiDB owner is not changed or restarted.
 		if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
 			// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consistent.
@@ -769,15 +743,15 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			}
 		}
 		return true, ver, nil
-	case model.StateMergeSync:
+	case model.BackfillStateReadyToMerge:
 		logutil.BgLogger().Info("Lightning backfill state merge Sync")
-		indexInfo.SubState = model.StateMerge
+		indexInfo.BackfillState = model.BackfillStateMerging
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		if err != nil {
 			return false, ver, errors.Trace(err)
 		}
 		return false, ver, nil
-	case model.StateMerge:
+	case model.BackfillStateMerging:
 		logutil.BgLogger().Info("Lightning start merge the increment part of adding index")
 		err = w.runMergeJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 			defer util.Recover(metrics.LabelDDL, "onMergeIndex",
@@ -811,13 +785,13 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	doReorg, ver, err = goFastDDLBackfill(w, d, t, job, tbl, indexInfo, reorgInfo, elements, rh)
-	if indexInfo.SubState != model.StatePublic {
+	if indexInfo.BackfillState != model.BackfillStateInapplicable {
 		if err != nil {
 			logutil.BgLogger().Error("Lightning: Add index fast path processing:", zap.String("Error:", err.Error()))
 			return false, ver, err
 		}
-		// Only when SubState is in BackFill state, then need start to start new backfill task.
-		if !doReorg || indexInfo.SubState == model.StateMerge {
+		// Only when BackfillState is in running state, then need to start a new backfill task.
+		if !doReorg || indexInfo.BackfillState == model.BackfillStateMerging {
 			return doReorg, ver, err
 		}
 	}
@@ -865,8 +839,8 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	// Go through new backfill path
-	if indexInfo.SubState != model.StatePublic {
-		indexInfo.SubState = model.StateMergeSync
+	if indexInfo.BackfillState != model.BackfillStateInapplicable {
+		indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		if err != nil {
 			return false, ver, errors.Trace(err)
@@ -951,7 +925,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			if indexInfo.SubState == model.StatePublic {
+			if indexInfo.BackfillState == model.BackfillStateInapplicable {
 				job.Args[0] = indexInfo.ID
 			} else {
 				// If go through new backfill flow, set temp index id as index id.

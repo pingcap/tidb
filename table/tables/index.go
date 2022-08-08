@@ -125,13 +125,15 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		keyVer []byte = []byte("i")
 	)
 	// Isbackfill set to true, means this is a backfill worker should not write to temp index.
-	if c.idxInfo.State != model.StatePublic && c.idxInfo.SubState != model.StatePublic && !c.Isbackfill {
-		switch c.idxInfo.SubState {
-		case model.StateNone, model.StateBackfillSync, model.StateBackfill:
+	if c.idxInfo.State != model.StatePublic && !c.Isbackfill {
+		switch c.idxInfo.BackfillState {
+		case model.BackfillStateInapplicable:
+			// Do nothing.
+		case model.BackfillStateRunning:
 			// Write to the temporary index.
 			keyVer = []byte("b")
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, key)
-		case model.StateMergeSync, model.StateMerge:
+		case model.BackfillStateReadyToMerge, model.BackfillStateMerging:
 			// Double write
 			keyVer = []byte("m")
 			tempKey = append(tempKey, key...)
@@ -309,15 +311,17 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		keyVer  []byte = []byte("i")
 		val     []byte
 	)
-	if c.idxInfo.State != model.StatePublic && c.idxInfo.SubState != model.StatePublic {
-		switch c.idxInfo.SubState {
-		case model.StateNone, model.StateBackfillSync, model.StateBackfill:
+	if c.idxInfo.State != model.StatePublic {
+		switch c.idxInfo.BackfillState {
+		case model.BackfillStateInapplicable:
+			// Do nothing.
+		case model.BackfillStateRunning:
 			// Write to the temporary index.
 			keyVer = []byte("b")
 			tempKey = append(tempKey, key...)
 			key = nil
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
-		case model.StateMergeSync, model.StateMerge:
+		case model.BackfillStateReadyToMerge, model.BackfillStateMerging:
 			// Double write
 			keyVer = []byte("m")
 			tempKey = append(tempKey, key...)
