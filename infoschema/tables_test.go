@@ -1592,3 +1592,11 @@ func TestTableConstraintsContainForeignKeys(t *testing.T) {
 	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't2'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t2 PRIMARY KEY", "def tableconstraints fk_t2_t1 tableconstraints t2 FOREIGN KEY"))
 	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't1'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t1 PRIMARY KEY"))
 }
+
+func TestClusterInfoTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SELECT START_TIME+1 FROM information_schema.CLUSTER_INFO")
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
+}
