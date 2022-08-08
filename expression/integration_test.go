@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -4244,17 +4243,7 @@ func TestOrderByFuncPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -4268,17 +4257,7 @@ func TestSelectLimitPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -4848,17 +4827,7 @@ func TestIssue17287(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@tidb_enable_vectorized_expression = false;")

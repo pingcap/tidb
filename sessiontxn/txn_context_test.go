@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
@@ -517,11 +516,9 @@ func TestTxnContextForStaleRead(t *testing.T) {
 
 func TestTxnContextForPrepareExecute(t *testing.T) {
 	store, do := setupTxnContextTest(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	se := tk.Session()
 
 	stmtID, _, _, err := se.PrepareStmt("select * from t1 where id=1")

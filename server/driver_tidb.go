@@ -163,7 +163,7 @@ func (ts *TiDBStatement) Close() error {
 			return err
 		}
 	} else {
-		if core.PreparedPlanCacheEnabled() {
+		if ts.ctx.GetSessionVars().EnablePreparedPlanCache {
 			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
 			preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
 			if !ok {

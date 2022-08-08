@@ -39,18 +39,6 @@ var (
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
 
-// SetPreparedPlanCache sets isEnabled to true, then prepared plan cache is enabled.
-// FIXME: leave it for test, remove it after implementing session-level plan-cache variables.
-func SetPreparedPlanCache(isEnabled bool) {
-	variable.EnablePreparedPlanCache.Store(isEnabled) // only for test
-}
-
-// PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
-// FIXME: leave it for test, remove it after implementing session-level plan-cache variables.
-func PreparedPlanCacheEnabled() bool {
-	return variable.EnablePreparedPlanCache.Load()
-}
-
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
 // Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
