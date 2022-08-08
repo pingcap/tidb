@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
@@ -155,7 +154,7 @@ func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected strin
 	sctx := mock.NewContext()
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
+	err := ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
 	require.NoError(t, err)
 	require.Equal(t, expected, result.String())
 }
