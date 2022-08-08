@@ -563,9 +563,9 @@ type SessionVars struct {
 		Vars map[string]interface{}
 	}
 	// UsersLock is a lock for user defined variables.
-	UsersLock    sync.RWMutex
-	Users        map[string]types.Datum
-	UserVarTypes map[string]*types.FieldType
+	UsersLock sync.RWMutex
+	//Users        map[string]types.Datum
+	//UserVarTypes map[string]*types.FieldType
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// stmtVars variables are temporarily set by SET_VAR hint
