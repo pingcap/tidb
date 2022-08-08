@@ -58,12 +58,6 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
 	var latestSchemaVersion int64
 
-	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // for point query plan
-		if plan, names, ok, err := getPointQueryPlan(prepared, sessVars, stmtCtx); ok {
-			return plan, names, err
-		}
-	}
-
 	if prepared.UseCache {
 		bindSQL, ignorePlanCache = GetBindSQL4PlanCache(sctx, preparedStmt)
 		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
@@ -79,6 +73,12 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	}
 
 	varsNum, txtVarTypes := parseParamTypes(sctx, txtProtoVars)
+
+	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // for point query plan
+		if plan, names, ok, err := getPointQueryPlan(prepared, sessVars, stmtCtx); ok {
+			return plan, names, err
+		}
+	}
 
 	if prepared.UseCache && !ignorePlanCache { // for general plans
 		if plan, names, ok, err := getGeneralPlan(ctx, sctx, cacheKey, bindSQL, is, preparedStmt,
