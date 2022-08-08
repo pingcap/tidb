@@ -88,8 +88,8 @@ func NewTableKVEncoder(
 	if meta.PKIsHandle && meta.ContainsAutoRandomBits() {
 		for _, col := range cols {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
-				autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits // nolint:gosec
+				shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.IntPKRangeBits)
+				autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << shardFmt.IncrementalBits // nolint:gosec
 				autoIDFn = func(id int64) int64 {
 					return autoRandomBits | id
 				}
@@ -120,16 +120,6 @@ func NewTableKVEncoder(
 		autoIDFn: autoIDFn,
 		metrics:  metrics,
 	}, nil
-}
-
-func autoRandomIncrementBits(col *table.Column, randomBits int) int {
-	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[col.GetType()] * 8
-	incrementalBits := typeBitsLength - randomBits
-	hasSignBit := !mysql.HasUnsignedFlag(col.GetFlag())
-	if hasSignBit {
-		incrementalBits--
-	}
-	return incrementalBits
 }
 
 // collectGeneratedColumns collects all expressions required to evaluate the
@@ -391,7 +381,8 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = append(record, value)
 
 		if isTableAutoRandom(meta) && isPKCol(col.ToInfo()) {
-			incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
+			shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.IntPKRangeBits)
+			incrementalBits := shardFmt.IncrementalBits
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
 			if err := alloc.Rebase(context.Background(), value.GetInt64()&((1<<incrementalBits)-1), false); err != nil {
 				return nil, errors.Trace(err)

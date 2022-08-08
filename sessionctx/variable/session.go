@@ -212,11 +212,8 @@ type SavepointRecord struct {
 	TxnCtxSavepoint TxnCtxNeedToRestore
 }
 
-// GetShard returns the shard prefix for the next `count` rowids.
-func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uint64, reserveSignBit bool, count int) int64 {
-	if shardRowIDBits == 0 {
-		return 0
-	}
+// GetCurrentShard returns the shard for the next `count` IDs.
+func (tc *TransactionContext) GetCurrentShard(count int) int64 {
 	if tc.shardRand == nil {
 		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
@@ -225,12 +222,7 @@ func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uin
 		tc.shardRemain = tc.ShardStep
 	}
 	tc.shardRemain -= count
-
-	var signBitLength uint64
-	if reserveSignBit {
-		signBitLength = 1
-	}
-	return (tc.currentShard & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - signBitLength)
+	return tc.currentShard
 }
 
 func (tc *TransactionContext) updateShard() {

@@ -1031,7 +1031,12 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			}
 		}
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
-			buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", tableInfo.AutoRandomBits))
+			if tableInfo.IntPKRangeBits == 0 {
+				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", tableInfo.AutoRandomBits))
+			} else {
+				s, r := tableInfo.AutoRandomBits, tableInfo.IntPKRangeBits
+				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d, %d) */", s, r))
+			}
 		}
 		if len(col.Comment) > 0 {
 			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))

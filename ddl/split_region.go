@@ -88,12 +88,16 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 
 	// Split table region.
 	shardingBits := shardingBits(tbInfo)
+	rangeBits := tbInfo.IntPKRangeBits
+	if rangeBits == 0 {
+		rangeBits = 64
+	}
 	step := int64(1 << (shardingBits - tbInfo.PreSplitRegions))
 	max := int64(1 << shardingBits)
 	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))
 	splitTableKeys = append(splitTableKeys, tablecodec.GenTablePrefix(physicalID))
 	for p := step; p < max; p += step {
-		recordID := p << (64 - shardingBits - 1)
+		recordID := p << (rangeBits - shardingBits - 1)
 		recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 		splitTableKeys = append(splitTableKeys, key)

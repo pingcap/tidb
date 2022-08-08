@@ -447,30 +447,13 @@ func setAutoRandomBits(tblInfo *model.TableInfo, colDefs []*ast.ColumnDef) {
 		if colDef.Name.Name.L != pkColName.L || colDef.Tp.GetType() != mysql.TypeLonglong {
 			continue
 		}
-		// potential AUTO_RANDOM candidate column, examine the options
-		hasAutoRandom := false
-		canSetAutoRandom := true
-		var autoRandomBits int
 		for _, option := range colDef.Options {
 			if option.Tp == ast.ColumnOptionAutoRandom {
-				hasAutoRandom = true
-				autoRandomBits = option.AutoRandomBitLength
-				switch {
-				case autoRandomBits == types.UnspecifiedLength:
-					autoRandomBits = autoid.DefaultAutoRandomBits
-				case autoRandomBits <= 0 || autoRandomBits > autoid.MaxAutoRandomBits:
-					canSetAutoRandom = false
-				}
+				s, r := option.AutoRandOpt.ShardBits, option.AutoRandOpt.RangeBits
+				tblInfo.AutoRandomBits, _ = autoid.AutoRandomShardBitsNormalize(s, colDef.Name.Name.O)
+				tblInfo.IntPKRangeBits, _ = autoid.AutoRandomRangeBitsNormalize(r)
+				break
 			}
-			if option.Tp == ast.ColumnOptionAutoIncrement {
-				canSetAutoRandom = false
-			}
-			if option.Tp == ast.ColumnOptionDefaultValue {
-				canSetAutoRandom = false
-			}
-		}
-		if hasAutoRandom && canSetAutoRandom {
-			tblInfo.AutoRandomBits = uint64(autoRandomBits)
 		}
 	}
 }

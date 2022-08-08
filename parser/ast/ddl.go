@@ -533,10 +533,9 @@ type ColumnOption struct {
 	// Stored is only for ColumnOptionGenerated, default is false.
 	Stored bool
 	// Refer is used for foreign key.
-	Refer               *ReferenceDef
-	StrValue            string
-	AutoRandomBitLength int
-	AutoRandOpt         AutoRandomOption
+	Refer       *ReferenceDef
+	StrValue    string
+	AutoRandOpt AutoRandomOption
 	// Enforced is only for Check, default is true.
 	Enforced bool
 	// Name is only used for Check Constraint name.

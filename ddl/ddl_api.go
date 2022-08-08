@@ -1732,44 +1732,39 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 			}
 
-			autoRandBits, err := extractAutoRandomBitsFromColDef(col)
+			shardBits, rangeBits, err := extractAutoRandomBitsFromColDef(col)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			tbInfo.AutoRandomBits = shardBits
+			tbInfo.IntPKRangeBits = rangeBits
 
-			layout := autoid.NewShardIDLayout(col.Tp, autoRandBits)
-			if autoRandBits == 0 {
-				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-			} else if autoRandBits > autoid.MaxAutoRandomBits {
-				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
-					autoid.MaxAutoRandomBits, autoRandBits, col.Name.Name.O)
-				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+			shardFmt := autoid.NewShardIDFormat(col.Tp, shardBits, rangeBits)
+			if shardFmt.IncrementalBits < autoid.AutoRandomIncBitsMin {
+				return dbterror.ErrInvalidAutoRandom.FastGenByArgs(autoid.AutoRandomIncrementalBitsTooSmall)
 			}
-			tbInfo.AutoRandomBits = autoRandBits
-
-			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, layout.IncrementalBitsCapacity())
+			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, shardFmt.IncrementalBitsCapacity())
 			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
 		}
 	}
 	return nil
 }
 
-func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (uint64, error) {
+func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBits uint64, err error) {
 	for _, op := range colDef.Options {
 		if op.Tp == ast.ColumnOptionAutoRandom {
-			return convertAutoRandomBitsToUnsigned(op.AutoRandomBitLength)
+			shardBits, err = autoid.AutoRandomShardBitsNormalize(op.AutoRandOpt.ShardBits, colDef.Name.Name.O)
+			if err != nil {
+				return 0, 0, err
+			}
+			rangeBits, err = autoid.AutoRandomRangeBitsNormalize(op.AutoRandOpt.RangeBits)
+			if err != nil {
+				return 0, 0, err
+			}
+			return shardBits, rangeBits, nil
 		}
 	}
-	return 0, nil
-}
-
-func convertAutoRandomBitsToUnsigned(autoRandomBits int) (uint64, error) {
-	if autoRandomBits == types.UnspecifiedLength {
-		return autoid.DefaultAutoRandomBits, nil
-	} else if autoRandomBits < 0 {
-		return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-	}
-	return uint64(autoRandomBits), nil
+	return 0, 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
 }
 
 // BuildTableInfo creates a TableInfo.
@@ -3292,19 +3287,13 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	switch tp {
 	case autoid.AutoRandomType:
 		tbInfo := t.Meta()
-		if tbInfo.AutoRandomBits == 0 {
+		pkCol := tbInfo.GetPkColInfo()
+		if tbInfo.AutoRandomBits == 0 || pkCol == nil {
 			return errors.Trace(dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
 		}
-		var autoRandColTp types.FieldType
-		for _, c := range tbInfo.Columns {
-			if mysql.HasPriKeyFlag(c.GetFlag()) {
-				autoRandColTp = c.FieldType
-				break
-			}
-		}
-		layout := autoid.NewShardIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
-		if layout.IncrementalMask()&newBase != newBase {
-			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
+		shardFmt := autoid.NewShardIDFormat(&pkCol.FieldType, tbInfo.AutoRandomBits, tbInfo.IntPKRangeBits)
+		if shardFmt.IncrementalMask()&newBase != newBase {
+			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, shardFmt.IncrementalBitsCapacity())
 			return errors.Trace(dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
 		}
 		actionType = model.ActionRebaseAutoRandomBase
@@ -3825,6 +3814,7 @@ func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *mod
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits ||
+		source.IntPKRangeBits != target.IntPKRangeBits ||
 		source.Charset != target.Charset ||
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
@@ -4542,38 +4532,42 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 }
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
-	var oldRandBits uint64
+	var oldShardBits, oldRangeBits uint64
 	if originCol.IsPKHandleColumn(tableInfo) {
-		oldRandBits = tableInfo.AutoRandomBits
+		oldShardBits = tableInfo.AutoRandomBits
+		oldRangeBits = tableInfo.IntPKRangeBits
 	}
-	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
+	newShardBits, newRangeBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	if oldRangeBits != newRangeBits {
+		return 0, dbterror.ErrInvalidAutoRandom.FastGenByArgs(autoid.AutoRandomUnsupportedAlterRangeBits)
+	}
 	switch {
-	case oldRandBits == newRandBits:
-	case oldRandBits < newRandBits:
-		addingAutoRandom := oldRandBits == 0
+	case oldShardBits == newShardBits:
+	case oldShardBits < newShardBits:
+		addingAutoRandom := oldShardBits == 0
 		if addingAutoRandom {
 			convFromAutoInc := mysql.HasAutoIncrementFlag(originCol.GetFlag()) && originCol.IsPKHandleColumn(tableInfo)
 			if !convFromAutoInc {
 				return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterChangeFromAutoInc)
 			}
 		}
-		if autoid.MaxAutoRandomBits < newRandBits {
+		if autoid.AutoRandomShardBitsMax < newShardBits {
 			errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
-				autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
+				autoid.AutoRandomShardBitsMax, newShardBits, specNewColumn.Name.Name.O)
 			return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 		}
 		// increasing auto_random shard bits is allowed.
-	case oldRandBits > newRandBits:
-		if newRandBits == 0 {
+	case oldShardBits > newShardBits:
+		if newShardBits == 0 {
 			return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
 		}
 		return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomDecreaseBitErrMsg)
 	}
 
-	modifyingAutoRandCol := oldRandBits > 0 || newRandBits > 0
+	modifyingAutoRandCol := oldShardBits > 0 || newShardBits > 0
 	if modifyingAutoRandCol {
 		// Disallow changing the column field type.
 		if originCol.GetType() != specNewColumn.Tp.GetType() {
@@ -4591,7 +4585,7 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 			return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 		}
 	}
-	return newRandBits, nil
+	return newShardBits, nil
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,
