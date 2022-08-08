@@ -1764,7 +1764,7 @@ func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBit
 			return shardBits, rangeBits, nil
 		}
 	}
-	return 0, 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
+	return 0, 0, nil
 }
 
 // BuildTableInfo creates a TableInfo.
