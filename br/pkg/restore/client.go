@@ -673,11 +673,18 @@ func (rc *Client) IsRawKvMode() bool {
 	return rc.backupMeta.IsRawKv
 }
 
-func (rc *Client) GetStreamFilesLoader(useV2 bool) StreamFilesLoader {
-	if useV2 {
-		return &StreamFilesLoaderV2{storage: rc.storage}
+func (rc *Client) GetStreamFilesLoader(ctx context.Context) (StreamFilesLoader, error) {
+	data, err := rc.storage.ReadFile(ctx, metautil.LockFile)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return &StreamFilesLoaderV1{storage: rc.storage}
+
+	if strings.Contains(string(data), "V2") {
+		log.Info("use storage v2, restore backup files in v2/")
+		return &StreamFilesLoaderV2{storage: rc.storage}, nil
+	}
+	log.Info("use storage v1, restore backup files in v1/")
+	return &StreamFilesLoaderV1{storage: rc.storage}, nil
 }
 
 // GetFilesInRawRange gets all files that are in the given range or intersects with the given range.

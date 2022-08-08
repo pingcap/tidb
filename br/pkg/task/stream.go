@@ -1091,7 +1091,10 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
-	streamFilesLoader := client.GetStreamFilesLoader(cfg.UseStorageV2)
+	streamFilesLoader, err := client.GetStreamFilesLoader(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	shiftStartTS, err := streamFilesLoader.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Annotate(err, "failed to get shift TS")

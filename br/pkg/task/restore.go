@@ -33,9 +33,8 @@ import (
 )
 
 const (
-	flagOnline       = "online"
-	flagNoSchema     = "no-schema"
-	flagUseStorageV2 = "use-storage-v2"
+	flagOnline   = "online"
+	flagNoSchema = "no-schema"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -167,9 +166,6 @@ type RestoreConfig struct {
 	StartTS     uint64 `json:"start-ts" toml:"start-ts"`
 	RestoreTS   uint64 `json:"restore-ts" toml:"restore-ts"`
 	skipTiflash bool   `json:"-" toml:"-"`
-
-	// Merge files before upload to storage if `useStorageV2` is true.
-	UseStorageV2 bool `json:"use-storage-v2" toml:"use-storage-v2"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -178,8 +174,6 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
-	flags.Bool(flagUseStorageV2, false, "merge files before upload to storage")
-	_ = flags.MarkHidden(flagUseStorageV2)
 	DefineRestoreCommonFlags(flags)
 }
 
@@ -220,10 +214,6 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	cfg.NoSchema, err = flags.GetBool(flagNoSchema)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.UseStorageV2, err = flags.GetBool(flagUseStorageV2)
 	if err != nil {
 		return errors.Trace(err)
 	}
