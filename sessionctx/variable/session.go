@@ -1365,7 +1365,7 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		UserVarTypes: make(map[string]*types.FieldType),
+		//UserVarTypes: make(map[string]*types.FieldType),
 		UserVars: struct {
 			Lock *sync.RWMutex
 			Vars map[string]interface{}

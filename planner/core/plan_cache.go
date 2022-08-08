@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	ptypes "github.com/pingcap/tidb/parser/types"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
@@ -102,9 +103,14 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 
 		// from text protocol, there must be a GetVar function
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
-		tp := sctx.GetSessionVars().UserVarTypes[name]
-		if tp == nil {
+		userVar, ok := sctx.GetSessionVars().UserVars.Vars[name]
+		var tp *ptypes.FieldType
+		if !ok {
 			tp = types.NewFieldType(mysql.TypeNull)
+		} else {
+			if v, ok1 := userVar.(expression.Constant); ok1 {
+				tp = v.RetType
+			}
 		}
 		paramTypes = append(paramTypes, tp)
 	}

@@ -161,9 +161,14 @@ func TestGetVar(t *testing.T) {
 		{[]interface{}{"h"}, timeDec.String()},
 	}
 	for _, tc := range testCases {
-		tp, ok := ctx.GetSessionVars().UserVarTypes[tc.args[0].(string)]
+		userVar, ok := ctx.GetSessionVars().UserVars.Vars[tc.args[0].(string)]
+		var tp *types.FieldType
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
+		} else {
+			if ct, ok1 := userVar.(Constant); ok1 {
+				tp = ct.RetType
+			}
 		}
 		fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
 		require.NoError(t, err)

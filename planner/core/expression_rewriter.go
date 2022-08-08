@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	ptypes "github.com/pingcap/tidb/parser/types"
 	"strconv"
 	"strings"
 	"time"
@@ -1280,16 +1281,25 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
 			// GetVar has not been executed to fill the SessionVars.Users.
 			sessionVars.UsersLock.Lock()
-			sessionVars.UserVarTypes[name] = tp
+			if userVar, ok := sessionVars.UserVars.Vars[name]; ok {
+				if v, ok1 := userVar.(expression.Constant); ok1 {
+					sessionVars.UserVars.Vars[name] = expression.Constant{Value: v.Value, RetType: tp}
+				}
+			}
 			sessionVars.UsersLock.Unlock()
 			return
 		}
 		sessionVars.UsersLock.RLock()
-		tp, ok := sessionVars.UserVarTypes[name]
+		userVar, ok := sessionVars.UserVars.Vars[name]
 		sessionVars.UsersLock.RUnlock()
+		var tp *ptypes.FieldType
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			tp.SetFlen(mysql.MaxFieldVarCharLength)
+		} else {
+			if v, ok1 := userVar.(expression.Constant); ok1 {
+				tp = v.RetType
+			}
 		}
 		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
 		if err != nil {

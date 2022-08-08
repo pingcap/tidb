@@ -1125,7 +1125,7 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if c, ok := sessionVars.UserVars.Vars[varName]; ok {
-		if v, _ok := c.(Constant); _ok {
+		if v, ok1 := c.(Constant); ok1 {
 			return v.Value.GetMysqlDecimal(), false, nil
 		}
 	}
