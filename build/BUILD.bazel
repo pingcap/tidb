@@ -54,6 +54,7 @@ STATICHECK_ANALYZERS = [
     "S1038",
     "S1039",
     "S1040",
+    "SA1019",
     "SA2000",
     "SA2001",
     "SA2003",
@@ -121,12 +122,14 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/unsafeptr:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
                "//build/linter/asciicheck:asciicheck",
+               "//build/linter/bodyclose:bodyclose",
                "//build/linter/durationcheck:durationcheck",
                "//build/linter/exportloopref:exportloopref",
                "//build/linter/gofmt:gofmt",
                "//build/linter/gci:gci",
                "//build/linter/gosec:gosec",
                "//build/linter/ineffassign:ineffassign",
+               "//build/linter/makezero:makezero",
                "//build/linter/misspell:misspell",
                "//build/linter/prealloc:prealloc",
                "//build/linter/predeclared:predeclared",
@@ -134,6 +137,7 @@ nogo(
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
+                   "//build/linter/allrevive:allrevive",
                    "//build/linter/errcheck:errcheck",
                    "//build/linter/revive:revive",
                ],

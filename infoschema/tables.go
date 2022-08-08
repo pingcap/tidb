@@ -1510,7 +1510,7 @@ var tablePlacementPoliciesCols = []columnInfo{
 
 var tableVariablesInfoCols = []columnInfo{
 	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "VARIABLES_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "VARIABLE_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "DEFAULT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "CURRENT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 64},
@@ -1857,7 +1857,7 @@ func GetDataFromSessionVariables(ctx sessionctx.Context) ([][]types.Datum, error
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, v := range sysVars {
 		var value string
-		value, err := variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
+		value, err := sessionVars.GetSessionOrGlobalSystemVar(v.Name)
 		if err != nil {
 			return nil, err
 		}

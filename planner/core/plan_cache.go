@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -42,7 +44,7 @@ import (
 // It tries to get a valid cached plan from this session's plan cache.
 // If there is no such a plan, it'll call the optimizer to generate a new one.
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
-	binProtoVars []types.Datum, txtProtoVars []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
+	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -65,106 +67,134 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText,
-			preparedStmt.StmtDB, prepared.SchemaVersion, latestSchemaVersion); err != nil {
+			preparedStmt.StmtDB, prepared.SchemaVersion, latestSchemaVersion, bindSQL); err != nil {
 			return nil, nil, err
 		}
 	}
 
-	var varsNum int
-	var binVarTypes []byte
-	var txtVarTypes []*types.FieldType
-	isBinProtocol := len(binProtoVars) > 0
-	if isBinProtocol { // binary protocol
-		varsNum = len(binProtoVars)
-		for _, param := range binProtoVars {
-			binVarTypes = append(binVarTypes, param.Kind())
-		}
-	} else { // txt protocol
-		varsNum = len(txtProtoVars)
-		for _, param := range txtProtoVars {
-			name := param.(*expression.ScalarFunction).GetArgs()[0].String()
-			tp := sctx.GetSessionVars().UserVarTypes[name]
-			if tp == nil {
-				tp = types.NewFieldType(mysql.TypeNull)
-			}
-			txtVarTypes = append(txtVarTypes, tp)
+	paramNum, paramTypes := parseParamTypes(sctx, params)
+
+	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // for point query plan
+		if plan, names, ok, err := getPointQueryPlan(prepared, sessVars, stmtCtx); ok {
+			return plan, names, err
 		}
 	}
 
-	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // short path for point-get plans
-		// Rewriting the expression in the select.where condition  will convert its
-		// type from "paramMarker" to "Constant".When Point Select queries are executed,
-		// the expression in the where condition will not be evaluated,
-		// so you don't need to consider whether prepared.useCache is enabled.
-		plan := prepared.CachedPlan.(Plan)
-		names := prepared.CachedNames.(types.NameSlice)
-		err := RebuildPlan4CachedPlan(plan)
-		if err != nil {
-			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
-			goto REBUILD
-		}
-		if metrics.ResettablePlanCacheCounterFortTest {
-			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-		} else {
-			planCacheCounter.Inc()
-		}
-		sessVars.FoundInPlanCache = true
-		stmtCtx.PointExec = true
-		return plan, names, nil
-	}
 	if prepared.UseCache && !ignorePlanCache { // for general plans
-		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-			if err := checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
-				return nil, nil, err
+		if plan, names, ok, err := getGeneralPlan(ctx, sctx, cacheKey, bindSQL, is, preparedStmt,
+			paramTypes); err != nil || ok {
+			return plan, names, err
+		}
+	}
+
+	return generateNewPlan(ctx, sctx, is, preparedStmt, ignorePlanCache, cacheKey,
+		latestSchemaVersion, paramNum, paramTypes, bindSQL)
+}
+
+// parseParamTypes get parameters' types in PREPARE statement
+func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramNum int, paramTypes []*types.FieldType) {
+	paramNum = len(params)
+	for _, param := range params {
+		if c, ok := param.(*expression.Constant); ok { // from binary protocol
+			paramTypes = append(paramTypes, c.GetType())
+			continue
+		}
+
+		// from text protocol, there must be a GetVar function
+		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
+		tp := sctx.GetSessionVars().UserVarTypes[name]
+		if tp == nil {
+			tp = types.NewFieldType(mysql.TypeNull)
+		}
+		paramTypes = append(paramTypes, tp)
+	}
+	return
+}
+
+func getPointQueryPlan(prepared *ast.Prepared, sessVars *variable.SessionVars, stmtCtx *stmtctx.StatementContext) (Plan,
+	[]*types.FieldName, bool, error) {
+	// short path for point-get plans
+	// Rewriting the expression in the select.where condition  will convert its
+	// type from "paramMarker" to "Constant".When Point Select queries are executed,
+	// the expression in the where condition will not be evaluated,
+	// so you don't need to consider whether prepared.useCache is enabled.
+	plan := prepared.CachedPlan.(Plan)
+	names := prepared.CachedNames.(types.NameSlice)
+	err := RebuildPlan4CachedPlan(plan)
+	if err != nil {
+		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+		return nil, nil, false, nil
+	}
+	if metrics.ResettablePlanCacheCounterFortTest {
+		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+	} else {
+		planCacheCounter.Inc()
+	}
+	sessVars.FoundInPlanCache = true
+	stmtCtx.PointExec = true
+	return plan, names, true, nil
+}
+
+func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
+	is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt, paramTypes []*types.FieldType) (Plan,
+	[]*types.FieldName, bool, error) {
+	sessVars := sctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+
+	if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
+		if err := checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
+			return nil, nil, false, err
+		}
+		cachedVals := cacheValue.([]*PlanCacheValue)
+		for _, cachedVal := range cachedVals {
+			if !cachedVal.varTypesUnchanged(paramTypes) {
+				continue
 			}
-			cachedVals := cacheValue.([]*PlanCacheValue)
-			for _, cachedVal := range cachedVals {
-				if cachedVal.BindSQL != bindSQL {
-					// When BindSQL does not match, it means that we have added a new binding,
-					// and the original cached plan will be invalid,
-					// so the original cached plan can be cleared directly
+			planValid := true
+			for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
+				if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+					planValid = false
+					// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
+					// rebuilding the filters in UnionScan is pretty trivial.
 					sctx.PreparedPlanCache().Delete(cacheKey)
 					break
 				}
-				if !cachedVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
-					continue
-				}
-				planValid := true
-				for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
-					if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
-						planValid = false
-						// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
-						// rebuilding the filters in UnionScan is pretty trivial.
-						sctx.PreparedPlanCache().Delete(cacheKey)
-						break
-					}
-				}
-				if planValid {
-					err := RebuildPlan4CachedPlan(cachedVal.Plan)
-					if err != nil {
-						logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
-						goto REBUILD
-					}
-					sessVars.FoundInPlanCache = true
-					if len(bindSQL) > 0 {
-						// When the `len(bindSQL) > 0`, it means we use the binding.
-						// So we need to record this.
-						sessVars.FoundInBinding = true
-					}
-					if metrics.ResettablePlanCacheCounterFortTest {
-						metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-					} else {
-						planCacheCounter.Inc()
-					}
-					stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
-					return cachedVal.Plan, cachedVal.OutPutNames, nil
-				}
-				break
 			}
+			if planValid {
+				err := RebuildPlan4CachedPlan(cachedVal.Plan)
+				if err != nil {
+					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+					return nil, nil, false, nil
+				}
+				sessVars.FoundInPlanCache = true
+				if len(bindSQL) > 0 {
+					// When the `len(bindSQL) > 0`, it means we use the binding.
+					// So we need to record this.
+					sessVars.FoundInBinding = true
+				}
+				if metrics.ResettablePlanCacheCounterFortTest {
+					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+				} else {
+					planCacheCounter.Inc()
+				}
+				stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
+				return cachedVal.Plan, cachedVal.OutPutNames, true, nil
+			}
+			break
 		}
 	}
+	return nil, nil, false, nil
+}
 
-REBUILD:
+// generateNewPlan call the optimizer to generate a new plan for current statement
+// and try to add it to cache
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
+	ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64, paramNum int,
+	paramTypes []*types.FieldType, bindSQL string) (Plan, []*types.FieldName, error) {
+	prepared := preparedStmt.PreparedAst
+	sessVars := sctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+
 	planCacheMissCounter.Inc()
 	stmt := prepared.Stmt
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
@@ -175,8 +205,9 @@ REBUILD:
 	if err != nil {
 		return nil, nil, err
 	}
-	// We only cache the tableDual plan when the number of vars are zero.
-	if containTableDual(p) && varsNum > 0 {
+
+	// We only cache the tableDual plan when the number of parameters are zero.
+	if containTableDual(p) && paramNum > 0 {
 		stmtCtx.SkipPlanCache = true
 	}
 	if prepared.UseCache && !stmtCtx.SkipPlanCache && !ignorePlanCache {
@@ -184,19 +215,19 @@ REBUILD:
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB,
-				prepared.SchemaVersion, latestSchemaVersion); err != nil {
+				prepared.SchemaVersion, latestSchemaVersion, bindSQL); err != nil {
 				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, isBinProtocol, binVarTypes, txtVarTypes, sessVars.StmtCtx.BindSQL)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
 			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
-				if cacheVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
+				if cacheVal.varTypesUnchanged(paramTypes) {
 					hitVal = true
 					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
@@ -531,14 +562,15 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 		err      error
 		names    types.NameSlice
 	)
-	switch p.(type) {
-	case *PointGetPlan:
+
+	if _, _ok := p.(*PointGetPlan); _ok {
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
 		names = p.OutputNames()
 		if err != nil {
 			return err
 		}
 	}
+
 	if ok {
 		// just cache point plan now
 		prepared.CachedPlan = p
@@ -564,4 +596,38 @@ func containTableDual(p Plan) bool {
 		childContainTableDual = childContainTableDual || containTableDual(child)
 	}
 	return childContainTableDual
+}
+
+// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
+func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) (string, bool) {
+	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	ignore := false
+	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
+		return "", ignore
+	}
+	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
+		return "", ignore
+	}
+	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
+	if bindRecord != nil {
+		enabledBinding := bindRecord.FindEnabledBinding()
+		if enabledBinding != nil {
+			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
+			return enabledBinding.BindSQL, ignore
+		}
+	}
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	if globalHandle == nil {
+		return "", ignore
+	}
+	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
+	if bindRecord != nil {
+		enabledBinding := bindRecord.FindEnabledBinding()
+		if enabledBinding != nil {
+			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
+			return enabledBinding.BindSQL, ignore
+		}
+	}
+	return "", ignore
 }

@@ -127,7 +127,7 @@ go_library(
 
 go_test(
     name = "ddl_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "attributes_sql_test.go",
         "callback_test.go",
@@ -167,7 +167,6 @@ go_test(
         "placement_policy_test.go",
         "placement_sql_test.go",
         "primary_key_handle_test.go",
-        "reorg_test.go",
         "repair_table_test.go",
         "restart_test.go",
         "rollingback_test.go",
