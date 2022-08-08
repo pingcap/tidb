@@ -34,7 +34,6 @@ go_test(
         "//kv",
         "//parser/ast",
         "//parser/model",
-        "//planner/core",
         "//sessionctx",
         "//sessiontxn/internal",
         "//sessiontxn/staleread",
