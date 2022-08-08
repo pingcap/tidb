@@ -464,61 +464,6 @@ type handshakeResponse41 struct {
 	Attrs      map[string]string
 }
 
-// parseOldHandshakeResponseHeader parses the old version handshake header HandshakeResponse320
-func parseOldHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
-	// Ensure there are enough data to read:
-	// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse320
-	logutil.Logger(ctx).Debug("try to parse hanshake response as Protocol::HandshakeResponse320", zap.ByteString("packetData", data))
-	if len(data) < 2+3 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
-		return 0, mysql.ErrMalformPacket
-	}
-	offset := 0
-	// capability
-	capability := binary.LittleEndian.Uint16(data[:2])
-	packet.Capability = uint32(capability)
-
-	// be compatible with Protocol::HandshakeResponse41
-	packet.Capability |= mysql.ClientProtocol41
-
-	offset += 2
-	// skip max packet size
-	offset += 3
-	// usa default CharsetID
-	packet.Collation = mysql.CollationNames["utf8mb4_general_ci"]
-
-	return offset, nil
-}
-
-// parseOldHandshakeResponseBody parse the HandshakeResponse for Protocol::HandshakeResponse320 (except the common header part).
-func parseOldHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41, data []byte, offset int) (err error) {
-	defer func() {
-		// Check malformat packet cause out of range is disgusting, but don't panic!
-		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data), zap.Stack("stack"))
-			err = mysql.ErrMalformPacket
-		}
-	}()
-	// user name
-	packet.User = string(data[offset : offset+bytes.IndexByte(data[offset:], 0)])
-	offset += len(packet.User) + 1
-
-	if packet.Capability&mysql.ClientConnectWithDB > 0 {
-		if len(data[offset:]) > 0 {
-			idx := bytes.IndexByte(data[offset:], 0)
-			packet.DBName = string(data[offset : offset+idx])
-			offset = offset + idx + 1
-		}
-		if len(data[offset:]) > 0 {
-			packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
-		}
-	} else {
-		packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
-	}
-
-	return nil
-}
-
 // parseHandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
 func parseHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
 	// Ensure there are enough data to read:
@@ -653,8 +598,6 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
-	isOldVersion := false
-
 	var resp handshakeResponse41
 	var pos int
 
@@ -667,8 +610,8 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	if capability&mysql.ClientProtocol41 > 0 {
 		pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
 	} else {
-		pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
-		isOldVersion = true
+		logutil.Logger(ctx).Error("ClientProtocol41 flag is not set, please upgrade client")
+		return errNotSupportedAuthMode
 	}
 
 	if err != nil {
@@ -689,11 +632,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 				logutil.Logger(ctx).Warn("read handshake response failure after upgrade to TLS", zap.Error(err))
 				return err
 			}
-			if isOldVersion {
-				pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
-			} else {
-				pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
-			}
+			pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
 			if err != nil {
 				terror.Log(err)
 				return err
@@ -708,11 +647,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	}
 
 	// Read the remaining part of the packet.
-	if isOldVersion {
-		err = parseOldHandshakeResponseBody(ctx, &resp, data, pos)
-	} else {
-		err = parseHandshakeResponseBody(ctx, &resp, data, pos)
-	}
+	err = parseHandshakeResponseBody(ctx, &resp, data, pos)
 	if err != nil {
 		terror.Log(err)
 		return err
@@ -1507,17 +1442,17 @@ func (cc *clientConn) flush(ctx context.Context) error {
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
 	msg := cc.ctx.LastMessage()
-	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount())
+	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.OKHeader)
 }
 
-func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16) error {
+func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16, header byte) error {
 	enclen := 0
 	if len(msg) > 0 {
 		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
 	}
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
-	data = append(data, mysql.OKHeader)
+	data = append(data, header)
 	data = dumpLengthEncodedInt(data, affectedRows)
 	data = dumpLengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -1535,6 +1470,9 @@ func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows,
 		return err
 	}
 
+	if header == mysql.EOFHeader {
+		return nil
+	}
 	return cc.flush(ctx)
 }
 
@@ -1582,6 +1520,11 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 // serverStatus, a flag bit represents server information
 // in the packet.
 func (cc *clientConn) writeEOF(serverStatus uint16) error {
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		logutil.Logger(context.Background()).Error(
+			"Attempt to write EOF to client that has the ClientDeprecateEOF flag set", zap.Stack("stack"))
+	}
+
 	data := cc.alloc.AllocWithLen(4, 9)
 
 	data = append(data, mysql.EOFHeader)
@@ -2133,7 +2076,7 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
-	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
+	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount(), mysql.OKHeader)
 }
 
 // handleFieldList returns the field list for a table.
@@ -2159,6 +2102,15 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
+	}
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
+			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.EOFHeader)
+		if err != nil {
+			return err
+		}
+		err = cc.pkt.flush()
+		return err
 	}
 	if err := cc.writeEOF(0); err != nil {
 		return err
@@ -2214,6 +2166,9 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
+	}
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		return nil
 	}
 	return cc.writeEOF(serverStatus)
 }
@@ -2294,10 +2249,19 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
+
 	if stmtDetail != nil {
 		start = time.Now()
 	}
-	err := cc.writeEOF(serverStatus)
+
+	var err error
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
+			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.EOFHeader)
+	} else {
+		err = cc.writeEOF(serverStatus)
+	}
+
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
 	}
