@@ -573,24 +573,24 @@ func (p *LogicalJoin) setPreferredHJBuildAndProbeSide(hintInfo *tableHintInfo) {
 
 	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
-	hjOrder := uint(0)
+	hjSide := uint(0)
 	if hintInfo.ifPreferHJBuild(lhsAlias) {
-		hjOrder |= preferLeftAsHJBuild
+		hjSide |= preferLeftAsHJBuild
 	}
 	if hintInfo.ifPreferHJBuild(rhsAlias) {
-		hjOrder |= preferRightAsHJBuild
+		hjSide |= preferRightAsHJBuild
 	}
 	if hintInfo.ifPreferHJProbe(lhsAlias) {
-		hjOrder |= preferLeftAsHJProbe
+		hjSide |= preferLeftAsHJProbe
 	}
 	if hintInfo.ifPreferHJProbe(rhsAlias) {
-		hjOrder |= preferRightAsHJProbe
+		hjSide |= preferRightAsHJProbe
 	}
 	hasConflict := false
-	if (hjOrder&preferLeftAsHJBuild) > 0 && (hjOrder&preferLeftAsHJProbe) > 0 {
+	if (hjSide&preferLeftAsHJBuild) > 0 && (hjSide&preferLeftAsHJProbe) > 0 {
 		hasConflict = true
 	}
-	if (hjOrder&preferRightAsHJBuild) > 0 && (hjOrder&preferRightAsHJProbe) > 0 {
+	if (hjSide&preferRightAsHJBuild) > 0 && (hjSide&preferRightAsHJProbe) > 0 {
 		hasConflict = true
 	}
 	if hasConflict {
@@ -598,7 +598,7 @@ func (p *LogicalJoin) setPreferredHJBuildAndProbeSide(hintInfo *tableHintInfo) {
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 	} else {
-		p.preferJoinType |= hjOrder
+		p.hashJoinSide |= hjSide
 	}
 }
 
@@ -648,7 +648,7 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		p.preferJoinOrder = hintInfo.matchTableName([]*hintTableInfo{lhsAlias, rhsAlias}, hintInfo.leadingJoinOrder)
 	}
 	// set hintInfo for further usage if this hint info can be used.
-	if p.preferJoinType != 0 || p.preferJoinOrder {
+	if p.preferJoinType != 0 || p.preferJoinOrder || p.hashJoinSide != 0 {
 		p.hintInfo = hintInfo
 	}
 }
@@ -5075,12 +5075,11 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		if b.TableHints().ifPreferINLMJ(innerAlias) {
 			joinPlan.preferJoinType = preferRightAsINLMJInner
 		}
+		joinPlan.setPreferredHJBuildAndProbeSide(b.TableHints())
 		// If there're multiple join hints, they're conflict.
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
-			joinPlan.preferJoinType = 0
 			return nil, errors.New("Join hints are conflict, you can only specify one type of join")
 		}
-		joinPlan.setPreferredHJBuildAndProbeSide(b.TableHints())
 	}
 	if forceRewrite {
 		joinPlan.preferJoinType |= preferRewriteSemiJoin

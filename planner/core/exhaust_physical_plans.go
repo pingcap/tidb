@@ -376,13 +376,12 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return nil
 	}
-	forceLeftToBuild := ((p.preferJoinType & preferLeftAsHJBuild) > 0) || ((p.preferJoinType & preferRightAsHJProbe) > 0)
-	forceRightToBuild := ((p.preferJoinType & preferRightAsHJBuild) > 0) || ((p.preferJoinType & preferLeftAsHJProbe) > 0)
+	forceLeftToBuild := ((p.hashJoinSide & preferLeftAsHJBuild) > 0) || ((p.hashJoinSide & preferRightAsHJProbe) > 0)
+	forceRightToBuild := ((p.hashJoinSide & preferRightAsHJBuild) > 0) || ((p.hashJoinSide & preferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Some HASH_BUILD and HASH_PROBE hints are conflicts, please check the hints"))
 		forceLeftToBuild = false
 		forceRightToBuild = false
-
 	}
 	joins := make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {

@@ -120,7 +120,10 @@ const (
 	preferRewriteSemiJoin
 	preferHashAgg
 	preferStreamAgg
-	preferLeftAsHJBuild
+)
+
+const (
+	preferLeftAsHJBuild uint = 1 << iota
 	preferRightAsHJBuild
 	preferLeftAsHJProbe
 	preferRightAsHJProbe
@@ -144,6 +147,7 @@ type LogicalJoin struct {
 	hintInfo        *tableHintInfo
 	preferJoinType  uint
 	preferJoinOrder bool
+	hashJoinSide    uint
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
