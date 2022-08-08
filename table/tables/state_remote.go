@@ -23,8 +23,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // CachedTableLockType define the lock type for cached table
@@ -127,6 +129,12 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
 				return errors.Trace(err)
 			}
+			logutil.BgLogger().Info(">> lock for read succ, clean old orphan lock",
+				zap.Int64("tid", tid),
+				zap.Stringer("lockType", lockType),
+				zap.Uint64("oldLease", lease),
+				zap.Uint64("newLease", newLease),
+				zap.Uint64("now", now))
 			return nil
 		}
 
@@ -137,6 +145,12 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 			return nil
 		}
 		succ = true
+		logutil.BgLogger().Info(">> lock for read succ",
+			zap.Int64("tid", tid),
+			zap.Stringer("lockType", lockType),
+			zap.Uint64("oldLease", lease),
+			zap.Uint64("newLease", newLease),
+			zap.Uint64("now", now))
 		if newLease > lease { // Note the check, don't decrease lease value!
 			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
 				return errors.Trace(err)
@@ -157,6 +171,11 @@ func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, leaseDu
 		if h.lease > safe {
 			// It means the remote has already been write locked and the lock will be valid for a while.
 			// So we can return directly.
+
+			logutil.BgLogger().Info(">> lock for write succ, short path",
+				zap.Int64("tid", tid),
+				zap.Uint64("lease", h.lease))
+
 			return h.lease, nil
 		}
 	}
@@ -168,6 +187,9 @@ func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, leaseDu
 		}
 		if waitAndRetry == 0 {
 			ret = lease
+			logutil.BgLogger().Info(">> lock for write succ",
+				zap.Int64("tid", tid),
+				zap.Uint64("lease", lease))
 			break
 		}
 		time.Sleep(waitAndRetry)
