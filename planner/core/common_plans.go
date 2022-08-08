@@ -205,7 +205,7 @@ func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) 
 		if err != nil || isNull {
 			res = false
 		} else if userVar, ok2 := sctx.GetSessionVars().UserVars.Vars[name]; ok2 {
-			if dt, ok3 := userVar.(expression.Constant); ok3 {
+			if dt, ok3 := userVar.(*expression.Constant); ok3 {
 				res = dt.Value.Kind() == types.KindBinaryLiteral
 			}
 		}

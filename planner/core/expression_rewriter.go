@@ -1282,8 +1282,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			// GetVar has not been executed to fill the SessionVars.Users.
 			sessionVars.UsersLock.Lock()
 			if userVar, ok := sessionVars.UserVars.Vars[name]; ok {
-				if v1, ok1 := userVar.(expression.Constant); ok1 {
-					sessionVars.UserVars.Vars[name] = expression.Constant{Value: v1.Value, RetType: tp}
+				if v1, ok1 := userVar.(*expression.Constant); ok1 {
+					sessionVars.UserVars.Vars[name] = &expression.Constant{Value: v1.Value, RetType: tp}
 				}
 			}
 			sessionVars.UsersLock.Unlock()
@@ -1293,7 +1293,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		userVar, ok := sessionVars.UserVars.Vars[name]
 		sessionVars.UsersLock.RUnlock()
 		var tp *ptypes.FieldType
-		if v, ok1 := userVar.(expression.Constant); ok && ok1 {
+		if v, ok1 := userVar.(*expression.Constant); ok && ok1 {
 			tp = v.RetType
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)

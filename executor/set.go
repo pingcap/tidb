@@ -91,7 +91,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if value.IsNull() {
 				sessionVars.UnsetUserVar(name)
 			} else {
-				sessionVars.UserVars.Vars[name] = expression.Constant{
+				sessionVars.UserVars.Vars[name] = &expression.Constant{
 					Value:   value,
 					RetType: v.Expr.GetType(),
 				}

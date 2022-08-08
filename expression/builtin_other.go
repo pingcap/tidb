@@ -784,7 +784,7 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 		_, collation = sessionVars.GetCharsetInfo()
 	}
 	v := types.NewCollationStringDatum(stringutil.Copy(res), collation)
-	sessionVars.UserVars.Vars[varName] = Constant{Value: v}
+	sessionVars.UserVars.Vars[varName] = &Constant{Value: v}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -814,7 +814,7 @@ func (b *builtinSetRealVarSig) evalReal(row chunk.Row) (res float64, isNull bool
 	res = datum.GetFloat64()
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
-	sessionVars.UserVars.Vars[varName] = Constant{Value: datum}
+	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -843,7 +843,7 @@ func (b *builtinSetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	res := datum.GetMysqlDecimal()
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
-	sessionVars.UserVars.Vars[varName] = Constant{Value: datum}
+	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -872,7 +872,7 @@ func (b *builtinSetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	res := datum.GetInt64()
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
-	sessionVars.UserVars.Vars[varName] = Constant{Value: datum}
+	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -900,7 +900,7 @@ func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	res := datum.GetMysqlTime()
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
-	sessionVars.UserVars.Vars[varName] = Constant{Value: datum}
+	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -981,7 +981,7 @@ func (b *builtinGetStringVarSig) evalString(row chunk.Row) (string, bool, error)
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if userVar, ok := sessionVars.UserVars.Vars[varName]; ok {
-		if v, ok1 := userVar.(Constant); ok1 {
+		if v, ok1 := userVar.(*Constant); ok1 {
 			// We cannot use v.GetString() here, because the datum may be in KindMysqlTime, which
 			// stores the data in datum.x.
 			// This seems controversial with https://dev.mysql.com/doc/refman/8.0/en/user-variables.html:
@@ -1037,7 +1037,7 @@ func (b *builtinGetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if useVar, ok := sessionVars.UserVars.Vars[varName]; ok {
-		if v, ok1 := useVar.(Constant); ok1 {
+		if v, ok1 := useVar.(*Constant); ok1 {
 			return v.Value.GetInt64(), false, nil
 		}
 	}
@@ -1081,7 +1081,7 @@ func (b *builtinGetRealVarSig) evalReal(row chunk.Row) (float64, bool, error) {
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if userVar, ok := sessionVars.UserVars.Vars[varName]; ok {
-		if v, ok1 := userVar.(Constant); ok1 {
+		if v, ok1 := userVar.(*Constant); ok1 {
 			return v.Value.GetFloat64(), false, nil
 		}
 	}
@@ -1125,7 +1125,7 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if c, ok := sessionVars.UserVars.Vars[varName]; ok {
-		if v, ok1 := c.(Constant); ok1 {
+		if v, ok1 := c.(*Constant); ok1 {
 			return v.Value.GetMysqlDecimal(), false, nil
 		}
 	}
@@ -1177,7 +1177,7 @@ func (b *builtinGetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if userVar, ok := sessionVars.UserVars.Vars[varName]; ok {
-		if v, ok1 := userVar.(Constant); ok1 {
+		if v, ok1 := userVar.(*Constant); ok1 {
 			return v.Value.GetMysqlTime(), false, nil
 		}
 	}
