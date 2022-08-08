@@ -2073,9 +2073,9 @@
         "SQL": "select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;",
         "Plan": [
           "Sort 1.00 root  Column#6",
-          "└─Projection 1.00 root  floor(div(cast(Column#4, decimal(10,0) BINARY), 2))->Column#6, Column#5",
+          "└─Projection 1.00 root  floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#6, Column#5",
           "  └─HashAgg 1.00 root  group by:Column#13, funcs:count(Column#11)->Column#5, funcs:firstrow(Column#12)->Column#4",
-          "    └─Projection 10000.00 root  test.t1.c1, Column#4, floor(div(cast(Column#4, decimal(10,0) BINARY), 2))->Column#13",
+          "    └─Projection 10000.00 root  test.t1.c1, Column#4, floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#13",
           "      └─Projection 10000.00 root  setvar(rownum, plus(getvar(rownum), 1))->Column#4, test.t1.c1",
           "        └─HashJoin 10000.00 root  CARTESIAN inner join",
           "          ├─Projection(Build) 1.00 root  setvar(rownum, -1)->Column#1",
