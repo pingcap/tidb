@@ -1,4 +1,4 @@
-# Proposal: Lazy Constraint Check in Pessimistic Transactions
+# Proposal: Extend `tidb_constraint_check_in_place` to Support Pessimistic Transactions
 
 * Authors: [sticnarf](https://github.com/sticnarf), [ekexium](https://github.com/ekexium)
 * Tracking issue: [#36579](https://github.com/pingcap/tidb/issues/36579)
@@ -32,14 +32,74 @@ So, skipping pessimistic locks for these keys and deferring constraint checks ca
 
 This feature makes it possible to skip acquiring pessimistic locks for the keys that need uniqueness constraint checks in pessimistic transactions. We do constraint checks for these keys during prewrite.
 
+A session/global system variable `tidb_constraint_check_in_place_optimistic_only` is introduced to control the behavior. The default value is `ON` and the behavior will remain unchanged. When `tidb_constraint_check_in_place_optimistic_only` is `OFF`, the new behavior will take effect in pessimistic transactions.
+
 ```sql
 CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY);
 INSERT INTO t1 VALUES (1), (2);
+
+set tidb_constraint_check_in_place_optimistic_only = off;
 BEGIN PESSIMISTIC;
 SELECT * FROM t1 WHERE id = 1 FOR UPDATE; -- SELECT FOR UPDATE locks key as usual.
 INSERT INTO t1 VALUES (2); -- Skip acquiring the lock and return success.
 COMMIT; -- ERROR 1062 (23000): Duplicate entry '2' for key 'PRIMARY'
 ```
+
+#### Protocol
+
+Although we skip locking some keys and doing constraint checks before `COMMIT`, it is still a pessimistic transaction. Except for the keys that need constraint checks, we acquire pessimistic locks for other keys as usual.
+
+It is completely a new kind of behavior to do constraint checks during prewrite for keys that don't get locked ahead of time. We need to change the prewrite protocol to describe it.
+
+Previously, there is a `repeated bool` field describing whether each key needs be locked first. Generally, non-unique index keys don't need to be locked and their conflict checks are skipped.
+
+ ```protobuf
+message PrewriteRequest {
+    // For pessimistic transaction, some mutations don't need to be locked, for example, non-unique index key.
+    repeated bool is_pessimistic_lock = 7;
+}
+ ```
+
+Now, we can reuse this field to describe the keys that need constraint checks during prewrite in a pessimistic transaction:
+
+```protobuf
+message PrewriteRequest {
+	enum PessimisticAction {
+		// The key needn't be locked and no extra write conflict checks are needed.
+		SKIP_PESSIMISTIC_CHECK = 0;
+		// The key should have been locked at the time of prewrite.
+		DO_PESSIMISTIC_CHECK = 1;
+		// The key doesn't need a pessimistic lock. But we need to do data constraint checks.
+		DO_CONSTRAINT_CHECK = 2;
+	}
+    // For pessimistic transaction, some mutations don't need to be locked, for example, non-unique index key.
+    repeated PessimisticAction pessimistic_actions = 7;
+}
+```
+
+Because `enum` is compatible with `bool` on the wire, we can seamlessly extend the  `is_pessimistic_lock` field. In a TiDB cluster, TiKV instances are upgraded before TiDB. So, we can make sure TiKV can handle it correctly when TiDB starts using the new protocol.
+
+When `tidb_constraint_check_in_place_optimistic_only` is off, all the keys that have `PresumeKeyNotExists` flags don't need to be locked when executing the DML. When the transaction commits, TiDB will set the actions of these keys to `DO_CONSTRAINT_CHECK`. So, TiKV will not check the existence of pessimistic transactions of these keys. Instead, constraint checks should be done for these keys.
+
+#### Behavior of locking lazy checked keys
+
+Consider the following scenario (from @cfzjywxk):
+
+```sql
+/* init */ CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY, value int);
+/* init */ INSERT INTO t1 VALUES (1, 1);
+
+/* s1 */ set tidb_constraint_check_in_place_optimistic_only = off;
+/* s1 */ BEGIN PESSIMISTIC;
+/* s1 */ INSERT INTO t1 VALUES (1, 2) LAZY CHECK; -- Skip acquiring the lock. So the statement would succeed.
+/* s1 */ SELECT * FROM t1 FOR UPDATE; -- Here the pessimistic lock on row key '1' would be acquired
+```
+
+The `INSERT` statement puts the row with `id = 1` in the transaction write buffer of TiDB without checking the constraint. The later `SELECT FOR UPDATE` will read and lock the row with `id = 1` in TiKV. If the `SELECT FOR UPDATE` succeeded, it would be difficult to decide the result set. Returning `(1, 1), (1, 2)` breaks the unique constraint, while returning `(1, 1)` or `(1, 2)` may be all strange semantically.
+
+So, we choose to do the missing constraint check when acquiring locks. Whenever we are going to acquire the pessimistic lock of a key with a `PresumeKeyNotExists` flag that is already in the write buffer, we will bring the constraint check to TiKV immediately.
+
+This means the `SELECT FOR UPDATE` will throw a "duplicate entry" error in the case above. It may be strange that a read-only statement raises errors like this. We should make the user aware of the behavior.
 
 ### Applicable Scenarios
 
@@ -75,86 +135,14 @@ In a special case, the success rate may drop due to the write conflict check:
 /* s1 */ COMMIT;
 ```
 
-If we check constraints while acquiring the lock, `s1` will succeed because the row with `id=1` has been deleted when acquiring the lock. However, if we check constraints lazily, to ensure snapshot isolation, we have to do a write conflict check like in optimistic transactions in additional to constraint checks. In the case above, write conflict check will fail because the commit TS of `s2` is bigger than the start TS of `s1`.
+If we check constraints while acquiring the lock, `s1` will succeed because the row with `id = 1` has been deleted when acquiring the lock. However, if we check constraints lazily, to ensure snapshot isolation, we have to do a write conflict check like in optimistic transactions in additional to constraint checks. In the case above, write conflict check will fail because the commit TS of `s2` is bigger than the start TS of `s1`.
 
 #### List of typical use cases
 
 Note that the feature is only needed if part of your transaction still needs to acquire pessimistic locks. Otherwise, use the optimistic transaction mode instead.
 
 * `INSERT` rows to a table without any unique key. TiDB does not generate duplicated implicit row ID, so normally there cannot be unique key conflicts.
-* The user guarantees their application does not `INSERT` any duplicate entries in most cases.
-
-### Protocol
-
-Although we skip locking some keys and doing constraint checks before `COMMIT`, it is still a pessimistic transaction. Except for the keys that need constraint checks, we acquire pessimistic locks for other keys as usual.
-
-It is completely a new kind of behavior to do constraint checks during prewrite for keys that don't get locked ahead of time. We need to change the prewrite protocol to describe it.
-
-Previously, there is a `repeated bool` field describing whether each key needs be locked first. Generally, non-unique index keys don't need to be locked and their conflict checks are skipped.
-
- ```protobuf
-message PrewriteRequest {
-    // For pessimistic transaction, some mutations don't need to be locked, for example, non-unique index key.
-    repeated bool is_pessimistic_lock = 7;
-}
- ```
-
-Now, we can reuse this field to describe the keys that need constraint checks during prewrite in a pessimistic transaction:
-
-```protobuf
-message PrewriteRequest {
-	enum PessimisticAction {
-		// The key needn't be locked and no extra write conflict checks are needed.
-		SKIP_PESSIMISTIC_CHECK = 0;
-		// The key should have been locked at the time of prewrite.
-		DO_PESSIMISTIC_CHECK = 1;
-		// The key doesn't need a pessimistic lock. But we need to do data constraint checks.
-		DO_CONSTRAINT_CHECK = 2;
-	}
-    // For pessimistic transaction, some mutations don't need to be locked, for example, non-unique index key.
-    repeated PessimisticAction pessimistic_actions = 7;
-}
-```
-
-Because `enum` is compatible with `bool` on the wire, we can seamlessly extend the  `is_pessimistic_lock` field. In a TiDB cluster, TiKV instances are upgraded before TiDB. So, we can make sure TiKV can handle it correctly when TiDB starts using the new protocol.
-
-### TiDB Variable
-
-A new global and session variable `tidb_pessimistic_txn_allow_lazy_constraint_check` is added to control the behavior. So, we don't get mixed with the old system variable `tidb_constraint_check_in_place` and can set different behaviors under different transaction modes.
-
-When `tidb_pessimistic_txn_allow_lazy_constraint_check` is on, all the keys that have `PresumeKeyNotExists` flags don't need to be locked when executing the DML. When the transaction commits, TiDB will set the actions of these keys to `DO_CONSTRAINT_CHECK`. So, TiKV will not check the existence of pessimistic transactions of these keys. Instead, constraint checks should be done for these keys.
-
-### SQL Syntax Extension
-
-It is possible that the user does not expect all DMLs in the transaction to defer constraint check. But in this case, it is difficult to control the behavior with the session variable. We can extend the SQL syntax to enable the feature only for a specific DML:
-
-```sql
-set tidb_pessimistic_txn_allow_lazy_constraint_check = off;
-BEGIN PESSIMISTIC;
-INSERT INTO t1 VALUES (1) LAZY CHECK; -- Skip acquiring the lock.
-INSERT INTO t1 VALUES (2); -- Acquire the lock and check constraints immediately.
-```
-
-The `INSERT ... LAZY CHECK` statement skips acquiring pessimistic locks and checking constraints during the DML even if `tidb_pessimistic_txn_allow_lazy_constraint_check` is off.
-
-### Behavior of Locking Lazy Checked Keys
-
-Consider the following scenario (from @cfzjywxk):
-
-```sql
-/* init */ CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY, value int);
-/* init */ INSERT INTO t1 VALUES (1, 1);
-
-/* s1 */ BEGIN PESSIMISTIC;
-/* s1 */ INSERT INTO t1 VALUES (1, 2) LAZY CHECK; -- Skip acquiring the lock. So the statement would succeed.
-/* s1 */ SELECT * FROM t1 FOR UPDATE; -- Here the pessimistic lock on row key '1' would be acquired
-```
-
-The `INSERT` statement puts the row with `id = 1` in the transaction write buffer of TiDB without checking the constraint. The later `SELECT FOR UPDATE` will read and lock the row with `id = 1` in TiKV. If the `SELECT FOR UPDATE` succeeded, it would be difficult to decide the result set. Returning `(1, 1), (1, 2)` breaks the unique constraint, while returning `(1, 1)` or `(1, 2)` may be all strange semantically.
-
-So, we choose to do the missing constraint check when acquiring locks. Whenever we are going to acquire the pessimistic lock of a key with a `PresumeKeyNotExists` flag that is already in the write buffer, we will bring the constraint check to TiKV immediately.
-
-This means the `SELECT FOR UPDATE` will throw a "duplicate entry" error in the case above. It may be strange that a read-only statement raises errors like this. We should make the user aware of the behavior.
+* The user guarantees their application does not `INSERT` duplicate entries, such bulk data load.
 
 ### Safety
 
