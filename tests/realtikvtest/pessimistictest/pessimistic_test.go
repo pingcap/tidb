@@ -2740,8 +2740,7 @@ func TestIssue21498(t *testing.T) {
 func TestPlanCacheSchemaChange(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tmp := testkit.NewTestKit(t, store)
-	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
-	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
+	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)

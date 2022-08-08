@@ -1805,19 +1805,12 @@ func TestPreparePlanCacheValid(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = 0.5")
 	tk.MustQuery("select @@global.tidb_prepared_plan_cache_memory_guard_ratio").Check(testkit.Rows("0.5"))
 
-	orgEnable := variable.EnablePreparedPlanCache.Load()
-	defer func() {
-		variable.EnablePreparedPlanCache.Store(orgEnable)
-	}()
 	tk.MustExec("SET GLOBAL tidb_enable_prepared_plan_cache = 0")
 	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache").Check(testkit.Rows("0"))
-	require.False(t, variable.EnablePreparedPlanCache.Load())
 	tk.MustExec("SET GLOBAL tidb_enable_prepared_plan_cache = 1")
 	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache").Check(testkit.Rows("1"))
-	require.True(t, variable.EnablePreparedPlanCache.Load())
 	tk.MustExec("SET GLOBAL tidb_enable_prepared_plan_cache = 0")
 	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache").Check(testkit.Rows("0"))
-	require.False(t, variable.EnablePreparedPlanCache.Load())
 }
 
 func TestInstanceScopeSwitching(t *testing.T) {
