@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.19
+go 1.18
 
 require (
 	cloud.google.com/go/storage v1.21.0
@@ -241,6 +241,6 @@ replace github.com/pingcap/tidb/parser => ./parser
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
-replace github.com/tikv/client-go/v2 => github.com/lcwangchao/client-go/v2 v2.0.0-alpha.0.20220808062359-3873bc3a42fb
+replace github.com/tikv/client-go/v2 => github.com/lcwangchao/client-go/v2 v2.0.0-alpha.0.20220808095607-641375c1de51
 
 replace honnef.co/go/tools => honnef.co/go/tools v0.3.2
