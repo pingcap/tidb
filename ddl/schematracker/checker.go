@@ -40,8 +40,12 @@ import (
 )
 
 var (
+	// ConstructResultOfShowCreateDatabase should be assigned to executor.ConstructResultOfShowCreateDatabase.
+	// It is used to break cycle import.
 	ConstructResultOfShowCreateDatabase func(sessionctx.Context, *model.DBInfo, bool, *bytes.Buffer) error
-	ConstructResultOfShowCreateTable    func(sessionctx.Context, *model.TableInfo, autoid.Allocators, *bytes.Buffer) error
+	// ConstructResultOfShowCreateTable should be assigned to executor.ConstructResultOfShowCreateTable.
+	// It is used to break cycle import.
+	ConstructResultOfShowCreateTable func(sessionctx.Context, *model.TableInfo, autoid.Allocators, *bytes.Buffer) error
 )
 
 func init() {
