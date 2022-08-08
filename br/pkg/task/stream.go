@@ -144,7 +144,7 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 
 	flags.String(flagStreamStartTS, "",
 		"usually equals last full backupTS, used for backup log. Default value is current ts.\n"+
-			"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'.")
+			"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'.")
 	// 999999999999999999 means 2090-11-18 22:07:45
 	flags.String(flagStreamEndTS, "999999999999999999", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
@@ -176,7 +176,7 @@ func DefineStreamStatusCommonFlags(flags *pflag.FlagSet) {
 
 func DefineStreamTruncateLogFlags(flags *pflag.FlagSet) {
 	flags.String(flagUntil, "", "Remove all backup data until this TS."+
-		"(support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'.)")
+		"(support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'.)")
 	flags.Bool(flagDryRun, false, "Run the command but don't really delete the files.")
 	flags.BoolP(flagYes, "y", false, "Skip all prompts and always execute the command.")
 }
@@ -878,12 +878,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 			return nil
 		}
 	}
-	if cfg.Until > sp && !cfg.DryRun {
-		if err := restore.SetTSToFile(
-			ctx, storage, cfg.Until, restore.TruncateSafePointFileName); err != nil {
-			return err
-		}
-	}
+
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
 		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
@@ -893,7 +888,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 			return cfg.DryRun
 		},
 	}
-	if err := metas.LoadFrom(ctx, storage); err != nil {
+	if err := metas.LoadUntil(ctx, storage, cfg.Until); err != nil {
 		return err
 	}
 	readMetaDone()
@@ -919,16 +914,14 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return nil
 	}
 
-	removed := metas.RemoveDataBefore(shiftUntilTS)
-
-	// remove metadata
-	removeMetaDone := console.ShowTask("Removing metadata... ", glue.WithTimeCost())
-	if !cfg.DryRun {
-		if err := metas.DoWriteBack(ctx, storage); err != nil {
+	if cfg.Until > sp && !cfg.DryRun {
+		if err := restore.SetTSToFile(
+			ctx, storage, cfg.Until, restore.TruncateSafePointFileName); err != nil {
 			return err
 		}
 	}
-	removeMetaDone()
+
+	removed := metas.RemoveDataBefore(shiftUntilTS)
 
 	// remove log
 	clearDataFileDone := console.ShowTask(
@@ -941,17 +934,27 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	for _, f := range removed {
 		if !cfg.DryRun {
 			wg.Add(1)
+			finalFile := f
 			worker.Apply(func() {
 				defer wg.Done()
-				if err := storage.DeleteFile(ctx, f.Path); err != nil {
-					log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-					console.Print("\n"+em(f.Path), "not deleted, you may clear it manually:", warn(err))
+				if err := storage.DeleteFile(ctx, finalFile.Path); err != nil {
+					log.Warn("File not deleted.", zap.String("path", finalFile.Path), logutil.ShortError(err))
+					console.Print("\n"+em(finalFile.Path), "not deleted, you may clear it manually:", warn(err))
 				}
 			})
 		}
 	}
 	wg.Wait()
 	clearDataFileDone()
+
+	// remove metadata
+	removeMetaDone := console.ShowTask("Removing metadata... ", glue.WithTimeCost())
+	if !cfg.DryRun {
+		if err := metas.DoWriteBack(ctx, storage); err != nil {
+			return err
+		}
+	}
+	removeMetaDone()
 	return nil
 }
 
@@ -1037,9 +1040,15 @@ func restoreStream(
 		if err != nil {
 			summary.Log("restore log failed summary", zap.Error(err))
 		} else {
-			summary.Log("restore log success summary", zap.Duration("total-take", time.Since(startTime)),
+			totalDureTime := time.Since(startTime)
+			summary.Log("restore log success summary", zap.Duration("total-take", totalDureTime),
 				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS),
-				zap.Uint64("total-kv-count", totalKVCount), zap.Uint64("total-size", totalSize))
+				zap.String("restore-from", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
+				zap.String("restore-to", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
+				zap.Uint64("total-kv-count", totalKVCount),
+				zap.String("total-size", units.HumanSize(float64(totalSize))),
+				zap.String("average-speed", units.HumanSize(float64(totalSize)/float64(totalDureTime.Seconds()))+"/s"),
+			)
 		}
 	}()
 
@@ -1082,8 +1091,13 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
+	shiftStartTS, err := client.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
+	if err != nil {
+		return errors.Annotate(err, "failed to get shift TS")
+	}
+
 	// read meta by given ts.
-	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
+	metas, err := client.ReadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1092,10 +1106,6 @@ func restoreStream(
 		return nil
 	}
 
-	shiftStartTS, exist := restore.CalculateShiftTS(metas, cfg.StartTS, cfg.RestoreTS)
-	if !exist {
-		shiftStartTS = cfg.StartTS
-	}
 	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
 
 	// read data file by given ts.
@@ -1521,9 +1531,8 @@ func ShiftTS(startTS uint64) uint64 {
 	shiftPhysical := physical - streamShiftDuration.Milliseconds()
 	if shiftPhysical < 0 {
 		return 0
-	} else {
-		return oracle.ComposeTS(shiftPhysical, logical)
 	}
+	return oracle.ComposeTS(shiftPhysical, logical)
 }
 
 func buildPauseSafePointName(taskName string) string {

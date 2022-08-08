@@ -316,8 +316,7 @@ func genGlobalID(store kv.Storage) (int64, error) {
 }
 
 func TestBuildBundle(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -659,8 +658,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 }
 
 func TestIndexComment(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

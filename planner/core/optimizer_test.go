@@ -69,7 +69,6 @@ func testJoinKeyTypeConvert(t *testing.T, leftType, rightType, retType *types.Fi
 	require.Equal(t, retType.GetFlag(), cType.GetFlag())
 	require.Equal(t, lConvert, lCon)
 	require.Equal(t, rConvert, rCon)
-
 }
 
 func TestMPPJoinKeyTypeConvert(t *testing.T) {

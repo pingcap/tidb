@@ -48,8 +48,7 @@ import (
 )
 
 func TestCheckDBPrivilege(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER 'testcheck'@'localhost';`)
 	rootTk.MustExec(`CREATE USER 'testcheck_tmp'@'localhost';`)
@@ -77,8 +76,7 @@ func TestCheckDBPrivilege(t *testing.T) {
 }
 
 func TestCheckPointGetDBPrivilege(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER 'tester'@'localhost';`)
 	rootTk.MustExec(`GRANT SELECT,UPDATE ON test.* TO  'tester'@'localhost';`)
@@ -96,8 +94,7 @@ func TestCheckPointGetDBPrivilege(t *testing.T) {
 }
 
 func TestCheckExchangePartitionDBPrivilege(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	rootTk := testkit.NewTestKit(t, store)
 
 	rootTk.MustExec(`CREATE USER 'tester'@'localhost';`)
@@ -127,8 +124,7 @@ func TestCheckExchangePartitionDBPrivilege(t *testing.T) {
 }
 
 func TestIssue22946(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec("create database db1;")
 	rootTk.MustExec("create database db2;")
@@ -152,8 +148,7 @@ func TestIssue22946(t *testing.T) {
 }
 
 func TestCheckTablePrivilege(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER 'test1'@'localhost';`)
@@ -188,8 +183,7 @@ func TestCheckTablePrivilege(t *testing.T) {
 }
 
 func TestCheckViewPrivilege(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec("use test")
 	rootTk.MustExec(`CREATE USER 'vuser'@'localhost';`)
@@ -211,8 +205,7 @@ func TestCheckViewPrivilege(t *testing.T) {
 }
 
 func TestCheckPrivilegeWithRoles(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER 'test_role'@'localhost';`)
 	rootTk.MustExec(`CREATE ROLE r_1, r_2, r_3;`)
@@ -245,8 +238,7 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 }
 
 func TestShowGrants(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx, _ := tk.Session().(sessionctx.Context)
@@ -428,8 +420,7 @@ func TestShowGrants(t *testing.T) {
 // identity from mysql.user. In TiDB we now use the identity from mysql.user in error messages
 // for consistency.
 func TestErrorMessage(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER wildcard`)
@@ -450,8 +441,7 @@ func TestErrorMessage(t *testing.T) {
 }
 
 func TestShowColumnGrants(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`USE test`)
 	tk.MustExec(`CREATE USER 'column'@'%'`)
@@ -465,8 +455,7 @@ func TestShowColumnGrants(t *testing.T) {
 }
 
 func TestDropTablePrivileges(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -493,8 +482,7 @@ func TestDropTablePrivileges(t *testing.T) {
 }
 
 func TestSetPasswdStmt(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// high privileged user setting password for other user (passes)
@@ -513,8 +501,7 @@ func TestSetPasswdStmt(t *testing.T) {
 }
 
 func TestAlterUserStmt(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// high privileged user setting password for other user (passes)
@@ -613,8 +600,7 @@ func TestAlterUserStmt(t *testing.T) {
 }
 
 func TestSelectViewSecurity(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -640,8 +626,7 @@ func TestSelectViewSecurity(t *testing.T) {
 }
 
 func TestShowViewPriv(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`DROP VIEW IF EXISTS test.v`)
@@ -736,8 +721,7 @@ func TestShowViewPriv(t *testing.T) {
 }
 
 func TestRoleAdminSecurity(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'ar1'@'localhost';`)
@@ -758,8 +742,7 @@ func TestRoleAdminSecurity(t *testing.T) {
 }
 
 func TestCheckCertBasedAuth(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'r1'@'localhost';`)
@@ -979,7 +962,6 @@ func TestCheckCertBasedAuth(t *testing.T) {
 	// test old data and broken data
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "r12_old_tidb_user", Hostname: "localhost"}, nil, nil))
 	require.False(t, tk.Session().Auth(&auth.UserIdentity{Username: "r13_broken_user", Hostname: "localhost"}, nil, nil))
-
 }
 
 func connectionState(issuer, subject pkix.Name, cipher uint16, opt ...func(c *x509.Certificate)) *tls.ConnectionState {
@@ -994,8 +976,7 @@ func connectionState(issuer, subject pkix.Name, cipher uint16, opt ...func(c *x5
 }
 
 func TestCheckAuthenticate(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'u1'@'localhost';`)
@@ -1036,8 +1017,7 @@ func TestCheckAuthenticate(t *testing.T) {
 }
 
 func TestUseDB(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// high privileged user
@@ -1079,8 +1059,7 @@ func TestUseDB(t *testing.T) {
 }
 
 func TestRevokePrivileges(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER 'hasgrant'")
@@ -1105,8 +1084,7 @@ func TestRevokePrivileges(t *testing.T) {
 }
 
 func TestSetGlobal(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER setglobal_a@localhost`)
 	tk.MustExec(`CREATE USER setglobal_b@localhost`)
@@ -1121,8 +1099,7 @@ func TestSetGlobal(t *testing.T) {
 }
 
 func TestCreateDropUser(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER tcd1, tcd2`)
@@ -1149,8 +1126,7 @@ func TestCreateDropUser(t *testing.T) {
 }
 
 func TestConfigPrivilege(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`DROP USER IF EXISTS tcd1`)
@@ -1175,8 +1151,7 @@ func TestConfigPrivilege(t *testing.T) {
 }
 
 func TestShowCreateTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER tsct1, tsct2`)
@@ -1193,8 +1168,7 @@ func TestShowCreateTable(t *testing.T) {
 }
 
 func TestReplaceAndInsertOnDuplicate(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1236,8 +1210,7 @@ func TestReplaceAndInsertOnDuplicate(t *testing.T) {
 }
 
 func TestAnalyzeTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// high privileged user
@@ -1274,8 +1247,7 @@ func TestAnalyzeTable(t *testing.T) {
 }
 
 func TestSystemSchema(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
 	tk := testkit.NewTestKit(t, store)
@@ -1314,8 +1286,7 @@ func TestSystemSchema(t *testing.T) {
 }
 
 func TestPerformanceSchema(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
 	tk := testkit.NewTestKit(t, store)
@@ -1347,8 +1318,7 @@ func TestPerformanceSchema(t *testing.T) {
 }
 
 func TestMetricsSchema(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER nobody, msprocess, msselect")
@@ -1459,8 +1429,7 @@ func TestMetricsSchema(t *testing.T) {
 }
 
 func TestAdminCommand(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1481,8 +1450,7 @@ func TestAdminCommand(t *testing.T) {
 }
 
 func TestTableNotExistNoPermissions(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
@@ -1524,7 +1492,6 @@ func TestTableNotExistNoPermissions(t *testing.T) {
 		// Check it is permission denied, not not found.
 		require.EqualError(t, err2, fmt.Sprintf("[planner:1142]%s command denied to user 'testnotexist'@'localhost' for table 't1'", tt.stmtType))
 	}
-
 }
 
 func TestLoadDataPrivilege(t *testing.T) {
@@ -1540,8 +1507,7 @@ func TestLoadDataPrivilege(t *testing.T) {
 	_, err = fp.WriteString("1\n")
 	require.NoError(t, err)
 
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1569,8 +1535,7 @@ func TestLoadDataPrivilege(t *testing.T) {
 }
 
 func TestSelectIntoNoPermissions(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'nofile'@'localhost';`)
@@ -1581,8 +1546,7 @@ func TestSelectIntoNoPermissions(t *testing.T) {
 }
 
 func TestGetEncodedPassword(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
@@ -1591,8 +1555,7 @@ func TestGetEncodedPassword(t *testing.T) {
 }
 
 func TestAuthHost(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	rootTk := testkit.NewTestKit(t, store)
 	tk := testkit.NewTestKit(t, store)
@@ -1612,8 +1575,7 @@ func TestAuthHost(t *testing.T) {
 }
 
 func TestDefaultRoles(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER 'testdefault'@'localhost';`)
@@ -1636,8 +1598,7 @@ func TestDefaultRoles(t *testing.T) {
 }
 
 func TestUserTableConsistency(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewAsyncTestKit(t, store)
 	ctx := tk.OpenSession(context.Background(), "test")
@@ -1665,8 +1626,7 @@ func TestUserTableConsistency(t *testing.T) {
 }
 
 func TestFieldList(t *testing.T) { // Issue #14237 List fields RPC
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1679,8 +1639,7 @@ func TestFieldList(t *testing.T) { // Issue #14237 List fields RPC
 }
 
 func TestDynamicPrivs(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec("CREATE USER notsuper")
@@ -1725,8 +1684,7 @@ func TestDynamicPrivs(t *testing.T) {
 }
 
 func TestDynamicGrantOption(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec("CREATE USER varuser1")
@@ -1747,8 +1705,7 @@ func TestDynamicGrantOption(t *testing.T) {
 }
 
 func TestSecurityEnhancedModeRestrictedTables(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	// This provides an integration test of the tests in util/security/security_test.go
 	cloudAdminTK := testkit.NewTestKit(t, store)
@@ -1779,8 +1736,7 @@ func TestSecurityEnhancedModeRestrictedTables(t *testing.T) {
 }
 
 func TestSecurityEnhancedModeInfoschema(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("CREATE USER uroot1, uroot2, uroot3")
@@ -1812,8 +1768,7 @@ func TestSecurityEnhancedModeInfoschema(t *testing.T) {
 }
 
 func TestClusterConfigInfoschema(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER ccnobody, ccconfig, ccprocess")
@@ -1899,8 +1854,7 @@ func TestSecurityEnhancedModeStatusVars(t *testing.T) {
 	// So we can only test that the dynamic privilege is grantable.
 	// We will have to use an integration test to run SHOW STATUS LIKE 'tidb_gc_leader_desc'
 	// and verify if it appears.
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER unostatus, ustatus")
 	tk.MustExec("GRANT RESTRICTED_STATUS_ADMIN ON *.* to ustatus")
@@ -1908,12 +1862,10 @@ func TestSecurityEnhancedModeStatusVars(t *testing.T) {
 		Username: "unostatus",
 		Hostname: "localhost",
 	}, nil, nil)
-
 }
 
 func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER backuprestore")
@@ -1952,12 +1904,10 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 
 	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'HDFS:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
-
 }
 
 func TestRenameUser(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec("DROP USER IF EXISTS 'ru1'@'localhost'")
@@ -2016,8 +1966,7 @@ func TestRenameUser(t *testing.T) {
 }
 
 func TestSecurityEnhancedModeSysVars(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER svroot1, svroot2")
@@ -2081,8 +2030,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer
 // See: https://github.com/pingcap/tidb/issues/24414
 func TestViewDefiner(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE issue24414")
@@ -2110,8 +2058,7 @@ func TestViewDefiner(t *testing.T) {
 }
 
 func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3")
@@ -2158,8 +2105,7 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 }
 
 func TestDynamicPrivsRegistration(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	pm := privilege.GetPrivilegeManager(tk.Session())
@@ -2200,8 +2146,7 @@ func TestDynamicPrivsRegistration(t *testing.T) {
 func TestInfoSchemaUserPrivileges(t *testing.T) {
 	// Being able to read all privileges from information_schema.user_privileges requires a very specific set of permissions.
 	// SUPER user is not sufficient. It was observed in MySQL to require SELECT on mysql.*
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER isnobody, isroot, isselectonmysqluser, isselectonmysql")
@@ -2258,8 +2203,7 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 
 // Issues https://github.com/pingcap/tidb/issues/25972 and https://github.com/pingcap/tidb/issues/26451
 func TestGrantOptionAndRevoke(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP USER IF EXISTS u1, u2, u3, ruser")
@@ -2307,8 +2251,8 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 	))
 }
 
-func createStoreAndPrepareDB(t *testing.T) (kv.Storage, func()) {
-	store, clean := testkit.CreateMockStore(t)
+func createStoreAndPrepareDB(t *testing.T) kv.Storage {
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("create database if not exists test1")
@@ -2319,12 +2263,11 @@ func createStoreAndPrepareDB(t *testing.T) (kv.Storage, func()) {
 	tk.MustExec(session.CreateDBPrivTable)
 	tk.MustExec(session.CreateTablePrivTable)
 	tk.MustExec(session.CreateColumnPrivTable)
-	return store, clean
+	return store
 }
 
 func TestGrantReferences(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE SCHEMA reftestdb")
@@ -2348,8 +2291,7 @@ func TestGrantReferences(t *testing.T) {
 }
 
 func TestDashboardClientDynamicPriv(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE ROLE dc_r1")
@@ -2392,8 +2334,7 @@ func TestDashboardClientDynamicPriv(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/27213
 func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE ROLE tsg_r1")
@@ -2480,8 +2421,7 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 }
 
 func TestGrantLockTables(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE lock_tables_db")
@@ -2504,8 +2444,7 @@ func TestGrantLockTables(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/27560
 func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -2554,8 +2493,7 @@ func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 }
 
 func TestGrantPlacementAdminDynamicPriv(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE placement_db")
@@ -2576,8 +2514,7 @@ func TestGrantPlacementAdminDynamicPriv(t *testing.T) {
 }
 
 func TestPlacementPolicyStmt(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop placement policy if exists x")
 	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1\""
@@ -2601,20 +2538,17 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "placement_user", Hostname: "localhost"}, nil, nil))
 	tk.MustExec(createStmt)
 	tk.MustExec(dropStmt)
-
 }
 
 func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER test_user")
 	tk.MustExec("grant select on metrics_schema.up to test_user;")
 }
 
 func TestGrantCreateTmpTables(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE create_tmp_table_db")
@@ -2637,8 +2571,7 @@ func TestGrantCreateTmpTables(t *testing.T) {
 }
 
 func TestCreateTmpTablesPriv(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	createStmt := "CREATE TEMPORARY TABLE test.tmp(id int)"
 	dropStmt := "DROP TEMPORARY TABLE IF EXISTS test.tmp"
@@ -2779,7 +2712,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 			tk.MustGetErrCode(test.sql, test.errcode)
 		}
 	}
-
+	//nolint:revive,all_revive
 	// TODO: issue #29282 to be fixed.
 	//for i, test := range tests {
 	//	preparedStmt := fmt.Sprintf("prepare stmt%d from '%s'", i, test.sql)
@@ -2794,8 +2727,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 }
 
 func TestRevokeSecondSyntax(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().Auth(&auth.UserIdentity{
@@ -2810,8 +2742,7 @@ func TestRevokeSecondSyntax(t *testing.T) {
 }
 
 func TestGrantEvent(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE event_db")
@@ -2833,8 +2764,7 @@ func TestGrantEvent(t *testing.T) {
 }
 
 func TestGrantRoutine(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE routine_db")
@@ -2858,8 +2788,7 @@ func TestGrantRoutine(t *testing.T) {
 }
 
 func TestIssue28675(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`DROP VIEW IF EXISTS test.v`)
@@ -2888,8 +2817,7 @@ func TestSkipGrantTable(t *testing.T) {
 	config.UpdateGlobal(func(c *config.Config) { c.Security.SkipGrantTable = true })
 	defer config.StoreGlobalConfig(save)
 
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	// Issue 29317
 	tk := testkit.NewTestKit(t, store)
@@ -2926,8 +2854,7 @@ func TestSkipGrantTable(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/32891
 func TestIncorrectUsageDBGrant(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER ucorrect1, ucorrect2;`)
@@ -2941,8 +2868,7 @@ func TestIncorrectUsageDBGrant(t *testing.T) {
 }
 
 func TestIssue29823(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -420,9 +420,9 @@ func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
 	for _, server := range servers {
 		parts := strings.Split(server, ",")
 		serversInfo = append(serversInfo, infoschema.ServerInfo{
-			ServerType: parts[0],
-			Address:    parts[1],
 			StatusAddr: parts[2],
+			Address:    parts[1],
+			ServerType: parts[0],
 		})
 	}
 	return serversInfo
@@ -660,7 +660,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 	for e.heap.Len() > 0 && len(finalRows) < clusterLogBatchSize {
 		minTimeItem := heap.Pop(e.heap).(logStreamResult)
 		headMessage := minTimeItem.messages[0]
-		loggingTime := time.Unix(headMessage.Time/1000, (headMessage.Time%1000)*int64(time.Millisecond))
+		loggingTime := time.UnixMilli(headMessage.Time)
 		finalRows = append(finalRows, types.MakeDatums(
 			loggingTime.Format("2006/01/02 15:04:05.000"),
 			minTimeItem.typ,
@@ -817,7 +817,6 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 	pdServers []infoschema.ServerInfo,
 	req *HistoryHotRegionsRequest,
 ) ([]chan hotRegionsResult, error) {
-
 	var results []chan hotRegionsResult
 	for _, srv := range pdServers {
 		for typ := range e.extractor.HotRegionTypes {
@@ -942,13 +941,12 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	// Ignore row without corresponding schema.
 	if tableInfos, ok := regionsTableInfos[int64(hisHotRegion.RegionID)]; ok {
 		for _, tableInfo := range tableInfos {
-			updateTimestamp := time.Unix(hisHotRegion.UpdateTime/1000, (hisHotRegion.UpdateTime%1000)*int64(time.Millisecond))
+			updateTimestamp := time.UnixMilli(hisHotRegion.UpdateTime)
 			if updateTimestamp.Location() != tz {
 				updateTimestamp.In(tz)
 			}
 			updateTime := types.NewTime(types.FromGoTime(updateTimestamp), mysql.TypeTimestamp, types.MinFsp)
-			row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
-
+			row := make([]types.Datum, len(infoschema.GetTableTiDBHotRegionsHistoryCols()))
 			row[0].SetMysqlTime(updateTime)
 			row[1].SetString(strings.ToUpper(tableInfo.DB.Name.O), mysql.DefaultCollationName)
 			row[2].SetString(strings.ToUpper(tableInfo.Table.Name.O), mysql.DefaultCollationName)
@@ -1088,7 +1086,7 @@ func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(
 				continue
 			}
 
-			row := make([]types.Datum, len(infoschema.TableTiKVRegionPeersCols))
+			row := make([]types.Datum, len(infoschema.GetTableTiKVRegionPeersCols()))
 			row[0].SetInt64(region.ID)
 			row[1].SetInt64(peer.ID)
 			row[2].SetInt64(peer.StoreID)

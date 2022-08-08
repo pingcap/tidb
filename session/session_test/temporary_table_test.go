@@ -31,8 +31,7 @@ import (
 )
 
 func TestLocalTemporaryTableInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -87,8 +86,7 @@ func TestLocalTemporaryTableInsert(t *testing.T) {
 }
 
 func TestLocalTemporaryTableUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -281,8 +279,7 @@ func TestLocalTemporaryTableUpdate(t *testing.T) {
 func TestTemporaryTableSize(t *testing.T) {
 	// Test the @@tidb_tmp_table_max_size system variable.
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -328,8 +325,7 @@ func TestTemporaryTableSize(t *testing.T) {
 }
 
 func TestGlobalTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -355,9 +351,10 @@ func TestGlobalTemporaryTable(t *testing.T) {
 }
 
 func TestRetryGlobalTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists normal_table")
@@ -403,9 +400,10 @@ func TestRetryGlobalTemporaryTable(t *testing.T) {
 }
 
 func TestRetryLocalTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists normal_table")

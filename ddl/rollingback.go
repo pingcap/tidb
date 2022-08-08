@@ -30,7 +30,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func updateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+// UpdateColsNull2NotNull changes the null option of columns of an index.
+func UpdateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	nullCols, err := getNullColInfos(tblInfo, indexInfo)
 	if err != nil {
 		return errors.Trace(err)

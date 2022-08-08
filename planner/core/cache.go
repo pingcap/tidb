@@ -15,8 +15,8 @@
 package core
 
 import (
-	"bytes"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,20 +39,8 @@ var (
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
 
-// SetPreparedPlanCache sets isEnabled to true, then prepared plan cache is enabled.
-// FIXME: leave it for test, remove it after implementing session-level plan-cache variables.
-func SetPreparedPlanCache(isEnabled bool) {
-	variable.EnablePreparedPlanCache.Store(isEnabled) // only for test
-}
-
-// PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
-// FIXME: leave it for test, remove it after implementing session-level plan-cache variables.
-func PreparedPlanCacheEnabled() bool {
-	return variable.EnablePreparedPlanCache.Load()
-}
-
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
-// Put the parameters that may affect the plan in planCacheValue, such as bindSQL.
+// Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
 // At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
 type planCacheKey struct {
@@ -70,6 +58,10 @@ type planCacheKey struct {
 	timezoneOffset           int
 	isolationReadEngines     map[kv.StoreType]struct{}
 	selectLimit              uint64
+	bindSQL                  string
+	inRestrictedSQL          bool
+	restrictedReadOnly       bool
+	TiDBSuperReadOnly        bool
 
 	hash []byte
 }
@@ -101,6 +93,10 @@ func (key *planCacheKey) Hash() []byte {
 			key.hash = append(key.hash, kv.TiFlash.Name()...)
 		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
+		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 	}
 	return key.hash
 }
@@ -125,7 +121,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64) (kvcache.Key, error) {
+	lastUpdatedSchemaVersion int64, bindSQL string) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -149,6 +145,10 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		timezoneOffset:           timezoneOffset,
 		isolationReadEngines:     make(map[kv.StoreType]struct{}),
 		selectLimit:              sessionVars.SelectLimit,
+		bindSQL:                  bindSQL,
+		inRestrictedSQL:          sessionVars.InRestrictedSQL,
+		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
+		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -193,22 +193,16 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	TxtVarTypes       FieldSlice // variable types under text protocol
-	BinVarTypes       []byte     // variable types under binary protocol
-	IsBinProto        bool       // whether this plan is under binary protocol
-	BindSQL           string
+	TxtVarTypes       FieldSlice
 }
 
-func (v *PlanCacheValue) varTypesUnchanged(binVarTps []byte, txtVarTps []*types.FieldType) bool {
-	if v.IsBinProto {
-		return bytes.Equal(v.BinVarTypes, binVarTps)
-	}
+func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
 	return v.TxtVarTypes.CheckTypesCompatibility4PC(txtVarTps)
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	isBinProto bool, binVarTypes []byte, txtVarTps []*types.FieldType, bindSQL string) *PlanCacheValue {
+	txtVarTps []*types.FieldType) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -222,9 +216,6 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
 		TxtVarTypes:       userVarTypes,
-		BinVarTypes:       binVarTypes,
-		IsBinProto:        isBinProto,
-		BindSQL:           bindSQL,
 	}
 }
 
