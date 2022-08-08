@@ -1112,8 +1112,7 @@ func TestIssue27532(t *testing.T) {
 }
 
 func TestRangeColumnsMultiColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database RangeColumnsMulti")
@@ -1255,8 +1254,7 @@ func TestRangeColumnsMultiColumn(t *testing.T) {
 }
 
 func TestRangeColumnsTemp(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database RColumnsMulti")
