@@ -57,8 +57,11 @@ type baseTxnContextProvider struct {
 	infoSchema      infoschema.InfoSchema
 	txn             kv.Transaction
 	isTxnPrepared   bool
-	constStartTS    uint64
 	enterNewTxnType sessiontxn.EnterNewTxnType
+	// constStartTS is only used by point get max ts optimization currently.
+	// When constStartTS != 0, we use constStartTS directly without fetching it from tso.
+	// To save the cpu cycles `PrepareTSFuture` will also not be called when warmup (postpone to activate txn).
+	constStartTS uint64
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
