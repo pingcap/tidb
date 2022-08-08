@@ -17,7 +17,6 @@ package planner
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"math"
 	"math/rand"
 	"strings"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/topsql"
+	"go.uber.org/zap"
 )
 
 // IsReadOnly check whether the ast.Node is a read only statement.

@@ -1550,6 +1550,7 @@ func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
 		p.err = err
 		return
 	}
+
 	if p.err = p.staleReadProcessor.OnExecutePreparedStmt(prepared.SnapshotTSEvaluator); p.err == nil {
 		if p.err = p.updateStateFromStaleReadProcessor(); p.err != nil {
 			return
