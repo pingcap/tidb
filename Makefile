@@ -385,47 +385,43 @@ dumpling_bins:
 generate_grafana_scripts:
 	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
 
-bazel_ci_prepare:
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
-
 bazel_prepare:
-	bazel run //:gazelle
+	bazel $(BAZEL_LOCAL_CACHE) run $(BAZEL_CMD_CONFIG) //:gazelle
 
-bazel_test: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
+bazel_test: failpoint-enable bazel_prepare
+	bazel $(BAZEL_LOCAL_CACHE) test $(BAZEL_CMD_CONFIG) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
-
-bazel_coverage_test: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
+bazel_coverage_test: failpoint-enable bazel_prepare
+	bazel $(BAZEL_LOCAL_CACHE) coverage $(BAZEL_CMD_CONFIG) \
 		--build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
+	bazel $(BAZEL_LOCAL_CACHE) coverage $(BAZEL_CMD_CONFIG) \
 		--build_event_json_file=bazel_2.json --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=featuretag \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
-bazel_all_build: bazel_ci_prepare
+bazel_all_build: bazel_prepare
 	mkdir -p bin
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+	bazel $(BAZEL_LOCAL_CACHE) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=true
 
-bazel_build: bazel_ci_prepare
+bazel_build: bazel_prepare
 	mkdir -p bin
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+	bazel $(BAZEL_LOCAL_CACHE) build $(BAZEL_CMD_CONFIG) \
 		//cmd/importer:importer //tidb-server:tidb-server //tidb-server:tidb-server-check --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
 
-bazel_fail_build:  failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+bazel_fail_build:  failpoint-enable bazel_prepare
+	bazel $(BAZEL_LOCAL_CACHE) build $(BAZEL_CMD_CONFIG) \
 		//...
 
 bazel_clean:
-	bazel $(BAZEL_GLOBAL_CONFIG) clean
+	bazel $(BAZEL_LOCAL_CACHE) clean
 
 bazel_junit:
 	bazel_collect
@@ -433,7 +429,7 @@ bazel_junit:
 	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
 
 bazel_golangcilinter:
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
+	bazel $(BAZEL_LOCAL_CACHE) run $(BAZEL_CMD_CONFIG) \
 		--run_under="cd $(CURDIR) && " \
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
 	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml
