@@ -2,6 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "session_test_test",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "session_test.go",
@@ -13,6 +14,7 @@ go_test(
         "//config",
         "//domain",
         "//errno",
+        "//expression",
         "//kv",
         "//parser/ast",
         "//parser/auth",

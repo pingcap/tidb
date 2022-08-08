@@ -101,11 +101,11 @@ type mockGCWorkerSuite struct {
 	}
 }
 
-func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite, clean func()) {
+func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite) {
 	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore)
 }
 
-func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType) (s *mockGCWorkerSuite, clean func()) {
+func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType) (s *mockGCWorkerSuite) {
 	s = new(mockGCWorkerSuite)
 	hijackClient := func(client tikv.Client) tikv.Client {
 		s.client = &mockGCWorkerClient{Client: client}
@@ -130,7 +130,7 @@ func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreTyp
 	require.NoError(t, err)
 	store.GetOracle().Close()
 	store.(tikv.Storage).SetOracle(s.oracle)
-	dom, clean := bootstrap(t, store, 0)
+	dom := bootstrap(t, store, 0)
 	s.store, s.dom = store, dom
 
 	s.tikvStore = s.store.(tikv.Storage)
@@ -256,8 +256,7 @@ func timeEqual(t *testing.T, t1, t2 time.Time, epsilon time.Duration) {
 }
 
 func TestGetOracleTime(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	t1, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
@@ -270,8 +269,7 @@ func TestGetOracleTime(t *testing.T) {
 }
 
 func TestGetLowResolveTS(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	lowResolveTS, err := s.gcWorker.getTryResolveLocksTS()
 	require.NoError(t, err)
@@ -281,8 +279,7 @@ func TestGetLowResolveTS(t *testing.T) {
 }
 
 func TestMinStartTS(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	ctx := context.Background()
 	spkv := s.tikvStore.GetSafePointKV()
@@ -312,8 +309,7 @@ func TestMinStartTS(t *testing.T) {
 }
 
 func TestPrepareGC(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	now, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
@@ -441,8 +437,7 @@ func TestPrepareGC(t *testing.T) {
 }
 
 func TestStatusVars(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	// Status variables should now exist for:
 	// tidb_gc_safe_point, tidb_gc_last_run_time
@@ -464,8 +459,7 @@ func TestStatusVars(t *testing.T) {
 }
 
 func TestDoGCForOneRegion(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	ctx := context.Background()
 	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
@@ -499,8 +493,7 @@ func TestDoGCForOneRegion(t *testing.T) {
 }
 
 func TestGetGCConcurrency(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	// Pick a concurrency that doesn't equal to the number of stores.
 	concurrencyConfig := 25
@@ -524,8 +517,7 @@ func TestGetGCConcurrency(t *testing.T) {
 }
 
 func TestDoGC(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	ctx := context.Background()
 	gcSafePointCacheInterval = 1
@@ -547,8 +539,7 @@ func TestDoGC(t *testing.T) {
 }
 
 func TestCheckGCMode(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	require.True(t, useDistributedGC)
@@ -576,8 +567,7 @@ func TestCheckGCMode(t *testing.T) {
 }
 
 func TestCheckScanLockMode(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
 	require.NoError(t, err)
@@ -657,8 +647,7 @@ func TestDeleteRangesFailure(t *testing.T) {
 		{"failErrResp", failErrResp},
 	}
 
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -825,8 +814,7 @@ Loop:
 }
 
 func TestLeaderTick(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	gcSafePointCacheInterval = 0
 
@@ -917,8 +905,7 @@ func TestLeaderTick(t *testing.T) {
 }
 
 func TestResolveLockRangeInfine(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	require.NoError(t, failpoint.Enable("tikvclient/invalidCacheAndRetry", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff", "return(1)"))
@@ -932,8 +919,7 @@ func TestResolveLockRangeInfine(t *testing.T) {
 }
 
 func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	var (
 		scanCnt       int
@@ -1036,8 +1022,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/DisablePaging"))
 	}()
-	s, clean := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV)
-	defer clean()
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV)
 
 	var (
 		firstAccess    = true
@@ -1118,8 +1103,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 }
 
 func TestRunGCJob(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	gcSafePointCacheInterval = 0
 
@@ -1157,8 +1141,7 @@ func TestRunGCJob(t *testing.T) {
 }
 
 func TestSetServiceSafePoint(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	// SafePoint calculations are based on time rather than ts value.
 	safePoint := s.mustAllocTs(t)
@@ -1198,8 +1181,7 @@ func TestSetServiceSafePoint(t *testing.T) {
 }
 
 func TestRunGCJobAPI(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	gcSafePointCacheInterval = 0
 
@@ -1214,8 +1196,7 @@ func TestRunGCJobAPI(t *testing.T) {
 }
 
 func TestRunDistGCJobAPI(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	gcSafePointCacheInterval = 0
 
@@ -1230,8 +1211,7 @@ func TestRunDistGCJobAPI(t *testing.T) {
 }
 
 func TestStartWithRunGCJobFailures(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	s.gcWorker.Start()
 	defer s.gcWorker.Close()
@@ -1352,8 +1332,7 @@ func (s *mockGCWorkerSuite) makeMergedMockClient(t *testing.T, count int) (*merg
 }
 
 func TestMergeLockScanner(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	// Shortcuts to make the following test code simpler
 
@@ -1448,7 +1427,7 @@ func TestMergeLockScanner(t *testing.T) {
 
 	for _, useMock := range []bool{false, true} {
 		channel := makeMergedChannel
-		if useMock == true {
+		if useMock {
 			channel = s.makeMergedMockClient
 		}
 
@@ -1512,8 +1491,7 @@ func TestMergeLockScanner(t *testing.T) {
 }
 
 func TestResolveLocksPhysical(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	alwaysSucceedHandler := func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		switch req.Type {
@@ -1703,8 +1681,7 @@ func TestResolveLocksPhysical(t *testing.T) {
 }
 
 func TestPhysicalScanLockDeadlock(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	ctx := gcContext()
 	stores := s.cluster.GetAllStores()
@@ -1750,8 +1727,7 @@ func TestPhysicalScanLockDeadlock(t *testing.T) {
 }
 
 func TestGCPlacementRules(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC", "return(10)"))
 	defer func() {
@@ -1804,8 +1780,7 @@ func TestGCPlacementRules(t *testing.T) {
 }
 
 func TestGCLabelRules(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"))
 	defer func() {
@@ -1818,8 +1793,7 @@ func TestGCLabelRules(t *testing.T) {
 }
 
 func TestGCWithPendingTxn(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
-	defer clean()
+	s := createGCWorkerSuite(t)
 	// set to false gc worker won't resolve locks after safepoint.
 	s.gcWorker.logBackupEnabled = false
 
@@ -1872,10 +1846,9 @@ func TestGCWithPendingTxn(t *testing.T) {
 }
 
 func TestGCWithPendingTxn2(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
+	s := createGCWorkerSuite(t)
 	// only when log backup enabled will scan locks after safepoint.
 	s.gcWorker.logBackupEnabled = true
-	defer clean()
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -1945,10 +1918,9 @@ func TestGCWithPendingTxn2(t *testing.T) {
 }
 
 func TestSkipGCAndOnlyResolveLock(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
+	s := createGCWorkerSuite(t)
 	// only when log backup enabled will scan locks after safepoint.
 	s.gcWorker.logBackupEnabled = true
-	defer clean()
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -2003,7 +1975,7 @@ func TestSkipGCAndOnlyResolveLock(t *testing.T) {
 	require.Equal(t, last.Unix(), lastRunTime.Unix())
 }
 
-func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) (*domain.Domain, func()) {
+func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(store)
@@ -2011,10 +1983,10 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) (*domain.Dom
 
 	dom.SetStatsUpdating(true)
 
-	clean := func() {
+	t.Cleanup(func() {
 		dom.Close()
 		err := store.Close()
 		require.NoError(t, err)
-	}
-	return dom, clean
+	})
+	return dom
 }

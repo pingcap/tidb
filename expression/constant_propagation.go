@@ -499,7 +499,6 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 		}
 	}
 	return nil, nil
-
 }
 
 // deriveConds given `outerCol = innerCol`, derive new expression for specified conditions.

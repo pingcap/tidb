@@ -227,7 +227,6 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 					}
 				}
 			}
-
 		}
 		return nil
 	})
@@ -616,6 +615,10 @@ rowLoop:
 		return errors.Annotatef(err, "[%s] batch write rows reach max retry %d and still failed", tableName, writeRowsMaxRetryTimes)
 	}
 	return nil
+}
+
+func (be *tidbBackend) TotalMemoryConsume() int64 {
+	return 0
 }
 
 type stmtTask struct {
