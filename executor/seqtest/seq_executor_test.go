@@ -60,11 +60,10 @@ import (
 
 func TestEarlyClose(t *testing.T) {
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -128,8 +127,7 @@ func (s stats) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
 }
 
 func TestShow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -283,7 +281,7 @@ func TestShow(t *testing.T) {
 		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
 		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
 		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|`id` * 2 + 1|NO",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>||BTREE| |YES|`id` * 2 + 1|NO",
 	))
 
 	// For show like with escape
@@ -608,8 +606,7 @@ func TestShow(t *testing.T) {
 }
 
 func TestShowStatsHealthy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -643,8 +640,7 @@ func TestShowStatsHealthy(t *testing.T) {
 // TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
 // leak. For testing distsql with multiple regions, we need to manually split a mock TiKV.
 func TestIndexDoubleReadClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	if _, ok := store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
@@ -680,8 +676,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 // TestIndexMergeReaderClose checks that when a partial index worker failed to start, the goroutine doesn't
 // leak.
 func TestIndexMergeReaderClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -699,8 +694,7 @@ func TestIndexMergeReaderClose(t *testing.T) {
 }
 
 func TestParallelHashAggClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -727,8 +721,7 @@ func TestParallelHashAggClose(t *testing.T) {
 }
 
 func TestUnparallelHashAggClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -761,8 +754,7 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func TestAdminShowNextID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	HelperTestAdminShowNextID(t, store, `admin show `)
 	HelperTestAdminShowNextID(t, store, `show table `)
@@ -856,8 +848,7 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 }
 
 func TestNoHistoryWhenDisableRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -898,8 +889,7 @@ func TestNoHistoryWhenDisableRetry(t *testing.T) {
 }
 
 func TestPrepareMaxParamCountCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -926,8 +916,7 @@ func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
 }
 
 func TestCartesianProduct(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -944,8 +933,7 @@ func TestCartesianProduct(t *testing.T) {
 }
 
 func TestBatchInsertDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	defer func() {
@@ -1112,11 +1100,10 @@ func (c *checkPrioClient) SendRequest(ctx context.Context, addr string, req *tik
 
 func TestCoprocessorPriority(t *testing.T) {
 	cli := &checkPrioClient{}
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
+	store := testkit.CreateMockStore(t, mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
 		cli.Client = c
 		return cli
 	}))
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1202,8 +1189,7 @@ func TestCoprocessorPriority(t *testing.T) {
 }
 
 func TestShowForNewCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	expectRows := testkit.Rows(
@@ -1224,8 +1210,7 @@ func TestShowForNewCollations(t *testing.T) {
 }
 
 func TestForbidUnsupportedCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	mustGetUnsupportedCollation := func(sql string, coll string) {
@@ -1244,8 +1229,7 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 }
 
 func TestAutoIncIDInRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -1269,8 +1253,7 @@ func TestAutoIncIDInRetry(t *testing.T) {
 }
 
 func TestPessimisticConflictRetryAutoID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1306,8 +1289,7 @@ func TestPessimisticConflictRetryAutoID(t *testing.T) {
 }
 
 func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1358,8 +1340,7 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 }
 
 func TestAutoRandIDRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
@@ -1406,8 +1387,7 @@ func TestAutoRandIDRetry(t *testing.T) {
 }
 
 func TestAutoRandRecoverTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
@@ -1458,8 +1438,7 @@ func TestAutoRandRecoverTable(t *testing.T) {
 }
 
 func TestMaxDeltaSchemaCount(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1487,8 +1466,7 @@ func TestMaxDeltaSchemaCount(t *testing.T) {
 }
 
 func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1505,8 +1483,7 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 }
 
 func TestIssue18744(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1555,8 +1532,7 @@ func TestIssue18744(t *testing.T) {
 }
 
 func TestIssue19410(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1580,8 +1556,7 @@ func TestIssue19410(t *testing.T) {
 }
 
 func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

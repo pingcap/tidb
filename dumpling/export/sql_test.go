@@ -425,7 +425,6 @@ func TestShowCreatePolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1", createPolicySQL)
 	require.NoError(t, mock.ExpectationsWereMet())
-
 }
 
 func TestListPolicyNames(t *testing.T) {

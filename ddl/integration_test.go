@@ -25,8 +25,7 @@ import (
 )
 
 func TestDefaultValueIsBinaryString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tests := []struct {
 		colTp  string
 		defVal string
@@ -62,8 +61,7 @@ func TestDefaultValueIsBinaryString(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/30740.
 func TestDefaultValueInEnum(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	// The value 0x91 should not cause panic.
@@ -84,8 +82,7 @@ func TestDefaultValueInEnum(t *testing.T) {
 }
 
 func TestDDLStatementsBackFill(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	needReorg := false
@@ -119,8 +116,7 @@ func TestDDLStatementsBackFill(t *testing.T) {
 }
 
 func TestDDLOnCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tests := []struct {
 		sql    string
 		result string

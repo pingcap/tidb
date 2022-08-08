@@ -29,8 +29,7 @@ import (
 )
 
 func TestGroupNDVs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -50,7 +49,7 @@ func TestGroupNDVs(t *testing.T) {
 		JoinInput string
 	}
 	statsSuiteData := core.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
@@ -121,8 +120,7 @@ func TestGroupNDVs(t *testing.T) {
 }
 
 func TestNDVGroupCols(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -142,7 +140,7 @@ func TestNDVGroupCols(t *testing.T) {
 		Plan []string
 	}
 	statsSuiteData := core.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

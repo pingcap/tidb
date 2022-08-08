@@ -553,7 +553,6 @@ func createTestDB(dbPath, LogPath string) (*badger.DB, error) {
 }
 
 func BenchmarkExecutors(b *testing.B) {
-
 	prepare := func(rows, limit int) (dagReq *tipb.DAGRequest, dagCtx *dagContext, clean func() error) {
 		data, err := prepareTestTableData(rows, tableID)
 		if err != nil {

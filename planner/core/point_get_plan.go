@@ -740,7 +740,6 @@ func newBatchPointGetPlan(
 				pos2PartitionDefinition[pos] = tmpPartitionDefinition
 			}
 		}
-
 	}
 
 	posArr := make([]int, len(pos2PartitionDefinition))

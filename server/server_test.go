@@ -1873,7 +1873,6 @@ func (cli *testServerClient) runTestStatusAPI(t *testing.T) {
 
 func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "FailedMultiStatements", func(dbt *testkit.DBTestKit) {
-
 		// Default is now OFF in new installations.
 		// It is still WARN in upgrade installations (for now)
 		_, err := dbt.GetDB().Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
@@ -1934,7 +1933,6 @@ func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 }
 
 func (cli *testServerClient) runTestMultiStatements(t *testing.T) {
-
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.Params["multiStatements"] = "true"
 	}, "MultiStatements", func(dbt *testkit.DBTestKit) {
@@ -2167,7 +2165,6 @@ func (cli *testServerClient) waitUntilServerOnline() {
 }
 
 func (cli *testServerClient) runTestInitConnect(t *testing.T) {
-
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());SET @a=1;"`)
 		dbt.MustExec(`CREATE USER init_nonsuper`)
@@ -2201,8 +2198,6 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "", a)
 		require.NoError(t, rows.Close())
-		// change the init-connect to invalid.
-		dbt.MustExec(`SET GLOBAL init_connect="invalidstring"`)
 	})
 	// set global init_connect to empty to avoid fail other tests
 	defer cli.runTests(t, func(config *mysql.Config) {
@@ -2215,17 +2210,14 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "init_nonsuper"
 	}))
-	require.NoError(t, err)      // doesn't fail because of lazy loading
-	defer db.Close()             // may already be closed
-	_, err = db.Exec("SELECT 1") // fails because of init sql
-	require.Error(t, err)
+	require.NoError(t, err) // doesn't fail because of lazy loading
+	defer db.Close()        // may already be closed
 }
 
 // Client errors are only incremented when using the TiDB Server protocol,
 // and not internal SQL statements. Thus, this test is in the server-test suite.
 func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "clientErrors", func(dbt *testkit.DBTestKit) {
-
 		clientErrors := []struct {
 			stmt              string
 			incrementWarnings bool
@@ -2255,7 +2247,6 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 
 		for _, test := range clientErrors {
 			for _, tbl := range sources {
-
 				var errors, warnings int
 				rows := dbt.MustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
 				if rows.Next() {
@@ -2290,6 +2281,5 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 				require.Equalf(t, warnings, newWarnings, "source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt)
 			}
 		}
-
 	})
 }
