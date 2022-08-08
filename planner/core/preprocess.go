@@ -1545,7 +1545,7 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 }
 
 func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
-	prepared, err := GetAndFillPreparedStmt(node, p.ctx.GetSessionVars())
+	prepared, err := GetPreparedStmt(node, p.ctx.GetSessionVars())
 	if err != nil {
 		p.err = err
 		return

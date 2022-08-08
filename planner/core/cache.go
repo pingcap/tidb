@@ -243,8 +243,8 @@ type CachedPrepareStmt struct {
 	StmtText string
 }
 
-// GetAndFillPreparedStmt extract the prepared statement from the execute statement.
-func GetAndFillPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
+// GetPreparedStmt extract the prepared statement from the execute statement.
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
 	if stmt.PrepStmt != nil {
 		return stmt.PrepStmt.(*CachedPrepareStmt), nil
 	}

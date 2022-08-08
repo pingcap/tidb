@@ -803,7 +803,7 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (Pla
 		vars = append(vars, newExpr)
 	}
 
-	prepStmt, err := GetAndFillPreparedStmt(v, b.ctx.GetSessionVars())
+	prepStmt, err := GetPreparedStmt(v, b.ctx.GetSessionVars())
 	if err != nil {
 		return nil, err
 	}

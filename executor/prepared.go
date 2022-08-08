@@ -342,7 +342,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		OutputNames: names,
 		Ti:          &TelemetryInfo{},
 	}
-	preparedObj, err := plannercore.GetAndFillPreparedStmt(execStmt, sctx.GetSessionVars())
+	preparedObj, err := plannercore.GetPreparedStmt(execStmt, sctx.GetSessionVars())
 	if err != nil {
 		return nil, err
 	}
