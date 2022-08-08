@@ -243,6 +243,6 @@ replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.
 
 replace honnef.co/go/tools => honnef.co/go/tools v0.3.3
 
-replace github.com/pingcap/kvproto => github.com/MyonKeminta/kvproto v0.0.0-20220802090504-c8c6d3148d2a
+replace github.com/pingcap/kvproto => github.com/MyonKeminta/kvproto v0.0.0-20220805090053-b775fa82ee6f
 
-replace github.com/tikv/client-go/v2 => github.com/MyonKeminta/client-go/v2 v2.0.0-20220804115852-8dafa312c734
+replace github.com/tikv/client-go/v2 => github.com/MyonKeminta/client-go/v2 v2.0.0-20220805150520-fe6ebca4c9a0
