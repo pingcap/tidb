@@ -61,6 +61,8 @@ type SchemasReplace struct {
 	genGenGlobalIDs           func(ctx context.Context, n int) ([]int64, error)
 	insertDeleteRangeForTable func(jobID int64, tableIDs []int64)
 	insertDeleteRangeForIndex func(jobID int64, elementID *int64, tableID int64, indexIDs []int64)
+
+	OnNewTableInfo func(ctx context.Context, tableInfo *model.TableInfo) error
 }
 
 // NewTableReplace creates a TableReplace struct.
@@ -279,9 +281,6 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 		newTableInfo.Partition = tableInfo.Partition.Clone()
 	}
 	newTableInfo.ID = tableReplace.NewTableID
-	// Do not restore tiflash replica to down-stream.
-	//After restore meta finished, restore tiflash replica by DDL.
-	newTableInfo.TiFlashReplica = nil
 
 	// update partition table ID
 	partitions := newTableInfo.GetPartitionInfo()
@@ -301,6 +300,13 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 				zap.String("partition-name", tbl.Name.String()),
 				zap.Int64("old-id", tbl.ID), zap.Int64("new-id", newID))
 			partitions.Definitions[i].ID = newID
+		}
+	}
+
+	if sr.OnNewTableInfo != nil {
+		err := sr.OnNewTableInfo(context.TODO(), newTableInfo)
+		if err != nil {
+			return nil, false, errors.Annotatef(err, "failed when calling the hook function of table %s", newTableInfo.Name)
 		}
 	}
 

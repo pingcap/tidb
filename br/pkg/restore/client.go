@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -1630,20 +1631,27 @@ func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
 	return rc.rebasedTablesMap
 }
 
+func (rc *Client) getTiFlashNodeCount(ctx context.Context) (uint64, error) {
+	tiFlashStores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.TiFlashOnly)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return uint64(len(tiFlashStores)), nil
+}
+
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
 func (rc *Client) PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	tables []*metautil.Table,
 	skipTiflash bool,
 ) error {
-	tiFlashStores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.TiFlashOnly)
+	tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	tiFlashStoreCount := len(tiFlashStores)
 	for _, table := range tables {
 		if skipTiflash ||
-			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount)) {
+			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > tiFlashStoreCount) {
 			// we cannot satisfy TiFlash replica in restore cluster. so we should
 			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
 			// see details at https://github.com/pingcap/br/issues/931
@@ -1993,7 +2001,36 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		}()...)
 	}
 
-	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs, rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex), nil
+	rp := stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs, rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
+	rp.OnNewTableInfo = rc.updatePlacementRuleForTiFlash
+	return rp, nil
+}
+
+func (rc *Client) updatePlacementRuleForTiFlash(ctx context.Context, tableInfo *model.TableInfo) error {
+	// NOTE: This (magical) implementation can keep consistency with full restore,
+	// 		 however we may query PD for each table we restored. Maybe we can cache the tiflash count?
+	if err := rc.PreCheckTableTiFlashReplica(ctx, []*metautil.Table{{Info: tableInfo}}, false); err != nil {
+		return err
+	}
+	replicaInfo := tableInfo.TiFlashReplica
+	if replicaInfo == nil {
+		return nil
+	}
+	if pi := tableInfo.GetPartitionInfo(); pi != nil {
+		if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.LocationLabels, tableInfo.ID); e != nil {
+			return errors.Annotatef(e, "failed to add tiflash replica for partition")
+		}
+		// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
+		if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.LocationLabels, tableInfo.ID); e != nil {
+			return errors.Annotatef(e, "failed to add tiflash replica for new partition")
+		}
+	} else {
+		if e := infosync.ConfigureTiFlashPDForTable(tableInfo.ID, replicaInfo.Count, &replicaInfo.LocationLabels); e != nil {
+			return errors.Annotatef(e, "failed to add tiflash replica for table %s", tableInfo.Name)
+		}
+	}
+
+	return nil
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.

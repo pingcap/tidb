@@ -103,6 +103,14 @@ func TestRewriteValueForTable(t *testing.T) {
 	require.Nil(t, err)
 
 	sr := MockEmptySchemasReplace(nil)
+	tableCount := 0
+	sr.OnNewTableInfo = func(ctx context.Context, tableInfo *model.TableInfo) error {
+		tableCount++
+		tableInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count: 1,
+		}
+		return nil
+	}
 	newValue, needRewrite, err := sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)
 	require.True(t, needRewrite)
@@ -110,6 +118,7 @@ func TestRewriteValueForTable(t *testing.T) {
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
+	require.EqualValues(t, tableInfo.TiFlashReplica.Count, 1)
 
 	newID := sr.DbMap[dbId].TableMap[tableID].NewTableID
 	newValue, needRewrite, err = sr.rewriteTableInfo(value, dbId)
@@ -120,6 +129,7 @@ func TestRewriteValueForTable(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
 	require.Equal(t, newID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
+	require.EqualValues(t, tableCount, 2)
 }
 
 func TestRewriteValueForPartitionTable(t *testing.T) {
