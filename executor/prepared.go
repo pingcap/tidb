@@ -342,9 +342,9 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		OutputNames: names,
 		Ti:          &TelemetryInfo{},
 	}
-	preparedObj, ok := execStmt.PrepStmt.(*plannercore.CachedPrepareStmt)
-	if !ok {
-		return nil, errors.Errorf("invalid CachedPrepareStmt type")
+	preparedObj, err := plannercore.GetAndFillPreparedStmt(execStmt, sctx.GetSessionVars())
+	if err != nil {
+		return nil, err
 	}
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmt.Text = preparedObj.PreparedAst.Stmt.Text()

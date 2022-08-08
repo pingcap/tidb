@@ -17,6 +17,7 @@ package planner
 import (
 	"context"
 	"fmt"
+	"go.uber.org/zap"
 	"math"
 	"math/rand"
 	"strings"
@@ -49,7 +50,12 @@ import (
 // IsReadOnly check whether the ast.Node is a read only statement.
 func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-		return ast.IsReadOnly(execStmt.PrepStmt.(*core.CachedPrepareStmt).PreparedAst.Stmt)
+		prepareStmt, err := core.GetAndFillPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt)
 	}
 	return ast.IsReadOnly(node)
 }

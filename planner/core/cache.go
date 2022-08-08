@@ -242,3 +242,19 @@ type CachedPrepareStmt struct {
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
 }
+
+// GetAndFillPreparedStmt extract the prepared statement from the execute statement.
+func GetAndFillPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
+	if stmt.PrepStmt != nil {
+		return stmt.PrepStmt.(*CachedPrepareStmt), nil
+	}
+	if stmt.Name != "" {
+		prepStmt, err := vars.GetPreparedStmtByName(stmt.Name)
+		if err != nil {
+			return nil, err
+		}
+		stmt.PrepStmt = prepStmt
+		return prepStmt.(*CachedPrepareStmt), nil
+	}
+	return nil, ErrStmtNotFound
+}

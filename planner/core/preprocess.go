@@ -1545,7 +1545,11 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 }
 
 func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
-	prepared := node.PrepStmt.(*CachedPrepareStmt)
+	prepared, err := GetAndFillPreparedStmt(node, p.ctx.GetSessionVars())
+	if err != nil {
+		p.err = err
+		return
+	}
 	if p.err = p.staleReadProcessor.OnExecutePreparedStmt(prepared.SnapshotTSEvaluator); p.err == nil {
 		if p.err = p.updateStateFromStaleReadProcessor(); p.err != nil {
 			return
