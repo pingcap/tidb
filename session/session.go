@@ -338,7 +338,7 @@ func (s *session) cleanRetryInfo() {
 		return
 	}
 
-	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
+	planCacheEnabled := s.GetSessionVars().EnablePreparedPlanCache
 	var cacheKey kvcache.Key
 	var err error
 	var preparedAst *ast.Prepared
@@ -426,6 +426,13 @@ func (s *session) SetCollation(coID int) error {
 }
 
 func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
+	if !s.GetSessionVars().EnablePreparedPlanCache {
+		return nil
+	}
+	if s.preparedPlanCache == nil { // lazy construction
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+	}
 	return s.preparedPlanCache
 }
 
@@ -2841,13 +2848,8 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
-	if plannercore.PreparedPlanCacheEnabled() {
-		if opt != nil && opt.PreparedPlanCache != nil {
-			s.preparedPlanCache = opt.PreparedPlanCache
-		} else {
-			s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
-		}
+	if opt != nil && opt.PreparedPlanCache != nil {
+		s.preparedPlanCache = opt.PreparedPlanCache
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
@@ -2879,10 +2881,6 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
-	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
-	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
