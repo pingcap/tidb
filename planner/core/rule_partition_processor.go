@@ -1002,10 +1002,8 @@ func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expres
 							panic("Not a constant!?!")
 						}
 					}
-					if res.Ranges[idx].HighExclude {
-						return true
-					}
-					return false
+					// if point is included, then false, due to LESS THAN
+					return res.Ranges[idx].HighExclude
 				}
 				// Can optimize if the range start is types.KindNull/types.MinNotNull
 				// or range end is types.KindMaxValue
