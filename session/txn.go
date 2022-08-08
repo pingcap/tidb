@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -91,7 +90,6 @@ func (txn *LazyTxn) init() {
 func (txn *LazyTxn) updateState(state txninfo.TxnRunningState) {
 	if txn.mu.TxnInfo.State != state {
 		txn.mu.TxnInfo.State = state
-		txn.mu.TxnInfo.LastStateChangeTime = time.Now()
 	}
 }
 
@@ -145,22 +143,12 @@ func (txn *LazyTxn) resetTxnInfo(
 	currentSQLDigest string,
 	allSQLDigests []string,
 ) {
-	if !txn.mu.LastStateChangeTime.IsZero() {
-		lastState := txn.mu.State
-		hasLockLbl := "false"
-		if !txn.mu.TxnInfo.BlockStartTime.IsZero() {
-			hasLockLbl = "true"
-		}
-		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel(lastState), hasLockLbl).Observe(time.Since(txn.mu.TxnInfo.LastStateChangeTime).Seconds())
-	}
 	if txn.mu.TxnInfo.StartTS != 0 {
 		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
 	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.TxnInfo.StartTS = startTS
 	txn.mu.TxnInfo.State = state
-	metrics.TxnStatusEnteringCounter.WithLabelValues(txninfo.StateLabel(state)).Inc()
-	txn.mu.TxnInfo.LastStateChangeTime = time.Now()
 	txn.mu.TxnInfo.EntriesCount = entriesCount
 	txn.mu.TxnInfo.EntriesSize = entriesSize
 	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
@@ -275,21 +263,11 @@ func (txn *LazyTxn) changeToInvalid() {
 	txn.txnFuture = nil
 
 	txn.mu.Lock()
-	lastState := txn.mu.TxnInfo.State
-	lastStateChangeTime := txn.mu.TxnInfo.LastStateChangeTime
-	hasLock := !txn.mu.TxnInfo.BlockStartTime.IsZero()
 	if txn.mu.TxnInfo.StartTS != 0 {
 		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
 	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.Unlock()
-	if !lastStateChangeTime.IsZero() {
-		hasLockLbl := "false"
-		if hasLock {
-			hasLockLbl = "true"
-		}
-		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel(lastState), hasLockLbl).Observe(time.Since(lastStateChangeTime).Seconds())
-	}
 }
 
 func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
