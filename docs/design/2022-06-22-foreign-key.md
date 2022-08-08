@@ -18,30 +18,34 @@ type TableInfo struct {
 	...
 	ForeignKeys         []*FKInfo            `json:"fk_info"`
 	ReferredForeignKeys []*ReferredFKInfo    `json:"cited_fk_info"`
+	// MaxFKIndexID uses to allocate foreign key ID. Or use MaxConstraintID instead.
+    MaxFKIndexID        int64                `json:"max_fk_idx_id"`
 	...
 }
 
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
-    ID        int64       `json:"id"`
-    Name      CIStr       `json:"fk_name"`
-    RefSchema CIStr       `json:"ref_schema"`
-    RefTable  CIStr       `json:"ref_table"`
-    RefCols   []CIStr     `json:"ref_cols"`
-    Cols      []CIStr     `json:"cols"`
-    OnDelete  int         `json:"on_delete"`
-    OnUpdate  int         `json:"on_update"`
-    State     SchemaState `json:"state"`
-    Version   bool        `json:"version"`
+    ID          int64       `json:"id"`
+    Name        CIStr       `json:"fk_name"`
+    RefSchemaID CIStr       `json:"ref_schema_id"`
+    RefTableID  CIStr       `json:"ref_table_id"`
+    RefCols     []CIStr     `json:"ref_cols"`
+    Cols        []CIStr     `json:"cols"`
+    OnDelete    int         `json:"on_delete"`
+    OnUpdate    int         `json:"on_update"`
+    State       SchemaState `json:"state"`
+    // Deprecated
+    RefTable CIStr `json:"ref_table"`
 }
 
 // ReferredFKInfo provides the referred foreign key in the child table.
 type ReferredFKInfo struct {
-    Cols         []CIStr `json:"cols"`
-    ChildSchema  CIStr   `json:"child_schema"`
-    ChildTable   CIStr   `json:"child_table"`
-    ChildFKIndex CIStr   `json:"child_fk_index"`
+    Cols          []CIStr `json:"cols"`
+    ChildSchemaID int64   `json:"child_schema_id"`
+    ChildTableID  int64   `json:"child_table_id"`
+    ChildFKIndex  CIStr   `json:"child_fk_index"`
 }
+
 ```
 
 Struct `FKInfo` uses for child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
@@ -166,9 +170,9 @@ Query OK, 0 rows affected
 (1553, "Cannot drop index 'fk': needed in a foreign key constraint")
 ```
 
-### Rename Table/Column
+### Rename Column
 
-Rename table which has foreign key references, should also need to update the related child table info.
+Rename column which has foreign key or references, should also need to update the related child/parent table info.
 
 ```sql
 create table t1 (id int key,a int, index(a));
@@ -186,6 +190,10 @@ Create Table | CREATE TABLE `t2` (
     CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`a`) REFERENCES `t11` (`id1`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 ```
+
+### Truncate Table
+
+Truncate table which has foreign key or references, should also need to update the related child/parent table info.
 
 ### Modify Column
 
@@ -288,6 +296,121 @@ modify related child table row by following step:
 1. get child table info by name(in reference table info).
 2. get the child table fk index's column info.
 3. build update executor to update child table rows.
+
+There is an pseudocode about `DELETE` on reference table:
+
+1. Pseudocode in build plan stage.
+
+```go
+type Delete struct {
+    ...
+    // table-id => foreign key triggers.
+    FKTriggers map[int64][]*ForeignKeyTrigger
+}
+
+type ForeignKeyTrigger struct {
+	Tp                    FKTriggerType
+	OnModifyReferredTable *OnModifyReferredTableFKInfo
+	OnModifyChildTable    *OnModifyChildTableFKInfo
+}
+
+type OnModifyReferredTableFKInfo struct {
+	ReferredFK *model.ReferredFKInfo
+	ChildTable table.Table
+	FK         *model.FKInfo
+}
+
+const (
+	FKTriggerOnDeleteReferredTable      FKTriggerType = 1
+	FKTriggerOnUpdateReferredTable      FKTriggerType = 2
+	FKTriggerOnInsertOrUpdateChildTable FKTriggerType = 3
+)
+
+func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan, error) {
+    ....
+    del.FKTriggers = buildOnDeleteForeignKeyTrigger()
+}
+```
+
+2. Pseudocode in build executor.
+
+```go
+type DeleteExec struct {
+    fkTriggerExecs map[int64][]*ForeignKeyTriggerExec
+}
+
+type ForeignKeyTriggerExec struct {
+    fkTrigger     *plannercore.ForeignKeyTrigger
+    colsOffsets   []int
+    fkValues      [][]types.Datum
+}
+
+func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
+	...
+	deleteExec.fkTriggerExecs = b.buildTblID2ForeignKeyTriggerExecs()
+}
+```
+
+3. Pseudocode in `Delete` execution.
+
+```go
+func (e *DeleteExec) removeRow(...){
+    fkTriggerExecs := e.fkTriggerExecs[t.Meta().ID]
+    sc := ctx.GetSessionVars().StmtCtx
+    for _, fkt := range fkTriggerExecs {
+        err = fkt.addRowNeedToTrigger(sc, row)
+    }
+}
+
+func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(sc *stmtctx.StatementContext, row []types.Datum) error {
+    vals, err := fetchFKValues(row, fkt.colsOffsets)
+    if err != nil || hasNullValue(vals) {
+        return err
+    }
+    fkt.fkValues = append(fkt.fkValues, vals)
+    return nil
+}
+```
+
+4. Pseudocode after `Delete` execution.
+
+```go
+func (a *ExecStmt) Exec(){
+    e, err := a.buildExecutor()
+    e.Open()
+	f handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled {
+        err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
+        return result, err
+    }
+}
+
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPessimistic bool) error {
+    fkTriggerExecs := e.GetForeignKeyTriggerExecs()
+    for i := 0; i < len(fkTriggerExecs); i++{
+        fkt := fkTriggerExecs[i]
+        e, err := fkt.buildExecutor(ctx)
+        if err != nil {
+            return err
+        }
+        if e == nil {
+            continue
+        }
+        if err := e.Open(ctx); err != nil {
+            terror.Call(e.Close)
+            return err
+        }
+        _, _, err = a.handleNoDelay(ctx, e, isPessimistic)
+        if err != nil {
+            return err
+        }
+        err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
+        if err != nil {
+            return err
+        }
+    }
+    return nil
+}
+```
 
 ### Issue need to be discussed
 
