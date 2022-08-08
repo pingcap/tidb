@@ -1127,7 +1127,7 @@ func NewShardIDFormat(fieldType *types.FieldType, shardBits, rangeBits uint64) *
 		incrementalBits = rangeBits - shardBits
 	}
 	hasSignBit := !mysql.HasUnsignedFlag(fieldType.GetFlag())
-	if hasSignBit && rangeBits == 0 {
+	if hasSignBit {
 		incrementalBits--
 	}
 	return &ShardIDFormat{
@@ -1151,7 +1151,7 @@ func (s *ShardIDFormat) IncrementalMask() int64 {
 
 // Compose generates an auto ID based on the given shard and an incremental ID.
 func (s *ShardIDFormat) Compose(shard int64, id int64) int64 {
-	return ((shard & (1<<s.ShardBits - 1)) << s.IncrementalBits) | id
+	return ((shard & ((1 << s.ShardBits) - 1)) << s.IncrementalBits) | id
 }
 
 type allocatorRuntimeStatsCtxKeyType struct{}

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -392,7 +391,6 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 			State:          model.StatePublic,
 			PKIsHandle:     true,
 			AutoRandomBits: 1,
-			IntPKRangeBits: autoid.AutoRandomRangeBitsDefault,
 			Columns: []*model.ColumnInfo{
 				{
 					Name:                model.NewCIStr("id"),

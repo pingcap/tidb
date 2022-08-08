@@ -4541,9 +4541,6 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if oldRangeBits != newRangeBits {
-		return 0, dbterror.ErrInvalidAutoRandom.FastGenByArgs(autoid.AutoRandomUnsupportedAlterRangeBits)
-	}
 	switch {
 	case oldShardBits == newShardBits:
 	case oldShardBits < newShardBits:
@@ -4585,7 +4582,20 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 			return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 		}
 	}
+	if rangeBitsIsChanged(oldRangeBits, newRangeBits) {
+		return 0, dbterror.ErrInvalidAutoRandom.FastGenByArgs(autoid.AutoRandomUnsupportedAlterRangeBits)
+	}
 	return newShardBits, nil
+}
+
+func rangeBitsIsChanged(oldBits, newBits uint64) bool {
+	if oldBits == 0 {
+		oldBits = autoid.AutoRandomRangeBitsDefault
+	}
+	if newBits == 0 {
+		newBits = autoid.AutoRandomRangeBitsDefault
+	}
+	return oldBits != newBits
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,

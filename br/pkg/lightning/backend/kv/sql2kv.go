@@ -89,9 +89,9 @@ func NewTableKVEncoder(
 		for _, col := range cols {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.IntPKRangeBits)
-				autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << shardFmt.IncrementalBits // nolint:gosec
+				shard := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63()
 				autoIDFn = func(id int64) int64 {
-					return autoRandomBits | id
+					return shardFmt.Compose(shard, id)
 				}
 				break
 			}

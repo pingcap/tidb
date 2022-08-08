@@ -159,6 +159,10 @@ func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID in
 	}
 	tbl.ID = tableID
 
+	if err = setTableAutoRandomBits(ctx, tbl, stmt.Cols); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// The specified charset will be handled in handleTableOptions
 	if err = handleTableOptions(stmt.Options, tbl); err != nil {
 		return nil, errors.Trace(err)

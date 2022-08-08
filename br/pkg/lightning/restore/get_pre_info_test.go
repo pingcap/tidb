@@ -136,29 +136,19 @@ func TestGetPreInfoAutoRandomBits(t *testing.T) {
 			ExpectAutoRandomRangeBits: 0,
 		},
 		{
-			ColDef:                    "varchar(16) AUTO_RANDOM",
-			ExpectAutoRandomBits:      0,
-			ExpectAutoRandomRangeBits: 0,
-		},
-		{
-			ColDef:                    "INTEGER PRIMARY KEY AUTO_RANDOM",
-			ExpectAutoRandomBits:      0,
-			ExpectAutoRandomRangeBits: 0,
-		},
-		{
-			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM AUTO_INCREMENT",
-			ExpectAutoRandomBits:      0,
-			ExpectAutoRandomRangeBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM",
+			ExpectAutoRandomBits:      5,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
 			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(3)",
 			ExpectAutoRandomBits:      3,
-			ExpectAutoRandomRangeBits: 0,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
 			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM",
 			ExpectAutoRandomBits:      5,
-			ExpectAutoRandomRangeBits: 0,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
 			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(5, 64)",
@@ -169,21 +159,6 @@ func TestGetPreInfoAutoRandomBits(t *testing.T) {
 			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(2, 32)",
 			ExpectAutoRandomBits:      2,
 			ExpectAutoRandomRangeBits: 32,
-		},
-		{
-			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(20)",
-			ExpectAutoRandomBits:      0,
-			ExpectAutoRandomRangeBits: 0,
-		},
-		{
-			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(0)",
-			ExpectAutoRandomBits:      0,
-			ExpectAutoRandomRangeBits: 0,
-		},
-		{
-			ColDef:                    "BIGINT AUTO_RANDOM",
-			ExpectAutoRandomBits:      0,
-			ExpectAutoRandomRangeBits: 0,
 		},
 	}
 	for _, subCase := range subCases {
