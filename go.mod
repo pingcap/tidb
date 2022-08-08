@@ -112,6 +112,7 @@ require (
 	github.com/nishanths/predeclared v0.2.2
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
 	github.com/tdakkota/asciicheck v0.1.1
+	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	honnef.co/go/tools v0.3.3
 )
 
@@ -124,6 +125,8 @@ require (
 	github.com/go-kit/kit v0.9.0 // indirect
 	github.com/go-logfmt/logfmt v0.5.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.2.0 // indirect
+	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect
+	github.com/gostaticanalysis/comment v1.4.2 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/kisielk/gotool v1.0.0 // indirect
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
