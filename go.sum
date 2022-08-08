@@ -607,8 +607,8 @@ github.com/kyoh86/exportloopref v0.1.8 h1:5Ry/at+eFdkX9Vsdw3qU4YkvGtzuVfzT4X7S77
 github.com/kyoh86/exportloopref v0.1.8/go.mod h1:1tUcJeiioIs7VWe5gcOObrux3lb66+sBqGZrRkMwPgg=
 github.com/labstack/echo/v4 v4.1.11/go.mod h1:i541M3Fj6f76NZtHSj7TXnyM8n2gaodfvfxNnFqi74g=
 github.com/labstack/gommon v0.3.0/go.mod h1:MULnywXg0yavhxWKc+lOruYdAhDwPK9wf0OL7NoOu+k=
-github.com/lcwangchao/client-go/v2 v2.0.0-alpha.0.20220808095607-641375c1de51 h1:x6YibG7EBi84FhZa3hueG5+U0ID7yyyDlwKneHxO2+k=
-github.com/lcwangchao/client-go/v2 v2.0.0-alpha.0.20220808095607-641375c1de51/go.mod h1:v3DEt8LS9olI6D6El17pYBWq7B28hw3NnDFTxQHDLpY=
+github.com/lcwangchao/client-go/v2 v2.0.0-alpha.0.20220808115317-8e7a343f2d63 h1:rAWDtNuvzs/OC9QpJuKHEFdTOEB5/paW98PD36Tv5no=
+github.com/lcwangchao/client-go/v2 v2.0.0-alpha.0.20220808115317-8e7a343f2d63/go.mod h1:v3DEt8LS9olI6D6El17pYBWq7B28hw3NnDFTxQHDLpY=
 github.com/lib/pq v1.0.0/go.mod h1:5WUZQaWbwv1U+lTReE5YruASi9Al49XbQIvNi/34Woo=
 github.com/lightstep/lightstep-tracer-go v0.15.6/go.mod h1:6AMpwZpsyCFwSovxzM78e+AsYxE8sGwiM6C3TytaWeI=
 github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 h1:6E+4a0GO5zZEnZ81pIr0yLvtUWk2if982qA3F3QD6H4=
