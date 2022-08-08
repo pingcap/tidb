@@ -2314,20 +2314,15 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 
 	s.sessionVars.StartTime = time.Now()
-	preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]
-	if !ok {
+	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
+	if err != nil {
 		err = plannercore.ErrStmtNotFound
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
-	preparedStmt, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	preparedStmt, ok := prepStmt.(*plannercore.CachedPrepareStmt)
 	if !ok {
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
-	}
-
-	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
-	if err != nil {
-		return nil, err
 	}
 
 	execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
