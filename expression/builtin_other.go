@@ -776,6 +776,7 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 	if err != nil {
 		return "", isNull, err
 	}
+	sessionVars.UsersLock.Lock()
 	//sessionVars.SetUserVar(varName, stringutil.Copy(res), datum.Collation())
 	varName = strings.ToLower(varName)
 	collation := datum.Collation()
@@ -783,7 +784,6 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 		_, collation = sessionVars.GetCharsetInfo()
 	}
 	v := types.NewCollationStringDatum(stringutil.Copy(res), collation)
-	sessionVars.UsersLock.Lock()
 	sessionVars.UserVars.Vars[varName] = Constant{Value: v}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
