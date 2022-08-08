@@ -231,6 +231,9 @@ const (
 
 	// RequireSecureTransport indicates the secure mode for data transport
 	RequireSecureTransport = "require_secure_transport"
+
+	// TiFlashReadMode indicates which read mode should use when read from TiFlash.
+	TiFlashReadMode = "tiflash_read_mode"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1004,6 +1007,7 @@ const (
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
+	DefTiFlashReadMode                             = mysql.Normal
 )
 
 // Process global variables.

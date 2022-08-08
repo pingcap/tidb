@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -182,6 +183,11 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec, ExecutorId: &executorID}, nil
 }
 
+func TiFlashReadModeToProto(readMode mysql.ReadModeEnum) *tipb.TiFlashReadMode {
+	pbReadMode := tipb.TiFlashReadMode(readMode)
+	return &pbReadMode
+}
+
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().UseDynamicPartitionPrune() {
@@ -191,6 +197,8 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	tsExec.Desc = p.Desc
 	keepOrder := p.KeepOrder
 	tsExec.KeepOrder = &keepOrder
+
+	tsExec.ReadMode = TiFlashReadModeToProto(ctx.GetSessionVars().TiFlashReadMode)
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
@@ -203,7 +211,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 }
 
 func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx sessionctx.Context) (*tipb.Executor, error) {
-	ptsExec := tables.BuildPartitionTableScanFromInfos(p.Table, p.Columns)
+	ptsExec := tables.BuildPartitionTableScanFromInfos(p.Table, p.Columns, TiFlashReadModeToProto(ctx.GetSessionVars().TiFlashReadMode))
 	ptsExec.Desc = p.Desc
 	executorID := p.ExplainID().String()
 	err := SetPBColumnsDefaultValue(ctx, ptsExec.Columns, p.Columns)

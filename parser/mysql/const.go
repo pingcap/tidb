@@ -600,3 +600,35 @@ const (
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
 	PartitionCountLimit = 8192
 )
+
+// ReadModeEnum is defined for ReadMode const values.
+type ReadModeEnum int
+
+// ReadMode const values.
+const (
+	Normal ReadModeEnum = iota
+	Auto
+	Fast
+)
+
+// Str2ReadMode is used to convert a string to a ReadMode.
+func Str2ReadMode(val string) ReadModeEnum {
+	val = strings.ToUpper(val)
+	switch val {
+	case "NORMAL":
+		return Normal
+	case "AUTO":
+		return Auto
+	case "FAST":
+		return Fast
+	default:
+		return Normal
+	}
+}
+
+// ReadMode2Str is used to convert the statement ReadMode to string.
+var ReadMode2Str = map[ReadModeEnum]string{
+	Normal: "NORMAL",
+	Auto:   "AUTO",
+	Fast:   "FAST",
+}

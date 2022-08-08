@@ -1187,6 +1187,9 @@ type SessionVars struct {
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
 	DefaultStrMatchSelectivity float64
+
+	// TiFlashReadMode indicates in this session which read mode the queries may read on TiFlash.
+	TiFlashReadMode mysql.ReadModeEnum
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1443,6 +1446,7 @@ func NewSessionVars() *SessionVars {
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
+		TiFlashReadMode:             mysql.Normal,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
