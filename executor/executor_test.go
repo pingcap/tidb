@@ -7964,3 +7964,20 @@ func TestForeignKeyLockInTxn(t *testing.T) {
 		tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("2 a"))
 	}
 }
+
+func TestForeignKeyOnDMLWithIgnore(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=1")
+
+	tk.MustExec("CREATE TABLE t1 (i INT PRIMARY KEY);")
+	tk.MustExec("CREATE TABLE t2 (i INT, FOREIGN KEY (i) REFERENCES t1 (i) ON DELETE NO ACTION);")
+	tk.MustExec("INSERT INTO t1 VALUES (1);")
+	tk.MustExec("INSERT INTO t2 VALUES (1);")
+	// todo: fix me.
+	tk.MustExec("DELETE IGNORE FROM t1 WHERE i = 1;")
+	tk.MustExec("INSERT IGNORE INTO t2 VALUES (2);")
+	tk.MustExec("UPDATE IGNORE t2 SET i = 2;")
+}
