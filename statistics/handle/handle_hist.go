@@ -65,6 +65,7 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 		return nil
 	}
 	sc.StatsLoad.Timeout = timeout
+	sc.StatsLoad.NeededItems = remainedItems
 	sc.StatsLoad.ResultCh = make(chan model.TableItemID, len(remainedItems))
 	for _, item := range remainedItems {
 		_, digest := sc.SQLDigest()
@@ -91,19 +92,25 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
 func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
-	if sc.StatsLoad.ResultCh == nil || cap(sc.StatsLoad.ResultCh) < 1 {
+	if len(sc.StatsLoad.NeededItems) <= 0 {
 		return true
 	}
-	cnt := 0
+	defer func() {
+		sc.StatsLoad.NeededItems = nil
+	}()
+	resultCheckMap := map[model.TableItemID]struct{}{}
+	for _, col := range sc.StatsLoad.NeededItems {
+		resultCheckMap[col] = struct{}{}
+	}
 	metrics.SyncLoadCounter.Inc()
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
 	defer timer.Stop()
 	for {
 		select {
-		case _, ok := <-sc.StatsLoad.ResultCh:
+		case result, ok := <-sc.StatsLoad.ResultCh:
 			if ok {
-				cnt++
-				if cnt >= cap(sc.StatsLoad.ResultCh) {
+				delete(resultCheckMap, result)
+				if len(resultCheckMap) == 0 {
 					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
 					return true
 				}
@@ -246,6 +253,11 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(item, wrapper, readerCtx.reader)
 	if err != nil {
+		logutil.BgLogger().Warn("read stats error",
+			zap.Int64("tableID", task.TableItemID.TableID),
+			zap.Int64("id", task.TableItemID.ID),
+			zap.Bool("isIndex", task.TableItemID.IsIndex),
+			zap.String("digest", task.Digest.String()))
 		return task, err
 	}
 	if item.IsIndex {
@@ -386,7 +398,11 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
-				logutil.BgLogger().Warn("")
+				logutil.BgLogger().Warn("task timeout",
+					zap.Int64("tableID", task.TableItemID.TableID),
+					zap.Int64("id", task.TableItemID.ID),
+					zap.Bool("isIndex", task.TableItemID.IsIndex),
+					zap.String("digest", task.Digest.String()))
 				h.writeToTimeoutChan(h.StatsLoad.TimeoutItemsCh, task)
 				continue
 			}
