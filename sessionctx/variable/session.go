@@ -1187,6 +1187,12 @@ type SessionVars struct {
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
 	DefaultStrMatchSelectivity float64
+
+	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
+	PrimaryKeyRequired bool
+
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1252,6 +1258,12 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
 		SkipPositionRecording:       true,
 	}
+}
+
+// AllocNewPlanID alloc new ID
+func (s *SessionVars) AllocNewPlanID() int {
+	s.PlanID++
+	return s.PlanID
 }
 
 const (
@@ -1422,7 +1434,6 @@ func NewSessionVars() *SessionVars {
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnablePointGetCache:         DefTiDBPointGetCache,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                    kv.NewDefaultTxnScopeVar(),

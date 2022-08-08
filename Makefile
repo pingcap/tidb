@@ -29,16 +29,13 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
-check-setup:tools/bin/revive tools/bin/goword
+check-setup:tools/bin/revive
 
-check: check-parallel lint tidy testSuite check-static errdoc
+check: check-parallel lint tidy testSuite errdoc bazel_golangcilinter bazel_all_build
 
 fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
-
-goword:tools/bin/goword
-	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
@@ -332,15 +329,6 @@ ifeq ("$(GOOS)", "freebsd")
         GOBUILD  = CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(LDFLAGS)'
 endif
 
-br_coverage:
-	tools/bin/gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go|.*__failpoint_binding__.go" > "$(TEST_DIR)/all_cov.out"
-ifeq ("$(JenkinsCI)", "1")
-	tools/bin/goveralls -coverprofile=$(TEST_DIR)/all_cov.out -service=jenkins-ci -repotoken $(COVERALLS_TOKEN)
-else
-	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
-	grep -F '<option' "$(TEST_DIR)/all_cov.html"
-endif
-
 # TODO: adjust bins when br integraion tests reformat.
 br_bins:
 	@which bin/tidb-server
@@ -413,9 +401,13 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
-bazel_build: bazel_ci_prepare
+bazel_all_build: bazel_ci_prepare
 	mkdir -p bin
 	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci //... --//build:with_nogo_flag=true
+
+bazel_build: bazel_ci_prepare
+	mkdir -p bin
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci //cmd/importer:importer //tidb-server:tidb-server //tidb-server:tidb-server-check --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
@@ -430,3 +422,8 @@ bazel_junit:
 	bazel_collect
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
+
+bazel_golangcilinter:
+	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci --run_under="cd $(CURDIR) && " \
+		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
+	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml

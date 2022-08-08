@@ -522,7 +522,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		syncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
+		syncer = util.NewSchemaSyncer(etcdCli, id)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -659,12 +659,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.prepareWorkers4ConcurrencyDDL()
 	d.prepareWorkers4legacyDDL()
 
-	go d.schemaSyncer.StartCleanWork()
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
 		go d.startCleanDeadTableLock()
 	}
-	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 
 	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
@@ -1683,6 +1681,26 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		return i.ID < j.ID
 	})
 	return allJobs, nil
+}
+
+// ScanHistoryDDLJobs get some of the done DDL jobs.
+// When the DDL history is quite large, GetAllHistoryDDLJobs() API can't work well, because it makes the server OOM.
+// The result is in descending order by job ID.
+func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job, error) {
+	var iter meta.LastJobIterator
+	var err error
+	if startJobID == 0 {
+		iter, err = m.GetLastHistoryDDLJobsIterator()
+	} else {
+		if limit == 0 {
+			return nil, errors.New("when 'start_job_id' is specified, it must work with a 'limit'")
+		}
+		iter, err = m.GetHistoryDDLJobsIterator(startJobID)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.GetLastJobs(limit, nil)
 }
 
 // GetHistoryJobByID return history DDL job by ID.
