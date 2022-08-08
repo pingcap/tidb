@@ -1282,8 +1282,9 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			// GetVar has not been executed to fill the SessionVars.Users.
 			sessionVars.UsersLock.Lock()
 			if userVar, ok := sessionVars.UserVars.Vars[name]; ok {
-				if v1, ok1 := userVar.(*expression.Constant); ok1 {
-					sessionVars.UserVars.Vars[name] = &expression.Constant{Value: v1.Value, RetType: tp}
+				if _, ok1 := userVar.(*expression.Constant); ok1 {
+					//sessionVars.UserVars.Vars[name] = &expression.Constant{Value: v1.Value, RetType: tp}
+					sessionVars.UserVars.Vars[name] = expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0)
 				}
 			}
 			sessionVars.UsersLock.Unlock()
