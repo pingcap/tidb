@@ -543,7 +543,7 @@ func (w *HashAggPartialWorker) getPartialResult(sc *stmtctx.StatementContext, gr
 			partialResults[i] = append(partialResults[i], partialResult)
 		}
 		if len(mapper) < 10000000 {
-			mapper[strconv.Itoa(len(mapper)+1)] = partialResults[i]
+			mapper[strconv.Itoa(len(mapper)+1)] = nil
 		}
 	}
 	return partialResults
