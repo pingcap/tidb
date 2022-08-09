@@ -176,7 +176,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		return
 	}
 	for _, col := range stableColsStats(statsTbl.Columns) {
-		if !col.IsStatsInitialized() || col.TotalRowCount() == 0 {
+		if !col.IsStatsInitialized() {
 			continue
 		}
 		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count, false),
@@ -190,7 +190,6 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 
 func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string, isIndex int, hist statistics.Histogram,
 	avgColSize float64, loadStatus string, memUsage statistics.CacheItemMemoryUsage) {
-
 	e.appendRow([]interface{}{
 		dbName,
 		tblName,
