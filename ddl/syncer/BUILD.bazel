@@ -21,6 +21,7 @@ go_library(
 go_test(
     name = "syncer_test",
     srcs = ["syncer_test.go"],
+    flaky = True,
     deps = [
         ":syncer",
         "//ddl",
