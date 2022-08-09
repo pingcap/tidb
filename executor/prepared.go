@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"math"
 	"time"
 
@@ -354,6 +355,12 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	// handle point plan short path specially
 	pointPlanShortPathOK, err := plannercore.IsPointPlanShortPathOK(sctx, preparedObj)
 	if pointPlanShortPathOK && err == nil {
+		failpoint.Inject("assertTxnManagerInCachedPlanExec", func() {
+			sessiontxn.RecordAssert(sctx, "assertTxnManagerInCachedPlanExec", true)
+			// stale read should not reach here
+			staleread.AssertStmtStaleness(sctx, false)
+		})
+
 		if ep, ok := execPlan.(*plannercore.Execute); ok {
 			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
 				stmtCtx.SetPlan(execPlan)
