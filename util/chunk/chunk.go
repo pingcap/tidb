@@ -156,7 +156,6 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 		sum += curColMemUsage
 	}
-	sum += int64(unsafe.Sizeof(*c)) + int64(cap(c.sel))*IntMemory
 	return
 }
 
