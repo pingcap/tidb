@@ -1287,7 +1287,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		sessionVars.UsersLock.RLock()
 		userVar, ok := sessionVars.UserVars.Vars[name]
 		sessionVars.UsersLock.RUnlock()
-		tp := new(types.FieldType)
+		var tp *types.FieldType
 		if v1, ok1 := userVar.(*expression.Constant); ok && ok1 {
 			tp = v1.RetType
 		} else {

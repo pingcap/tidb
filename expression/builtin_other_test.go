@@ -137,7 +137,7 @@ func TestGetVar(t *testing.T) {
 		{"h", timeDec},
 	}
 	for _, kv := range sessionVars {
-		tp := new(types.FieldType)
+		var tp *types.FieldType
 		if _, ok := kv.val.(types.Time); ok {
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		} else {
@@ -162,7 +162,7 @@ func TestGetVar(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		userVar, ok := ctx.GetSessionVars().UserVars.Vars[tc.args[0].(string)]
-		tp := new(types.FieldType)
+		var tp *types.FieldType
 		if ct, ok1 := userVar.(*Constant); ok && ok1 {
 			tp = ct.RetType
 		} else {

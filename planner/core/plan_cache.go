@@ -103,7 +103,7 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 		// from text protocol, there must be a GetVar function
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 		userVar, ok := sctx.GetSessionVars().UserVars.Vars[name]
-		tp := new(types.FieldType)
+		var tp *types.FieldType
 		if v, ok1 := userVar.(*expression.Constant); ok && ok1 {
 			tp = v.RetType
 		} else {
