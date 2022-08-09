@@ -115,8 +115,8 @@ func TestBasic(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	checkApplyCreateNonExistsSchemaDoesNotPanic(t, txn, builder, store)
-	checkApplyCreateNonExistsTableDoesNotPanic(t, txn, builder, dbID, store)
+	checkApplyCreateNonExistsSchemaDoesNotPanic(t, txn, builder)
+	checkApplyCreateNonExistsTableDoesNotPanic(t, txn, builder, dbID)
 	err = txn.Rollback()
 	require.NoError(t, err)
 
@@ -235,13 +235,13 @@ func TestMockInfoSchema(t *testing.T) {
 	require.Equal(t, colInfo, tbl.Cols()[0].ColumnInfo)
 }
 
-func checkApplyCreateNonExistsSchemaDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder, store kv.Storage) {
+func checkApplyCreateNonExistsSchemaDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder) {
 	m := meta.NewMeta(txn)
 	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
 	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 }
 
-func checkApplyCreateNonExistsTableDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder, dbID int64, store kv.Storage) {
+func checkApplyCreateNonExistsTableDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder, dbID int64) {
 	m := meta.NewMeta(txn)
 	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999})
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
