@@ -50,7 +50,7 @@ type txnManager struct {
 	stmtNode    ast.StmtNode
 	ctxProvider sessiontxn.TxnContextProvider
 
-	// We always reuse a same OptimisticTxnContextProvider in one session to reduce memory allocation cost for every new txn
+	// We always reuse the same OptimisticTxnContextProvider in one session to reduce memory allocation cost for every new txn.
 	reservedOptimisticProvider isolation.OptimisticTxnContextProvider
 }
 
