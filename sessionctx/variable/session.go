@@ -547,6 +547,7 @@ func validateReadConsistencyLevel(val string) error {
 	}
 }
 
+// CloneUserVars is a function to  copy interface
 var CloneUserVars func(userVar interface{}) (interface{}, error)
 
 // SessionVars is to handle user-defined or global variables in the current session.

@@ -1470,10 +1470,11 @@ func init() {
 	variable.CloneUserVars = CloneUserVars
 }
 
+// CloneUserVars clone userVar between SessionVars and sessionStates
 func CloneUserVars(userVar interface{}) (interface{}, error) {
 	c, ok := userVar.(*Constant)
 	if !ok {
-		return nil, errors.New("...")
+		return nil, errors.New("CloneUserVars Failed")
 	}
 	return c.Clone(), nil
 }
