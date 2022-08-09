@@ -5342,7 +5342,7 @@ func (d *ddl) dropTableObject(
 			if tableInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Table")
 			}
-			if referredFK := checkTableHasForeignKeyReferred(ctx, d.GetInfoSchemaWithInterceptor(ctx), tn.Schema, tableInfo.Meta()); referredFK != nil {
+			if referredFK := checkTableHasForeignKeyReferred(ctx, d.GetInfoSchemaWithInterceptor(ctx), tableInfo.Meta(), objects); referredFK != nil {
 				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
 			}
 		case viewObject:
@@ -5424,7 +5424,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
-	if referredFK := checkTableHasForeignKeyReferred(ctx, d.GetInfoSchemaWithInterceptor(ctx), ti.Schema, tb.Meta()); referredFK != nil {
+	if referredFK := checkTableHasForeignKeyReferred(ctx, d.GetInfoSchemaWithInterceptor(ctx), tb.Meta(), []*ast.TableName{{Name: ti.Name, Schema: ti.Schema}}); referredFK != nil {
 		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
 		return errors.Trace(dbterror.ErrTruncateIllegalFk.GenWithStackByArgs(msg))
 	}
@@ -5471,12 +5471,19 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	return nil
 }
 
-func checkTableHasForeignKeyReferred(ctx sessionctx.Context, is infoschema.InfoSchema, schema model.CIStr, tbInfo *model.TableInfo) *model.ReferredFKInfo {
+func checkTableHasForeignKeyReferred(ctx sessionctx.Context, is infoschema.InfoSchema, tbInfo *model.TableInfo, ignoreTables []*ast.TableName) *model.ReferredFKInfo {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
 	for _, referredFK := range tbInfo.ReferredForeignKeys {
-		if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L {
+		found := false
+		for _, tb := range ignoreTables {
+			if referredFK.ChildSchema.L == tb.Schema.L && referredFK.ChildTable.L == tb.Name.L {
+				found = true
+				break
+			}
+		}
+		if found {
 			continue
 		}
 		if is.TableExists(referredFK.ChildSchema, referredFK.ChildTable) {

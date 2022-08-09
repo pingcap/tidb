@@ -475,6 +475,11 @@ func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
 			"truncate table t1",
 			"drop table t1",
 		},
+		{
+			"create table t1 (id int key, a varchar(10), index (a(10)));",
+			"create table t2 (a int, b varchar(20), foreign key fk_b(b) references t1(a));",
+			"drop table t1, t2",
+		},
 	}
 	tk.MustExec("set @@foreign_key_checks=1;")
 	for _, ca := range passCases {
