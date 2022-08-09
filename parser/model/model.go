@@ -430,7 +430,7 @@ type TableInfo struct {
 	MaxShardRowIDBits uint64 `json:"max_shard_row_id_bits"`
 	// AutoRandomBits is used to set the bit number to shard automatically when PKIsHandle.
 	AutoRandomBits uint64 `json:"auto_random_bits"`
-	// IntPKRangeBits represents the bit length of int primary key.
+	// IntPKRangeBits represents the bit number of the int primary key that will be used by TiDB.
 	IntPKRangeBits uint64 `json:"int_pk_range_bits"`
 	// PreSplitRegions specify the pre-split region when create table.
 	// The pre-split region num is 2^(PreSplitRegions-1).

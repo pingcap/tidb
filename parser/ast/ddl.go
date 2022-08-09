@@ -668,7 +668,7 @@ func (n *ColumnOption) Accept(v Visitor) (Node, bool) {
 type AutoRandomOption struct {
 	// ShardBits is the number of bits used to store the shard.
 	ShardBits int
-	// RangeBits is the number of the field type bits.
+	// RangeBits is the number of int primary key bits that will be used by TiDB.
 	RangeBits int
 }
 

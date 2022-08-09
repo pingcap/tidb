@@ -1069,8 +1069,8 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	tableInfo := e.Table.Meta()
 
-	layout := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits, 0)
-	newTiDBRowIDBase := layout.IncrementalMask() & recordID
+	shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits, 0)
+	newTiDBRowIDBase := shardFmt.IncrementalMask() & recordID
 
 	return alloc.Rebase(ctx, newTiDBRowIDBase, true)
 }

@@ -1100,28 +1100,27 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 	alloc.(*allocator).mu.Unlock()
 }
 
-// ShardIDFormat is used to calculate the bits length of different segments in auto id.
-// Generally, an auto id is consist of 3 segments: sign bit, shard bits and incremental bits.
+// ShardIDFormat is used to calculate the bit length of different segments in auto id.
+// Generally, an auto id is consist of 4 segments: sign bit, reserved bits, shard bits and incremental bits.
 // Take ``a BIGINT AUTO_INCREMENT PRIMARY KEY`` as an example, assume that the `shard_row_id_bits` = 5,
 // the layout is like
-//  | [sign_bit] (1 bit) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
+//  | [sign_bit] (1 bit) | [reserved bits] (0 bits) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
 // Please always use NewShardIDFormat() to instantiate.
 type ShardIDFormat struct {
 	FieldType *types.FieldType
 	ShardBits uint64
 	// Derived fields.
-	TypeBitsLength  uint64
 	IncrementalBits uint64
-	HasSignBit      bool
 }
 
 // NewShardIDFormat create an instance of ShardIDFormat.
 // RangeBits means the bit length of the sign bit + shard bits + incremental bits.
-// If it is 0, it will be calculated according to field type automatically.
-func NewShardIDFormat(fieldType *types.FieldType, shardBits, rangeBits uint64) *ShardIDFormat {
-	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
+// If RangeBits is 0, it will be calculated according to field type automatically.
+func NewShardIDFormat(fieldType *types.FieldType, shardBits, rangeBits uint64) ShardIDFormat {
 	var incrementalBits uint64
 	if rangeBits == 0 {
+		// Zero means that the range bits is not specified. We interpret it as the default length(BIGINT).
+		typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
 		incrementalBits = typeBitsLength - shardBits
 	} else {
 		incrementalBits = rangeBits - shardBits
@@ -1130,12 +1129,10 @@ func NewShardIDFormat(fieldType *types.FieldType, shardBits, rangeBits uint64) *
 	if hasSignBit {
 		incrementalBits--
 	}
-	return &ShardIDFormat{
+	return ShardIDFormat{
 		FieldType:       fieldType,
 		ShardBits:       shardBits,
-		TypeBitsLength:  typeBitsLength,
 		IncrementalBits: incrementalBits,
-		HasSignBit:      hasSignBit,
 	}
 }
 
@@ -1144,7 +1141,7 @@ func (s *ShardIDFormat) IncrementalBitsCapacity() uint64 {
 	return uint64(math.Pow(2, float64(s.IncrementalBits))) - 1
 }
 
-// IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current format.
+// IncrementalMask returns 00..0[11..1], where [11..1] is the incremental part of the current format.
 func (s *ShardIDFormat) IncrementalMask() int64 {
 	return (1 << s.IncrementalBits) - 1
 }

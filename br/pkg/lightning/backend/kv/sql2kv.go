@@ -382,9 +382,8 @@ func (kvcodec *tableKVEncoder) Encode(
 
 		if isTableAutoRandom(meta) && isPKCol(col.ToInfo()) {
 			shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.IntPKRangeBits)
-			incrementalBits := shardFmt.IncrementalBits
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
-			if err := alloc.Rebase(context.Background(), value.GetInt64()&((1<<incrementalBits)-1), false); err != nil {
+			if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}

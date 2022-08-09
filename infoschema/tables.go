@@ -1535,8 +1535,9 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 	if tableInfo.PKIsHandle {
 		if tableInfo.ContainsAutoRandomBits() {
 			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
-			if tableInfo.IntPKRangeBits != autoid.AutoRandomRangeBitsDefault {
-				shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, tableInfo.IntPKRangeBits)
+			rangeBits := tableInfo.IntPKRangeBits
+			if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
+				shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
 			}
 		} else {
 			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
