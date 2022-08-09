@@ -7507,7 +7507,8 @@ func TestIssue31600(t *testing.T) {
 }
 
 func TestIssue31569(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 
