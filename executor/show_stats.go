@@ -190,6 +190,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 
 func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string, isIndex int, hist statistics.Histogram,
 	avgColSize float64, loadStatus string, memUsage statistics.CacheItemMemoryUsage) {
+
 	e.appendRow([]interface{}{
 		dbName,
 		tblName,
