@@ -434,11 +434,6 @@ func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string,
 	return w.writer.AppendRows(ctx, w.tableName, columnNames, rows)
 }
 
-// WriteRows writes a collection of encoded rows into the engine.
-func (w *LocalEngineWriter) WriteRow(ctx context.Context, columnNames []string, row kv.Row) error {
-	return w.writer.AppendRow(ctx, w.tableName, columnNames, row)
-}
-
 func (w *LocalEngineWriter) Close(ctx context.Context) (ChunkFlushStatus, error) {
 	return w.writer.Close(ctx)
 }
@@ -520,12 +515,6 @@ type EngineWriter interface {
 		tableName string,
 		columnNames []string,
 		rows kv.Rows,
-	) error
-	AppendRow(
-		ctx context.Context,
-		tableName string,
-		columnNames []string,
-		rows kv.Row,
 	) error
 	IsSynced() bool
 	Close(ctx context.Context) (ChunkFlushStatus, error)

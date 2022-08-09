@@ -397,7 +397,7 @@ func addIndexLitUnique(ctx *suiteContext, tableID int, tableName string, indexID
 			if pos > 0 {
 				fmt.Printf("create index failed: %q, %q, %q\n", tableName, indexID, err.Error())
 			}
-		}	
+		}
 	}
 	return err
 }

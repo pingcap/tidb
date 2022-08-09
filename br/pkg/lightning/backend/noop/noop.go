@@ -189,10 +189,6 @@ func (w Writer) AppendRows(context.Context, string, []string, kv.Rows) error {
 	return nil
 }
 
-func (w Writer) AppendRow(context.Context, string, []string, kv.Row) error {
-	return nil
-}
-
 func (w Writer) IsSynced() bool {
 	return true
 }
