@@ -119,7 +119,7 @@
     "exclude_files": {
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*_test\\.go$": "ignore generated code",
+       ".*_test\\.go$": "ignore generated code",
       "util/logutil": "ignore util/logutil code",
       "tools/": "ignore tools code",
       "/src/net/conf.go": "ignore code",
@@ -272,8 +272,8 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
-      "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
       "ddl/index.go": "ddl/index code",
+      "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
       "distsql/": "ignore distsql code",
       "dumpling/export": "dumpling/export code",
       "lock/": "lock file",
