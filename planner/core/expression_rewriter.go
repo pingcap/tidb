@@ -1281,7 +1281,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
 			// GetVar has not been executed to fill the SessionVars.Users.
 			sessionVars.UsersLock.Lock()
-			sessionVars.UserVars.Vars[name] = &expression.Constant{RetType: tp}
+			sessionVars.UserVars.Vars[name] = expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0)
 			sessionVars.UsersLock.Unlock()
 			return
 		}

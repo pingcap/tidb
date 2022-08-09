@@ -190,7 +190,7 @@ func (b *builtinSetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetString(i)
 		datum := types.NewCollationStringDatum(stringutil.Copy(res), collation)
-		var tp *types.FieldType
+		tp := new(types.FieldType)
 		types.DefaultParamTypeForValue(datum, tp)
 		sessionVars.UserVars.Vars[varName] = &Constant{Value: datum, RetType: tp}
 		result.AppendString(res)
@@ -233,7 +233,7 @@ func (b *builtinSetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetInt64(i)
 		datum := types.NewIntDatum(res)
-		var tp *types.FieldType
+		tp := new(types.FieldType)
 		types.DefaultParamTypeForValue(datum, tp)
 		sessionVars.UserVars.Vars[varName] = &Constant{Value: datum, RetType: tp}
 		i64s[i] = res
@@ -276,7 +276,7 @@ func (b *builtinSetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Col
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetFloat64(i)
 		datum := types.NewFloat64Datum(res)
-		var tp *types.FieldType
+		tp := new(types.FieldType)
 		types.DefaultParamTypeForValue(datum, tp)
 		sessionVars.UserVars.Vars[varName] = &Constant{Value: datum, RetType: tp}
 		f64s[i] = res
@@ -319,7 +319,7 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetDecimal(i)
 		datum := types.NewDecimalDatum(res)
-		var tp *types.FieldType
+		tp := new(types.FieldType)
 		types.DefaultParamTypeForValue(datum, tp)
 		sessionVars.UserVars.Vars[varName] = &Constant{Value: datum, RetType: tp}
 		decs[i] = *res
