@@ -29,8 +29,9 @@ import (
 )
 
 var (
-	tempDirLock  fslock.Handle
-	sf           singleflight.Group
+	tempDirLock fslock.Handle
+	sf          singleflight.Group
+	// TempDirMutex is used for changing tidb_tmp_storage_path
 	TempDirMutex sync.RWMutex
 )
 
