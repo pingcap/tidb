@@ -1764,7 +1764,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	if tbl.IsView() {
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
-			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
+			plannercore.PlanBuilderOptNoExecution{}).Init(sctx, is, &hint.BlockHintProcessor{})
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
 			viewOutputNames := viewLogicalPlan.OutputNames()
