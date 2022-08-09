@@ -547,6 +547,8 @@ func validateReadConsistencyLevel(val string) error {
 	}
 }
 
+var CloneUserVars func(userVar interface{}) (interface{}, error)
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -2008,7 +2010,9 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	s.UsersLock.RLock()
 	sessionStates.UserVars = make(map[string]interface{}, len(s.UserVars.Vars))
 	for name, userVar := range s.UserVars.Vars {
-		sessionStates.UserVars[name] = userVar
+		if v, err1 := CloneUserVars(userVar); err1 == nil {
+			sessionStates.UserVars[name] = v
+		}
 	}
 	s.UsersLock.RUnlock()
 
@@ -2042,7 +2046,9 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	s.UsersLock.Lock()
 	s.UserVars.Vars = make(map[string]interface{}, len(sessionStates.UserVars))
 	for name, userVar := range sessionStates.UserVars {
-		s.UserVars.Vars[name] = userVar
+		if v, err1 := CloneUserVars(userVar); err1 == nil {
+			s.UserVars.Vars[name] = v
+		}
 	}
 	s.UsersLock.Unlock()
 

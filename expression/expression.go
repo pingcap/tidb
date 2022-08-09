@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1463,4 +1464,16 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 		exprs[i] = &Constant{Value: d, RetType: ft}
 	}
 	return exprs
+}
+
+func init() {
+	variable.CloneUserVars = CloneUserVars
+}
+
+func CloneUserVars(userVar interface{}) (interface{}, error) {
+	c, ok := userVar.(*Constant)
+	if !ok {
+		return nil, errors.New("...")
+	}
+	return c.Clone(), nil
 }
