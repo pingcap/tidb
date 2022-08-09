@@ -406,7 +406,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 				// if more than one store is valid, put the region
 				// to store candidate map
 				totalRegionCandidateNum += validStoreNum
-				totalRemainingRegionNum += 1
+				totalRemainingRegionNum++
 				candidateRegionInfos = append(candidateRegionInfos, ri)
 				taskKey := ri.Region.String()
 				for _, storeID := range ri.AllStores {

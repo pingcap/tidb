@@ -1176,7 +1176,7 @@
       },
       {
         "SQL": "select max(a+1) from t;",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([Column#40 true],0,1)->Projection->Projection->StreamAgg"
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([Column#40 true],0,1)->Projection->Projection->StreamAgg"
       },
       {
         "SQL": "select max(a), min(a) from t;",
@@ -1619,6 +1619,14 @@
     "Warning": null
   },
   {
+    "SQL": "with cte as (select /*+ MERGE() */ * from v) select * from cte",
+    "Plan": [
+      "TableReader 7.00 root  data:TableFullScan",
+      "└─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
+    ],
+    "Warning": null
+  },
+  {
     "SQL": "WITH cte1 AS (SELECT /*+ MERGE()*/ a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
     "Plan": [
       "HashJoin 7.00 root  inner join, equal:[eq(test.tc.a, test.te.c)]",
@@ -1679,7 +1687,7 @@
       "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false"
     ],
     "Warning": [
-      "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is using in outer query, you should use this hint in CTE inner query."
+      "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."
     ]
   },
   {
@@ -1866,7 +1874,58 @@
       "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false"
     ],
     "Warning": null
-  }
+  },
+      {
+        "SQL": "with cte1 as (with cte2 as (with cte3 as (select  /*+ MERGE() */  * from t2) select  /*+ MERGE() */  * from cte3) select * from cte2,(select  /*+ MERGE() */ * from t1) ttt) select * from cte1;",
+        "Plan": [
+          "CTEFullScan 49.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 49.00 root  Non-Recursive CTE",
+          "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false",
+          "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+          "    └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
+        ],
+        "Warning": [
+          "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."
+        ]
+      },
+      {
+        "SQL": "with cte1 as (with cte2 as (with cte3 as (select  /*+ MERGE() */  * from t2) select  /*+ MERGE() */  * from cte3) select * from cte2,(select * from t1) ttt) select * from cte1,(select  /*+ MERGE() */ * from t3) ttw;",
+        "Plan": [
+          "Projection 343.00 root  test.t2.b, test.t1.a, test.t3.c",
+          "└─HashJoin 343.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 7.00 cop[tikv] table:t3 keep order:false",
+          "  └─CTEFullScan(Probe) 49.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 49.00 root  Non-Recursive CTE",
+          "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false",
+          "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+          "    └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
+        ],
+        "Warning": [
+          "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."
+        ]
+      },
+      {
+        "SQL": "with cte1 as (with cte2 as (with cte3 as (select  /*+ MERGE() */  * from t2) select  /*+ MERGE() */  * from cte3) select * from cte2,(select * from t1) ttt) select * from cte1,(select * from t3) ttw;",
+        "Plan": [
+          "Projection 343.00 root  test.t2.b, test.t1.a, test.t3.c",
+          "└─HashJoin 343.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 7.00 cop[tikv] table:t3 keep order:false",
+          "  └─CTEFullScan(Probe) 49.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 49.00 root  Non-Recursive CTE",
+          "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false",
+          "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+          "    └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
+        ],
+        "Warning": null
+      }
     ]
   },
   {
@@ -1876,7 +1935,7 @@
         "SQL": "select /*+ HASH_AGG() */ avg(distinct a) from t;",
         "Plan": [
           "HashAgg 1.00 root  funcs:avg(distinct Column#6)->Column#5",
-          "└─Projection 1.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#6",
+          "└─Projection 1.00 root  cast(test.t.a, decimal(20,0) BINARY)->Column#6",
           "  └─TableReader 1.00 root  data:HashAgg",
           "    └─HashAgg 1.00 cop[tikv]  group by:test.t.a, ",
           "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -2038,7 +2097,7 @@
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
         "Plan": [
           "HashAgg 1.00 root  funcs:avg(distinct Column#6)->Column#5",
-          "└─Projection 10000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#6",
+          "└─Projection 10000.00 root  cast(test.t.a, decimal(20,0) BINARY)->Column#6",
           "  └─TableReader 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -2063,7 +2122,7 @@
         "Plan": [
           "Projection 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
           "└─HashAgg 8000.00 root  group by:Column#17, funcs:avg(Column#10)->Column#5, funcs:count(distinct Column#11, Column#12)->Column#6, funcs:count(distinct Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:firstrow(Column#16)->test.t.c",
-          "  └─Projection 10000.00 root  cast(test.t.b, decimal(15,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(10,0) BINARY)->Column#15, test.t.c, test.t.c",
+          "  └─Projection 10000.00 root  cast(test.t.b, decimal(20,0) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(10,0) BINARY)->Column#15, test.t.c, test.t.c",
           "    └─TableReader 10000.00 root  data:TableFullScan",
           "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -2984,7 +3043,7 @@
         "Plan": [
           "Projection 8000.00 root  test.t.d, Column#6, cast(Column#11, bigint(21) BINARY)->Column#7, Column#8",
           "└─HashAgg 8000.00 root  group by:Column#20, funcs:sum(Column#16)->Column#6, funcs:sum(Column#17)->Column#11, funcs:avg(Column#18)->Column#8, funcs:firstrow(Column#19)->test.t.d",
-          "  └─Projection 8000.00 root  Column#9, cast(Column#10, decimal(20,0) BINARY)->Column#17, cast(test.t.c, decimal(15,4) BINARY)->Column#18, test.t.d, test.t.d",
+          "  └─Projection 8000.00 root  Column#9, cast(Column#10, decimal(20,0) BINARY)->Column#17, cast(test.t.c, decimal(20,0) BINARY)->Column#18, test.t.d, test.t.d",
           "    └─HashAgg 8000.00 root  group by:test.t.c, test.t.d, funcs:sum(Column#12)->Column#9, funcs:count(Column#13)->Column#10, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(test.t.d)->test.t.d",
           "      └─TableReader 8000.00 root  data:HashAgg",
           "        └─HashAgg 8000.00 cop[tikv]  group by:test.t.c, test.t.d, funcs:sum(test.t.a)->Column#12, funcs:count(test.t.b)->Column#13",

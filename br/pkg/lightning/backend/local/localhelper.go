@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	split "github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
@@ -261,21 +261,21 @@ func (local *local) SplitAndScatterRegionByRanges(
 								err = multierr.Append(err, err1)
 								syncLock.Unlock()
 								break
-							} else {
-								log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
-									zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
-									zap.Binary("end", keys[endIdx-1]))
-								slices.SortFunc(newRegions, func(i, j *split.RegionInfo) bool {
-									return bytes.Compare(i.Region.StartKey, j.Region.StartKey) < 0
-								})
-								syncLock.Lock()
-								scatterRegions = append(scatterRegions, newRegions...)
-								syncLock.Unlock()
-								// the region with the max start key is the region need to be further split.
-								if bytes.Compare(splitRegion.Region.StartKey, newRegions[len(newRegions)-1].Region.StartKey) < 0 {
-									splitRegion = newRegions[len(newRegions)-1]
-								}
 							}
+							log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
+								zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
+								zap.Binary("end", keys[endIdx-1]))
+							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) bool {
+								return bytes.Compare(i.Region.StartKey, j.Region.StartKey) < 0
+							})
+							syncLock.Lock()
+							scatterRegions = append(scatterRegions, newRegions...)
+							syncLock.Unlock()
+							// the region with the max start key is the region need to be further split.
+							if bytes.Compare(splitRegion.Region.StartKey, newRegions[len(newRegions)-1].Region.StartKey) < 0 {
+								splitRegion = newRegions[len(newRegions)-1]
+							}
+
 							batchKeySize = 0
 							startIdx = endIdx
 						}
@@ -319,13 +319,12 @@ func (local *local) SplitAndScatterRegionByRanges(
 
 		if len(retryKeys) == 0 {
 			break
-		} else {
-			slices.SortFunc(retryKeys, func(i, j []byte) bool {
-				return bytes.Compare(i, j) < 0
-			})
-			minKey = codec.EncodeBytes([]byte{}, retryKeys[0])
-			maxKey = codec.EncodeBytes([]byte{}, nextKey(retryKeys[len(retryKeys)-1]))
 		}
+		slices.SortFunc(retryKeys, func(i, j []byte) bool {
+			return bytes.Compare(i, j) < 0
+		})
+		minKey = codec.EncodeBytes([]byte{}, retryKeys[0])
+		maxKey = codec.EncodeBytes([]byte{}, nextKey(retryKeys[len(retryKeys)-1]))
 	}
 	if err != nil {
 		return errors.Trace(err)

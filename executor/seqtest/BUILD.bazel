@@ -2,6 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "seqtest_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "prepared_test.go",
@@ -14,6 +15,7 @@ go_test(
         "//ddl/util",
         "//errno",
         "//executor",
+        "//expression",
         "//infoschema",
         "//kv",
         "//meta/autoid",
@@ -33,7 +35,6 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "//testkit/testutil",
-        "//types",
         "//util",
         "//util/gcutil",
         "//util/kvcache",

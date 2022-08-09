@@ -179,7 +179,7 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
-	if config.GetGlobalConfig().OOMUseTmpStorage {
+	if variable.EnableTmpStorageOnOOM.Load() {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
 		terror.MustNil(err)
@@ -238,7 +238,7 @@ func syncLog() {
 }
 
 func checkTempStorageQuota() {
-	// check capacity and the quota when OOMUseTmpStorage is enabled
+	// check capacity and the quota when EnableTmpStorageOnOOM is enabled
 	c := config.GetGlobalConfig()
 	if c.TempStorageQuota < 0 {
 		// means unlimited, do nothing
@@ -451,7 +451,7 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Binlog.Enable = *enableBinlog
 	}
 	if actualFlags[nmRunDDL] {
-		cfg.RunDDL = *runDDL
+		cfg.Instance.TiDBEnableDDL.Store(*runDDL)
 	}
 	if actualFlags[nmDdlLease] {
 		cfg.Lease = *ddlLease
@@ -565,6 +565,8 @@ func setGlobalVars() {
 					cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
 				case "max-server-connections":
 					cfg.Instance.MaxConnections = cfg.MaxServerConnections
+				case "run-ddl":
+					cfg.Instance.TiDBEnableDDL.Store(cfg.RunDDL)
 				}
 			case "log":
 				switch oldName {
@@ -615,7 +617,6 @@ func setGlobalVars() {
 	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
-	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	}
@@ -674,7 +675,7 @@ func setGlobalVars() {
 
 	// For CI environment we default enable prepare-plan-cache.
 	if config.CheckTableBeforeDrop { // only for test
-		plannercore.SetPreparedPlanCache(true)
+		variable.SetSysVar(variable.TiDBEnablePrepPlanCache, variable.BoolToOnOff(true))
 	}
 	// use server-memory-quota as max-plan-cache-memory
 	plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.ServerMemoryQuota)

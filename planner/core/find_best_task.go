@@ -204,7 +204,8 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	return nil
 }
 
-func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
+func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan,
+	prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
 	childTasks := make([]task, 0, len(p.children))
@@ -278,7 +279,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
-		if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask); err != nil {
+		if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask, opt); err != nil {
 			return nil, 0, err
 		} else if curIsBetter {
 			bestTask = curTask
@@ -288,12 +289,12 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 }
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
-func compareTaskCost(_ sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
-	curCost, curInvalid, err := getTaskPlanCost(curTask)
+func compareTaskCost(_ sessionctx.Context, curTask, bestTask task, op *physicalOptimizeOp) (curIsBetter bool, err error) {
+	curCost, curInvalid, err := getTaskPlanCost(curTask, op)
 	if err != nil {
 		return false, err
 	}
-	bestCost, bestInvalid, err := getTaskPlanCost(bestTask)
+	bestCost, bestInvalid, err := getTaskPlanCost(bestTask, op)
 	if err != nil {
 		return false, err
 	}
@@ -309,7 +310,7 @@ func compareTaskCost(_ sessionctx.Context, curTask, bestTask task) (curIsBetter 
 // getTaskPlanCost returns the cost of this task.
 // The new cost interface will be used if EnableNewCostInterface is true.
 // The second returned value indicates whether this task is valid.
-func getTaskPlanCost(t task) (float64, bool, error) {
+func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 	if t.invalid() {
 		return math.MaxFloat64, true, nil
 	}
@@ -329,7 +330,7 @@ func getTaskPlanCost(t task) (float64, bool, error) {
 	default:
 		return 0, false, errors.New("unknown task type")
 	}
-	cost, err := t.plan().GetPlanCost(taskType, 0)
+	cost, err := t.plan().GetPlanCost(taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
 	return cost, false, err
 }
 
@@ -357,6 +358,13 @@ func (op *physicalOptimizeOp) appendCandidate(lp LogicalPlan, pp PhysicalPlan, p
 		MappingLogicalPlan: tracing.CodecPlanName(lp.TP(), lp.ID())}
 	op.tracer.AppendCandidate(candidate)
 	pp.appendChildCandidate(op)
+}
+
+func (op *physicalOptimizeOp) appendPlanCostDetail(detail *tracing.PhysicalPlanCostDetail) {
+	if op == nil || op.tracer == nil {
+		return
+	}
+	op.tracer.PhysicalPlanCostDetails[detail.GetPlanID()] = detail
 }
 
 // findBestTask implements LogicalPlan interface.
@@ -449,7 +457,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
-	if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask); err != nil {
+	if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask, opt); err != nil {
 		return nil, 0, err
 	} else if curIsBetter {
 		bestTask = curTask
@@ -881,7 +889,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}
 			appendCandidate(ds, idxMergeTask, prop, opt)
 
-			curIsBetter, err := compareTaskCost(ds.ctx, idxMergeTask, t)
+			curIsBetter, err := compareTaskCost(ds.ctx, idxMergeTask, t, opt)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -973,7 +981,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 					cntPlan++
 					planCounter.Dec(1)
 				}
-				curIsBetter, cerr := compareTaskCost(ds.ctx, pointGetTask, t)
+				curIsBetter, cerr := compareTaskCost(ds.ctx, pointGetTask, t, opt)
 				if cerr != nil {
 					return nil, 0, cerr
 				}
@@ -1007,7 +1015,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, tblTask, prop, opt)
-			curIsBetter, err := compareTaskCost(ds.ctx, tblTask, t)
+			curIsBetter, err := compareTaskCost(ds.ctx, tblTask, t, opt)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -1032,7 +1040,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			planCounter.Dec(1)
 		}
 		appendCandidate(ds, idxTask, prop, opt)
-		curIsBetter, err := compareTaskCost(ds.ctx, idxTask, t)
+		curIsBetter, err := compareTaskCost(ds.ctx, idxTask, t, opt)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1882,6 +1890,19 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return invalidTask, nil
 	}
+	if ts.StoreType == kv.TiFlash {
+		for _, col := range ts.schema.Columns {
+			// In theory, TiFlash does not support virtual expr, but in non-mpp mode, if the cop request only contain table scan, then
+			// TiDB will fill the virtual column after decoding the cop response(executor.FillVirtualColumnValue), that is to say, the virtual
+			// columns in Cop request is just a placeholder, so TiFlash can support virtual column in cop request mode. However, virtual column
+			// with TiDBShard is special, it can be added using create index statement, TiFlash's ddl does not handle create index statement, so
+			// there is a chance that the TiDBShard's virtual column is not seen by TiFlash, in this case, TiFlash will throw column not found error
+			if ds.containExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr) {
+				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
+				return invalidTask, nil
+			}
+		}
+	}
 	if prop.TaskTp == property.MppTaskType {
 		if ts.KeepOrder {
 			return invalidTask, nil
@@ -1972,7 +1993,7 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 	}, nil
 }
 
-func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task) {
+func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -2018,7 +2039,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
 		pointGetPlan.PartitionInfo = partitionInfo
 		pointGetPlan.accessCols = ds.TblCols
-		cost = pointGetPlan.GetCost()
+		cost = pointGetPlan.GetCost(opt)
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -2040,7 +2061,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		} else {
 			pointGetPlan.accessCols = ds.TblCols
 		}
-		cost = pointGetPlan.GetCost()
+		cost = pointGetPlan.GetCost(opt)
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()

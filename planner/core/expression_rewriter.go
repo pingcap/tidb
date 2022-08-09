@@ -339,7 +339,7 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 		er.b.hasValidSemiJoinHint = oldHasHint
 	}()
 
-	np, err = er.b.buildResultSetNode(ctx, subq.Query)
+	np, err = er.b.buildResultSetNode(ctx, subq.Query, false)
 	if err != nil {
 		return nil, false, err
 	}
@@ -825,7 +825,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		return v, true
 	}
 	np = er.popExistsSubPlan(np)
-	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, hasRewriteHint)
 		if er.err != nil || !er.asScalar {
 			return v, true
@@ -1000,7 +1001,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
-	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
@@ -1333,9 +1334,9 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	if sysVar.HasNoneScope() {
 		val = sysVar.Value
 	} else if v.IsGlobal {
-		val, err = variable.GetGlobalSystemVar(sessionVars, name)
+		val, err = sessionVars.GetGlobalSystemVar(name)
 	} else {
-		val, err = variable.GetSessionOrGlobalSystemVar(sessionVars, name)
+		val, err = sessionVars.GetSessionOrGlobalSystemVar(name)
 	}
 	if err != nil {
 		er.err = err
@@ -2166,7 +2167,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		}
 		cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
 		for _, col := range tblInfo.Columns {
-			cols[col.ID] = &col.FieldType
+			cols[col.ID] = &(col.FieldType)
 		}
 		handleColIDs := make([]int64, 0, len(idxInfo.Columns))
 		for _, col := range idxInfo.Columns {
