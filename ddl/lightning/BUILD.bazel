@@ -46,6 +46,7 @@ go_test(
         "res_mgr_test.go",
     ],
     embed = [":lightning"],
+    flaky = True,
     deps = [
         "//sessionctx/variable",
         "@com_github_google_uuid//:uuid",
