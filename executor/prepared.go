@@ -352,7 +352,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 
 	// handle point plan short path specially
-	pointPlanShortPathOK, err := plannercore.IsPointPlanShortPathOK(sctx, preparedObj)
+	pointPlanShortPathOK, err := plannercore.IsPointPlanShortPathOK(sctx, is, preparedObj)
 	if pointPlanShortPathOK && err == nil {
 		if ep, ok := execPlan.(*plannercore.Execute); ok {
 			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {

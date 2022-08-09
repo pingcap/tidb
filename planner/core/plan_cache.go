@@ -636,7 +636,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 // IsPointPlanShortPathOK check if we can execute using plan cached in prepared structure
 // Be careful with the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func IsPointPlanShortPathOK(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) (bool, error) {
+func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) (bool, error) {
 	prepared := preparedStmt.PreparedAst
 	if prepared.CachedPlan == nil || staleread.IsStmtStaleness(sctx) {
 		return false, nil
@@ -645,7 +645,6 @@ func IsPointPlanShortPathOK(sctx sessionctx.Context, preparedStmt *CachedPrepare
 	if !IsAutoCommitTxn(sctx) {
 		return false, nil
 	}
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		prepared.CachedPlan = nil
 		preparedStmt.ColumnInfos = nil
