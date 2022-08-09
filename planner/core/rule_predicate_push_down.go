@@ -232,7 +232,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = append(p.RightConditions, rightPushCond...)
 		p.RightConditions = nil
-
 	}
 	leftCond = expression.RemoveDupExprs(p.ctx, leftCond)
 	rightCond = expression.RemoveDupExprs(p.ctx, rightCond)
@@ -575,7 +574,6 @@ func DeriveOtherConditions(
 	p *LogicalJoin, leftSchema *expression.Schema, rightSchema *expression.Schema,
 	deriveLeft bool, deriveRight bool) (
 	leftCond []expression.Expression, rightCond []expression.Expression) {
-
 	isOuterSemi := (p.JoinType == LeftOuterSemiJoin) || (p.JoinType == AntiLeftOuterSemiJoin)
 	for _, expr := range p.OtherConditions {
 		if deriveLeft {

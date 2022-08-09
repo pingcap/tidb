@@ -248,7 +248,7 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 			opInfo.schemaAndDecoder = newSchemaAndDecoder(sctx, tblAtStart.Meta())
 			fieldTypes := make([]*types.FieldType, 0, len(tblAtStart.Meta().Columns))
 			for _, col := range tblAtStart.Meta().Columns {
-				fieldTypes = append(fieldTypes, &col.FieldType)
+				fieldTypes = append(fieldTypes, &(col.FieldType))
 			}
 			opInfo.chk = chunk.NewChunkWithCapacity(fieldTypes, 4)
 			addNewIndexOp := &amendOperationAddIndex{

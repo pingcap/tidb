@@ -34,8 +34,7 @@ import (
 )
 
 func TestSplitTableRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
@@ -107,8 +106,7 @@ func TestSplitTableRegion(t *testing.T) {
 }
 
 func TestSplitRegionEdgeCase(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -122,8 +120,7 @@ func TestSplitRegionEdgeCase(t *testing.T) {
 }
 
 func TestClusterIndexSplitTableIntegration(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_cluster_index_index_split_table_integration;")
 	tk.MustExec("create database test_cluster_index_index_split_table_integration;")
@@ -177,8 +174,7 @@ func TestClusterIndexSplitTableIntegration(t *testing.T) {
 }
 
 func TestClusterIndexShowTableRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("set global tidb_scatter_region = 1")
@@ -206,8 +202,7 @@ func TestClusterIndexShowTableRegion(t *testing.T) {
 }
 
 func TestShowTableRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions")
@@ -713,5 +708,4 @@ func TestShowTableRegion(t *testing.T) {
 		}
 		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
 	}
-
 }

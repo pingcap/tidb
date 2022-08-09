@@ -1350,10 +1350,10 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 					delete(stores, store)
 				}
 				// The store is checked and has been resolved before.
+				// If the store is checked and not resolved, we can retry to resolve it again, so leave it in dirtyStores.
 				if _, ok := dirtyStores[store]; !ok {
 					delete(stores, store)
 				}
-				// If the store is checked and not resolved, we can retry to resolve it again, so leave it in dirtyStores.
 			} else if _, ok := registeredStores[store]; ok {
 				// The store has been registered and it's dirty due to too many collected locks. Fall back to legacy mode.
 				// We can't remove the lock observer from the store and retry the whole procedure because if the store

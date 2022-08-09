@@ -36,8 +36,7 @@ import (
 )
 
 func TestDDLStatsInfo(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := domain.DDL()
 
 	dbInfo, err := testSchemaInfo(store, "test_stat")
@@ -93,8 +92,7 @@ func TestDDLStatsInfo(t *testing.T) {
 }
 
 func TestGetDDLInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	sess := tk.Session()
