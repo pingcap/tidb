@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -180,7 +181,7 @@ type DDL interface {
 	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
 	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
-	SchemaSyncer() util.SchemaSyncer
+	SchemaSyncer() syncer.SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -268,7 +269,7 @@ type ddlCtx struct {
 	uuid         string
 	store        kv.Storage
 	ownerManager owner.Manager
-	schemaSyncer util.SchemaSyncer
+	schemaSyncer syncer.SchemaSyncer
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
@@ -513,16 +514,16 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	id := uuid.New().String()
 	var manager owner.Manager
-	var syncer util.SchemaSyncer
+	var schemaSyncer syncer.SchemaSyncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(ctx, id)
-		syncer = NewMockSchemaSyncer()
+		schemaSyncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		syncer = util.NewSchemaSyncer(etcdCli, id)
+		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -541,7 +542,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		lease:                      opt.Lease,
 		ddlJobDoneCh:               make(chan struct{}, 1),
 		ownerManager:               manager,
-		schemaSyncer:               syncer,
+		schemaSyncer:               schemaSyncer,
 		binlogCli:                  binloginfo.GetPumpsClient(),
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
@@ -807,7 +808,7 @@ func (d *ddl) genPlacementPolicyID() (int64, error) {
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
-func (d *ddl) SchemaSyncer() util.SchemaSyncer {
+func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
 	return d.schemaSyncer
 }
 

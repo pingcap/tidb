@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/ddl/util"
 	"os"
 	"path"
 	"runtime"
@@ -27,7 +28,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/util"

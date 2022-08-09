@@ -23,13 +23,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	util2 "github.com/pingcap/tidb/ddl/util"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -316,7 +316,7 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	}
 	if origin != httpAddr {
 		logutil.BgLogger().Warn(fmt.Sprintf("Update status addr of %v from %v to %v", key, origin, httpAddr))
-		err := ddlutil.PutKVToEtcd(d.ctx, d.etcdCli, 1, key, httpAddr)
+		err := util2.PutKVToEtcd(d.ctx, d.etcdCli, 1, key, httpAddr)
 		if err != nil {
 			return errors.Trace(err)
 		}
