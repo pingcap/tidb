@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -326,7 +327,7 @@ func BenchmarkPreparedPointGet(b *testing.B) {
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(64)})
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(64))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1808,14 +1809,18 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	prepStmt, err := se.GetSessionVars().GetPreparedStmtByID(stmtID)
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	args := []types.Datum{types.NewDatum(3401544)}
 	is := se.GetInfoSchema()
 
 	b.ResetTimer()
-	stmtExec := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
+	stmtExec := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, is.(infoschema.InfoSchema))
+		_, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, is.(infoschema.InfoSchema))
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -3345,7 +3345,6 @@ func (n *AlterTableStmt) HaveOnlyPlacementOptions() bool {
 	for _, n := range n.Specs {
 		if n.Tp != AlterTablePartitionOptions {
 			return false
-
 		}
 		if !n.IsAllPlacementRule() {
 			return false

@@ -230,7 +230,6 @@ func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error 
 }
 
 func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
-
 	var restoreMetaSQL string
 	var err error
 	switch {

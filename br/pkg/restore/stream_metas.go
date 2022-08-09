@@ -4,6 +4,7 @@ package restore
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"sync"
 
@@ -25,8 +26,10 @@ type StreamMetadataSet struct {
 	BeforeDoWriteBack func(path string, last, current *backuppb.Metadata) (skip bool)
 }
 
-// LoadFrom loads data from an external storage into the stream metadata set.
-func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
+// LoadUntil loads the metadata until the specified timestamp.
+// This would load all metadata files that *may* contain data from transaction committed before that TS.
+// Note: maybe record the timestamp and reject reading data files after this TS?
+func (ms *StreamMetadataSet) LoadUntil(ctx context.Context, s storage.ExternalStorage, until uint64) error {
 	metadataMap := struct {
 		sync.Mutex
 		metas map[string]*backuppb.Metadata
@@ -35,7 +38,12 @@ func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalSto
 	metadataMap.metas = make(map[string]*backuppb.Metadata)
 	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
 		metadataMap.Lock()
-		metadataMap.metas[path] = m
+		// If the meta file contains only files with ts grater than `until`, when the file is from
+		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater than it, which should not be considered.
+		// `Write`: it should trivially not be considered.
+		if m.MinTs <= until {
+			metadataMap.metas[path] = m
+		}
 		metadataMap.Unlock()
 		return nil
 	})
@@ -44,6 +52,11 @@ func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalSto
 	}
 	ms.metadata = metadataMap.metas
 	return nil
+}
+
+// LoadFrom loads data from an external storage into the stream metadata set.
+func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
+	return ms.LoadUntil(ctx, s, math.MaxUint64)
 }
 
 func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
@@ -183,10 +196,7 @@ func swapAndOverrideFile(ctx context.Context, s storage.ExternalStorage, path st
 	if err := s.WriteFile(ctx, path, data); err != nil {
 		return err
 	}
-	if err := s.DeleteFile(ctx, backup); err != nil {
-		return err
-	}
-	return nil
+	return s.DeleteFile(ctx, backup)
 }
 
 const (
@@ -233,6 +243,30 @@ func SetTSToFile(
 	return truncateAndWrite(ctx, s, filename, []byte(content))
 }
 
+func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint64, bool) {
+	var (
+		minBeginTS uint64
+		isExist    bool
+	)
+	if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+		return 0, false
+	}
+
+	for _, d := range m.Files {
+		if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+			continue
+		}
+		if d.MinTs > restoreTS || d.MaxTs < startTS {
+			continue
+		}
+		if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
+			isExist = true
+			minBeginTS = d.MinBeginTsInDefaultCf
+		}
+	}
+	return minBeginTS, isExist
+}
+
 // CalculateShiftTS gets the minimal begin-ts about transaction according to the kv-event in write-cf.
 func CalculateShiftTS(
 	metas []*backuppb.Metadata,
@@ -247,18 +281,10 @@ func CalculateShiftTS(
 		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
 			continue
 		}
-
-		for _, d := range m.Files {
-			if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
-				continue
-			}
-			if d.MinTs > restoreTS || d.MaxTs < startTS {
-				continue
-			}
-			if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
-				isExist = true
-				minBeginTS = d.MinBeginTsInDefaultCf
-			}
+		ts, ok := UpdateShiftTS(m, startTS, mathutil.MaxUint)
+		if ok && (!isExist || ts < minBeginTS) {
+			minBeginTS = ts
+			isExist = true
 		}
 	}
 

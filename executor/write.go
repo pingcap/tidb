@@ -158,7 +158,21 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
 		txnCtx := sctx.GetSessionVars().TxnCtx
 		if txnCtx.IsPessimistic {
-			txnCtx.AddUnchangedRowKey(unchangedRowKey)
+			txnCtx.AddUnchangedLockKey(unchangedRowKey)
+			for _, idx := range t.Indices() {
+				if !idx.Meta().Unique {
+					continue
+				}
+				ukVals, err := idx.FetchValues(oldData, nil)
+				if err != nil {
+					return false, err
+				}
+				unchangedUniqueKey, _, err := idx.GenIndexKey(sc, ukVals, h, nil)
+				if err != nil {
+					return false, err
+				}
+				txnCtx.AddUnchangedLockKey(unchangedUniqueKey)
+			}
 		}
 		return false, nil
 	}
@@ -213,7 +227,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			}
 			return false, err
 		}
-
 	}
 	if onDup {
 		sc.AddAffectedRows(2)

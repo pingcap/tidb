@@ -773,12 +773,22 @@ func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 	return nil
 }
 
+// FindPublicColumnByName finds the public column by name.
+func (t *TableInfo) FindPublicColumnByName(colNameL string) *ColumnInfo {
+	for _, col := range t.Cols() {
+		if col.Name.L == colNameL {
+			return col
+		}
+	}
+	return nil
+}
+
 // IsLocked checks whether the table was locked.
 func (t *TableInfo) IsLocked() bool {
 	return t.Lock != nil && len(t.Lock.Sessions) > 0
 }
 
-// MoveColumnInfo moves a column to another offset.
+// MoveColumnInfo moves a column to another offset. It maintains the offsets of all affects columns and index columns,
 func (t *TableInfo) MoveColumnInfo(from, to int) {
 	if from == to {
 		return
@@ -1343,6 +1353,22 @@ func (index *IndexInfo) HasColumnInIndexColumns(tblInfo *TableInfo, colID int64)
 		}
 	}
 	return false
+}
+
+// FindColumnByName finds the index column with the specified name.
+func (index *IndexInfo) FindColumnByName(nameL string) *IndexColumn {
+	_, ret := FindIndexColumnByName(index.Columns, nameL)
+	return ret
+}
+
+// FindIndexColumnByName finds IndexColumn by name. When IndexColumn is not found, returns (-1, nil).
+func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexColumn) {
+	for i, ic := range indexCols {
+		if ic.Name.L == nameL {
+			return i, ic
+		}
+	}
+	return -1, nil
 }
 
 // ConstraintInfo provides meta data describing check-expression constraint.

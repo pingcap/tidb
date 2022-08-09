@@ -120,12 +120,11 @@ func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
-	bf.tp = c.tp
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
@@ -170,12 +169,11 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
-	bf.tp = c.tp
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
@@ -226,12 +224,11 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
-	bf.tp = c.tp
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
@@ -281,11 +278,10 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = c.tp
 	if args[0].GetType().Hybrid() {
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
@@ -336,11 +332,10 @@ func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = c.tp
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
@@ -380,11 +375,10 @@ func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = c.tp
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
@@ -424,11 +418,10 @@ func (c *castAsJSONFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = c.tp
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
@@ -526,11 +519,13 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 		return res, isNull, err
 	}
 	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()); !mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 {
+		//revive:disable:empty-lines
 		res = types.NewDecFromInt(val)
 		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
 		// NOTE: the following expressions are equal (so choose the more efficient one):
 		// `b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 && val < 0`
 		// `b.inUnion && !unsignedArgs0 && val < 0`
+		//revive:enable:empty-lines
 	} else if b.inUnion && !unsignedArgs0 && val < 0 {
 		res = &types.MyDecimal{}
 	} else {
@@ -1791,12 +1786,8 @@ const inUnionCastContext inCastContext = 0
 // This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as integer.
 // See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
 func CanImplicitEvalInt(expr Expression) bool {
-	switch f := expr.(type) {
-	case *ScalarFunction:
-		switch f.FuncName.L {
-		case ast.DayName:
-			return true
-		}
+	if f, ok := expr.(*ScalarFunction); ok {
+		return f.FuncName.L == ast.DayName
 	}
 	return false
 }
@@ -1806,12 +1797,8 @@ func CanImplicitEvalInt(expr Expression) bool {
 // This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as real.
 // See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
 func CanImplicitEvalReal(expr Expression) bool {
-	switch f := expr.(type) {
-	case *ScalarFunction:
-		switch f.FuncName.L {
-		case ast.DayName:
-			return true
-		}
+	if f, ok := expr.(*ScalarFunction); ok {
+		return f.FuncName.L == ast.DayName
 	}
 	return false
 }
@@ -1937,6 +1924,25 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+func minimalDecimalLenForHoldingInteger(tp byte) int {
+	switch tp {
+	case mysql.TypeTiny:
+		return 3
+	case mysql.TypeShort:
+		return 5
+	case mysql.TypeInt24:
+		return 8
+	case mysql.TypeLong:
+		return 10
+	case mysql.TypeLonglong:
+		return 20
+	case mysql.TypeYear:
+		return 4
+	default:
+		return mysql.MaxIntWidth
+	}
+}
+
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type of expr is
 // not type decimal, otherwise, returns `expr` directly.
 func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
@@ -1948,7 +1954,8 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
 
 	if expr.GetType().EvalType() == types.ETInt {
-		tp.SetFlen(mysql.MaxIntWidth)
+		tp.SetFlen(minimalDecimalLenForHoldingInteger(expr.GetType().GetType()))
+		tp.SetDecimal(0)
 	}
 	if tp.GetFlen() == types.UnspecifiedLength || tp.GetFlen() > mysql.MaxDecimalWidth {
 		tp.SetFlen(mysql.MaxDecimalWidth)

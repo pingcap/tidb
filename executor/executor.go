@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -160,6 +161,9 @@ func init() {
 	variable.GetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.GetBytesLimit
 	// TODO: do not attach now to avoid impact to global, will attach later when analyze memory track is stable
 	//GlobalAnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+
+	schematracker.ConstructResultOfShowCreateDatabase = ConstructResultOfShowCreateDatabase
+	schematracker.ConstructResultOfShowCreateTable = ConstructResultOfShowCreateTable
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -399,8 +403,10 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		switch alloc.GetType() {
 		case autoid.RowIDAllocType, autoid.AutoIncrementType:
 			idType = "AUTO_INCREMENT"
-			if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
-				colName = col.Name.O
+			if tblMeta.PKIsHandle {
+				if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
+					colName = col.Name.O
+				}
 			} else {
 				colName = model.ExtraHandleName.O
 			}
@@ -663,6 +669,80 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, req *chunk.Chunk) erro
 			if id == e.jobs[i].ID {
 				req.AppendString(0, e.jobs[i].Query)
 			}
+		}
+	}
+	e.cursor += numCurBatch
+	return nil
+}
+
+// ShowDDLJobQueriesWithRangeExec represents a show DDL job queries with range executor.
+// The jobs id that is given by 'admin show ddl job queries' statement,
+// can be searched within a specified range in history jobs using offset and limit.
+type ShowDDLJobQueriesWithRangeExec struct {
+	baseExecutor
+
+	cursor int
+	jobs   []*model.Job
+	offset uint64
+	limit  uint64
+}
+
+// Open implements the Executor Open interface.
+func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
+	var err error
+	var jobs []*model.Job
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	session, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	err = sessiontxn.NewTxn(context.Background(), session)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// releaseSysSession will rollbacks txn automatically.
+		e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), session)
+	}()
+	txn, err := session.Txn(true)
+	if err != nil {
+		return err
+	}
+	session.GetSessionVars().SetInTxn(true)
+
+	m := meta.NewMeta(txn)
+	jobs, err = ddl.GetAllDDLJobs(session, m)
+	if err != nil {
+		return err
+	}
+
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(m, int(e.offset+e.limit))
+	if err != nil {
+		return err
+	}
+
+	e.jobs = append(e.jobs, jobs...)
+	e.jobs = append(e.jobs, historyJobs...)
+
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.maxChunkSize)
+	if e.cursor >= len(e.jobs) {
+		return nil
+	}
+	if int(e.limit) > len(e.jobs) {
+		return nil
+	}
+	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
+	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+		if i >= int(e.offset) && i < int(e.offset+e.limit) {
+			req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
+			req.AppendString(1, e.jobs[i].Query)
 		}
 	}
 	e.cursor += numCurBatch
@@ -1856,7 +1936,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
-	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
+	if variable.EnableTmpStorageOnOOM.Load() && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
 	switch variable.OOMAction.Load() {

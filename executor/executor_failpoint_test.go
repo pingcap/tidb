@@ -42,8 +42,7 @@ func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 	})
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -109,8 +108,7 @@ func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
 }
 
 func TestPointGetRepeatableRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -148,8 +146,7 @@ func TestPointGetRepeatableRead(t *testing.T) {
 }
 
 func TestBatchPointGetRepeatableRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -185,8 +182,7 @@ func TestBatchPointGetRepeatableRead(t *testing.T) {
 }
 
 func TestSplitRegionTimeout(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	require.NoError(t, failpoint.Enable("tikvclient/injectLiveness", `return("reachable")`))
 	defer func() {
@@ -221,8 +217,7 @@ func TestSplitRegionTimeout(t *testing.T) {
 }
 
 func TestTSOFail(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -243,8 +238,7 @@ func TestKillTableReader(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(retry))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -268,8 +262,7 @@ func TestKillTableReader(t *testing.T) {
 }
 
 func TestCollectCopRuntimeStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -285,8 +278,7 @@ func TestCollectCopRuntimeStats(t *testing.T) {
 }
 
 func TestCoprocessorOOMTiCase(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
@@ -367,8 +359,7 @@ func TestIssue21441(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/issue21441"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -402,9 +393,10 @@ select a from t`
 }
 
 func TestTxnWriteThroughputSLI(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -551,8 +543,7 @@ func TestDeadlocksTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select * from information_schema.deadlocks").Check(

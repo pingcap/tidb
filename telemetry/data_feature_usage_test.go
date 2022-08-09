@@ -36,8 +36,7 @@ import (
 )
 
 func TestTxnUsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	t.Run("Used", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
@@ -99,8 +98,7 @@ func TestTxnUsageInfo(t *testing.T) {
 }
 
 func TestTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -116,8 +114,7 @@ func TestTemporaryTable(t *testing.T) {
 }
 
 func TestCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -138,8 +135,7 @@ func TestCachedTable(t *testing.T) {
 }
 
 func TestMultiSchemaChange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -172,8 +168,7 @@ func TestMultiSchemaChange(t *testing.T) {
 }
 
 func TestTablePartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -228,8 +223,7 @@ func TestTablePartition(t *testing.T) {
 }
 
 func TestPlacementPolicies(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -271,8 +265,7 @@ func TestPlacementPolicies(t *testing.T) {
 }
 
 func TestAutoCapture(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -291,8 +284,7 @@ func TestAutoCapture(t *testing.T) {
 }
 
 func TestClusterIndexUsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -307,8 +299,7 @@ func TestClusterIndexUsageInfo(t *testing.T) {
 }
 
 func TestNonTransactionalUsage(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -325,8 +316,7 @@ func TestNonTransactionalUsage(t *testing.T) {
 }
 
 func TestGlobalKillUsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
@@ -437,8 +427,7 @@ func TestTiFlashModeStatistics(t *testing.T) {
 }
 
 func TestPagingUsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
@@ -452,8 +441,7 @@ func TestPagingUsageInfo(t *testing.T) {
 }
 
 func TestCostModelVer2UsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
@@ -467,8 +455,7 @@ func TestCostModelVer2UsageInfo(t *testing.T) {
 }
 
 func TestTxnSavepointUsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("savepoint sp1")
