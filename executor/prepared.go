@@ -346,26 +346,22 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, err
 	}
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+
+	// handle point plan short path specially
 	pointPlanShortPathOK, err := plannercore.IsPointPlanShortPathOK(sctx, preparedObj)
 	if pointPlanShortPathOK && err == nil {
 		if ep, ok := execPlan.(*plannercore.Execute); ok {
 			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
-				// set for point plan short path
-				stmtCtx := sctx.GetSessionVars().StmtCtx
-				stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-				stmtCtx.OriginalSQL = stmt.Text
 				stmtCtx.SetPlan(execPlan)
-				stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
 				stmt.Plan = pointPlan
 				stmt.PsStmt = preparedObj
 			}
 		}
 	}
-
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-	stmtCtx.OriginalSQL = stmt.Text
-	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	return stmt, nil
 }
