@@ -515,7 +515,7 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 		table.Partition = &newPartition
 	}
 
-	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore, nil)
+	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
 }
 
 // CreatePlacementPolicy implements glue.Session

@@ -212,7 +212,7 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		onExist = ddl.OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist, nil)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
 }
 
 // CreateTableWithInfo implements the DDL interface.
@@ -221,7 +221,6 @@ func (d SchemaTracker) CreateTableWithInfo(
 	dbName model.CIStr,
 	info *model.TableInfo,
 	onExist ddl.OnExist,
-	stmt *ast.CreateTableStmt,
 ) error {
 	schema := d.SchemaByName(dbName)
 	if schema == nil {
@@ -271,7 +270,7 @@ func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt)
 		onExist = ddl.OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist, nil)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
 }
 
 // DropTable implements the DDL interface.
