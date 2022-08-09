@@ -816,14 +816,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		return v, true
 	}
 	np = er.popExistsSubPlan(np)
-<<<<<<< HEAD
-	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
-=======
-
 	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, hasRewriteHint)
->>>>>>> e39ef4cae... executor: prevent sending cop request for show columns (#36613)
+		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
