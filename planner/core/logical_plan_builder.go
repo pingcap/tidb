@@ -329,10 +329,35 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	return plan4Agg, aggIndexMap, nil
 }
 
+func (b *PlanBuilder) CTEInfoFromCol(from ast.ResultSetNode) {
+	var tableList []*ast.TableName
+	tableList = extractTableList(from, tableList, true)
+	for _, field := range tableList {
+		for i := len(b.outerCTEs) - 1; i >= 0; i-- {
+			cte := b.outerCTEs[i]
+			if field.Name.L == cte.def.Name.L {
+				cte.RefCount++
+			}
+		}
+	}
+	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
+		outercte := b.outerCTEs[i]
+		for j := len(b.RefCTEs) - 1; j >= 0; j-- {
+			refcte := b.RefCTEs[j]
+			if outercte.def.Name.L == refcte.def.Name.L {
+				refcte.RefCount = outercte.RefCount
+			}
+		}
+	}
+}
+
 func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
 	if from == nil {
 		p = b.buildTableDual()
 		return
+	}
+	if b.buildingCTE || len(b.RefCTEs) > 0 {
+		b.CTEInfoFromCol(from.TableRefs)
 	}
 	defer func() {
 		// After build the resultSetNode, need to reset it so that it can be referenced by outer level.
@@ -4031,6 +4056,19 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
+	//If CTE query has only 1 consumer, we will inline it automatically.
+	if len(b.RefCTEs) > 0 && !b.buildingCTE && !b.isCTE {
+		for j := len(b.RefCTEs) - 1; j >= 0; j-- {
+			//refcte := b.RefCTEs[j]
+			//if refcte.RefCount == 1 && refcte.recurLP == nil {
+			//	p, err := b.buildDataSourceFromCTEMerge(ctx, refcte.def)
+			//	if err != nil || p != nil {
+			//		return p, err
+			//	}
+			//}
+		}
+	}
+
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
@@ -4226,6 +4264,12 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 					on = append(on, &cpOn)
 				}
 				p.SetOutputNames(on)
+			}
+			for j := len(b.RefCTEs) - 1; j >= 0; j-- {
+				refcte := b.RefCTEs[j]
+				if refcte.def.Name == cte.def.Name {
+					refcte = cte
+				}
 			}
 			return p, nil
 		}
@@ -6956,7 +7000,8 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		nameMap[cte.Name.L] = struct{}{}
 	}
 	for _, cte := range w.CTEs {
-		b.outerCTEs = append(b.outerCTEs, &cteInfo{def: cte, nonRecursive: !w.IsRecursive, isBuilding: true, storageID: b.allocIDForCTEStorage, seedStat: &property.StatsInfo{}})
+		b.outerCTEs = append(b.outerCTEs, &cteInfo{def: cte, nonRecursive: !w.IsRecursive, isBuilding: true, storageID: b.allocIDForCTEStorage, seedStat: &property.StatsInfo{}, RefCount: 0})
+		b.RefCTEs = append(b.RefCTEs, &cteInfo{def: cte, nonRecursive: !w.IsRecursive, isBuilding: true, storageID: b.allocIDForCTEStorage, seedStat: &property.StatsInfo{}, RefCount: 0})
 		b.allocIDForCTEStorage++
 		saveFlag := b.optFlag
 		// Init the flag to flagPrunColumns, otherwise it's missing.
