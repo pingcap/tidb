@@ -245,19 +245,16 @@ type CachedPrepareStmt struct {
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
 func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
-	var ok bool
-	execID := stmt.ExecID
-	if stmt.Name != "" {
-		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
-			return nil, ErrStmtNotFound
-		}
+	if stmt.PrepStmt != nil {
+		return stmt.PrepStmt.(*CachedPrepareStmt), nil
 	}
-	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-		preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+	if stmt.Name != "" {
+		prepStmt, err := vars.GetPreparedStmtByName(stmt.Name)
+		if err != nil {
+			return nil, err
 		}
-		return preparedObj, nil
+		stmt.PrepStmt = prepStmt
+		return prepStmt.(*CachedPrepareStmt), nil
 	}
 	return nil, ErrStmtNotFound
 }
