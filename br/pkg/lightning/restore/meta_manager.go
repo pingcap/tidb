@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
@@ -19,6 +20,11 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
+)
+
+const (
+	maxRetryOnStatusConflict = 30
+	maxBackoffTime           = 30 * time.Second
 )
 
 type metaMgrBuilder interface {
@@ -179,124 +185,149 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		return nil, 0, errors.Annotate(err, "enable pessimistic transaction failed")
 	}
 	needAutoID := common.TableHasAutoRowID(m.tr.tableInfo.Core) || m.tr.tableInfo.Core.GetAutoIncrementColInfo() != nil || m.tr.tableInfo.Core.ContainsAutoRandomBits()
-	err = exec.Transact(ctx, "init table allocator base", func(ctx context.Context, tx *sql.Tx) error {
-		rows, err := tx.QueryContext(
-			ctx,
-			fmt.Sprintf("SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from %s WHERE table_id = ? FOR UPDATE", m.tableName),
-			m.tr.tableInfo.ID,
-		)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer rows.Close()
-		var (
-			metaTaskID, rowIDBase, rowIDMax, maxRowIDMax int64
-			totalKvs, totalBytes, checksum               uint64
-			statusValue                                  string
-		)
-		for rows.Next() {
-			if err = rows.Scan(&metaTaskID, &rowIDBase, &rowIDMax, &totalKvs, &totalBytes, &checksum, &statusValue); err != nil {
+	tableChecksumingMsg := "Target table is calculating checksum. Please wait until the checksum is finished and try again."
+	doAllocTableRowIDsFn := func() error {
+		return exec.Transact(ctx, "init table allocator base", func(ctx context.Context, tx *sql.Tx) error {
+			rows, err := tx.QueryContext(
+				ctx,
+				fmt.Sprintf("SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from %s WHERE table_id = ? FOR UPDATE", m.tableName),
+				m.tr.tableInfo.ID,
+			)
+			if err != nil {
 				return errors.Trace(err)
 			}
-			status, err := parseMetaStatus(statusValue)
-			if err != nil {
-				return err
-			}
+			defer rows.Close()
+			var (
+				metaTaskID, rowIDBase, rowIDMax, maxRowIDMax int64
+				totalKvs, totalBytes, checksum               uint64
+				statusValue                                  string
+			)
+			for rows.Next() {
+				if err = rows.Scan(&metaTaskID, &rowIDBase, &rowIDMax, &totalKvs, &totalBytes, &checksum, &statusValue); err != nil {
+					return errors.Trace(err)
+				}
+				status, err := parseMetaStatus(statusValue)
+				if err != nil {
+					return err
+				}
 
-			// skip finished meta
-			if status >= metaStatusFinished {
-				continue
-			}
+				// skip finished meta
+				if status >= metaStatusFinished {
+					continue
+				}
 
-			if status == metaStatusChecksuming {
-				return common.ErrAllocTableRowIDs.GenWithStack("Target table is calculating checksum. Please wait until the checksum is finished and try again.")
-			}
+				if status == metaStatusChecksuming {
+					return common.ErrAllocTableRowIDs.GenWithStack(tableChecksumingMsg)
+				}
 
-			if metaTaskID == m.taskID {
-				curStatus = status
-				baseChecksum = checksum
-				baseTotalKvs = totalKvs
-				baseTotalBytes = totalBytes
+				if metaTaskID == m.taskID {
+					curStatus = status
+					baseChecksum = checksum
+					baseTotalKvs = totalKvs
+					baseTotalBytes = totalBytes
+					if status >= metaStatusRowIDAllocated {
+						if rowIDMax-rowIDBase != rawRowIDMax {
+							return common.ErrAllocTableRowIDs.GenWithStack("verify allocator base failed. local: '%d', meta: '%d'", rawRowIDMax, rowIDMax-rowIDBase)
+						}
+						newRowIDBase = rowIDBase
+						newRowIDMax = rowIDMax
+						break
+					}
+					continue
+				}
+
+				// other tasks has finished this logic, we needn't do again.
 				if status >= metaStatusRowIDAllocated {
-					if rowIDMax-rowIDBase != rawRowIDMax {
-						return common.ErrAllocTableRowIDs.GenWithStack("verify allocator base failed. local: '%d', meta: '%d'", rawRowIDMax, rowIDMax-rowIDBase)
+					newStatus = metaStatusRestoreStarted
+				}
+
+				if rowIDMax > maxRowIDMax {
+					maxRowIDMax = rowIDMax
+				}
+			}
+			if rows.Err() != nil {
+				return errors.Trace(rows.Err())
+			}
+
+			// no enough info are available, fetch row_id max for table
+			if curStatus == metaStatusInitial {
+				if needAutoID && maxRowIDMax == 0 {
+					// NOTE: currently, if a table contains auto_incremental unique key and _tidb_rowid,
+					// the `show table next_row_id` will returns the unique key field only.
+					var autoIDField string
+					for _, col := range m.tr.tableInfo.Core.Columns {
+						if mysql.HasAutoIncrementFlag(col.GetFlag()) {
+							autoIDField = col.Name.L
+							break
+						} else if mysql.HasPriKeyFlag(col.GetFlag()) && m.tr.tableInfo.Core.AutoRandomBits > 0 {
+							autoIDField = col.Name.L
+							break
+						}
 					}
-					newRowIDBase = rowIDBase
-					newRowIDMax = rowIDMax
-					break
-				}
-				continue
-			}
+					if len(autoIDField) == 0 && common.TableHasAutoRowID(m.tr.tableInfo.Core) {
+						autoIDField = model.ExtraHandleName.L
+					}
+					if len(autoIDField) == 0 {
+						return common.ErrAllocTableRowIDs.GenWithStack("table %s contains auto increment id or _tidb_rowid, but target field not found", m.tr.tableName)
+					}
 
-			// other tasks has finished this logic, we needn't do again.
-			if status >= metaStatusRowIDAllocated {
-				newStatus = metaStatusRestoreStarted
-			}
-
-			if rowIDMax > maxRowIDMax {
-				maxRowIDMax = rowIDMax
-			}
-		}
-		if rows.Err() != nil {
-			return errors.Trace(rows.Err())
-		}
-
-		// no enough info are available, fetch row_id max for table
-		if curStatus == metaStatusInitial {
-			if needAutoID && maxRowIDMax == 0 {
-				// NOTE: currently, if a table contains auto_incremental unique key and _tidb_rowid,
-				// the `show table next_row_id` will returns the unique key field only.
-				var autoIDField string
-				for _, col := range m.tr.tableInfo.Core.Columns {
-					if mysql.HasAutoIncrementFlag(col.GetFlag()) {
-						autoIDField = col.Name.L
-						break
-					} else if mysql.HasPriKeyFlag(col.GetFlag()) && m.tr.tableInfo.Core.AutoRandomBits > 0 {
-						autoIDField = col.Name.L
-						break
+					autoIDInfos, err := tidb.FetchTableAutoIDInfos(ctx, tx, m.tr.tableName)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					found := false
+					for _, info := range autoIDInfos {
+						if strings.ToLower(info.Column) == autoIDField {
+							maxRowIDMax = info.NextID - 1
+							found = true
+							break
+						}
+					}
+					if !found {
+						return common.ErrAllocTableRowIDs.GenWithStack("can't fetch previous auto id base for table %s field '%s'", m.tr.tableName, autoIDField)
 					}
 				}
-				if len(autoIDField) == 0 && common.TableHasAutoRowID(m.tr.tableInfo.Core) {
-					autoIDField = model.ExtraHandleName.L
-				}
-				if len(autoIDField) == 0 {
-					return common.ErrAllocTableRowIDs.GenWithStack("table %s contains auto increment id or _tidb_rowid, but target field not found", m.tr.tableName)
+				newRowIDBase = maxRowIDMax
+				newRowIDMax = newRowIDBase + rawRowIDMax
+				// table contains no data, can skip checksum
+				if needAutoID && newRowIDBase == 0 && newStatus < metaStatusRestoreStarted {
+					newStatus = metaStatusRestoreStarted
 				}
 
-				autoIDInfos, err := tidb.FetchTableAutoIDInfos(ctx, tx, m.tr.tableName)
+				// nolint:gosec
+				query := fmt.Sprintf("update %s set row_id_base = ?, row_id_max = ?, status = ? where table_id = ? and task_id = ?", m.tableName)
+				_, err := tx.ExecContext(ctx, query, newRowIDBase, newRowIDMax, newStatus.String(), m.tr.tableInfo.ID, m.taskID)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				found := false
-				for _, info := range autoIDInfos {
-					if strings.ToLower(info.Column) == autoIDField {
-						maxRowIDMax = info.NextID - 1
-						found = true
-						break
-					}
-				}
-				if !found {
-					return common.ErrAllocTableRowIDs.GenWithStack("can't fetch previous auto id base for table %s field '%s'", m.tr.tableName, autoIDField)
-				}
-			}
-			newRowIDBase = maxRowIDMax
-			newRowIDMax = newRowIDBase + rawRowIDMax
-			// table contains no data, can skip checksum
-			if needAutoID && newRowIDBase == 0 && newStatus < metaStatusRestoreStarted {
-				newStatus = metaStatusRestoreStarted
-			}
 
-			// nolint:gosec
-			query := fmt.Sprintf("update %s set row_id_base = ?, row_id_max = ?, status = ? where table_id = ? and task_id = ?", m.tableName)
-			_, err := tx.ExecContext(ctx, query, newRowIDBase, newRowIDMax, newStatus.String(), m.tr.tableInfo.ID, m.taskID)
-			if err != nil {
-				return errors.Trace(err)
+				curStatus = newStatus
 			}
-
-			curStatus = newStatus
+			return nil
+		})
+	}
+	// TODO: the retry logic is duplicate with code in local.writeAndIngestByRanges, should encapsulate it later.
+	// max retry backoff time: 2+4+8+16+30*26=810s
+	backOffTime := time.Second
+	for i := 0; i < maxRetryOnStatusConflict; i++ {
+		err = doAllocTableRowIDsFn()
+		if err == nil || !strings.Contains(err.Error(), tableChecksumingMsg) {
+			break
 		}
-		return nil
-	})
+		// we only retry if it's tableChecksuming error, it happens during parallel import.
+		// for detail see https://docs.pingcap.com/tidb/stable/tidb-lightning-distributed-import
+		log.L().Warn("target table is doing checksum, will try again",
+			zap.Int("retry time", i+1), log.ShortError(err))
+		backOffTime *= 2
+		if backOffTime > maxBackoffTime {
+			backOffTime = maxBackoffTime
+		}
+		select {
+		case <-time.After(backOffTime):
+		case <-ctx.Done():
+			return nil, 0, errors.Trace(ctx.Err())
+		}
+	}
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
