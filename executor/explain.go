@@ -221,9 +221,9 @@ func (h *memoryDebugModeHandler) run() {
 		case <-ticker.C:
 			heapInUse, trackedMem := h.fetchCurrentMemoryUsage(h.autoGC)
 			loop++
-			if loop%6 == 0 {
+			if loop%2 == 0 {
 				fields, err = h.genInfo("running", true, int64(heapInUse), int64(trackedMem))
-				logutil.BgLogger().Info("Memory Debug Mode", fields...)
+				logutil.BgLogger().Info("Memory Debug Mode", append(fields, zap.Int("loop", loop))...)
 				if err != nil {
 					return
 				}
