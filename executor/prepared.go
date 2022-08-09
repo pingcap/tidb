@@ -360,6 +360,9 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
 				stmt.Plan = pointPlan
 				stmt.PsStmt = preparedObj
+			} else {
+				// invalid the previous cached point plan
+				preparedObj.PreparedAst.CachedPlan = nil
 			}
 		}
 	}
