@@ -58,6 +58,10 @@ type baseTxnContextProvider struct {
 	txn             kv.Transaction
 	isTxnPrepared   bool
 	enterNewTxnType sessiontxn.EnterNewTxnType
+	// constStartTS is only used by point get max ts optimization currently.
+	// When constStartTS != 0, we use constStartTS directly without fetching it from tso.
+	// To save the cpu cycles `PrepareTSFuture` will also not be called when warmup (postpone to activate txn).
+	constStartTS uint64
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -222,6 +226,12 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
+	if p.constStartTS != 0 {
+		if err := p.replaceTxnTsFuture(sessiontxn.ConstantFuture(p.constStartTS)); err != nil {
+			return nil, err
+		}
+	}
+
 	txnFuture := p.sctx.GetPreparedTxnFuture()
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
@@ -277,7 +287,7 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 	}
 
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return p.prepareTxnWithTS(snapshotTS)
+		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}
 
 	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
@@ -296,8 +306,13 @@ func (p *baseTxnContextProvider) prepareTxnWithOracleTS() error {
 	return p.replaceTxnTsFuture(future)
 }
 
-func (p *baseTxnContextProvider) prepareTxnWithTS(ts uint64) error {
-	return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(ts))
+func (p *baseTxnContextProvider) forcePrepareConstStartTS(ts uint64) error {
+	if p.txn != nil {
+		return errors.New("cannot force prepare const start ts because txn is active")
+	}
+	p.constStartTS = ts
+	p.isTxnPrepared = true
+	return nil
 }
 
 func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error {
@@ -332,7 +347,7 @@ func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
 
 // AdviseWarmup provides warmup for inner state
 func (p *baseTxnContextProvider) AdviseWarmup() error {
-	if p.isBeginStmtWithStaleRead() {
+	if p.isTxnPrepared || p.isBeginStmtWithStaleRead() {
 		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
