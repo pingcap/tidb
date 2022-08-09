@@ -265,13 +265,15 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 			// And then retry changing the lock to WRITE
 			waitAndRetry = waitForLeaseExpire(oldReadLease, now)
 		case CachedTableLockWrite:
-			if err = h.updateRow(ctx, tid, "WRITE", ts); err != nil {
-				return errors.Trace(err)
-			}
-			{
-				_updateLocal = true
-				_lockType = CachedTableLockWrite
-				_lease = ts
+			if ts > lease { // Note the check, don't decrease lease value!
+				if err = h.updateRow(ctx, tid, "WRITE", ts); err != nil {
+					return errors.Trace(err)
+				}
+				{
+					_updateLocal = true
+					_lockType = CachedTableLockWrite
+					_lease = ts
+				}
 			}
 		}
 		return nil
