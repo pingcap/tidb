@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -1288,7 +1287,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		sessionVars.UsersLock.RLock()
 		userVar, ok := sessionVars.UserVars.Vars[name]
 		sessionVars.UsersLock.RUnlock()
-		tp := new(ptypes.FieldType)
+		tp := new(types.FieldType)
 		if v1, ok1 := userVar.(*expression.Constant); ok && ok1 {
 			tp = v1.RetType
 		} else {
