@@ -1786,11 +1786,8 @@ const inUnionCastContext inCastContext = 0
 // This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as integer.
 // See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
 func CanImplicitEvalInt(expr Expression) bool {
-	switch f := expr.(type) {
-	case *ScalarFunction:
-		if f.FuncName.L == ast.DayName {
-			return true
-		}
+	if f, ok := expr.(*ScalarFunction); ok {
+		return f.FuncName.L == ast.DayName
 	}
 	return false
 }
@@ -1800,12 +1797,8 @@ func CanImplicitEvalInt(expr Expression) bool {
 // This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as real.
 // See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
 func CanImplicitEvalReal(expr Expression) bool {
-	switch f := expr.(type) {
-	case *ScalarFunction:
-		switch f.FuncName.L {
-		case ast.DayName:
-			return true
-		}
+	if f, ok := expr.(*ScalarFunction); ok {
+		return f.FuncName.L == ast.DayName
 	}
 	return false
 }
