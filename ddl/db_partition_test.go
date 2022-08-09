@@ -3840,7 +3840,6 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 	for _, tt := range cases {
 		checkCreateSyntax(t, tk, tt.ok, tt.sql, tt.showCreate)
 	}
-
 }
 
 func TestCreateAndAlterIntervalPartition(t *testing.T) {
