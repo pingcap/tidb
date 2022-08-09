@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	util2 "github.com/pingcap/tidb/ddl/util"
 	"math"
 	"strconv"
 	"strings"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -2195,11 +2195,11 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 	log.Info("update global schema version", zap.Int64("global-schema-version", schemaVersion))
 
 	ver := strconv.FormatInt(schemaVersion, 10)
-	if err := util2.PutKVToEtcd(
+	if err := ddlutil.PutKVToEtcd(
 		ctx,
 		rc.GetDomain().GetEtcdClient(),
 		math.MaxInt,
-		util2.DDLGlobalSchemaVersion,
+		ddlutil.DDLGlobalSchemaVersion,
 		ver,
 	); err != nil {
 		return errors.Annotatef(err, "failed to put global schema verson %v to etcd", ver)
