@@ -40,6 +40,7 @@ go_library(
 
 go_test(
     name = "unistore_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "pd_test.go",

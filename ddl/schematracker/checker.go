@@ -23,20 +23,34 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 )
+
+var (
+	// ConstructResultOfShowCreateDatabase should be assigned to executor.ConstructResultOfShowCreateDatabase.
+	// It is used to break cycle import.
+	ConstructResultOfShowCreateDatabase func(sessionctx.Context, *model.DBInfo, bool, *bytes.Buffer) error
+	// ConstructResultOfShowCreateTable should be assigned to executor.ConstructResultOfShowCreateTable.
+	// It is used to break cycle import.
+	ConstructResultOfShowCreateTable func(sessionctx.Context, *model.TableInfo, autoid.Allocators, *bytes.Buffer) error
+)
+
+func init() {
+	mockstore.DDLCheckerInjector = NewStorageDDLInjector
+}
 
 // Checker is used to check the result of SchemaTracker is same as real DDL.
 type Checker struct {
@@ -66,7 +80,7 @@ func (d *Checker) Enable() {
 
 // CreateTestDB creates a `test` database like the default behaviour of TiDB.
 func (d Checker) CreateTestDB() {
-	d.tracker.createTestDB()
+	d.tracker.CreateTestDB()
 }
 
 func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
@@ -85,12 +99,12 @@ func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	}
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := executor.ConstructResultOfShowCreateDatabase(ctx, dbInfo, false, result)
+	err := ConstructResultOfShowCreateDatabase(ctx, dbInfo, false, result)
 	if err != nil {
 		panic(err)
 	}
 	result2 := bytes.NewBuffer(make([]byte, 0, 512))
-	err = executor.ConstructResultOfShowCreateDatabase(ctx, dbInfo2, false, result2)
+	err = ConstructResultOfShowCreateDatabase(ctx, dbInfo2, false, result2)
 	if err != nil {
 		panic(err)
 	}
@@ -107,6 +121,11 @@ func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.
 		return
 	}
 
+	if dbName.L == mysql.SystemDB {
+		// no need to check system tables.
+		return
+	}
+
 	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(dbName, tableName)
 	tableInfo2, _ := d.tracker.TableByName(dbName, tableName)
 
@@ -120,12 +139,12 @@ func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.
 	}
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := executor.ConstructResultOfShowCreateTable(ctx, tableInfo.Meta(), autoid.Allocators{}, result)
+	err := ConstructResultOfShowCreateTable(ctx, tableInfo.Meta(), autoid.Allocators{}, result)
 	if err != nil {
 		panic(err)
 	}
 	result2 := bytes.NewBuffer(make([]byte, 0, 512))
-	err = executor.ConstructResultOfShowCreateTable(ctx, tableInfo2, autoid.Allocators{}, result2)
+	err = ConstructResultOfShowCreateTable(ctx, tableInfo2, autoid.Allocators{}, result2)
 	if err != nil {
 		panic(err)
 	}
@@ -466,7 +485,7 @@ func (d Checker) RegisterStatsHandle(h *handle.Handle) {
 }
 
 // SchemaSyncer implements the DDL interface.
-func (d Checker) SchemaSyncer() util.SchemaSyncer {
+func (d Checker) SchemaSyncer() syncer.SchemaSyncer {
 	return d.realDDL.SchemaSyncer()
 }
 
@@ -518,4 +537,27 @@ func (d Checker) MoveJobFromQueue2Table(bool) error {
 // MoveJobFromTable2Queue implements the DDL interface.
 func (d Checker) MoveJobFromTable2Queue() error {
 	panic("implement me")
+}
+
+// StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.
+type StorageDDLInjector struct {
+	kv.Storage
+	Injector func(ddl.DDL) *Checker
+}
+
+// NewStorageDDLInjector creates a new StorageDDLInjector to inject Checker.
+func NewStorageDDLInjector(s kv.Storage) kv.Storage {
+	return StorageDDLInjector{
+		Storage:  s,
+		Injector: NewChecker,
+	}
+}
+
+// UnwrapStorage unwraps StorageDDLInjector for one level.
+func UnwrapStorage(s kv.Storage) kv.Storage {
+	injector, ok := s.(StorageDDLInjector)
+	if !ok {
+		return s
+	}
+	return injector.Storage
 }

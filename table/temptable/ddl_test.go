@@ -30,23 +30,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createTestSuite(t *testing.T) (sessionctx.Context, *temporaryTableDDL, func()) {
+func createTestSuite(t *testing.T) (sessionctx.Context, *temporaryTableDDL) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
 	sctx := mock.NewContext()
 	sctx.Store = store
 	ddl := GetTemporaryTableDDL(sctx).(*temporaryTableDDL)
-	clean := func() {
+	t.Cleanup(func() {
 		require.NoError(t, store.Close())
-	}
+	})
 
-	return sctx, ddl, clean
+	return sctx, ddl
 }
 
 func TestAddLocalTemporaryTable(t *testing.T) {
-	sctx, ddl, clean := createTestSuite(t)
-	defer clean()
+	sctx, ddl := createTestSuite(t)
 
 	sessVars := sctx.GetSessionVars()
 
@@ -108,8 +107,7 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 }
 
 func TestRemoveLocalTemporaryTable(t *testing.T) {
-	sctx, ddl, clean := createTestSuite(t)
-	defer clean()
+	sctx, ddl := createTestSuite(t)
 
 	sessVars := sctx.GetSessionVars()
 	db1 := newMockSchema("db1")
@@ -155,8 +153,7 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 }
 
 func TestTruncateLocalTemporaryTable(t *testing.T) {
-	sctx, ddl, clean := createTestSuite(t)
-	defer clean()
+	sctx, ddl := createTestSuite(t)
 
 	sessVars := sctx.GetSessionVars()
 	db1 := newMockSchema("db1")

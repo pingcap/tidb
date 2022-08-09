@@ -139,6 +139,9 @@ func run(pass *analysis.Pass) (any, error) {
 	for _, r := range allRules {
 		conf.Rules[r.Name()] = lint.RuleConfig{}
 	}
+	conf.Rules["defer"] = lint.RuleConfig{
+		Arguments: []interface{}{[]interface{}{"loop", "method-call", "immediate-recover", "return"}},
+	}
 	lintingRules, err := config.GetLintingRules(&conf, []lint.Rule{})
 	if err != nil {
 		return nil, err

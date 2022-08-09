@@ -61,11 +61,10 @@ func checkGoroutineExists(keyword string) bool {
 func TestCopClientSend(t *testing.T) {
 	t.Skip("not stable")
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 	if _, ok := store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
 		return
@@ -155,8 +154,7 @@ func TestGetLackHandles(t *testing.T) {
 }
 
 func TestBigIntPK(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -166,8 +164,7 @@ func TestBigIntPK(t *testing.T) {
 }
 
 func TestCorColToRanges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -185,8 +182,7 @@ func TestCorColToRanges(t *testing.T) {
 }
 
 func TestUniqueKeyNullValueSelect(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -214,8 +210,7 @@ func TestUniqueKeyNullValueSelect(t *testing.T) {
 
 // TestIssue10178 contains tests for https://github.com/pingcap/tidb/issues/10178 .
 func TestIssue10178(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -228,8 +223,7 @@ func TestIssue10178(t *testing.T) {
 }
 
 func TestInconsistentIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -280,8 +274,7 @@ func TestInconsistentIndex(t *testing.T) {
 }
 
 func TestPushLimitDownIndexLookUpReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -298,8 +291,7 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 }
 
 func TestPartitionTableIndexLookUpReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -328,8 +320,7 @@ func TestPartitionTableIndexLookUpReader(t *testing.T) {
 }
 
 func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -380,8 +371,7 @@ func TestIndexLookUpStats(t *testing.T) {
 }
 
 func TestIndexLookUpGetResultChunk(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -395,8 +385,7 @@ func TestIndexLookUpGetResultChunk(t *testing.T) {
 }
 
 func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -427,8 +416,7 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 }
 
 func TestCoprocessorPagingSize(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -483,8 +471,7 @@ func TestCoprocessorPagingSize(t *testing.T) {
 }
 
 func TestAdaptiveClosestRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -584,8 +571,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 }
 
 func TestCoprocessorPagingReqKeyRangeSorted(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/checkKeyRangeSortedForPaging", "return"))
@@ -627,4 +613,19 @@ func TestCoprocessorPagingReqKeyRangeSorted(t *testing.T) {
 	tk.MustExec("execute stmt using @a,@b,@c,@d;")
 	tk.MustExec("set @a=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE, @b=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE, @c=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE, @d=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE;")
 	tk.MustExec("execute stmt using @a,@b,@c,@d;")
+
+	tk.MustExec("CREATE TABLE `PK_SNPRE10114` (" +
+		"`COL1` varbinary(10) NOT NULL DEFAULT 'S'," +
+		"`COL2` varchar(20) DEFAULT NULL," +
+		"`COL4` datetime DEFAULT NULL," +
+		"`COL3` bigint(20) DEFAULT NULL," +
+		"`COL5` float DEFAULT NULL," +
+		"PRIMARY KEY (`COL1`) CLUSTERED)")
+	tk.MustExec(`prepare stmt from 'SELECT * FROM PK_SNPRE10114 WHERE col1 IN (?, ?, ?) AND (col2 IS NULL OR col2 IN (?, ?)) AND (col3 IS NULL OR col4 IS NULL);';`)
+	tk.MustExec(`set @a=0x0D5BDAEB79074756F203, @b=NULL, @c=0x6A911AAAC728F1ED3B4F, @d="鏖秿垙麜濇凗辯Ũ卮伄幖轒ƀ漭蝏雓轊恿磔徵", @e="訇廵纹髺釖寒近槩靏詗膦潳陒錃粓悧闒摔)乀";`)
+	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
+	tk.MustExec(`set @a=7775448739068993371, @b=5641728652098016210, @c=6774432238941172824, @d="HqpP5rN", @e="8Fy";`)
+	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
+	tk.MustExec(`set @a=0x61219F79C90D3541F70E, @b=5501707547099269248, @c=0xEC43EFD30131DEA2CB8B, @d="呣丼蒢咿卻鹻铴础湜僂頃ǆ縍套衞陀碵碼幓9", @e="鹹楞睕堚尛鉌翡佾搁紟精廬姆燵藝潐楻翇慸嵊";`)
+	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
 }

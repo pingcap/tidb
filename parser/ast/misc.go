@@ -506,7 +506,7 @@ type ExecuteStmt struct {
 	Name       string
 	UsingVars  []ExprNode
 	BinaryArgs interface{}
-	ExecID     uint32
+	PrepStmt   interface{} // the corresponding prepared statement
 	IdxInMulti int
 }
 
@@ -1054,11 +1054,11 @@ func (n *SetConfigStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetConfigStmt)
-	if node, ok := n.Value.Accept(v); !ok {
+	node, ok := n.Value.Accept(v)
+	if !ok {
 		return n, false
-	} else {
-		n.Value = node.(ExprNode)
 	}
+	n.Value = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -3566,7 +3566,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "ordered_hash_join", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_build", "hash_probe", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")

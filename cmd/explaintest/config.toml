@@ -22,6 +22,10 @@ status-host = "127.0.0.1"
 [performance]
 stats-lease = "0"
 
+[tikv-client.async-commit]
+safe-window = 0
+allowed-clock-drift = 0
+
 [experimental]
 enable-new-charset = true
 allow-expression-index = true
