@@ -45,8 +45,10 @@ const (
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
 	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
-	KeyOpDefaultTimeout          = 2 * time.Second
-	KeyOpRetryInterval           = 30 * time.Millisecond
+	// KeyOpDefaultTimeout is the default timeout for each key operation.
+	KeyOpDefaultTimeout = 2 * time.Second
+	// KeyOpRetryInterval is the interval between two key operations.
+	KeyOpRetryInterval = 30 * time.Millisecond
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
