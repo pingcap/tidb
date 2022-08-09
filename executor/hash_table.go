@@ -106,6 +106,14 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	return c
 }
 
+func getRowsMemUse(rows []chunk.Row) int64 {
+	return int64(cap(rows) * int(unsafe.Sizeof(chunk.Row{})))
+}
+
+func getRowPtrsMemUse(rowPtrs []chunk.RowPtr) int64 {
+	return int64(cap(rowPtrs) * int(unsafe.Sizeof(chunk.RowPtr{})))
+}
+
 func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
 	newHRC := *c
 	newHRC.rowContainer = c.rowContainer.ShallowCopyWithNewMutex()
@@ -125,6 +133,8 @@ func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, h
 // h and buf.
 func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr, needPtr bool) ([]chunk.Row, []chunk.RowPtr, error) {
 	var err error
+	memSizeMatched := getRowsMemUse(matched)
+	memSizeMatchedPtrs := getRowPtrsMemUse(matchedPtrs)
 	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
 		return nil, nil, err
@@ -151,6 +161,8 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			matchedPtrs = append(matchedPtrs, ptr)
 		}
 	}
+	c.memTracker.Consume(getRowsMemUse(matched) - memSizeMatched)
+	c.memTracker.Consume(getRowPtrsMemUse(matchedPtrs) - memSizeMatchedPtrs)
 	return matched, matchedPtrs, err
 }
 
@@ -397,10 +409,13 @@ func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
 // Get gets the values of the "key" and appends them to "values".
 func (ht *concurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 	entryAddr, _ := ht.hashMap.Get(hashKey)
+	rowPtrSize := int64(unsafe.Sizeof(chunk.RowPtr{}))
+	memSize := int64(cap(rowPtrs)) * rowPtrSize
 	for entryAddr != nil {
 		rowPtrs = append(rowPtrs, entryAddr.ptr)
 		entryAddr = entryAddr.next
 	}
+	ht.memDelta = int64(cap(rowPtrs))*rowPtrSize - memSize
 	return
 }
 

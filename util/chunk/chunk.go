@@ -56,6 +56,11 @@ const (
 	ZeroCapacity    = 0
 )
 
+// Memory constants.
+const (
+	IntMemory = int64(unsafe.Sizeof(int(0)))
+)
+
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, capacity int) *Chunk {
 	return New(fields, capacity, capacity)
@@ -151,6 +156,7 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 		sum += curColMemUsage
 	}
+	sum += int64(unsafe.Sizeof(*c)) + int64(cap(c.sel))*IntMemory
 	return
 }
 
