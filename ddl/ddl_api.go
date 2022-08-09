@@ -1737,7 +1737,7 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return errors.Trace(err)
 			}
 			tbInfo.AutoRandomBits = shardBits
-			tbInfo.IntPKRangeBits = rangeBits
+			tbInfo.AutoRandomRangeBits = rangeBits
 
 			shardFmt := autoid.NewShardIDFormat(col.Tp, shardBits, rangeBits)
 			if shardFmt.IncrementalBits < autoid.AutoRandomIncBitsMin {
@@ -3291,7 +3291,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		if tbInfo.AutoRandomBits == 0 || pkCol == nil {
 			return errors.Trace(dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
 		}
-		shardFmt := autoid.NewShardIDFormat(&pkCol.FieldType, tbInfo.AutoRandomBits, tbInfo.IntPKRangeBits)
+		shardFmt := autoid.NewShardIDFormat(&pkCol.FieldType, tbInfo.AutoRandomBits, tbInfo.AutoRandomRangeBits)
 		if shardFmt.IncrementalMask()&newBase != newBase {
 			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, shardFmt.IncrementalBitsCapacity())
 			return errors.Trace(dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
@@ -3814,7 +3814,7 @@ func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *mod
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits ||
-		source.IntPKRangeBits != target.IntPKRangeBits ||
+		source.AutoRandomRangeBits != target.AutoRandomRangeBits ||
 		source.Charset != target.Charset ||
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
@@ -4535,7 +4535,7 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 	var oldShardBits, oldRangeBits uint64
 	if originCol.IsPKHandleColumn(tableInfo) {
 		oldShardBits = tableInfo.AutoRandomBits
-		oldRangeBits = tableInfo.IntPKRangeBits
+		oldRangeBits = tableInfo.AutoRandomRangeBits
 	}
 	newShardBits, newRangeBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {

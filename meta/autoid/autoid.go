@@ -1119,9 +1119,8 @@ type ShardIDFormat struct {
 func NewShardIDFormat(fieldType *types.FieldType, shardBits, rangeBits uint64) ShardIDFormat {
 	var incrementalBits uint64
 	if rangeBits == 0 {
-		// Zero means that the range bits is not specified. We interpret it as the default length(BIGINT).
-		typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
-		incrementalBits = typeBitsLength - shardBits
+		// Zero means that the range bits is not specified. We interpret it as the length of BIGINT.
+		incrementalBits = RowIDBitLength - shardBits
 	} else {
 		incrementalBits = rangeBits - shardBits
 	}
@@ -1138,7 +1137,7 @@ func NewShardIDFormat(fieldType *types.FieldType, shardBits, rangeBits uint64) S
 
 // IncrementalBitsCapacity returns the max capacity of incremental section of the current format.
 func (s *ShardIDFormat) IncrementalBitsCapacity() uint64 {
-	return uint64(math.Pow(2, float64(s.IncrementalBits))) - 1
+	return uint64(s.IncrementalMask())
 }
 
 // IncrementalMask returns 00..0[11..1], where [11..1] is the incremental part of the current format.

@@ -1083,6 +1083,13 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	require.Equal(t, fmt.Sprintf("t_%d_r_536870912", tbl.Meta().ID), rows[1][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_1073741824", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_1610612736", tbl.Meta().ID), rows[3][1])
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint unsigned auto_random(2, 32) primary key clustered, b int) pre_split_regions=2;")
+	rows = tk.MustQuery("show table t regions;").Rows()
+	tbl = external.GetTableByName(t, tk, "auto_random_db", "t") //nolint:typecheck
+	require.Equal(t, fmt.Sprintf("t_%d_r_1073741824", tbl.Meta().ID), rows[1][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_2147483648", tbl.Meta().ID), rows[2][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_3221225472", tbl.Meta().ID), rows[3][1])
 }
 
 func TestModifyingColumn4NewCollations(t *testing.T) {

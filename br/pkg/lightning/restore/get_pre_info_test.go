@@ -166,7 +166,7 @@ func TestGetPreInfoAutoRandomBits(t *testing.T) {
 		tblInfo, err := newTableInfo(createTblSQL, 1)
 		require.Nil(t, err)
 		require.Equal(t, subCase.ExpectAutoRandomBits, tblInfo.AutoRandomBits, subCase.ColDef)
-		require.Equal(t, subCase.ExpectAutoRandomRangeBits, tblInfo.IntPKRangeBits, subCase.ColDef)
+		require.Equal(t, subCase.ExpectAutoRandomRangeBits, tblInfo.AutoRandomRangeBits, subCase.ColDef)
 	}
 }
 

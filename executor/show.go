@@ -1031,7 +1031,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			}
 		}
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
-			s, r := tableInfo.AutoRandomBits, tableInfo.IntPKRangeBits
+			s, r := tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits
 			if r == 0 || r == autoid.AutoRandomRangeBitsDefault {
 				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", s))
 			} else {

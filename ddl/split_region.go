@@ -96,7 +96,7 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	} else {
 		ft = types.NewFieldType(mysql.TypeLonglong)
 	}
-	shardFmt := autoid.NewShardIDFormat(ft, shardingBits(tbInfo), tbInfo.IntPKRangeBits)
+	shardFmt := autoid.NewShardIDFormat(ft, shardingBits(tbInfo), tbInfo.AutoRandomRangeBits)
 	step := int64(1 << (shardFmt.ShardBits - tbInfo.PreSplitRegions))
 	max := int64(1 << shardFmt.ShardBits)
 	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))

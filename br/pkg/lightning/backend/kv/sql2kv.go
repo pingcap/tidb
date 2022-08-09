@@ -88,7 +88,7 @@ func NewTableKVEncoder(
 	if meta.PKIsHandle && meta.ContainsAutoRandomBits() {
 		for _, col := range cols {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.IntPKRangeBits)
+				shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
 				shard := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63()
 				autoIDFn = func(id int64) int64 {
 					return shardFmt.Compose(shard, id)
@@ -381,7 +381,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = append(record, value)
 
 		if isTableAutoRandom(meta) && isPKCol(col.ToInfo()) {
-			shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.IntPKRangeBits)
+			shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
 			if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
 				return nil, errors.Trace(err)

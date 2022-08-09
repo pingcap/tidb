@@ -992,7 +992,7 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if err != nil {
 		return 0, err
 	}
-	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.IntPKRangeBits)
+	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	if shardFmt.IncrementalMask()&autoRandomID != autoRandomID {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
@@ -1015,7 +1015,7 @@ func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, f
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
-	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.IntPKRangeBits)
+	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	autoRandomID := shardFmt.IncrementalMask() & recordID
 
 	return alloc.Rebase(ctx, autoRandomID, true)
@@ -1069,7 +1069,7 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	tableInfo := e.Table.Meta()
 
-	shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits, 0)
+	shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits, autoid.RowIDBitLength)
 	newTiDBRowIDBase := shardFmt.IncrementalMask() & recordID
 
 	return alloc.Rebase(ctx, newTiDBRowIDBase, true)
