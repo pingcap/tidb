@@ -1031,10 +1031,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			}
 		}
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
-			if tableInfo.IntPKRangeBits == 0 {
-				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", tableInfo.AutoRandomBits))
+			s, r := tableInfo.AutoRandomBits, tableInfo.IntPKRangeBits
+			if r == 0 || r == autoid.AutoRandomRangeBitsDefault {
+				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", s))
 			} else {
-				s, r := tableInfo.AutoRandomBits, tableInfo.IntPKRangeBits
 				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d, %d) */", s, r))
 			}
 		}

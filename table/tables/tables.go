@@ -1507,8 +1507,9 @@ func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table,
 			return 0, 0, autoid.ErrAutoincReadFailed
 		}
 		txnCtx := sctx.GetSessionVars().TxnCtx
-		base = shardFmt.Compose(txnCtx.GetCurrentShard(int(n)), base)
-		maxID = shardFmt.Compose(txnCtx.GetCurrentShard(int(n)), maxID)
+		shard := txnCtx.GetCurrentShard(int(n))
+		base = shardFmt.Compose(shard, base)
+		maxID = shardFmt.Compose(shard, maxID)
 	}
 	return base, maxID, nil
 }

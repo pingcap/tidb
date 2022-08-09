@@ -1036,7 +1036,7 @@ func TestAutoRandomWithRangeBits(t *testing.T) {
 	// Test normal usages.
 	tk.MustExec("create table t (a bigint auto_random(5, 64) primary key, b int);")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a bigint auto_random(5, 32) primary key, b int);")
+	tk.MustExec("create table t (a bigint unsigned auto_random(5, 32) primary key, b int);")
 
 	// Test create auto_random table with invalid range bits.
 	expectErr := dbterror.ErrInvalidAutoRandom
