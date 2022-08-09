@@ -1285,6 +1285,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				if v1, ok1 := userVar.(*expression.Constant); ok1 {
 					v1.RetType = tp
 				}
+			} else {
+				sessionVars.UserVars.Vars[name] = &expression.Constant{RetType: tp}
 			}
 			sessionVars.UsersLock.Unlock()
 			return
@@ -1293,8 +1295,12 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		userVar, ok := sessionVars.UserVars.Vars[name]
 		sessionVars.UsersLock.RUnlock()
 		var tp *ptypes.FieldType
-		if v, ok1 := userVar.(*expression.Constant); ok && ok1 {
-			tp = v.RetType
+		if v1, ok1 := userVar.(*expression.Constant); ok && ok1 {
+			if v1.RetType == nil {
+				types.DefaultParamTypeForValue(v1.Value.GetValue(), tp)
+			} else {
+				tp = v1.RetType
+			}
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			tp.SetFlen(mysql.MaxFieldVarCharLength)
