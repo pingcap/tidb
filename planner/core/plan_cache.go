@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -44,7 +45,7 @@ import (
 // It tries to get a valid cached plan from this session's plan cache.
 // If there is no such a plan, it'll call the optimizer to generate a new one.
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
-	txtProtoVars []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
+	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -72,7 +73,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 		}
 	}
 
-	varsNum, txtVarTypes := parseParamTypes(sctx, txtProtoVars)
+	paramNum, paramTypes := parseParamTypes(sctx, params)
 
 	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // for point query plan
 		if plan, names, ok, err := getPointQueryPlan(prepared, sessVars, stmtCtx); ok {
@@ -82,21 +83,21 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 
 	if prepared.UseCache && !ignorePlanCache { // for general plans
 		if plan, names, ok, err := getGeneralPlan(ctx, sctx, cacheKey, bindSQL, is, preparedStmt,
-			txtVarTypes); err != nil || ok {
+			paramTypes); err != nil || ok {
 			return plan, names, err
 		}
 	}
 
 	return generateNewPlan(ctx, sctx, is, preparedStmt, ignorePlanCache, cacheKey,
-		latestSchemaVersion, varsNum, txtVarTypes, bindSQL)
+		latestSchemaVersion, paramNum, paramTypes, bindSQL)
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
-func parseParamTypes(sctx sessionctx.Context, txtProtoVars []expression.Expression) (varsNum int, txtVarTypes []*types.FieldType) {
-	varsNum = len(txtProtoVars)
-	for _, param := range txtProtoVars {
+func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramNum int, paramTypes []*types.FieldType) {
+	paramNum = len(params)
+	for _, param := range params {
 		if c, ok := param.(*expression.Constant); ok { // from binary protocol
-			txtVarTypes = append(txtVarTypes, c.GetType())
+			paramTypes = append(paramTypes, c.GetType())
 			continue
 		}
 
@@ -106,7 +107,7 @@ func parseParamTypes(sctx sessionctx.Context, txtProtoVars []expression.Expressi
 		if tp == nil {
 			tp = types.NewFieldType(mysql.TypeNull)
 		}
-		txtVarTypes = append(txtVarTypes, tp)
+		paramTypes = append(paramTypes, tp)
 	}
 	return
 }
@@ -136,7 +137,7 @@ func getPointQueryPlan(prepared *ast.Prepared, sessVars *variable.SessionVars, s
 }
 
 func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt, txtVarTypes []*types.FieldType) (Plan,
+	is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt, paramTypes []*types.FieldType) (Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -147,7 +148,7 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcac
 		}
 		cachedVals := cacheValue.([]*PlanCacheValue)
 		for _, cachedVal := range cachedVals {
-			if !cachedVal.varTypesUnchanged(txtVarTypes) {
+			if !cachedVal.varTypesUnchanged(paramTypes) {
 				continue
 			}
 			planValid := true
@@ -189,8 +190,8 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcac
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
-	ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64, varsNum int,
-	txtVarTypes []*types.FieldType, bindSQL string) (Plan, []*types.FieldName, error) {
+	ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64, paramNum int,
+	paramTypes []*types.FieldType, bindSQL string) (Plan, []*types.FieldName, error) {
 	prepared := preparedStmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -206,8 +207,8 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema
 		return nil, nil, err
 	}
 
-	// We only cache the tableDual plan when the number of vars are zero.
-	if containTableDual(p) && varsNum > 0 {
+	// We only cache the tableDual plan when the number of parameters are zero.
+	if containTableDual(p) && paramNum > 0 {
 		stmtCtx.SkipPlanCache = true
 	}
 	if prepared.UseCache && !stmtCtx.SkipPlanCache && !ignorePlanCache {
@@ -220,14 +221,14 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, txtVarTypes)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
 			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
-				if cacheVal.varTypesUnchanged(txtVarTypes) {
+				if cacheVal.varTypesUnchanged(paramTypes) {
 					hitVal = true
 					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
@@ -630,4 +631,42 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 		}
 	}
 	return "", ignore
+}
+
+// IsPointPlanShortPathOK check if we can execute using plan cached in prepared structure
+// Be careful with the short path, current precondition is ths cached plan satisfying
+// IsPointGetWithPKOrUniqueKeyByAutoCommit
+func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) (bool, error) {
+	prepared := preparedStmt.PreparedAst
+	if prepared.CachedPlan == nil || staleread.IsStmtStaleness(sctx) {
+		return false, nil
+	}
+	// check auto commit
+	if !IsAutoCommitTxn(sctx) {
+		return false, nil
+	}
+	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		prepared.CachedPlan = nil
+		preparedStmt.ColumnInfos = nil
+		return false, nil
+	}
+	// maybe we'd better check cached plan type here, current
+	// only point select/update will be cached, see "getPhysicalPlan" func
+	var ok bool
+	var err error
+	switch prepared.CachedPlan.(type) {
+	case *PointGetPlan:
+		ok = true
+	case *Update:
+		pointUpdate := prepared.CachedPlan.(*Update)
+		_, ok = pointUpdate.SelectPlan.(*PointGetPlan)
+		if !ok {
+			err = errors.Errorf("cached update plan not point update")
+			prepared.CachedPlan = nil
+			return false, err
+		}
+	default:
+		ok = false
+	}
+	return ok, err
 }

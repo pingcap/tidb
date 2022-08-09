@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -272,6 +273,7 @@ func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtype
 // PreRestoreInfoGetterImpl implements the operations to get information used in importing preparation.
 type PreRestoreInfoGetterImpl struct {
 	cfg              *config.Config
+	getPreInfoCfg    *GetPreInfoConfig
 	srcStorage       storage.ExternalStorage
 	ioWorkers        *worker.Pool
 	encBuilder       backend.EncodingBuilder
@@ -290,6 +292,7 @@ func NewPreRestoreInfoGetter(
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
 	encBuilder backend.EncodingBuilder,
+	opts ...GetPreInfoOption,
 ) (*PreRestoreInfoGetterImpl, error) {
 	if ioWorkers == nil {
 		ioWorkers = worker.NewPool(context.Background(), cfg.App.IOConcurrency, "pre_info_getter_io")
@@ -305,8 +308,13 @@ func NewPreRestoreInfoGetter(
 		}
 	}
 
+	getPreInfoCfg := NewDefaultGetPreInfoConfig()
+	for _, o := range opts {
+		o.Apply(getPreInfoCfg)
+	}
 	result := &PreRestoreInfoGetterImpl{
 		cfg:              cfg,
+		getPreInfoCfg:    getPreInfoCfg,
 		dbMetas:          dbMetas,
 		srcStorage:       srcStorage,
 		ioWorkers:        ioWorkers,
@@ -368,8 +376,20 @@ func (p *PreRestoreInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Cont
 	dbName := dbSrcFileMeta.Name
 	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
 	if err != nil {
+		if p.getPreInfoCfg != nil && p.getPreInfoCfg.IgnoreDBNotExist {
+			dbNotExistErr := dbterror.ClassSchema.NewStd(errno.ErrBadDB).FastGenByArgs(dbName)
+			// The returned error is an error showing get info request error,
+			// and attaches the detailed error response as a string.
+			// So we cannot get the error chain and use error comparison,
+			// and instead, we use the string comparison on error messages.
+			if strings.Contains(err.Error(), dbNotExistErr.Error()) {
+				log.L().Warn("DB not exists.  But ignore it", zap.Error(err))
+				goto get_struct_from_src
+			}
+		}
 		return nil, errors.Trace(err)
 	}
+get_struct_from_src:
 	currentTableInfosMap := make(map[string]*model.TableInfo)
 	for _, tblInfo := range currentTableInfosFromDB {
 		currentTableInfosMap[tblInfo.Name.L] = tblInfo

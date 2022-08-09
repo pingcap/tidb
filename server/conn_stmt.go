@@ -255,6 +255,13 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			cl.OnFetchReturned()
 		}
 		// explicitly flush columnInfo to client.
+		if cc.capability&mysql.ClientDeprecateEOF > 0 {
+			status := cc.ctx.Status() | mysql.ServerStatusCursorExists
+			err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount(), mysql.EOFHeader)
+			if err != nil {
+				return false, err
+			}
+		}
 		return false, cc.flush(ctx)
 	}
 	defer terror.Call(rs.Close)
