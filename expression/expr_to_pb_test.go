@@ -656,6 +656,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// CastTimeAsDuration
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), durationColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// Substring2ArgsUTF8
 	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	require.NoError(t, err)
