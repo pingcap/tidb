@@ -1296,7 +1296,9 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		sessionVars.UsersLock.RUnlock()
 		var tp *ptypes.FieldType
 		if v1, ok1 := userVar.(*expression.Constant); ok && ok1 {
-			if v1.RetType != nil {
+			if v1.RetType == nil {
+				types.DefaultParamTypeForValue(v1.Value.GetValue(), tp)
+			} else {
 				tp = v1.RetType
 			}
 		} else {
