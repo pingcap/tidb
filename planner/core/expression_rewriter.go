@@ -1283,7 +1283,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			sessionVars.UsersLock.Lock()
 			if userVar, ok := sessionVars.UserVars.Vars[name]; ok {
 				if v1, ok1 := userVar.(*expression.Constant); ok1 {
-					sessionVars.UserVars.Vars[name] = &expression.Constant{Value: v1.Value, RetType: tp}
+					v1.RetType = tp
 				}
 			}
 			sessionVars.UsersLock.Unlock()
