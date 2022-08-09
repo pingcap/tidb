@@ -284,7 +284,7 @@ test> show warnings;
 
 ### DML On reference Table
 
-On reference Table Insert Or Update:
+On reference Table Delete Or Update:
 
 1. modify related child table row by referential action:
 - `CASCADE`: update/delete related child table row.
