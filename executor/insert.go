@@ -200,11 +200,7 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 		oldRow = append(oldRow, extraCols...)
 	}
 
-<<<<<<< HEAD
-	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, e.OnDuplicate)
-=======
-	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch)
->>>>>>> 6418350e9... executor,expression: avoid to append nil to warnings (#36304)
+	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, e.OnDuplicate, idxInBatch)
 	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
@@ -379,11 +375,7 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 
 // doDupRowUpdate updates the duplicate row.
 func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRow []types.Datum, newRow []types.Datum,
-<<<<<<< HEAD
-	cols []*expression.Assignment) error {
-=======
-	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int) error {
->>>>>>> 6418350e9... executor,expression: avoid to append nil to warnings (#36304)
+	cols []*expression.Assignment, idxInBatch int) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
