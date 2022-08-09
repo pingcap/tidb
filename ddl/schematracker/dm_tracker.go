@@ -26,7 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -1153,7 +1153,7 @@ func (d SchemaTracker) Stop() error {
 func (SchemaTracker) RegisterStatsHandle(handle *handle.Handle) {}
 
 // SchemaSyncer implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) SchemaSyncer() util.SchemaSyncer {
+func (SchemaTracker) SchemaSyncer() syncer.SchemaSyncer {
 	return nil
 }
 
