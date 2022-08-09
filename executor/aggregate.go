@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -535,11 +536,17 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 
 func (w *HashAggPartialWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
 	n := len(groupKey)
+	partialResults := make([][]aggfuncs.PartialResult, n)
 	for i := 0; i < n; i++ {
-		mapper[string(groupKey[i])] = nil
-		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
+		for _, af := range w.aggFuncs {
+			partialResult, _ := af.AllocPartialResult()
+			partialResults[i] = append(partialResults[i], partialResult)
+		}
+		if len(mapper) < 10000000 {
+			mapper[strconv.Itoa(len(mapper)+1)] = partialResults[i]
+		}
 	}
-	return nil
+	return partialResults
 }
 
 // shuffleIntermData shuffles the intermediate data of partial workers to corresponded final workers.
