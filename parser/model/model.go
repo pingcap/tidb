@@ -1261,7 +1261,7 @@ func (i *IndexColumn) Clone() *IndexColumn {
 }
 
 // PrimaryKeyType is the type of primary key.
-// Available values are 'clustered', 'nonclustered', and ”(default).
+// Available values are "clustered", "nonclustered", and ""(default).
 type PrimaryKeyType int8
 
 func (p PrimaryKeyType) String() string {
