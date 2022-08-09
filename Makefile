@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive
 
-check: check-parallel lint tidy testSuite errdoc bazel_golangcilinter bazel_all_build
+check: check-parallel lint tidy testSuite errdoc bazel_golangcilinter bazel_all_build check-file-perm
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -39,6 +39,10 @@ fmt:
 
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
+
+check-file-perm:
+	@echo "check file permission"
+	./tools/check/check-file-perm.sh
 
 gogenerate:
 	@echo "go generate ./..."
@@ -208,17 +212,17 @@ tools/bin/revive:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@v1.2.1
 
 tools/bin/failpoint-ctl:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@master
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@2eaa328
 
 tools/bin/errdoc-gen:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/errors/errdoc-gen@master
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/errors/errdoc-gen@518f63d
 
 tools/bin/golangci-lint:
 	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
 
 tools/bin/vfsgendev:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@master
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
 
 tools/bin/gotestsum:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1

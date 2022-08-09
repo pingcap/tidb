@@ -740,7 +740,6 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		is:           b.is,
 		name:         v.Name,
 		usingVars:    v.Params,
-		id:           v.ExecID,
 		stmt:         v.Stmt,
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),

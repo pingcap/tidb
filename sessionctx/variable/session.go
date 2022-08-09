@@ -1190,6 +1190,27 @@ type SessionVars struct {
 
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
+
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
+}
+
+// GetPreparedStmtByName returns the prepared statement specified by stmtName.
+func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
+	stmtID, ok := s.PreparedStmtNameToID[stmtName]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return s.GetPreparedStmtByID(stmtID)
+}
+
+// GetPreparedStmtByID returns the prepared statement specified by stmtID.
+func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
+	stmt, ok := s.PreparedStmts[stmtID]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return stmt, nil
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
