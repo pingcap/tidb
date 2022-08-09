@@ -229,7 +229,7 @@
   "makezero": {
     "exclude_files": {
       "/cgo/": "ignore cgo code",
-       ".*_test\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore generated code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
@@ -272,6 +272,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
       "ddl/index.go": "ddl/index code",
       "distsql/": "ignore distsql code",
       "dumpling/export": "dumpling/export code",
@@ -620,9 +621,9 @@
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     },
-     "only_files": {
-       "ddl/": "enable to ddl"
-     }
+    "only_files": {
+      "ddl/": "enable to ddl"
+    }
   },
   "SA2000": {
     "exclude_files": {
