@@ -636,7 +636,9 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 				_, collation = sessionVars.GetCharsetInfo()
 			}
 			v := types.NewCollationStringDatum(stringutil.Copy(string(col.str)), collation)
-			sessionVars.UserVars.Vars[name] = &expression.Constant{Value: v}
+			var tp *types.FieldType
+			types.DefaultParamTypeForValue(v, tp)
+			sessionVars.UserVars.Vars[name] = &expression.Constant{Value: v, RetType: tp}
 		}
 		sessionVars.UsersLock.Unlock()
 	}

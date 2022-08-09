@@ -106,11 +106,7 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 		userVar, ok := sctx.GetSessionVars().UserVars.Vars[name]
 		var tp *ptypes.FieldType
 		if v, ok1 := userVar.(*expression.Constant); ok && ok1 {
-			if v.RetType == nil {
-				types.DefaultParamTypeForValue(v.Value.GetValue(), tp)
-			} else {
-				tp = v.RetType
-			}
+			tp = v.RetType
 		} else {
 			tp = types.NewFieldType(mysql.TypeNull)
 		}

@@ -1281,13 +1281,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
 			// GetVar has not been executed to fill the SessionVars.Users.
 			sessionVars.UsersLock.Lock()
-			if userVar, ok := sessionVars.UserVars.Vars[name]; ok {
-				if v1, ok1 := userVar.(*expression.Constant); ok1 {
-					v1.RetType = tp
-				}
-			} else {
-				sessionVars.UserVars.Vars[name] = &expression.Constant{RetType: tp}
-			}
+			sessionVars.UserVars.Vars[name] = &expression.Constant{RetType: tp}
 			sessionVars.UsersLock.Unlock()
 			return
 		}
@@ -1296,11 +1290,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		sessionVars.UsersLock.RUnlock()
 		var tp *ptypes.FieldType
 		if v1, ok1 := userVar.(*expression.Constant); ok && ok1 {
-			if v1.RetType == nil {
-				types.DefaultParamTypeForValue(v1.Value.GetValue(), tp)
-			} else {
-				tp = v1.RetType
-			}
+			tp = v1.RetType
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			tp.SetFlen(mysql.MaxFieldVarCharLength)

@@ -1372,7 +1372,7 @@ func NewSessionVars() *SessionVars {
 		UserVars: struct {
 			Lock *sync.RWMutex
 			Vars map[string]interface{}
-		}{Lock: &sync.RWMutex{}, Vars: make(map[string]interface{})},
+		}{Vars: make(map[string]interface{})},
 		systems:                     make(map[string]string),
 		stmtVars:                    make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),

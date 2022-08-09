@@ -784,7 +784,9 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 		_, collation = sessionVars.GetCharsetInfo()
 	}
 	v := types.NewCollationStringDatum(stringutil.Copy(res), collation)
-	sessionVars.UserVars.Vars[varName] = &Constant{Value: v}
+	var tp *types.FieldType
+	types.DefaultParamTypeForValue(v, tp)
+	sessionVars.UserVars.Vars[varName] = &Constant{Value: v, RetType: tp}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -813,8 +815,10 @@ func (b *builtinSetRealVarSig) evalReal(row chunk.Row) (res float64, isNull bool
 	}
 	res = datum.GetFloat64()
 	varName = strings.ToLower(varName)
+	var tp *types.FieldType
+	types.DefaultParamTypeForValue(datum, tp)
 	sessionVars.UsersLock.Lock()
-	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum}
+	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum, RetType: tp}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -842,8 +846,10 @@ func (b *builtinSetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	}
 	res := datum.GetMysqlDecimal()
 	varName = strings.ToLower(varName)
+	var tp *types.FieldType
+	types.DefaultParamTypeForValue(datum, tp)
 	sessionVars.UsersLock.Lock()
-	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum}
+	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum, RetType: tp}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -871,8 +877,10 @@ func (b *builtinSetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	res := datum.GetInt64()
 	varName = strings.ToLower(varName)
+	var tp *types.FieldType
+	types.DefaultParamTypeForValue(datum, tp)
 	sessionVars.UsersLock.Lock()
-	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum}
+	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum, RetType: tp}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -899,8 +907,10 @@ func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	}
 	res := datum.GetMysqlTime()
 	varName = strings.ToLower(varName)
+	var tp *types.FieldType
+	types.DefaultParamTypeForValue(datum, tp)
 	sessionVars.UsersLock.Lock()
-	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum}
+	sessionVars.UserVars.Vars[varName] = &Constant{Value: datum, RetType: tp}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
