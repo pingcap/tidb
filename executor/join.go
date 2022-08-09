@@ -711,6 +711,10 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	result, ok := <-e.joinResultCh
 	if !ok {
+		err := e.releaseMemoryUsed()
+		if err != nil {
+			return err
+		}
 		return nil
 	}
 	if result.err != nil {
@@ -719,6 +723,16 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	}
 	req.SwapColumns(result.chk)
 	result.src <- result.chk
+	return nil
+}
+
+func (e *HashJoinExec) releaseMemoryUsed() error {
+	e.buildSideRows = nil
+	e.buildSideRowPtrs = nil
+	err := e.rowContainer.Close()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
