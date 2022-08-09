@@ -504,8 +504,6 @@ func (sr *SchemasReplace) tryToGCJob(job *model.Job) error {
 					return err
 				}
 			}
-		case model.ActionExchangeTablePartition:
-			return errors.Errorf("restore of ddl `exchange-table-partition` is not supported")
 		}
 	}
 	return nil
