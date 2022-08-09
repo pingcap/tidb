@@ -645,7 +645,7 @@ func IsPointPlanShortPathOK(sctx sessionctx.Context, preparedStmt *CachedPrepare
 	if !IsAutoCommitTxn(sctx) {
 		return false, nil
 	}
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		prepared.CachedPlan = nil
 		preparedStmt.ColumnInfos = nil
