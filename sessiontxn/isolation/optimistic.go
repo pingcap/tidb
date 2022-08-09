@@ -27,27 +27,26 @@ import (
 	"go.uber.org/zap"
 )
 
+var emptyOptimisticTxnContextProvider = OptimisticTxnContextProvider{}
+
 // OptimisticTxnContextProvider provides txn context for optimistic transaction
 type OptimisticTxnContextProvider struct {
 	baseTxnContextProvider
 }
 
-// NewOptimisticTxnContextProvider returns a new OptimisticTxnContextProvider
-func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *OptimisticTxnContextProvider {
-	provider := &OptimisticTxnContextProvider{
-		baseTxnContextProvider: baseTxnContextProvider{
-			sctx:                  sctx,
-			causalConsistencyOnly: causalConsistencyOnly,
-			onTxnActive: func(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
-				sessVars := sctx.GetSessionVars()
-				sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
-			},
-		},
-	}
+// ResetForNewTxn resets OptimisticTxnContextProvider to an initial state for a new txn
+func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionctx.Context, causalConsistencyOnly bool) {
+	*p = emptyOptimisticTxnContextProvider
+	p.sctx = sctx
+	p.causalConsistencyOnly = causalConsistencyOnly
+	p.onTxnActiveFunc = p.onTxnActive
+	p.getStmtReadTSFunc = p.getTxnStartTS
+	p.getStmtForUpdateTSFunc = p.getTxnStartTS
+}
 
-	provider.getStmtReadTSFunc = provider.getTxnStartTS
-	provider.getStmtForUpdateTSFunc = provider.getTxnStartTS
-	return provider
+func (p *OptimisticTxnContextProvider) onTxnActive(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
+	sessVars := p.sctx.GetSessionVars()
+	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
 }
 
 // isOptimisticTxnRetryable (if returns true) means the transaction could retry.
