@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test bazel_warn_cache bazel_golangcilinter
 
 default: server buildsucc
 
@@ -29,7 +29,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
-check-setup:tools/bin/revive
+check-setup:lint
 
 check: check-file-perm check-parallel lint tidy testSuite errdoc bazel_golangcilinter bazel_all_build
 
@@ -37,8 +37,11 @@ fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-check-static: tools/bin/golangci-lint
-	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
+check-static:
+ifneq ("$(JenkinsCI)", "1")
+	@GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
+endif
 
 check-file-perm:
 	@echo "check file permission"
@@ -52,9 +55,12 @@ errdoc:tools/bin/errdoc-gen
 	@echo "generator errors.toml"
 	./tools/check/check-errdoc.sh
 
-lint:tools/bin/revive
+lint:
+ifneq ("$(JenkinsCI)", "1")
 	@echo "linting"
+	@GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@latest
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+endif
 
 vet:
 	@echo "vet"
@@ -208,18 +214,11 @@ tools/bin/xprog: tools/check/xprog.go
 	cd tools/check; \
 	$(GO) build -o ../bin/xprog xprog.go
 
-tools/bin/revive:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@v1.2.1
-
 tools/bin/failpoint-ctl:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@2eaa328
 
 tools/bin/errdoc-gen:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/errors/errdoc-gen@518f63d
-
-tools/bin/golangci-lint:
-	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
 
 tools/bin/vfsgendev:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
@@ -433,3 +432,6 @@ bazel_golangcilinter:
 		--run_under="cd $(CURDIR) && " \
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
 	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml
+
+bazel_warn_cache: bazel_coverage_test
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci @com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint

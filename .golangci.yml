@@ -23,6 +23,9 @@ linters:
     - durationcheck
     - prealloc
     - predeclared
+    - revive
+    - misspell
+    - unconvert
 
 linters-settings:
   staticcheck:
