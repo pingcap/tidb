@@ -135,6 +135,13 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "filepermission": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_/testmain\\.go$": "ignore code"
+    }
+  },
   "findcall": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
