@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"go.uber.org/zap"
 	"strings"
 	"time"
 
@@ -33,6 +32,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
