@@ -256,7 +256,6 @@ type ExecuteExec struct {
 	stmtExec      Executor
 	stmt          ast.StmtNode
 	plan          plannercore.Plan
-	id            uint32
 	lowerPriority bool
 	outputNames   []*types.FieldName
 }
@@ -343,15 +342,13 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		OutputNames: names,
 		Ti:          &TelemetryInfo{},
 	}
-	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execStmt.ExecID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
-		}
-		stmtCtx := sctx.GetSessionVars().StmtCtx
-		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-		stmtCtx.OriginalSQL = stmt.Text
-		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+	preparedObj, err := plannercore.GetPreparedStmt(execStmt, sctx.GetSessionVars())
+	if err != nil {
+		return nil, err
 	}
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	return stmt, nil
 }
