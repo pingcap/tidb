@@ -119,42 +119,44 @@ type AfFinalResult struct {
 // and updates all the items in PartialAggFuncs.
 // The parallel execution flow is as the following graph shows:
 //
-//                            +-------------+
-//                            | Main Thread |
-//                            +------+------+
-//                                   ^
-//                                   |
-//                                   +
-//                              +-+-            +-+
-//                              | |    ......   | |  finalOutputCh
-//                              +++-            +-+
-//                               ^
-//                               |
-//                               +---------------+
-//                               |               |
-//                 +--------------+             +--------------+
-//                 | final worker |     ......  | final worker |
-//                 +------------+-+             +-+------------+
-//                              ^                 ^
-//                              |                 |
-//                             +-+  +-+  ......  +-+
-//                             | |  | |          | |
-//                             ...  ...          ...    partialOutputChs
-//                             | |  | |          | |
-//                             +++  +++          +++
-//                              ^    ^            ^
-//          +-+                 |    |            |
-//          | |        +--------o----+            |
+//	                  +-------------+
+//	                  | Main Thread |
+//	                  +------+------+
+//	                         ^
+//	                         |
+//	                         +
+//	                    +-+-            +-+
+//	                    | |    ......   | |  finalOutputCh
+//	                    +++-            +-+
+//	                     ^
+//	                     |
+//	                     +---------------+
+//	                     |               |
+//	       +--------------+             +--------------+
+//	       | final worker |     ......  | final worker |
+//	       +------------+-+             +-+------------+
+//	                    ^                 ^
+//	                    |                 |
+//	                   +-+  +-+  ......  +-+
+//	                   | |  | |          | |
+//	                   ...  ...          ...    partialOutputChs
+//	                   | |  | |          | |
+//	                   +++  +++          +++
+//	                    ^    ^            ^
+//	+-+                 |    |            |
+//	| |        +--------o----+            |
+//
 // inputCh  +-+        |        +-----------------+---+
-//          | |        |                              |
-//          ...    +---+------------+            +----+-----------+
-//          | |    | partial worker |   ......   | partial worker |
-//          +++    +--------------+-+            +-+--------------+
-//           |                     ^                ^
-//           |                     |                |
-//      +----v---------+          +++ +-+          +++
-//      | data fetcher | +------> | | | |  ......  | |   partialInputChs
-//      +--------------+          +-+ +-+          +-+
+//
+//	    | |        |                              |
+//	    ...    +---+------------+            +----+-----------+
+//	    | |    | partial worker |   ......   | partial worker |
+//	    +++    +--------------+-+            +-+--------------+
+//	     |                     ^                ^
+//	     |                     |                |
+//	+----v---------+          +++ +-+          +++
+//	| data fetcher | +------> | | | |  ......  | |   partialInputChs
+//	+--------------+          +-+ +-+          +-+
 type HashAggExec struct {
 	baseExecutor
 
@@ -513,21 +515,29 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 		return err
 	}
 
-	partialResults := w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
-	numRows := chk.NumRows()
-	rows := make([]chunk.Row, 1)
-	allMemDelta := int64(0)
-	for i := 0; i < numRows; i++ {
-		for j, af := range w.aggFuncs {
-			rows[0] = chk.GetRow(i)
-			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j])
-			if err != nil {
-				return err
-			}
-			allMemDelta += memDelta
-		}
+	_ = w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
+	//numRows := chk.NumRows()
+	//rows := make([]chunk.Row, 1)
+	//allMemDelta := int64(0)
+	//for i := 0; i < numRows; i++ {
+	//	for j, af := range w.aggFuncs {
+	//		rows[0] = chk.GetRow(i)
+	//		memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j])
+	//		if err != nil {
+	//			return err
+	//		}
+	//		allMemDelta += memDelta
+	//	}
+	//}
+	//w.memTracker.Consume(allMemDelta)
+	return nil
+}
+
+func (w *HashAggPartialWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
+	n := len(groupKey)
+	for i := 0; i < n; i++ {
+		mapper[string(groupKey[i])] = nil
 	}
-	w.memTracker.Consume(allMemDelta)
 	return nil
 }
 
