@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -2715,11 +2714,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	rebuildAllPartitionValueMapAndSorted(ses[0])
 
 	dom := domain.GetDomain(ses[0])
-	if injector, ok := store.(schematracker.StorageDDLInjector); ok {
-		checker := injector.Injector(dom.DDL())
-		checker.CreateTestDB()
-		dom.SetDDL(checker)
-	}
 
 	// We should make the load bind-info loop before other loops which has internal SQL.
 	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the

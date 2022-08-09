@@ -12,7 +12,6 @@ go_library(
     deps = [
         "//ddl",
         "//ddl/util",
-        "//executor",
         "//infoschema",
         "//kv",
         "//meta/autoid",
