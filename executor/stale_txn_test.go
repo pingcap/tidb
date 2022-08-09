@@ -1245,3 +1245,31 @@ func (s *testStaleTxnSerialSuite) TestStaleReadNoExtraTSORequest(c *C) {
 	tk.MustQuery("select * from t")
 	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
 }
+
+func (s *testStaleTxnSerialSuite) TestIssue30872(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		tk.MustExec("drop table if exists test.t1")
+	}()
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("set tidb_txn_mode='pessimistic'")
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	tk.MustExec("insert into t1 values(1, 10)")
+	time.Sleep(time.Millisecond * 100)
+	tk.MustExec("set @a=now(6)")
+	time.Sleep(time.Millisecond * 100)
+	tk.MustExec("update t1 set v=100 where id=1")
+	tk.MustExec("set autocommit=0")
+	tk.MustQuery("select * from t1 as of timestamp @a").Check(testkit.Rows("1 10"))
+}
