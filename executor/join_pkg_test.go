@@ -75,7 +75,6 @@ func TestJoinExec(t *testing.T) {
 				}
 				result.Append(chk, 0, chk.NumRows())
 			}
-			require.Equal(t, casTest.disk, exec.rowContainer.alreadySpilledSafeForTest())
 			err = exec.Close()
 			require.NoError(t, err)
 		}
