@@ -323,6 +323,16 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
+
+	preparedObj, err := plannercore.GetPreparedStmt(execStmt, sctx.GetSessionVars())
+	if err != nil {
+		return nil, err
+	}
+	pointPlanShortPathOK, err := plannercore.IsPointPlanShortPathOK(sctx, is, preparedObj)
+	if err != nil {
+		return nil, err
+	}
+
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
@@ -342,13 +352,24 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		OutputNames: names,
 		Ti:          &TelemetryInfo{},
 	}
-	preparedObj, err := plannercore.GetPreparedStmt(execStmt, sctx.GetSessionVars())
-	if err != nil {
-		return nil, err
-	}
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+
+	// handle point plan short path specially
+	if pointPlanShortPathOK {
+		if ep, ok := execPlan.(*plannercore.Execute); ok {
+			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
+				stmtCtx.SetPlan(execPlan)
+				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
+				stmt.Plan = pointPlan
+				stmt.PsStmt = preparedObj
+			} else {
+				// invalid the previous cached point plan
+				preparedObj.PreparedAst.CachedPlan = nil
+			}
+		}
+	}
 	return stmt, nil
 }
