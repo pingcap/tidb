@@ -106,6 +106,7 @@ require (
 	github.com/golangci/misspell v0.3.5
 	github.com/golangci/unconvert v0.0.0-20180507085042-28b1c447d1f4
 	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
+	github.com/gostaticanalysis/forcetypeassert v0.1.0
 	github.com/kisielk/errcheck v1.6.1
 	github.com/kyoh86/exportloopref v0.1.8
 	github.com/mgechev/revive v1.2.1
