@@ -461,7 +461,20 @@ insert into t2 values (1, 1);
 
 From the plan, you can't see any information about the foreign key constrain which need to delete the related row in child table `t2`.
 
-I think this is a MySQL issue, should we make TiDB plan better, at least when we meet some slow query, we can know maybe it is caused by modify related row in child table.
+I think this is a MySQL issue, should we make TiDB plan better, at least when we meet some slow query, we can know maybe it is caused by modify related row in child table. 
+
+Here is an example plan with foreign key:
+
+```sql
+> explain delete from t1 where id = 1;
++--------------------------+---------+------+---------------+---------------+
+| id                       | estRows | task | access object | operator info |
++--------------------------+---------+------+---------------+---------------+
+| Delete_4                 | N/A     | root |               | N/A           |
+| └─Point_Get_6            | 1.00    | root | table:t1      | handle:1      |
+| └─Foreign_Key_Trigger    | N/A     | root | table:t2      | cascade       |
++--------------------------+---------+------+---------------+---------------+
+```
 
 ##### CockroachDB DML Execution Plan
 
