@@ -1140,6 +1140,9 @@ func TestSetLabels(t *testing.T) {
 		resp, err := ts.postStatus("/labels", "application/json", buffer)
 		require.NoError(t, err)
 		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		newLabels := config.GetGlobalConfig().Labels
 		require.Equal(t, newLabels, expected)
