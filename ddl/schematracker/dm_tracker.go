@@ -86,7 +86,8 @@ func (d SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateData
 	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
 }
 
-func (d SchemaTracker) createTestDB() {
+// CreateTestDB creates the `test` database, which is the default behavior of TiDB.
+func (d SchemaTracker) CreateTestDB() {
 	_ = d.CreateSchema(nil, &ast.CreateDatabaseStmt{
 		Name: model.NewCIStr("test"),
 	})

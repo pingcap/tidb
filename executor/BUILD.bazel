@@ -101,6 +101,7 @@ go_library(
         "//ddl",
         "//ddl/label",
         "//ddl/placement",
+        "//ddl/schematracker",
         "//distsql",
         "//domain",
         "//domain/infosync",
