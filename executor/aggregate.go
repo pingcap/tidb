@@ -535,29 +535,11 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 
 func (w *HashAggPartialWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
 	n := len(groupKey)
-	partialResults := make([][]aggfuncs.PartialResult, n)
-	allMemDelta := int64(0)
 	for i := 0; i < n; i++ {
-		var ok bool
-		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
-			continue
-		}
-		for _, af := range w.aggFuncs {
-			partialResult, memDelta := af.AllocPartialResult()
-			partialResults[i] = append(partialResults[i], partialResult)
-			allMemDelta += memDelta + 8 // the memory usage of PartialResult
-		}
-		mapper[string(groupKey[i])] = partialResults[i]
-		allMemDelta += int64(len(groupKey[i]))
+		mapper[string(groupKey[i])] = nil
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
-			w.BInMap++
-		}
 	}
-	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(allMemDelta)
-	return partialResults
+	return nil
 }
 
 // shuffleIntermData shuffles the intermediate data of partial workers to corresponded final workers.
