@@ -2303,22 +2303,10 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
 	logGeneralQuery(st, s, true)
 
-	pointShortPathOK, err := plannercore.IsPointPlanShortPathOK(s, prepareStmt)
-	if err != nil {
-		return nil, err
-	}
-	if pointShortPathOK {
-		stmtCtx := s.GetSessionVars().StmtCtx
-		switch st.Plan.(type) {
-		case *plannercore.PointGetPlan:
-			resultSet, err := st.PointGet(ctx)
-			s.txn.changeToInvalid()
-			return resultSet, err
-		case *plannercore.Update:
-			stmtCtx.Priority = kv.PriorityHigh
-			resultSet, err := runStmt(ctx, s, st)
-			return resultSet, err
-		}
+	if st.PsStmt != nil { // point plan short path
+		resultSet, err := st.PointGet(ctx)
+		s.txn.changeToInvalid()
+		return resultSet, err
 	}
 
 	return runStmt(ctx, s, st)
