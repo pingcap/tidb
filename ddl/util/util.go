@@ -306,6 +306,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 	return errors.Trace(err)
 }
 
+// IsContextDone checks if context is done.
 func IsContextDone(ctx context.Context) bool {
 	select {
 	case <-ctx.Done():
