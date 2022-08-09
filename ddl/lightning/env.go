@@ -79,8 +79,8 @@ func init() {
 	GlobalEnv.diskQuota = variable.DDLDiskQuota.Load()
 }
 
-// InitGolbalLightningBackendEnv initialize Lightning execution environment.
-func InitGolbalLightningBackendEnv() {
+// InitGlobalLightningBackendEnv initialize Lightning execution environment.
+func InitGlobalLightningBackendEnv() {
 	var (
 		bufferSize uint64
 		err        error
@@ -97,7 +97,7 @@ func InitGolbalLightningBackendEnv() {
 	// Set Memory usage limitation to 1 GB
 	sbz := variable.GetSysVar("sort_buffer_size")
 	bufferSize, err = strconv.ParseUint(sbz.Value, 10, 64)
-	// If get bufferSize err, then maxMemLimtation is 128 MB
+	// If get bufferSize err, then maxMemLimitation is 128 MB
 	// Otherwise, the ddl maxMemLimitation is 2 GB
 	if err == nil {
 		maxMemLimit = bufferSize * 8 * _kb

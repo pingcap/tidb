@@ -35,10 +35,10 @@ func TestAdjustMemory(t *testing.T) {
 		{"Mem4", 1 * _gb, 32 * _mb, 128 * _mb},
 		{"Mem5", 4 * _gb, 128 * _mb, 512 * _mb},
 	}
-	InitGolbalLightningBackendEnv()
+	InitGlobalLightningBackendEnv()
 	for _, test := range tests {
 		GlobalEnv.LitMemRoot.Reset(test.quota)
-		cfg, err := generateLightningConfig(context.TODO(), false, "bckey")
+		cfg, err := generateLightningConfig("bckey", false)
 		require.NoError(t, err)
 		require.Equal(t, test.lsize, int64(cfg.TikvImporter.LocalWriterMemCacheSize))
 		require.Equal(t, test.ensize, int64(cfg.TikvImporter.EngineMemCacheSize))
@@ -47,14 +47,14 @@ func TestAdjustMemory(t *testing.T) {
 
 func TestLightningBackend(t *testing.T) {
 	GlobalEnv.SetMinQuota()
-	InitGolbalLightningBackendEnv()
+	InitGlobalLightningBackendEnv()
 	require.Equal(t, GlobalEnv.IsInited, true)
 	ctx := context.Background()
 	require.Equal(t, GlobalEnv.LitMemRoot.currUsage, int64(0))
 	// Init important variables
 	sysVars := obtainImportantVariables()
 	bckey := "bckey1"
-	cfg, err := generateLightningConfig(ctx, false, bckey)
+	cfg, err := generateLightningConfig(bckey, false)
 	require.NoError(t, err)
 	GlobalEnv.LitMemRoot.backendCache[bckey] = newBackendContext(ctx, bckey, nil, cfg, sysVars)
 	require.NoError(t, err)

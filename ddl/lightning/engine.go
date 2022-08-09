@@ -34,8 +34,8 @@ import (
 )
 
 var (
-	compactMem     int64 = 1 * _gb
-	compactConcurr int   = 4
+	compactMemory      int64 = 1 * _gb
+	compactConcurrency int   = 4
 )
 
 // One engine for one index reorg task, each task will create several new writers under the
@@ -87,8 +87,8 @@ func CreateEngine(
 	var cfg backend.EngineConfig
 	cfg.Local = &backend.LocalEngineConfig{
 		Compact:            true,
-		CompactThreshold:   compactMem,
-		CompactConcurrency: compactConcurr,
+		CompactThreshold:   compactMemory,
+		CompactConcurrency: compactConcurrency,
 	}
 	// Set engine tableInfo
 	cpt := checkpoints.TidbTableInfo{
@@ -100,23 +100,22 @@ func CreateEngine(
 
 	// Get a created backend to create engine under it.
 	bc := GlobalEnv.LitMemRoot.backendCache[backendKey]
-	be := bc.Backend
 
-	// Opne one engine under an exist backend
-	en, err := be.OpenEngine(ctx, &cfg, job.TableName, int32(indexID))
+	// Open one engine under an existing backend.
+	en, err := bc.Backend.OpenEngine(ctx, &cfg, job.TableName, int32(indexID))
 	if err != nil {
 		errMsg := LitErrCreateEngineFail + err.Error()
 		log.L().Error(errMsg)
 		return errors.New(errMsg)
 	}
-	uuid := en.GetEngineUUID()
-	ei := NewEngineInfo(indexID, engineKey, &cfg, bc, en, job.TableName, uuid, wCnt)
+	id := en.GetEngineUUID()
+	ei := NewEngineInfo(indexID, engineKey, &cfg, bc, en, job.TableName, id, wCnt)
 	GlobalEnv.LitMemRoot.EngineMgr.StoreEngineInfo(engineKey, ei)
 	bc.EngineCache[engineKey] = ei
 	return nil
 }
 
-// FinishIndexOp will finished local index preparation job and ingest index sst file into TiKV.
+// FinishIndexOp will finish local index preparation job and ingest index sst file into TiKV.
 func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, unique bool) (err error) {
 	var errMsg string
 	var keyMsg string
@@ -180,7 +179,7 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 	return nil
 }
 
-// FlushEngine flush an lightning engine memory data into local disk.
+// FlushEngine flush the lightning engine memory data into local disk.
 func FlushEngine(engineKey string, ei *engineInfo) error {
 	err := ei.openedEngine.Flush(ei.backCtx.Ctx)
 	if err != nil {
@@ -203,7 +202,7 @@ func UnsafeImportEngineData(jobID int64, indexID int64) error {
 	GlobalEnv.checkAndResetQuota()
 	if GlobalEnv.NeedImportEngineData(totalStorageUsed, totalStorageAvail) {
 		// ToDo it should be changed according checkpoint solution.
-		// Flush wirter cached data into local disk for engine first.
+		// Flush writer cached data into local disk for engine first.
 		err := FlushEngine(engineKey, ei)
 		if err != nil {
 			return err
@@ -225,19 +224,19 @@ type WorkerContext struct {
 	lWrite *backend.LocalEngineWriter
 }
 
-// InitWorkerContext will get worker local writer from engine info writer cache first, if exist.
-// If local wirter not exist, then create new one and store it into engine info writer cache.
-// note: operate ei.writeCache map is not thread safe please make sure there is sync mechaism to
+// InitWorkerContext will get worker local writer from engine info writer cache first, if exists.
+// If local writer not exist, then create new one and store it into engine info writer cache.
+// note: operate ei.writeCache map is not thread safe please make sure there is sync mechanism to
 // make sure the safe.
-func (wCtx *WorkerContext) InitWorkerContext(engineKey string, workerid int) (err error) {
-	wCtxKey := engineKey + strconv.Itoa(workerid)
+func (wCtx *WorkerContext) InitWorkerContext(engineKey string, workerID int) (err error) {
+	wCtxKey := engineKey + strconv.Itoa(workerID)
 	ei, exist := GlobalEnv.LitMemRoot.EngineMgr.enginePool[engineKey]
 	if !exist {
 		return errors.New(LitErrGetEngineFail)
 	}
 	wCtx.eInfo = ei
 
-	// Fisrt get local writer from engine cache.
+	// First get local writer from engine cache.
 	wCtx.lWrite, exist = ei.writerCache[wCtxKey]
 	// If not exist then build one
 	if !exist {
@@ -261,7 +260,7 @@ func (wCtx *WorkerContext) WriteRow(key, idxVal []byte) error {
 	return wCtx.lWrite.WriteRows(wCtx.eInfo.backCtx.Ctx, nil, row)
 }
 
-// CanRestoreReorgTask only when backend and Engine still be cached, then the task could be restore,
+// CanRestoreReorgTask only when backend and Engine still be cached, then the task could be restored,
 // otherwise return false to let reorg task restart.
 func CanRestoreReorgTask(jobID int64, indexID int64) bool {
 	engineInfoKey := GenEngineInfoKey(jobID, indexID)

@@ -17,7 +17,6 @@ package lightning
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"strconv"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tidbconf "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"go.uber.org/zap"
@@ -56,35 +54,6 @@ func newBackendContext(ctx context.Context, key string, be *backend.Backend, cfg
 	}
 }
 
-func generateLightningConfig(ctx context.Context, unique bool, bcKey string) (*config.Config, error) {
-	cfg := config.NewConfig()
-	cfg.TikvImporter.Backend = config.BackendLocal
-	// Each backend will build an single dir in linghtning dir.
-	cfg.TikvImporter.SortedKVDir = filepath.Join(GlobalEnv.SortPath, bcKey)
-	// Should not output err, after go through cfg.adjust function.
-	_, err := cfg.AdjustCommon()
-	if err != nil {
-		log.L().Warn(LitWarnConfigError, zap.Error(err))
-		return nil, err
-	}
-	adjustImportMemory(cfg)
-	cfg.Checkpoint.Enable = true
-	if unique {
-		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRecord
-	} else {
-		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
-	}
-	cfg.TiDB.PdAddr = GlobalEnv.PdAddr
-	cfg.TiDB.Host = "127.0.0.1"
-	cfg.TiDB.StatusPort = int(GlobalEnv.Status)
-	// Set TLS related information
-	cfg.Security.CAPath = tidbconf.GetGlobalConfig().Security.ClusterSSLCA
-	cfg.Security.CertPath = tidbconf.GetGlobalConfig().Security.ClusterSSLCert
-	cfg.Security.KeyPath = tidbconf.GetGlobalConfig().Security.ClusterSSLKey
-
-	return cfg, err
-}
-
 func createLocalBackend(ctx context.Context, cfg *config.Config, glue glue.Glue) (backend.Backend, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
@@ -96,63 +65,9 @@ func createLocalBackend(ctx context.Context, cfg *config.Config, glue glue.Glue)
 	return local.NewLocalBackend(ctx, tls, cfg, glue, int(GlobalEnv.limit), errorMgr)
 }
 
-// CloseBackend close one backend for one add index task.
-func CloseBackend(bcKey string) {
-	log.L().Info(LitInfoCloseBackend, zap.String("backend key", bcKey))
-	GlobalEnv.LitMemRoot.DeleteBackendContext(bcKey)
-}
-
 // GenBackendContextKey generate a backend key from job id for a DDL job.
 func GenBackendContextKey(jobID int64) string {
 	return strconv.FormatInt(jobID, 10)
-}
-
-// Adjust lightning memory parameters according memory root's max limitation
-func adjustImportMemory(cfg *config.Config) {
-	var scale int64
-	// Try aggressive resource usage successful.
-	if tryAggressiveMemory(cfg) {
-		return
-	}
-
-	defaultMemSize := int64(cfg.TikvImporter.LocalWriterMemCacheSize) * int64(cfg.TikvImporter.RangeConcurrency)
-	defaultMemSize += 4 * int64(cfg.TikvImporter.EngineMemCacheSize)
-	log.L().Info(LitInfoInitMemSetting,
-		zap.String("LocalWriterMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
-		zap.String("EngineMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
-		zap.String("range concurrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
-
-	if defaultMemSize > GlobalEnv.LitMemRoot.maxLimit {
-		scale = defaultMemSize / GlobalEnv.LitMemRoot.maxLimit
-	}
-
-	if scale == 1 || scale == 0 {
-		return
-	}
-
-	cfg.TikvImporter.LocalWriterMemCacheSize /= config.ByteSize(scale)
-	cfg.TikvImporter.EngineMemCacheSize /= config.ByteSize(scale)
-	// TODO: adjust range concurrency number to control total concurrency in future.
-	log.L().Info(LitInfoChgMemSetting,
-		zap.String("LocalWriterMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
-		zap.String("EngineMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
-		zap.String("range concurrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
-}
-
-// tryAggressiveMemory lightning memory parameters according memory root's max limitation.
-func tryAggressiveMemory(cfg *config.Config) bool {
-	var defaultMemSize int64
-	defaultMemSize = int64(int(cfg.TikvImporter.LocalWriterMemCacheSize) * cfg.TikvImporter.RangeConcurrency)
-	defaultMemSize += int64(cfg.TikvImporter.EngineMemCacheSize)
-
-	if (defaultMemSize + GlobalEnv.LitMemRoot.currUsage) > GlobalEnv.LitMemRoot.maxLimit {
-		return false
-	}
-	log.L().Info(LitInfoChgMemSetting,
-		zap.String("LocalWriterMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
-		zap.String("EngineMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
-		zap.String("range concurrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
-	return true
 }
 
 type glueLit struct{}
@@ -194,7 +109,6 @@ func (g glueLit) OpenCheckpointsDB(context.Context, *config.Config) (checkpoints
 
 // Record is used to report some information (key, value) to host TiDB, including progress, stage currently.
 func (g glueLit) Record(string, uint64) {
-
 }
 
 // IsEngineLightningBackfill show if lightning backend env is set up.

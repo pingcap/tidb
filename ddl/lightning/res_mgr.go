@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"go.uber.org/zap"
 )
 
@@ -51,7 +50,7 @@ type MemoryRoot struct {
 	writeBuffer  int64
 	backendCache map[string]*BackendContext
 	EngineMgr    EngineManager
-	// This map is use to store all object memory allocated size.
+	// This map is used to store all object memory allocated size.
 	structSize map[string]int64
 	mLock      sync.Mutex
 }
@@ -71,11 +70,11 @@ func (m *MemoryRoot) init(maxMemUsage int64) {
 	m.backendCache = make(map[string]*BackendContext, 10)
 	m.EngineMgr.init()
 	m.structSize = make(map[string]int64, 10)
-	m.initDefaultStruceMemSize()
+	m.initDefaultStructMemSize()
 }
 
-// init Caculate memory struct size and save it into map.
-func (m *MemoryRoot) initDefaultStruceMemSize() {
+// init calculates the memory struct size and save it into map.
+func (m *MemoryRoot) initDefaultStructMemSize() {
 	var (
 		bc   BackendContext
 		ei   engineInfo
@@ -101,7 +100,7 @@ func (m *MemoryRoot) Reset(maxMemUsage int64) {
 	}
 }
 
-// checkMemoryUsage check if there is enough memory to allocte struct for lighting execution.
+// checkMemoryUsage check if there is enough memory to allocate struct for lighting execution.
 func (m *MemoryRoot) checkMemoryUsage(t defaultType) error {
 	var requiredMem int64
 	switch t {
@@ -147,7 +146,7 @@ func (m *MemoryRoot) RegisterBackendContext(ctx context.Context, unique bool, ke
 				zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))
 			return err
 		}
-		cfg, err = generateLightningConfig(ctx, unique, key)
+		cfg, err = generateLightningConfig(key, unique)
 		if err != nil {
 			log.L().Warn(LitErrAllocMemFail, zap.String("backend key", key),
 				zap.String("Generate config for lightning error:", err.Error()))
@@ -241,7 +240,7 @@ func (m *MemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, engineKey st
 		return 0, err
 	}
 
-	// Caculate lightning concurrecy degree and set memory usage.
+	// Calculate lightning concurrency degree and set memory usage.
 	// and pre-allocate memory usage for worker
 	newWorkerCount := m.workerDegree(workerCount, engineKey, bcKey)
 	en, exist1 := bc.EngineCache[engineKey]
@@ -459,47 +458,6 @@ func (m *MemoryRoot) DiskStat() (uint64, uint64) {
 		return uint64(totalDiskUsed), uint64(GlobalEnv.diskQuota)
 	}
 	return uint64(totalDiskUsed), sz.Available
-}
-
-// defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
-// variables from downstream which may affect KV encode result. The values record the default
-// values if missing.
-var defaultImportantVariables = map[string]string{
-	"max_allowed_packet":      "67108864",
-	"div_precision_increment": "4",
-	"time_zone":               "SYSTEM",
-	"lc_time_names":           "en_US",
-	"default_week_format":     "0",
-	"block_encryption_mode":   "aes-128-ecb",
-	"group_concat_max_len":    "1024",
-}
-
-// defaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system
-// variables from downstream in local/importer backend. The values record the default
-// values if missing.
-var defaultImportVariablesTiDB = map[string]string{
-	"tidb_row_format_version": "1",
-}
-
-func obtainImportantVariables() map[string]string {
-	// Convert the result into a map. Fill the missing variables with default values.
-	result := make(map[string]string, len(defaultImportantVariables)+len(defaultImportVariablesTiDB))
-	for key, value := range defaultImportantVariables {
-		result[key] = value
-		v := variable.GetSysVar(key)
-		if v.Value != value {
-			result[key] = value
-		}
-	}
-
-	for key, value := range defaultImportVariablesTiDB {
-		result[key] = value
-		v := variable.GetSysVar(key)
-		if v.Value != value {
-			result[key] = value
-		}
-	}
-	return result
 }
 
 // SetFull set memory used up, only used for testing

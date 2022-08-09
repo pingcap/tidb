@@ -135,13 +135,13 @@ func TestInitLightningEnv(t *testing.T) {
 		{"path2", 100 * _tb, "/tmp/tidb/tmp_ddl-4000", false},
 	}
 
-	InitGolbalLightningBackendEnv()
+	InitGlobalLightningBackendEnv()
 	require.Equal(t, tests[0].initSucc, GlobalEnv.IsInited)
 
 	// DiskQuota check fail
 	GlobalEnv.isTestMode = true
 	GlobalEnv.diskQuota = tests[1].disquota
-	InitGolbalLightningBackendEnv()
+	InitGlobalLightningBackendEnv()
 	require.Equal(t, tests[1].initSucc, GlobalEnv.IsInited)
 }
 

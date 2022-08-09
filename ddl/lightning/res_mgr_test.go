@@ -24,7 +24,7 @@ import (
 
 func TestMemoryControl(t *testing.T) {
 	GlobalEnv.SetMinQuota()
-	InitGolbalLightningBackendEnv()
+	InitGlobalLightningBackendEnv()
 	GlobalEnv.LitMemRoot.maxLimit = int64(2 * _gb)
 	require.Equal(t, true, GlobalEnv.IsInited)
 	require.Equal(t, int64(0), GlobalEnv.LitMemRoot.currUsage)
@@ -33,7 +33,7 @@ func TestMemoryControl(t *testing.T) {
 	// Init important variables
 	sysVars := obtainImportantVariables()
 	bcKey := "bcKey1"
-	cfg, err := generateLightningConfig(ctx, false, bcKey)
+	cfg, err := generateLightningConfig(bcKey, false)
 	require.NoError(t, err)
 	GlobalEnv.LitMemRoot.backendCache[bcKey] = newBackendContext(ctx, bcKey, nil, cfg, sysVars)
 

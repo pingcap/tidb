@@ -133,7 +133,7 @@ func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexID int64
 func cleanUpLightningEnv(reorg *reorgInfo, isCanceled bool, indexIDs ...int64) {
 	if isLightningEnabled(reorg.ID) {
 		bcKey := lit.GenBackendContextKey(reorg.ID)
-		// If reorg is cancled, need do clean up engine.
+		// If reorg is cancelled, need to clean up engine.
 		if isCanceled {
 			lit.GlobalEnv.LitMemRoot.ClearEngines(reorg.ID, indexIDs...)
 		}

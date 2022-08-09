@@ -683,7 +683,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Init Lighting Global environment.
 	// If Create local lightning dir fail or the local available storage that the dir represented
 	// is less than disk quota(100 GB default)
-	lit.InitGolbalLightningBackendEnv()
+	lit.InitGlobalLightningBackendEnv()
 
 	return nil
 }
