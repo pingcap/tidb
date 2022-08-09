@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -257,6 +258,8 @@ func (h *memoryDebugModeHandler) run() {
 }
 
 func getHeapProfile() (fileName string, err error) {
+	disk.TempDirMutex.RLock()
+	defer disk.TempDirMutex.RUnlock()
 	tempDir := filepath.Join(config.GetGlobalConfig().Instance.TmpStoragePath, "record")
 	timeString := time.Now().Format(time.RFC3339)
 	fileName = filepath.Join(tempDir, "heapGC"+timeString)

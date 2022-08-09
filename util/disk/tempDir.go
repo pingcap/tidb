@@ -17,6 +17,7 @@ package disk
 import (
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/danjacques/gofslock/fslock"
 	"github.com/pingcap/errors"
@@ -28,8 +29,9 @@ import (
 )
 
 var (
-	tempDirLock fslock.Handle
-	sf          singleflight.Group
+	tempDirLock  fslock.Handle
+	sf           singleflight.Group
+	TempDirMutex sync.RWMutex
 )
 
 const (
