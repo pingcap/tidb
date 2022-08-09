@@ -1,20 +1,29 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_test(
     name = "addindexlittest_test",
     timeout = "short",
     srcs = [
+        "addIndex_test.go",
         "main_test.go",
-        "adindex_test.go",
-        "common.go"
-        "workload.go",
-        "workload_test.go",
     ],
+    embed = [":addindexlittest"],
     flaky = True,
     deps = [
-        "//statistics/handle",
+        "//ddl/lightning",
         "//testkit",
         "//tests/realtikvtest",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_library(
+    name = "addindexlittest",
+    srcs = ["common.go"],
+    importpath = "github.com/pingcap/tidb/tests/realtikvtest/addindexlittest",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//testkit",
         "@com_github_stretchr_testify//require",
     ],
 )
