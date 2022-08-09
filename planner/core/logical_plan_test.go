@@ -1344,7 +1344,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		// TODO: to fix, Table 'test.ttt' doesn't exist
 		_ = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
 		c.Assert(err, IsNil, comment)
@@ -1425,7 +1425,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		plan, err := builder.Build(ctx, stmt)
 		s.testData.OnRecord(func() {
 			output[i].Err = err != nil
@@ -1458,7 +1458,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1532,7 +1532,7 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1569,7 +1569,7 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1650,7 +1650,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 			return nil, nil, err
 		}
 	}
-	builder, _ := NewPlanBuilder(sctx, s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
 		return nil, nil, err
@@ -1733,7 +1733,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
@@ -1836,7 +1836,7 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1853,7 +1853,7 @@ func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
 	c.Assert(err, IsNil)
 	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	c.Assert(err, IsNil)
-	builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1874,7 +1874,7 @@ func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
 	c.Assert(err, IsNil)
 	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	c.Assert(err, IsNil)
-	builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))

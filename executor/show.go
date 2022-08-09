@@ -1730,9 +1730,9 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	if tbl.IsView() {
 		// Retrieve view columns info.
 <<<<<<< HEAD
-		planBuilder, _ := plannercore.NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
+		planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
 =======
-		planBuilder, _ := plannercore.NewPlanBuilder(
+		planBuilder, _ := plannercore.NewPlanBuilder().Init(
 			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
 >>>>>>> e39ef4cae... executor: prevent sending cop request for show columns (#36613)
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {

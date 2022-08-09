@@ -508,21 +508,8 @@ type PlanBuilder struct {
 	isForUpdateRead             bool
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
-<<<<<<< HEAD
-=======
-	buildingCTE                 bool
-
-	// checkSemiJoinHint checks whether the SEMI_JOIN_REWRITE hint is possible to be applied on the current SELECT stmt.
-	// We need this variable for the hint since the hint is set in subquery, but we check its availability in its outer scope.
-	//   e.g. select * from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t1 where t.a=t1.a)
-	// Whether the hint can be applied or not is checked after the subquery is fully built.
-	checkSemiJoinHint bool
-	// hasValidSemijoinHint would tell the outer APPLY/JOIN operator that there's valid hint to be checked later
-	// if there's SEMI_JOIN_REWRITE hint and we find checkSemiJoinHint is true.
-	hasValidSemiJoinHint bool
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
->>>>>>> e39ef4cae... executor: prevent sending cop request for show columns (#36613)
 }
 
 type handleColHelper struct {
@@ -618,9 +605,6 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
-<<<<<<< HEAD
-// NewPlanBuilder creates a new PlanBuilder. Return the original PlannerSelectBlockAsName as well, callers decide if
-=======
 // PlanBuilderOpt is used to adjust the plan builder.
 type PlanBuilderOpt interface {
 	Apply(builder *PlanBuilder)
@@ -650,25 +634,20 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 
 // Init initialize a PlanBuilder.
 // Return the original PlannerSelectBlockAsName as well, callers decide if
->>>>>>> e39ef4cae... executor: prevent sending cop request for show columns (#36613)
 // PlannerSelectBlockAsName should be restored after using this builder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
+func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
-	return &PlanBuilder{
-		ctx:                 sctx,
-		is:                  is,
-		outerCTEs:           make([]*cteInfo, 0),
-		colMapper:           make(map[*ast.ColumnNameExpr]int),
-		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
-		hintProcessor:       processor,
-		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
-		isForUpdateRead:     sctx.GetSessionVars().IsPessimisticReadConsistency(),
-	}, savedBlockNames
+
+	b.ctx = sctx
+	b.is = is
+	b.hintProcessor = processor
+	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
+	return b, savedBlockNames
 }
 
 // Build builds the ast node to a Plan.
