@@ -148,7 +148,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 3. There are less 100 diffs.
 	startTime := time.Now()
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < 100 {
-		is, relatedChanges, err := do.tryLoadSchemaDiffs(do.store, m, currentSchemaVersion, neededSchemaVersion)
+		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
 		if err == nil {
 			do.infoCache.Insert(is, startTS)
 			logutil.BgLogger().Info("diff load InfoSchema success",
@@ -281,7 +281,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(store kv.Storage, m *meta.Meta, usedVersion, newVersion int64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, error) {
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
@@ -301,7 +301,7 @@ func (do *Domain) tryLoadSchemaDiffs(store kv.Storage, m *meta.Meta, usedVersion
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
-		IDs, err := builder.ApplyDiff(store, m, diff)
+		IDs, err := builder.ApplyDiff(m, diff)
 		if err != nil {
 			return nil, nil, err
 		}

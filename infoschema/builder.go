@@ -192,7 +192,7 @@ type Builder struct {
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
-func (b *Builder) ApplyDiff(store kv.Storage, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
 	switch diff.Type {
 	case model.ActionCreateSchema:
@@ -216,15 +216,15 @@ func (b *Builder) ApplyDiff(store kv.Storage, m *meta.Meta, diff *model.SchemaDi
 	case model.ActionRecoverTable:
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
-		return b.applyCreateTables(store, m, diff)
+		return b.applyCreateTables(m, diff)
 	case model.ActionExchangeTablePartition:
-		return b.applyExchangeTablePartition(store, m, diff)
+		return b.applyExchangeTablePartition(m, diff)
 	default:
-		return b.applyDefaultAction(store, m, diff)
+		return b.applyDefaultAction(m, diff)
 	}
 }
 
-func (b *Builder) applyCreateTables(store kv.Storage, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs := make([]int64, 0, len(diff.AffectedOpts))
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
@@ -236,7 +236,7 @@ func (b *Builder) applyCreateTables(store kv.Storage, m *meta.Meta, diff *model.
 				OldSchemaID: opt.OldSchemaID,
 				OldTableID:  opt.OldTableID,
 			}
-			affectedIDs, err := b.ApplyDiff(store, m, affectedDiff)
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -291,7 +291,7 @@ func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
-func (b *Builder) applyExchangeTablePartition(store kv.Storage, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -306,14 +306,14 @@ func (b *Builder) applyExchangeTablePartition(store kv.Storage, m *meta.Meta, di
 			OldSchemaID: opt.OldSchemaID,
 			OldTableID:  opt.OldTableID,
 		}
-		affectedIDs, err := b.ApplyDiff(store, m, affectedDiff)
+		affectedIDs, err := b.ApplyDiff(m, affectedDiff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		tblIDs = append(tblIDs, affectedIDs...)
 
 		// handle partition table and table AutoID
-		err = updateAutoIDForExchangePartition(store, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.TableID)
+		err = updateAutoIDForExchangePartition(b.store, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.TableID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -323,8 +323,6 @@ func (b *Builder) applyExchangeTablePartition(store kv.Storage, m *meta.Meta, di
 }
 
 func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
-	// partition table auto IDs.
-
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
@@ -358,7 +356,7 @@ func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSche
 	return err
 }
 
-func (b *Builder) applyDefaultAction(store kv.Storage, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -374,7 +372,7 @@ func (b *Builder) applyDefaultAction(store kv.Storage, m *meta.Meta, diff *model
 			OldSchemaID: opt.OldSchemaID,
 			OldTableID:  opt.OldTableID,
 		}
-		affectedIDs, err := b.ApplyDiff(store, m, affectedDiff)
+		affectedIDs, err := b.ApplyDiff(m, affectedDiff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

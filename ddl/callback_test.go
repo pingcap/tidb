@@ -52,6 +52,7 @@ type TestDDLCallback struct {
 	onJobUpdated           func(*model.Job)
 	OnJobUpdatedExported   func(*model.Job)
 	onWatched              func(ctx context.Context)
+	OnWatchedExported      func(ctx context.Context)
 	OnGetJobBeforeExported func(string)
 	OnGetJobAfterExported  func(string, *model.Job)
 }
@@ -112,6 +113,10 @@ func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
 
 // OnWatched is used to run the user customized logic of `OnWatched` first.
 func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
+	if tc.OnWatchedExported != nil {
+		tc.OnWatchedExported(ctx)
+		return
+	}
 	if tc.onWatched != nil {
 		tc.onWatched(ctx)
 		return

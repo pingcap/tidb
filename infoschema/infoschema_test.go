@@ -202,7 +202,7 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(store, meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
 	require.NoError(t, err)
 	err = txn.Rollback()
 	require.NoError(t, err)
@@ -237,13 +237,13 @@ func TestMockInfoSchema(t *testing.T) {
 
 func checkApplyCreateNonExistsSchemaDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder, store kv.Storage) {
 	m := meta.NewMeta(txn)
-	_, err := builder.ApplyDiff(store, m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
+	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
 	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 }
 
 func checkApplyCreateNonExistsTableDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder, dbID int64, store kv.Storage) {
 	m := meta.NewMeta(txn)
-	_, err := builder.ApplyDiff(store, m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999})
+	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999})
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 }
 

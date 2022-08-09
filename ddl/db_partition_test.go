@@ -2404,21 +2404,15 @@ func TestExchangePartitionAutoID(t *testing.T) {
         PARTITION p3 values less than (50000000)
 		);`)
 	tk.MustExec(`create table nt(a int primary key auto_increment);`)
-
 	tk.MustExec(`insert into pt values (0), (4)`)
 	tk.MustExec("insert into nt values (1)")
 
 	hook := &ddl.TestDDLCallback{Do: dom}
 	dom.DDL().SetHook(hook)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `return(true)`))
-	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
-
-	hookFunc := func(job *model.Job) {
-		if job.Type == model.ActionExchangeTablePartition && job.State == model.JobStateRunning {
-			tk.MustExec(`insert into pt values (40000000)`)
-		}
+	hookFunc := func(ctx context.Context) {
+		tk.MustExec(`insert into pt values (40000000)`)
 	}
-	hook.OnJobUpdatedExported = hookFunc
+	hook.OnWatchedExported = hookFunc
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustExec("insert into nt values (NULL)")
