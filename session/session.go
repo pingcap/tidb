@@ -2302,6 +2302,13 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
 	logGeneralQuery(st, s, true)
+
+	if st.PsStmt != nil { // point plan short path
+		resultSet, err := st.PointGet(ctx)
+		s.txn.changeToInvalid()
+		return resultSet, err
+	}
+
 	return runStmt(ctx, s, st)
 }
 
