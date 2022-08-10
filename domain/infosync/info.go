@@ -181,13 +181,8 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if err != nil {
 		return nil, err
 	}
-	if etcdCli != nil {
-		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
-		is.placementManager = initPlacementManager(etcdCli.Endpoints())
-	} else {
-		is.labelRuleManager = initLabelRuleManager([]string{})
-		is.placementManager = initPlacementManager([]string{})
-	}
+	is.labelRuleManager = initLabelRuleManager(etcdCli)
+	is.placementManager = initPlacementManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -214,18 +209,18 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	return is.manager
 }
 
-func initLabelRuleManager(addrs []string) LabelRuleManager {
-	if len(addrs) == 0 {
+func initLabelRuleManager(etcdCli *clientv3.Client) LabelRuleManager {
+	if etcdCli == nil {
 		return &mockLabelManager{labelRules: map[string][]byte{}}
 	}
-	return &PDLabelManager{addrs: addrs}
+	return &PDLabelManager{etcdCli: etcdCli}
 }
 
-func initPlacementManager(addrs []string) PlacementManager {
-	if len(addrs) == 0 {
+func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
+	if etcdCli == nil {
 		return &mockPlacementManager{}
 	}
-	return &PDPlacementManager{addrs: addrs}
+	return &PDPlacementManager{etcdCli: etcdCli}
 }
 
 // GetServerInfo gets self server static information.
