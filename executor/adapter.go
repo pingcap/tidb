@@ -780,7 +780,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			tryCancelAggressiveLocking(ctx, txn)
 			return err1
 		}
-		keys = txnCtx.CollectUnchangedLockKeys(keys)
+		keys = txnCtx.CollectUnchangedRowKeys(keys)
 		if len(keys) == 0 {
 			tryDoneAggressiveLocking(ctx, txn)
 			return nil
