@@ -164,7 +164,7 @@ func TestGetVar(t *testing.T) {
 		userVar, ok := ctx.GetSessionVars().UserVars.Vars[tc.args[0].(string)]
 		var tp *types.FieldType
 		if ct, ok1 := userVar.(*Constant); ok && ok1 {
-			tp = ct.RetType
+			tp = ct.GetType()
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}

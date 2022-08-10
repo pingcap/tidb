@@ -999,11 +999,11 @@ func (b *builtinGetStringVarSig) evalString(row chunk.Row) (string, bool, error)
 			// > floating-point, binary or nonbinary string, or NULL value.
 			// However, MySQL actually does support query like `set @p = now()`, so we should not assume the datum stored
 			// must be of one of the following types: string, decimal, int, float.
-			res, err := v.Value.ToString()
-			if err != nil {
-				return "", false, err
+			res, isnull, err1 := v.EvalString(b.ctx, row)
+			if err1 != nil {
+				return "", isnull, err1
 			}
-			return res, false, nil
+			return res, isnull, err1
 		}
 	}
 	return "", true, nil
@@ -1048,7 +1048,7 @@ func (b *builtinGetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	defer sessionVars.UsersLock.RUnlock()
 	if useVar, ok := sessionVars.UserVars.Vars[varName]; ok {
 		if v, ok1 := useVar.(*Constant); ok1 {
-			return v.Value.GetInt64(), false, nil
+			return v.EvalInt(b.ctx, row)
 		}
 	}
 	return 0, true, nil
@@ -1092,7 +1092,7 @@ func (b *builtinGetRealVarSig) evalReal(row chunk.Row) (float64, bool, error) {
 	defer sessionVars.UsersLock.RUnlock()
 	if userVar, ok := sessionVars.UserVars.Vars[varName]; ok {
 		if v, ok1 := userVar.(*Constant); ok1 {
-			return v.Value.GetFloat64(), false, nil
+			return v.EvalReal(b.ctx, row)
 		}
 	}
 	return 0, true, nil
@@ -1136,7 +1136,7 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	defer sessionVars.UsersLock.RUnlock()
 	if c, ok := sessionVars.UserVars.Vars[varName]; ok {
 		if v, ok1 := c.(*Constant); ok1 {
-			return v.Value.GetMysqlDecimal(), false, nil
+			return v.EvalDecimal(b.ctx, row)
 		}
 	}
 	return nil, true, nil
@@ -1188,7 +1188,7 @@ func (b *builtinGetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	defer sessionVars.UsersLock.RUnlock()
 	if userVar, ok := sessionVars.UserVars.Vars[varName]; ok {
 		if v, ok1 := userVar.(*Constant); ok1 {
-			return v.Value.GetMysqlTime(), false, nil
+			return v.EvalTime(b.ctx, row)
 		}
 	}
 	return types.ZeroTime, true, nil
