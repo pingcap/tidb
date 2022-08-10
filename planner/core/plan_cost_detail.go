@@ -26,6 +26,12 @@ const (
 	RowCountLbl = "rowCount"
 	// RowSizeLbl indicates rowSize
 	RowSizeLbl = "rowSize"
+	// BuildRowCountLbl indicates rowCount on build side
+	BuildRowCountLbl = "buildRowCount"
+	// ProbeRowCountLbl indicates rowCount on probe side
+	ProbeRowCountLbl = "probeRowCount"
+	// NumPairsLbl indicates numPairs
+	NumPairsLbl = "numPairs"
 
 	// NetworkFactorLbl indicates networkFactor
 	NetworkFactorLbl = "networkFactor"
@@ -33,9 +39,21 @@ const (
 	SeekFactorLbl = "seekFactor"
 	// ScanFactorLbl indicates for scanFactor
 	ScanFactorLbl = "scanFactor"
+	// SelectionFactorLbl indicates selection factor
+	SelectionFactorLbl = "selectionFactor"
+	// CpuFactorLbl indicates cpu factor
+	CpuFactorLbl = "cpuFactor"
+	// MemoryFactorLbl indicates mem factor
+	MemoryFactorLbl = "memoryFactor"
+	// DiskFactorLbl indicates disk factor
+	DiskFactorLbl = "diskFactor"
+	// ConcurrencyFactorLbl indicates for concurrency factor
+	ConcurrencyFactorLbl = "concurrencyFactor"
 
 	// ScanConcurrencyLbl indicates sql scan concurrency
 	ScanConcurrencyLbl = "scanConcurrency"
+	// HashJoinConcurrencyLbl indicates concurrency for hash join
+	HashJoinConcurrencyLbl = "hashJoinConcurrency"
 
 	// NetSeekCostLbl indicates netSeek cost
 	NetSeekCostLbl = "netSeekCost"
@@ -43,6 +61,30 @@ const (
 	TablePlanCostLbl = "tablePlanCost"
 	// IndexPlanCostLbl indicates indexPlan cost
 	IndexPlanCostLbl = "indexPlanCost"
+
+	// ProbeCostDetailLbl indicates probeCost
+	ProbeCostDetailLbl = "probeCostDetail"
+	// ProbeCostDescLbl indicates description for probe cost
+	ProbeCostDescLbl = "probeCostDesc"
+	// CpuCostDetailLbl indicates cpuCost detail
+	CpuCostDetailLbl = "cpuCostDetail"
+	// CpuCostDescLbl indicates description for cpu cost
+	CpuCostDescLbl = "cpuCostDesc"
+	// MemCostDetailLbl indicates mem cost detail
+	MemCostDetailLbl = "memCostDetail"
+	// MemCostDescLbl indicates description for mem cost
+	MemCostDescLbl = "memCostDesc"
+	// DiskCostDetailLbl indicates disk cost detail
+	DiskCostDetailLbl = "diskCostDetail"
+	// DiskCostDescLbl indicates description for disk cost
+	DiskCostDescLbl = "diskCostDesc"
+	// ProbeDiskCostLbl indicates probe disk cost detail
+	ProbeDiskCostLbl = "probeDiskCostDetail"
+	// ProbeDiskCostDescLbl indicates description for probe disk cost
+	ProbeDiskCostDescLbl = "probeDiskCostDesc"
+
+	// MemQuotaLbl indicates memory quota
+	MemQuotaLbl = "memQuota"
 )
 
 func setPointGetPlanCostDetail(p *PointGetPlan, opt *physicalOptimizeOp,
@@ -133,4 +175,168 @@ func setPhysicalIndexReaderCostDetail(p *PhysicalIndexReader, opt *physicalOptim
 	detail.SetDesc(fmt.Sprintf("(%s+%s*%s*%s+%s)/%s", IndexPlanCostLbl,
 		RowCountLbl, RowSizeLbl, NetworkFactorLbl, NetSeekCostLbl, ScanConcurrencyLbl))
 	opt.appendPlanCostDetail(detail)
+}
+
+func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
+	spill bool, buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
+	probeCost, probeDiskCost, cpuCost float64, memQuota int64) {
+	if opt == nil {
+		return
+	}
+	detail := tracing.NewPhysicalPlanCostDetail(p.ID(), p.TP())
+	sessVars := p.ctx.GetSessionVars()
+	diskCostDetail := &HashJoinDiskCostDetail{
+		Spill:           spill,
+		UseOuterToBuild: p.UseOuterToBuild,
+		BuildRowCount:   buildCnt,
+		DiskFactor:      sessVars.GetDiskFactor(),
+		RowSize:         rowSize,
+		ProbeDiskCost: &HashJoinProbeDiskCostDetail{
+			SelectionFactor: SelectionFactor,
+			NumPairs:        numPairs,
+			HasConditions:   len(p.LeftConditions)+len(p.RightConditions) > 0,
+			Cost:            probeDiskCost,
+		},
+	}
+	memoryCostDetail := &HashJoinMemoryCostDetail{
+		Spill:         spill,
+		MemQuota:      memQuota,
+		RowSize:       rowSize,
+		BuildRowCount: buildCnt,
+		MemoryFactor:  sessVars.GetMemoryFactor(),
+	}
+	cpuCostDetail := &HashJoinCpuCostDetail{
+		BuildRowCount:     buildCnt,
+		CpuFactor:         cpuFactor,
+		ConcurrencyFactor: sessVars.GetConcurrencyFactor(),
+		ProbeCost: &HashJoinProbeCostDetail{
+			NumPairs:        numPairs,
+			HasConditions:   len(p.LeftConditions)+len(p.RightConditions) > 0,
+			SelectionFactor: SelectionFactor,
+			ProbeRowCount:   probeCnt,
+			Cost:            probeCost,
+		},
+		HashJoinConcurrency: p.Concurrency,
+		Spill:               spill,
+		Cost:                cpuCost,
+	}
+
+	// record cpu cost detail
+	detail.AddParam(CpuCostDetailLbl, cpuCostDetail).
+		AddParam(CpuCostDescLbl, cpuCostDetail.desc()).
+		AddParam(ProbeCostDescLbl, cpuCostDetail.probeCostDesc())
+	// record memory cost detail
+	detail.AddParam(MemCostDetailLbl, memoryCostDetail).
+		AddParam(MemCostDescLbl, memoryCostDetail.desc())
+	// record disk cost detail
+	detail.AddParam(DiskCostDetailLbl, diskCostDetail).
+		AddParam(DiskCostDescLbl, diskCostDetail.desc()).
+		AddParam(ProbeDiskCostDescLbl, diskCostDetail.probeDesc())
+
+	detail.SetDesc(fmt.Sprintf("%s+%s+%s+all children cost", CpuCostDetailLbl, MemCostDetailLbl, DiskCostDetailLbl))
+	opt.appendPlanCostDetail(detail)
+}
+
+type HashJoinProbeCostDetail struct {
+	NumPairs        float64 `json:"numPairs"`
+	HasConditions   bool    `json:"hasConditions"`
+	SelectionFactor float64 `json:"selectionFactor"`
+	ProbeRowCount   float64 `json:"probeRowCount"`
+	Cost            float64 `json:"cost"`
+}
+
+type HashJoinCpuCostDetail struct {
+	BuildRowCount       float64                  `json:"buildRowCount"`
+	CpuFactor           float64                  `json:"cpuFactor"`
+	ConcurrencyFactor   float64                  `json:"concurrencyFactor"`
+	ProbeCost           *HashJoinProbeCostDetail `json:"probeCost"`
+	HashJoinConcurrency uint                     `json:"hashJoinConcurrency"`
+	Spill               bool                     `json:"spill"`
+	Cost                float64                  `json:"cost"`
+}
+
+func (h *HashJoinCpuCostDetail) desc() string {
+	var cpuCostDesc string
+	buildCostDesc := fmt.Sprintf("%s*%s", BuildRowCountLbl, CpuFactorLbl)
+	if h.Spill {
+		cpuCostDesc = fmt.Sprintf("%s+%s+(%s+1)*%s)+%s",
+			buildCostDesc,
+			ProbeCostDetailLbl, HashJoinConcurrencyLbl, ConcurrencyFactorLbl,
+			buildCostDesc)
+	} else {
+		cpuCostDesc = fmt.Sprintf("%s+%s+(%s+1)*%s)+%s/%s",
+			buildCostDesc,
+			ProbeCostDetailLbl, HashJoinConcurrencyLbl, ConcurrencyFactorLbl,
+			buildCostDesc, HashJoinConcurrencyLbl)
+	}
+	return cpuCostDesc
+}
+
+func (h *HashJoinCpuCostDetail) probeCostDesc() string {
+	var probeCostDesc string
+	if h.ProbeCost.HasConditions {
+		probeCostDesc = fmt.Sprintf("(%s*%s*%s+%s*%s)/%s",
+			NumPairsLbl, CpuFactorLbl, SelectionFactorLbl,
+			ProbeRowCountLbl, CpuFactorLbl, HashJoinConcurrencyLbl)
+	} else {
+		probeCostDesc = fmt.Sprintf("(%s*%s)/%s",
+			NumPairsLbl, CpuFactorLbl,
+			HashJoinConcurrencyLbl)
+	}
+	return probeCostDesc
+}
+
+type HashJoinMemoryCostDetail struct {
+	Spill         bool    `json:"spill"`
+	MemQuota      int64   `json:"memQuota"`
+	RowSize       float64 `json:"rowSize"`
+	BuildRowCount float64 `json:"buildRowCount"`
+	MemoryFactor  float64 `json:"memoryFactor"`
+}
+
+func (h *HashJoinMemoryCostDetail) desc() string {
+	memCostDesc := fmt.Sprintf("%s*%s", BuildRowCountLbl, MemoryFactorLbl)
+	if h.Spill {
+		memCostDesc = fmt.Sprintf("%s*%s/(%s*%s)", memCostDesc, MemQuotaLbl, RowSizeLbl, BuildRowCountLbl)
+	}
+	return memCostDesc
+}
+
+type HashJoinProbeDiskCostDetail struct {
+	SelectionFactor float64 `json:"selectionFactor"`
+	NumPairs        float64 `json:"numPairs"`
+	HasConditions   bool    `json:"hasConditions"`
+	Cost            float64 `json:"cost"`
+}
+
+type HashJoinDiskCostDetail struct {
+	Spill           bool                         `json:"spill"`
+	UseOuterToBuild bool                         `json:"useOuterToBuild"`
+	BuildRowCount   float64                      `json:"buildRowCount"`
+	DiskFactor      float64                      `json:"diskFactor"`
+	RowSize         float64                      `json:"rowSize"`
+	ProbeDiskCost   *HashJoinProbeDiskCostDetail `json:"probeDiskCost"`
+}
+
+func (h *HashJoinDiskCostDetail) desc() string {
+	if !h.Spill {
+		return ""
+	}
+	buildDiskCost := fmt.Sprintf("%s*%s*%s", BuildRowCountLbl, DiskFactorLbl, RowSizeLbl)
+	desc := fmt.Sprintf("%s+%s", buildDiskCost, ProbeDiskCostLbl)
+	if h.UseOuterToBuild {
+		desc = fmt.Sprintf("%s+%s", desc, buildDiskCost)
+	}
+	return desc
+}
+
+func (h *HashJoinDiskCostDetail) probeDesc() string {
+	if !h.Spill {
+		return ""
+	}
+	desc := fmt.Sprintf("%s*%s*%s", NumPairsLbl, DiskFactorLbl, RowSizeLbl)
+	if h.ProbeDiskCost.HasConditions {
+		desc = fmt.Sprintf("%s*%s", desc, SelectionFactorLbl)
+	}
+	return desc
 }

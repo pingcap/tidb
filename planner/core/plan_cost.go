@@ -920,7 +920,7 @@ func (p *PhysicalMergeJoin) GetPlanCost(taskType property.TaskType, option *Plan
 }
 
 // GetCost computes cost of hash join operator itself.
-func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint64) float64 {
+func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint64, op *physicalOptimizeOp) float64 {
 	buildCnt, probeCnt := lCnt, rCnt
 	build := p.children[0]
 	// Taking the right as the inner for right join or using the outer to build a hash table.
@@ -928,18 +928,23 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 		buildCnt, probeCnt = rCnt, lCnt
 		build = p.children[1]
 	}
+	// build/probe rowCount
 	sessVars := p.ctx.GetSessionVars()
 	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
+	// build rowSize
 	rowSize := getAvgRowSize(build.statsInfo(), build.Schema())
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota) && p.storeTp != kv.TiFlash
 	// Cost of building hash table.
+	// cpu factor
 	cpuFactor := sessVars.GetCPUFactor()
 	if isMPP && p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
 		cpuFactor = sessVars.GetTiFlashCPUFactor() // use the dedicated TiFlash CPU Factor on modelVer2
 	}
 	cpuCost := buildCnt * cpuFactor
+	// memory factor
 	memoryCost := buildCnt * sessVars.GetMemoryFactor()
+	// disk factor
 	diskCost := buildCnt * sessVars.GetDiskFactor() * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
 	helper := &fullJoinRowCountHelper{
@@ -1002,6 +1007,8 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	} else {
 		diskCost = 0
 	}
+	setPhysicalHashJoinCostDetail(p, op, spill, buildCnt, probeCnt, cpuFactor,
+		rowSize, numPairs, probeCost, probeDiskCost, cpuCost, memQuota)
 	return cpuCost + memoryCost + diskCost
 }
 
@@ -1019,7 +1026,8 @@ func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, option *PlanC
 		}
 		p.planCost += childCost
 	}
-	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag), taskType == property.MppTaskType, costFlag)
+	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag),
+		taskType == property.MppTaskType, costFlag, option.tracer)
 	p.planCostInit = true
 	return p.planCost, nil
 }
