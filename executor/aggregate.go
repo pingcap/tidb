@@ -613,7 +613,7 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
-		partialResultSize := w.getPartialResultSize()
+		partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
 		partialResults[i] = make([]aggfuncs.PartialResult, partialResultSize)
 		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
@@ -634,7 +634,7 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 	return partialResults
 }
 
-func (w *baseHashAggWorker) getPartialResultSize() int {
+func (w *baseHashAggWorker) getPartialResultSliceLenConsiderByteAlign() int {
 	length := len(w.aggFuncs)
 	if len(w.aggFuncs) == 1 {
 		return 1
