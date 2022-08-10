@@ -168,9 +168,8 @@ type TxnCtxNoNeedToRestore struct {
 	currentShard int64
 	shardRand    *rand.Rand
 
-	// unchangedLockKeys is used to store the unchanged keys that needs to lock for pessimistic transaction, including
-	// row keys and unique keys.
-	unchangedLockKeys map[string]struct{}
+	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
+	unchangedRowKeys map[string]struct{}
 
 	PessimisticCacheHit int
 
@@ -239,20 +238,20 @@ func (tc *TransactionContext) updateShard() {
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
-// AddUnchangedLockKey adds an unchanged key in update statement for pessimistic lock.
-func (tc *TransactionContext) AddUnchangedLockKey(key []byte) {
-	if tc.unchangedLockKeys == nil {
-		tc.unchangedLockKeys = map[string]struct{}{}
+// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
+	if tc.unchangedRowKeys == nil {
+		tc.unchangedRowKeys = map[string]struct{}{}
 	}
-	tc.unchangedLockKeys[string(key)] = struct{}{}
+	tc.unchangedRowKeys[string(key)] = struct{}{}
 }
 
-// CollectUnchangedLockKeys collects unchanged keys for pessimistic lock.
-func (tc *TransactionContext) CollectUnchangedLockKeys(buf []kv.Key) []kv.Key {
-	for key := range tc.unchangedLockKeys {
+// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedRowKeys {
 		buf = append(buf, kv.Key(key))
 	}
-	tc.unchangedLockKeys = nil
+	tc.unchangedRowKeys = nil
 	return buf
 }
 
@@ -1193,6 +1192,27 @@ type SessionVars struct {
 
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
+
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
+}
+
+// GetPreparedStmtByName returns the prepared statement specified by stmtName.
+func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
+	stmtID, ok := s.PreparedStmtNameToID[stmtName]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return s.GetPreparedStmtByID(stmtID)
+}
+
+// GetPreparedStmtByID returns the prepared statement specified by stmtID.
+func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
+	stmt, ok := s.PreparedStmts[stmtID]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return stmt, nil
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
