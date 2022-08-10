@@ -229,7 +229,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
-	preparedObj := &plannercore.CachedPrepareStmt{
+	preparedObj := &plannercore.PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              e.ctx.GetSessionVars().CurrentDB,
 		StmtText:            stmt.Text(),
@@ -295,9 +295,9 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
 	preparedPointer := vars.PreparedStmts[id]
-	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
 	if !ok {
-		return errors.Errorf("invalid CachedPrepareStmt type")
+		return errors.Errorf("invalid PlanCacheStmt type")
 	}
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)

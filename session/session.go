@@ -347,7 +347,7 @@ func (s *session) cleanRetryInfo() {
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
-			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+			preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
@@ -2271,7 +2271,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStmt, prepareStmt *plannercore.CachedPrepareStmt) (sqlexec.RecordSet, error) {
+func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStmt, prepareStmt *plannercore.PlanCacheStmt) (sqlexec.RecordSet, error) {
 	failpoint.Inject("assertTxnManagerInPreparedStmtExec", func() {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInPreparedStmtExec", true)
 		if prepareStmt.SnapshotTSEvaluator != nil {
@@ -2322,7 +2322,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
-	stmt, ok := prepStmt.(*plannercore.CachedPrepareStmt)
+	stmt, ok := prepStmt.(*plannercore.PlanCacheStmt)
 	if !ok {
 		return nil, errors.Errorf("invalid PlanCacheStmt type")
 	}
@@ -2337,14 +2337,14 @@ func (s *session) ExecuteGeneralStmt(ctx context.Context, sql string, params []e
 		logutil.Logger(ctx).Error("general statement not found", zap.String("sql", sql))
 		return nil, err
 	}
-	stmt, ok := generalStmt.(*plannercore.CachedPrepareStmt)
+	stmt, ok := generalStmt.(*plannercore.PlanCacheStmt)
 	if !ok {
 		return nil, errors.Errorf("invalid PlanCacheStmt type")
 	}
 	return s.executePlanCacheStmt(ctx, stmt, params)
 }
 
-func (s *session) executePlanCacheStmt(ctx context.Context, stmt *plannercore.CachedPrepareStmt, params []expression.Expression) (sqlexec.RecordSet, error) {
+func (s *session) executePlanCacheStmt(ctx context.Context, stmt *plannercore.PlanCacheStmt, params []expression.Expression) (sqlexec.RecordSet, error) {
 	var err error
 	if err = s.PrepareTxnCtx(ctx); err != nil {
 		return nil, err
