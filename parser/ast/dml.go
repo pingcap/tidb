@@ -1055,7 +1055,7 @@ func (c *CommonTableExpression) Restore(ctx *format.RestoreCtx) error {
 	if c.IsRecursive {
 		// If the CTE is recursive, we should make it visible for the CTE's query.
 		// Otherwise, we should put it to stack after building the CTE's query.
-		ctx.CTENames = append(ctx.CTENames, c.Name.L)
+		ctx.RecordCTEName(c.Name.L)
 	}
 	if len(c.ColNameList) > 0 {
 		ctx.WritePlain(" (")
@@ -1073,7 +1073,7 @@ func (c *CommonTableExpression) Restore(ctx *format.RestoreCtx) error {
 		return err
 	}
 	if !c.IsRecursive {
-		ctx.CTENames = append(ctx.CTENames, c.Name.L)
+		ctx.RecordCTEName(c.Name.L)
 	}
 	return nil
 }
@@ -1183,10 +1183,7 @@ func (n *WithClause) Accept(v Visitor) (Node, bool) {
 // Restore implements Node interface.
 func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.WithBeforeBraces {
-		l := len(ctx.CTENames)
-		defer func() {
-			ctx.CTENames = ctx.CTENames[:l]
-		}()
+		defer ctx.RestoreCtx()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1535,10 +1532,7 @@ type SetOprSelectList struct {
 // Restore implements Node interface.
 func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		l := len(ctx.CTENames)
-		defer func() {
-			ctx.CTENames = ctx.CTENames[:l]
-		}()
+		defer ctx.RestoreCtx()()
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
 		}
@@ -1639,10 +1633,7 @@ func (*SetOprStmt) resultSet() {}
 // Restore implements Node interface.
 func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		l := len(ctx.CTENames)
-		defer func() {
-			ctx.CTENames = ctx.CTENames[:l]
-		}()
+		defer ctx.RestoreCtx()()
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore UnionStmt.With")
 		}
@@ -2224,10 +2215,7 @@ type DeleteStmt struct {
 // Restore implements Node interface.
 func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		l := len(ctx.CTENames)
-		defer func() {
-			ctx.CTENames = ctx.CTENames[:l]
-		}()
+		defer ctx.RestoreCtx()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -2388,10 +2376,7 @@ type UpdateStmt struct {
 // Restore implements Node interface.
 func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		l := len(ctx.CTENames)
-		defer func() {
-			ctx.CTENames = ctx.CTENames[:l]
-		}()
+		defer ctx.RestoreCtx()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err

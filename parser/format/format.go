@@ -387,3 +387,20 @@ func (ctx *RestoreCtx) WritePlain(plainText string) {
 func (ctx *RestoreCtx) WritePlainf(format string, a ...interface{}) {
 	fmt.Fprintf(ctx.In, format, a...)
 }
+
+// RecordCTEName records the CTE name.
+func (c *RestoreCtx) RecordCTEName(nameL string) {
+	c.CTENames = append(c.CTENames, nameL)
+}
+
+// RestoreCTEFunc is used to restore CTE.
+func (c *RestoreCtx) RestoreCTEFunc() func() {
+	l := len(c.CTENames)
+	return func() {
+		if l == 0 {
+			c.CTENames = nil
+		} else {
+			c.CTENames = c.CTENames[:l]
+		}
+	}
+}
