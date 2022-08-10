@@ -635,10 +635,11 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 }
 
 func (w *baseHashAggWorker) getPartialResultSize() int {
+	length := len(w.aggFuncs)
 	if len(w.aggFuncs) == 1 {
 		return 1
 	}
-	return (len(w.aggFuncs) + 1) / 2
+	return length + length&1
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
