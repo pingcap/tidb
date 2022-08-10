@@ -621,8 +621,6 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 			allMemDelta += memDelta // the memory usage of PartialResult
 		}
 		allMemDelta += int64(partialResultSize * 8)
-		mapper[string(groupKey[i])] = partialResults[i]
-		allMemDelta += int64(len(groupKey[i]))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
 		if len(mapper)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
