@@ -16,6 +16,8 @@ package core
 
 import (
 	"context"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
@@ -673,5 +675,25 @@ func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, p
 
 // ParameterizeSQL ...
 func ParameterizeSQL(sctx sessionctx.Context, sql string) (paramSQL string, params []expression.Expression, ok bool) {
-	return "", nil, false
+	// for test, only consider `select * from t where a>INT`
+	prefix := "select * from t where a>"
+	if !strings.HasPrefix(sql, prefix) {
+		return "", nil, false
+	}
+	valStr := sql[len(prefix):]
+	val, err := strconv.Atoi(valStr)
+	if err != nil {
+		return "", nil, false
+	}
+	d := types.NewDatum(val)
+	var tp types.FieldType
+	types.DefaultParamTypeForValue(d, &tp)
+	c := &expression.Constant{
+		Value:   d,
+		RetType: &tp,
+	}
+	paramSQL = prefix + "?"
+	params = append(params, c)
+	ok = true
+	return
 }
