@@ -140,7 +140,9 @@ func TestPrepared(t *testing.T) {
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 
-		execStmt := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: expression.Args2Expressions4Test(1)}
+		prepStmt, err := tk.Session().GetSessionVars().GetPreparedStmtByID(stmtID)
+		require.NoError(t, err)
+		execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: expression.Args2Expressions4Test(1)}
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
 		stmt, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), execStmt,
 			tk.Session().GetInfoSchema().(infoschema.InfoSchema))

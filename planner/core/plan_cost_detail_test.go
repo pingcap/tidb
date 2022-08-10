@@ -35,23 +35,87 @@ func TestPlanCostDetail(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, d int, k int, key b(b), key cd(c, d), unique key(k))`)
-	// assert PointGet cost detail
-	testPointGetCostDetail(t, tk, p, dom)
-}
-
-func testPointGetCostDetail(t *testing.T, tk *testkit.TestKit, p *parser.Parser, dom *domain.Domain) {
-	tk.Session().GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	costDetails := optimize(t, "select * from t where a = 1", p, tk.Session(), dom)
-	assertPG := false
-	for _, cd := range costDetails {
-		if cd.GetPlanType() == plancodec.TypePointGet {
-			assertPG = true
-			require.True(t, cd.Exists(core.RowSizeLbl))
-			require.True(t, cd.Exists(core.NetworkFactorLbl))
-			require.True(t, cd.Exists(core.SeekFactorLbl))
-		}
+	testcases := []struct {
+		sql        string
+		assertLbls []string
+		tp         string
+	}{
+		{
+			tp:  plancodec.TypePointGet,
+			sql: "select * from t where a = 1",
+			assertLbls: []string{
+				core.RowSizeLbl,
+				core.NetworkFactorLbl,
+				core.SeekFactorLbl,
+			},
+		},
+		{
+			tp:  plancodec.TypeBatchPointGet,
+			sql: "select * from t where a = 1 or a = 2 or a = 3",
+			assertLbls: []string{
+				core.RowCountLbl,
+				core.RowSizeLbl,
+				core.NetworkFactorLbl,
+				core.SeekFactorLbl,
+				core.ScanConcurrencyLbl,
+			},
+		},
+		{
+			tp:  plancodec.TypeTableFullScan,
+			sql: "select * from t",
+			assertLbls: []string{
+				core.RowCountLbl,
+				core.RowSizeLbl,
+				core.ScanFactorLbl,
+			},
+		},
+		{
+			tp:  plancodec.TypeTableReader,
+			sql: "select * from t",
+			assertLbls: []string{
+				core.RowCountLbl,
+				core.RowSizeLbl,
+				core.NetworkFactorLbl,
+				core.NetSeekCostLbl,
+				core.TablePlanCostLbl,
+				core.ScanConcurrencyLbl,
+			},
+		},
+		{
+			tp:  plancodec.TypeIndexFullScan,
+			sql: "select b from t",
+			assertLbls: []string{
+				core.RowCountLbl,
+				core.RowSizeLbl,
+				core.ScanFactorLbl,
+			},
+		},
+		{
+			tp:  plancodec.TypeIndexReader,
+			sql: "select b from t",
+			assertLbls: []string{
+				core.RowCountLbl,
+				core.RowSizeLbl,
+				core.NetworkFactorLbl,
+				core.NetSeekCostLbl,
+				core.IndexPlanCostLbl,
+				core.ScanConcurrencyLbl,
+			},
+		},
 	}
-	require.True(t, assertPG)
+	for _, tc := range testcases {
+		costDetails := optimize(t, tc.sql, p, tk.Session(), dom)
+		asserted := false
+		for _, cd := range costDetails {
+			if cd.GetPlanType() == tc.tp {
+				asserted = true
+				for _, lbl := range tc.assertLbls {
+					require.True(t, cd.Exists(lbl))
+				}
+			}
+		}
+		require.True(t, asserted)
+	}
 }
 
 func optimize(t *testing.T, sql string, p *parser.Parser, ctx sessionctx.Context, dom *domain.Domain) map[int]*tracing.PhysicalPlanCostDetail {
