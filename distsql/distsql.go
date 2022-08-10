@@ -16,6 +16,7 @@ package distsql
 
 import (
 	"context"
+	"github.com/pingcap/failpoint"
 	"strconv"
 	"unsafe"
 
@@ -153,6 +154,14 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
+	failpoint.Inject("assertAnalyzeIsolationLevel", func(val failpoint.Value) {
+		if val.(bool) {
+			if kvReq.IsolationLevel != kv.SI {
+				panic("Analyze request's IsolationLevel should be SI")
+			}
+		}
+	})
+
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = kv.InternalTxnStats
