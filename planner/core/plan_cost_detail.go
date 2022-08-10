@@ -66,10 +66,10 @@ const (
 	ProbeCostDetailLbl = "probeCostDetail"
 	// ProbeCostDescLbl indicates description for probe cost
 	ProbeCostDescLbl = "probeCostDesc"
-	// CpuCostDetailLbl indicates cpuCost detail
-	CpuCostDetailLbl = "cpuCostDetail"
-	// CpuCostDescLbl indicates description for cpu cost
-	CpuCostDescLbl = "cpuCostDesc"
+	// CPUCostDetailLbl indicates cpuCost detail
+	CPUCostDetailLbl = "cpuCostDetail"
+	// CPUCostDescLbl indicates description for cpu cost
+	CPUCostDescLbl = "cpuCostDesc"
 	// MemCostDetailLbl indicates mem cost detail
 	MemCostDetailLbl = "memCostDetail"
 	// MemCostDescLbl indicates description for mem cost
@@ -179,7 +179,7 @@ func setPhysicalIndexReaderCostDetail(p *PhysicalIndexReader, opt *physicalOptim
 
 func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp, spill bool,
 	buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
-	cpuCost, probeCpuCost, memCost, diskCost, probeDiskCost float64,
+	cpuCost, probeCPUCost, memCost, diskCost, probeDiskCost float64,
 	memQuota int64) {
 	if opt == nil {
 		return
@@ -208,16 +208,16 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
 		MemoryFactor:  sessVars.GetMemoryFactor(),
 		Cost:          memCost,
 	}
-	cpuCostDetail := &HashJoinCpuCostDetail{
+	cpuCostDetail := &HashJoinCPUCostDetail{
 		BuildRowCount:     buildCnt,
-		CpuFactor:         cpuFactor,
+		CPUFactor:         cpuFactor,
 		ConcurrencyFactor: sessVars.GetConcurrencyFactor(),
 		ProbeCost: &HashJoinProbeCostDetail{
 			NumPairs:        numPairs,
 			HasConditions:   len(p.LeftConditions)+len(p.RightConditions) > 0,
 			SelectionFactor: SelectionFactor,
 			ProbeRowCount:   probeCnt,
-			Cost:            probeCpuCost,
+			Cost:            probeCPUCost,
 		},
 		HashJoinConcurrency: p.Concurrency,
 		Spill:               spill,
@@ -225,8 +225,8 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
 	}
 
 	// record cpu cost detail
-	detail.AddParam(CpuCostDetailLbl, cpuCostDetail).
-		AddParam(CpuCostDescLbl, cpuCostDetail.desc()).
+	detail.AddParam(CPUCostDetailLbl, cpuCostDetail).
+		AddParam(CPUCostDescLbl, cpuCostDetail.desc()).
 		AddParam(ProbeCostDescLbl, cpuCostDetail.probeCostDesc())
 	// record memory cost detail
 	detail.AddParam(MemCostDetailLbl, memoryCostDetail).
@@ -236,10 +236,11 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
 		AddParam(DiskCostDescLbl, diskCostDetail.desc()).
 		AddParam(ProbeDiskCostDescLbl, diskCostDetail.probeDesc())
 
-	detail.SetDesc(fmt.Sprintf("%s+%s+%s+all children cost", CpuCostDetailLbl, MemCostDetailLbl, DiskCostDetailLbl))
+	detail.SetDesc(fmt.Sprintf("%s+%s+%s+all children cost", CPUCostDetailLbl, MemCostDetailLbl, DiskCostDetailLbl))
 	opt.appendPlanCostDetail(detail)
 }
 
+// HashJoinProbeCostDetail indicates probe cpu cost detail
 type HashJoinProbeCostDetail struct {
 	NumPairs        float64 `json:"numPairs"`
 	HasConditions   bool    `json:"hasConditions"`
@@ -248,9 +249,10 @@ type HashJoinProbeCostDetail struct {
 	Cost            float64 `json:"cost"`
 }
 
-type HashJoinCpuCostDetail struct {
+// HashJoinCPUCostDetail indicates cpu cost detail
+type HashJoinCPUCostDetail struct {
 	BuildRowCount       float64                  `json:"buildRowCount"`
-	CpuFactor           float64                  `json:"cpuFactor"`
+	CPUFactor           float64                  `json:"cpuFactor"`
 	ConcurrencyFactor   float64                  `json:"concurrencyFactor"`
 	ProbeCost           *HashJoinProbeCostDetail `json:"probeCost"`
 	HashJoinConcurrency uint                     `json:"hashJoinConcurrency"`
@@ -258,7 +260,7 @@ type HashJoinCpuCostDetail struct {
 	Cost                float64                  `json:"cost"`
 }
 
-func (h *HashJoinCpuCostDetail) desc() string {
+func (h *HashJoinCPUCostDetail) desc() string {
 	var cpuCostDesc string
 	buildCostDesc := fmt.Sprintf("%s*%s", BuildRowCountLbl, CpuFactorLbl)
 	if h.Spill {
@@ -275,7 +277,7 @@ func (h *HashJoinCpuCostDetail) desc() string {
 	return cpuCostDesc
 }
 
-func (h *HashJoinCpuCostDetail) probeCostDesc() string {
+func (h *HashJoinCPUCostDetail) probeCostDesc() string {
 	var probeCostDesc string
 	if h.ProbeCost.HasConditions {
 		probeCostDesc = fmt.Sprintf("(%s*%s*%s+%s*%s)/%s",
@@ -289,6 +291,7 @@ func (h *HashJoinCpuCostDetail) probeCostDesc() string {
 	return probeCostDesc
 }
 
+// HashJoinMemoryCostDetail indicates memory cost detail
 type HashJoinMemoryCostDetail struct {
 	Spill         bool    `json:"spill"`
 	MemQuota      int64   `json:"memQuota"`
@@ -306,6 +309,7 @@ func (h *HashJoinMemoryCostDetail) desc() string {
 	return memCostDesc
 }
 
+// HashJoinProbeDiskCostDetail indicates probe disk cost detail
 type HashJoinProbeDiskCostDetail struct {
 	SelectionFactor float64 `json:"selectionFactor"`
 	NumPairs        float64 `json:"numPairs"`
@@ -313,6 +317,7 @@ type HashJoinProbeDiskCostDetail struct {
 	Cost            float64 `json:"cost"`
 }
 
+// HashJoinDiskCostDetail indicates disk cost detail
 type HashJoinDiskCostDetail struct {
 	Spill           bool                         `json:"spill"`
 	UseOuterToBuild bool                         `json:"useOuterToBuild"`

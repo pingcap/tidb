@@ -44,8 +44,8 @@ func TestPlanCostDetail(t *testing.T) {
 			tp:  plancodec.TypeHashJoin,
 			sql: "select /*+ HASH_JOIN(t1, t2) */  * from t t1 join t t2 on t1.k = t2.k where t1.a = 1;",
 			assertLbls: []string{
-				plannercore.CpuCostDetailLbl,
-				plannercore.CpuCostDescLbl,
+				plannercore.CPUCostDetailLbl,
+				plannercore.CPUCostDescLbl,
 				plannercore.ProbeCostDescLbl,
 				plannercore.MemCostDetailLbl,
 				plannercore.MemCostDescLbl,
