@@ -7965,6 +7965,21 @@ func TestForeignKeyLockInTxn(t *testing.T) {
 	}
 }
 
+func TestForeignKeyOnDeleteReferTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=1")
+
+	tk.MustExec("create table t1 (id int,a int, index(id));")
+	tk.MustExec("create table t2 (id int,a int, foreign key fk(a) references t1(id));")
+	tk.MustExec("insert into t1 values (1, 1), (1, 1), (1, 1);")
+	tk.MustExec("insert into t2 values (1, 1);")
+	err := tk.ExecToErr("delete from t1 limit 1;")
+	require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+}
+
 func TestForeignKeyOnDMLWithIgnore(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
