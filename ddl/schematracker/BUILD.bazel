@@ -11,8 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//ddl",
-        "//ddl/util",
-        "//executor",
+        "//ddl/syncer",
         "//infoschema",
         "//kv",
         "//meta/autoid",
