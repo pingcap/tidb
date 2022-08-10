@@ -15,12 +15,9 @@
 package core_test
 
 import (
-<<<<<<< HEAD
 	"context"
-=======
 	"strings"
 	"testing"
->>>>>>> fa5e19010... planner: `preprocessor` add CTE recursive check when `handleTableName` (#34133)
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"

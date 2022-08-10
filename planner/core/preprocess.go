@@ -112,16 +112,11 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 // Preprocess resolves table names of the node, and checks some statements' validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
-<<<<<<< HEAD
-	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
-=======
 	v := preprocessor{
-		ctx:                ctx,
-		tableAliasInJoin:   make([]map[string]interface{}, 0),
-		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
-		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
+		ctx:              ctx,
+		tableAliasInJoin: make([]map[string]interface{}, 0),
+		preprocessWith:   &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 	}
->>>>>>> fa5e19010... planner: `preprocessor` add CTE recursive check when `handleTableName` (#34133)
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}
