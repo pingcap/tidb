@@ -190,7 +190,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		normalizedSQL4PC, digest4PC string
 		selectStmtNode              ast.StmtNode
 	)
-	if !plannercore.PreparedPlanCacheEnabled() {
+	if !e.ctx.GetSessionVars().EnablePreparedPlanCache {
 		prepared.UseCache = false
 	} else {
 		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
@@ -256,7 +256,6 @@ type ExecuteExec struct {
 	stmtExec      Executor
 	stmt          ast.StmtNode
 	plan          plannercore.Plan
-	id            uint32
 	lowerPriority bool
 	outputNames   []*types.FieldName
 }
@@ -302,8 +301,10 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
-	if plannercore.PreparedPlanCacheEnabled() {
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion, 0)
+	if e.ctx.GetSessionVars().EnablePreparedPlanCache {
+		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.ctx, preparedObj)
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
+			0, bindSQL)
 		if err != nil {
 			return err
 		}
@@ -322,6 +323,16 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
+
+	preparedObj, err := plannercore.GetPreparedStmt(execStmt, sctx.GetSessionVars())
+	if err != nil {
+		return nil, err
+	}
+	pointPlanShortPathOK, err := plannercore.IsPointPlanShortPathOK(sctx, is, preparedObj)
+	if err != nil {
+		return nil, err
+	}
+
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
@@ -341,15 +352,24 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		OutputNames: names,
 		Ti:          &TelemetryInfo{},
 	}
-	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execStmt.ExecID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+
+	// handle point plan short path specially
+	if pointPlanShortPathOK {
+		if ep, ok := execPlan.(*plannercore.Execute); ok {
+			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
+				stmtCtx.SetPlan(execPlan)
+				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
+				stmt.Plan = pointPlan
+				stmt.PsStmt = preparedObj
+			} else {
+				// invalid the previous cached point plan
+				preparedObj.PreparedAst.CachedPlan = nil
+			}
 		}
-		stmtCtx := sctx.GetSessionVars().StmtCtx
-		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-		stmtCtx.OriginalSQL = stmt.Text
-		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
 	return stmt, nil
 }

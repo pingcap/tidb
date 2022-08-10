@@ -28,8 +28,7 @@ import (
 )
 
 func TestSlowQueryWithoutSlowLog(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.Log.SlowQueryFile = "tidb-slow-not-exist.log"
@@ -45,8 +44,7 @@ func TestSlowQueryWithoutSlowLog(t *testing.T) {
 }
 
 func TestSlowQuerySensitiveQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -80,8 +78,7 @@ func TestSlowQuerySensitiveQuery(t *testing.T) {
 }
 
 func TestSlowQueryPrepared(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -117,8 +114,7 @@ func TestSlowQueryPrepared(t *testing.T) {
 }
 
 func TestLogSlowLogIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
@@ -142,8 +138,7 @@ func TestLogSlowLogIndex(t *testing.T) {
 }
 
 func TestSlowQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	f, err := os.CreateTemp("", "tidb-slow-*.log")

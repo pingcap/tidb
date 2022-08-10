@@ -581,7 +581,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// collation if this one is not supported.
 	// The SetSystemVar will also update the CharsetDatabase
 	dbCollate = collate.SubstituteMissingCollationToDefault(dbCollate)
-	return sessionVars.SetSystemVar(variable.CollationDatabase, dbCollate)
+	return sessionVars.SetSystemVarWithoutValidation(variable.CollationDatabase, dbCollate)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
@@ -1733,7 +1733,7 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 	if s.StatementScope == ast.StatementScopeGlobal {
 		return errors.New("Do not support the 'admin flush global scope.'")
 	}
-	if !core.PreparedPlanCacheEnabled() {
+	if !e.ctx.GetSessionVars().EnablePreparedPlanCache {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("The plan cache is disable. So there no need to flush the plan cache"))
 		return nil
 	}

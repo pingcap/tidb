@@ -26,19 +26,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGrammar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show session_states").Rows()
 	require.Len(t, rows, 1)
@@ -47,8 +46,7 @@ func TestGrammar(t *testing.T) {
 }
 
 func TestUserVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(" +
 		"j json, b blob, s varchar(255), st set('red', 'green', 'blue'), en enum('red', 'green', 'blue'))")
@@ -93,8 +91,7 @@ func TestUserVars(t *testing.T) {
 }
 
 func TestSystemVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tests := []struct {
 		stmts           []string
@@ -219,8 +216,7 @@ func TestSystemVars(t *testing.T) {
 }
 
 func TestSessionCtx(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(id int)")
 
@@ -455,8 +451,7 @@ func TestSessionCtx(t *testing.T) {
 }
 
 func TestStatementCtx(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(id int auto_increment primary key, str char(1))")
 
@@ -574,8 +569,7 @@ func TestStatementCtx(t *testing.T) {
 }
 
 func TestPreparedStatements(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
 
@@ -861,8 +855,7 @@ func TestPreparedStatements(t *testing.T) {
 				return stmtID
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
-				datum := []types.Datum{types.NewDatum(1)}
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), datum)
+				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), expression.Args2Expressions4Test(1))
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
 			},
@@ -884,8 +877,7 @@ func TestPreparedStatements(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
 				tk.MustQuery("execute stmt").Check(testkit.Rows("10"))
-				datum := []types.Datum{types.NewDatum(1)}
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), datum)
+				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), expression.Args2Expressions4Test(1))
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
 			},
@@ -917,8 +909,7 @@ func TestPreparedStatements(t *testing.T) {
 				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[1], nil)
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows())
-				datum := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-				_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[0], datum)
+				_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[0], expression.Args2Expressions4Test(1, 2, 3))
 				require.NoError(t, err)
 				rs, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[1], nil)
 				require.NoError(t, err)
@@ -1015,8 +1006,7 @@ func TestPreparedStatements(t *testing.T) {
 }
 
 func TestSQLBinding(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
 
@@ -1189,8 +1179,7 @@ func TestSQLBinding(t *testing.T) {
 }
 
 func TestShowStateFail(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
 

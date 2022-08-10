@@ -155,6 +155,10 @@ func (b noopBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, 
 	return nil
 }
 
+func (b noopBackend) TotalMemoryConsume() int64 {
+	return 0
+}
+
 type noopEncoder struct{}
 
 // Close the encoder.
