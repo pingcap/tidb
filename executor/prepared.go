@@ -75,6 +75,8 @@ type PrepareExec struct {
 	ParamCount int
 	Fields     []*ast.ResultField
 
+	IsGeneralPlanCache bool
+
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
 	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
 	// They both generate a PrepareExec struct, but the second case needs to reset the statement context while the first already do that.
@@ -241,6 +243,12 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		NormalizedSQL4PC:    normalizedSQL4PC,
 		SQLDigest4PC:        digest4PC,
 	}
+
+	if e.IsGeneralPlanCache {
+		vars.AddGeneralPreparedStmt(e.sqlText, preparedObj)
+		return nil
+	}
+
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
 

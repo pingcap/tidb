@@ -574,6 +574,8 @@ type SessionVars struct {
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
 	SysErrorCount uint16
+	// GeneralPreparedStmts ...
+	GeneralPreparedStmts map[string]interface{}
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -1804,6 +1806,14 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	default:
 		s.DDLReorgPriority = kv.PriorityLow
 	}
+}
+
+// AddGeneralPreparedStmt ...
+func (s *SessionVars) AddGeneralPreparedStmt(sql string, stmt interface{}) {
+	if s.GeneralPreparedStmts == nil {
+		s.GeneralPreparedStmts = make(map[string]interface{})
+	}
+	s.GeneralPreparedStmts[sql] = stmt
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
