@@ -242,7 +242,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SQLDigest4PC:        digest4PC,
 	}
 
-	if err = plannercore.CheckPreparedPriv(ctx, e.ctx, preparedObj, ret.InfoSchema); err != nil {
+	if err = plannercore.CheckPreparedPriv(e.ctx, preparedObj, ret.InfoSchema); err != nil {
 		return err
 	}
 
