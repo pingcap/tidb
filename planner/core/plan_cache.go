@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -630,4 +631,42 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 		}
 	}
 	return "", ignore
+}
+
+// IsPointPlanShortPathOK check if we can execute using plan cached in prepared structure
+// Be careful with the short path, current precondition is ths cached plan satisfying
+// IsPointGetWithPKOrUniqueKeyByAutoCommit
+func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) (bool, error) {
+	prepared := preparedStmt.PreparedAst
+	if prepared.CachedPlan == nil || staleread.IsStmtStaleness(sctx) {
+		return false, nil
+	}
+	// check auto commit
+	if !IsAutoCommitTxn(sctx) {
+		return false, nil
+	}
+	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		prepared.CachedPlan = nil
+		preparedStmt.ColumnInfos = nil
+		return false, nil
+	}
+	// maybe we'd better check cached plan type here, current
+	// only point select/update will be cached, see "getPhysicalPlan" func
+	var ok bool
+	var err error
+	switch prepared.CachedPlan.(type) {
+	case *PointGetPlan:
+		ok = true
+	case *Update:
+		pointUpdate := prepared.CachedPlan.(*Update)
+		_, ok = pointUpdate.SelectPlan.(*PointGetPlan)
+		if !ok {
+			err = errors.Errorf("cached update plan not point update")
+			prepared.CachedPlan = nil
+			return false, err
+		}
+	default:
+		ok = false
+	}
+	return ok, err
 }
