@@ -5,7 +5,7 @@
 
 ## Abstract
 
-This proposes an implementation of supporting foreign key constrain.
+This proposes an implementation of supporting foreign key constraint.
 
 ## DDL Technical Design
 
@@ -15,12 +15,12 @@ Table's foreign key information will be stored in `model.TableInfo`:
 ```go
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
-	...
-	ForeignKeys         []*FKInfo            `json:"fk_info"`
-	ReferredForeignKeys []*ReferredFKInfo    `json:"cited_fk_info"`
-	// MaxFKIndexID uses to allocate foreign key ID. Or use MaxConstraintID instead.
+    ...
+    ForeignKeys         []*FKInfo            `json:"fk_info"`
+    ReferredForeignKeys []*ReferredFKInfo    `json:"referred_fk_info"`
+    // MaxFKIndexID uses to allocate foreign key ID. Or use MaxConstraintID instead. 
     MaxFKIndexID        int64                `json:"max_fk_idx_id"`
-	...
+    ...
 }
 
 // FKInfo provides meta data describing a foreign key constraint.
@@ -50,18 +50,18 @@ type ReferredFKInfo struct {
 
 Struct `FKInfo` uses for child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
   - `Version`: uses to distinguish between old and new versions.
-Struct `ReferredFKInfo` uses for referenced table to record the child table which referenced me.
+Struct `ReferredFKInfo` is used to record the tables that are referencing the current table.
 
 ### Create Table with Foreign Key
 
 #### Build TableInfo
 
-When build `TableInfo`, auto create an index for foreign key columns if there is no index cover foreign key columns. Here is an example:
+When build `TableInfo`, an index for the foreign key columns is created automatically if there is no index covering the foreign key columns. Here is an example:
 
 ```sql
-mysql>create table t (id int key,a int, foreign key fk(a) references t(id));
+mysql> create table t (id int key, a int, foreign key fk(a) references t(id));
 Query OK, 0 rows affected
-mysql>show create table t\G
+mysql> show create table t\G
 ***************************[ 1. row ]***************************
 Table        | t
 Create Table | CREATE TABLE `t` (
@@ -74,26 +74,26 @@ Create Table | CREATE TABLE `t` (
 1 row in set
 ```
 
-As you can see, the index `fk` is auto create for foreign key usage.
+As you can see, the index `fk` is created automatically for the foreign key.
 
 #### Validate
 
-Create a table with foreign key, check following condition when build DDL job and DDL owner received DDL job(aka Double-Check):
+Create a table with foreign key, check the following conditions when a DDL job is built and the DDL owner received a DDL job(aka Double-Check):
 
 - whether the user have `REFERENCES` privilege to the foreign key references table.
 - Corresponding columns in the foreign key and the referenced key must have similar data types. The size and sign of fixed precision types such as INTEGER and DECIMAL must be the same. The length of string types need not be the same. For nonbinary (character) string columns, the character set and collation must be the same.
 - Supports foreign key references between one column and another within a table. (A column cannot have a foreign key reference to itself.)
-- Require indexes on foreign keys and referenced keys so that foreign key checks can be fast and not require a table scan. The size and sign of fixed precision types such as INTEGER and DECIMAL must be the same. The length of string types need not be the same. For nonbinary (character) string columns, the character set and collation must be the same.
-- Index prefixes on foreign key columns are not supported. Consequently, BLOB and TEXT columns cannot be included in a foreign key because indexes on those columns must always include a prefix length.
+- Indexes on foreign keys and referenced keys are required, because the foreign key check can be fast and do not require a table scan. The size and sign of fixed precision types such as INTEGER and DECIMAL must be the same. The length of string types need not be the same. For nonbinary (character) string columns, the character set and collation must be the same.
+- Prefixed indexes on foreign key columns are not supported. Consequently, BLOB and TEXT columns cannot be included in a foreign key because indexes on those columns must always include a prefix length.
 - Does not currently support foreign keys for tables with user-defined partitioning. This includes both reference and child tables.
-- A foreign key constraint cannot reference a virtual generated column, but stored generated column is ok.
+- A foreign key constraint cannot reference any virtual generated columns, but the stored generated columns are fine.
 
 #### Handle In DDL Owner
 
 When DDL Owner handle create table job, DDL owner need to create a new table, and update the reference tables information.
 
 At the same point in time, there may be two versions of the schema in the TiDB cluster, so we can't create new table and 
-update all reference tables in one schema version, since this may break foreign key constrain, such as delete reference table
+update all reference tables in one schema version, since this may break foreign key constraint, such as delete reference table
 without foreign key constrain check in child table.
 
 ```sql
@@ -109,7 +109,7 @@ So, when create a table with foreign key, we need multi-schema version change:
 1. None -> Write Only: Create table with state is `write-only`, and update all reference tables info.
 2. Write Only -> Done: Update the new created table state to `public`.
 
-In step-1, we need update some table info in one schema-version. Technically, we can implement is since we already support `ActionCreateTables` DDL job.
+In step-1, we need update some table info in one schema-version. Technically, we can implement it since we already support `ActionCreateTables` DDL job.
 
 ### Alter Table Add Foreign Key
 
@@ -125,7 +125,7 @@ Just like create table, we should validate first, and return error if the condit
 
 When build `TableInfo`, we need to auto create an index for foreign key columns if there is no index cover foreign key columns.
 And this is divides the problem into two cases:
-- Case-1: No need to auto create index, and only add foreign key constrain.
+- Case-1: No need to create index automatically, and only add foreign key constraint.
 - Case-2: Need auto create index for foreign key
 
 #### Case-1: Only add foreign key constrain
