@@ -2080,7 +2080,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 }
 
 func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
-	candidate *candidatePath, hashPartColName *ast.ColumnName, _ *physicalOptimizeOp) (task task) {
+	candidate *candidatePath, hashPartColName *ast.ColumnName, opt *physicalOptimizeOp) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -2111,7 +2111,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
 		batchPointGetPlan.accessCols = ds.TblCols
-		cost = batchPointGetPlan.GetCost()
+		cost = batchPointGetPlan.GetCost(opt)
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -2139,7 +2139,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		} else {
 			batchPointGetPlan.accessCols = ds.TblCols
 		}
-		cost = batchPointGetPlan.GetCost()
+		cost = batchPointGetPlan.GetCost(opt)
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()

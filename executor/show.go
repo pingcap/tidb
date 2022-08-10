@@ -1375,39 +1375,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
 
-	for i, def := range partitionInfo.Definitions {
-		if i > 0 {
-			fmt.Fprintf(buf, ",\n ")
-		}
-		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
-		// PartitionTypeHash does not have any VALUES definition
-		if partitionInfo.Type == model.PartitionTypeRange {
-			lessThans := strings.Join(def.LessThan, ",")
-			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", lessThans)
-		} else if partitionInfo.Type == model.PartitionTypeList {
-			values := bytes.NewBuffer(nil)
-			for j, inValues := range def.InValues {
-				if j > 0 {
-					values.WriteString(",")
-				}
-				if len(inValues) > 1 {
-					values.WriteString("(")
-					values.WriteString(strings.Join(inValues, ","))
-					values.WriteString(")")
-				} else {
-					values.WriteString(strings.Join(inValues, ","))
-				}
-			}
-			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
-		}
-		if len(def.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(def.Comment)))
-		}
-		if def.PlacementPolicyRef != nil {
-			// add placement ref info here
-			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
-		}
-	}
+	ddl.AppendPartitionDefs(partitionInfo, buf, sqlMode)
 	buf.WriteString(")")
 }
 

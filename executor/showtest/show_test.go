@@ -699,9 +699,9 @@ func TestShowWarnings(t *testing.T) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert show_warnings values ('a')")
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect int value: 'a' for column 'a' at row 1"))
 	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect int value: 'a' for column 'a' at row 1"))
 	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 
 	// Test Warning level 'Error'

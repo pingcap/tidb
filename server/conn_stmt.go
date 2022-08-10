@@ -98,8 +98,10 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(0); err != nil {
-			return err
+		if cc.capability&mysql.ClientDeprecateEOF == 0 {
+			if err := cc.writeEOF(0); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -113,8 +115,10 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(0); err != nil {
-			return err
+		if cc.capability&mysql.ClientDeprecateEOF == 0 {
+			if err := cc.writeEOF(0); err != nil {
+				return err
+			}
 		}
 	}
 	return cc.flush(ctx)
@@ -137,21 +141,18 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 	flag := data[pos]
 	pos++
-	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
+	// Please refer to https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_stmt_execute.html
 	// The client indicates that it wants to use cursor by setting this flag.
-	// 0x00 CURSOR_TYPE_NO_CURSOR
-	// 0x01 CURSOR_TYPE_READ_ONLY
-	// 0x02 CURSOR_TYPE_FOR_UPDATE
-	// 0x04 CURSOR_TYPE_SCROLLABLE
 	// Now we only support forward-only, read-only cursor.
-	var useCursor bool
-	switch flag {
-	case 0:
-		useCursor = false
-	case 1:
+	useCursor := false
+	if flag&mysql.CursorTypeReadOnly > 0 {
 		useCursor = true
-	default:
-		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", nil, flag)
+	}
+	if flag&mysql.CursorTypeForUpdate > 0 {
+		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeForUpdate", nil)
+	}
+	if flag&mysql.CursorTypeScrollable > 0 {
+		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
 	}
 
 	// skip iteration-count, always 1
@@ -254,6 +255,13 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			cl.OnFetchReturned()
 		}
 		// explicitly flush columnInfo to client.
+		if cc.capability&mysql.ClientDeprecateEOF > 0 {
+			status := cc.ctx.Status() | mysql.ServerStatusCursorExists
+			err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount(), mysql.EOFHeader)
+			if err != nil {
+				return false, err
+			}
+		}
 		return false, cc.flush(ctx)
 	}
 	defer terror.Call(rs.Close)

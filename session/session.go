@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -338,7 +337,7 @@ func (s *session) cleanRetryInfo() {
 		return
 	}
 
-	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
+	planCacheEnabled := s.GetSessionVars().EnablePreparedPlanCache
 	var cacheKey kvcache.Key
 	var err error
 	var preparedAst *ast.Prepared
@@ -426,6 +425,13 @@ func (s *session) SetCollation(coID int) error {
 }
 
 func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
+	if !s.GetSessionVars().EnablePreparedPlanCache {
+		return nil
+	}
+	if s.preparedPlanCache == nil { // lazy construction
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+	}
 	return s.preparedPlanCache
 }
 
@@ -640,7 +646,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
-		c := cachedTableRenewLease{tables: tables, ts: s.txn.StartTS()}
+		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
 		err := c.start(ctx)
 		defer c.stop(ctx)
@@ -662,25 +668,17 @@ type cachedTableRenewLease struct {
 	tables map[int64]interface{}
 	lease  []uint64 // Lease for each visited cached tables.
 	exit   chan struct{}
-	ts     uint64
 }
 
 func (c *cachedTableRenewLease) start(ctx context.Context) error {
 	c.exit = make(chan struct{})
 	c.lease = make([]uint64, len(c.tables))
-	tids := make([]int64, len(c.tables))
 	wg := make(chan error, len(c.tables))
 	ith := 0
 	for _, raw := range c.tables {
 		tbl := raw.(table.CachedTable)
-		tids[ith] = tbl.Meta().ID
 		go tbl.WriteLockAndKeepAlive(ctx, c.exit, &c.lease[ith], wg)
 		ith++
-	}
-	if ith > 0 {
-		logutil.BgLogger().Info(">> write lock and keep alive",
-			zap.Int64s("tids", tids),
-			zap.Uint64("ts", c.ts))
 	}
 
 	// Wait for all LockForWrite() return, this function can return.
@@ -701,11 +699,6 @@ func (c *cachedTableRenewLease) stop(ctx context.Context) {
 func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
 	for i := 0; i < len(c.lease); i++ {
 		lease := atomic.LoadUint64(&c.lease[i])
-		logutil.BgLogger().Info(">> commitTSCheck",
-			zap.Uint64("commitTS", commitTS),
-			zap.Uint64("lease", lease),
-			zap.Uint64("ts", c.ts),
-			zap.Bool("succ", commitTS >= lease))
 		if commitTS >= lease {
 			// Txn fails to commit because the write lease is expired.
 			return false
@@ -2309,6 +2302,13 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
 	logGeneralQuery(st, s, true)
+
+	if st.PsStmt != nil { // point plan short path
+		resultSet, err := st.PointGet(ctx)
+		s.txn.changeToInvalid()
+		return resultSet, err
+	}
+
 	return runStmt(ctx, s, st)
 }
 
@@ -2320,18 +2320,18 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 
 	s.sessionVars.StartTime = time.Now()
-	preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]
-	if !ok {
+	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
+	if err != nil {
 		err = plannercore.ErrStmtNotFound
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
-	preparedStmt, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	preparedStmt, ok := prepStmt.(*plannercore.CachedPrepareStmt)
 	if !ok {
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 
-	execStmt := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
+	execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
 	if err := executor.ResetContextOfStmt(s, execStmt); err != nil {
 		return nil, err
 	}
@@ -2721,11 +2721,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	rebuildAllPartitionValueMapAndSorted(ses[0])
 
 	dom := domain.GetDomain(ses[0])
-	if injector, ok := store.(schematracker.StorageDDLInjector); ok {
-		checker := injector.Injector(dom.DDL())
-		checker.CreateTestDB()
-		dom.SetDDL(checker)
-	}
 
 	// We should make the load bind-info loop before other loops which has internal SQL.
 	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
@@ -2854,13 +2849,8 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
-	if plannercore.PreparedPlanCacheEnabled() {
-		if opt != nil && opt.PreparedPlanCache != nil {
-			s.preparedPlanCache = opt.PreparedPlanCache
-		} else {
-			s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
-		}
+	if opt != nil && opt.PreparedPlanCache != nil {
+		s.preparedPlanCache = opt.PreparedPlanCache
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
@@ -2892,10 +2882,6 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
-	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
-	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
