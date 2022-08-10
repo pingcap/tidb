@@ -1110,7 +1110,7 @@ type PartitionInfo struct {
 	Expr    string        `json:"expr"`
 	Columns []CIStr       `json:"columns"`
 
-	// User may already creates table with partition but table partition is not
+	// User may already create table with partition but table partition is not
 	// yet supported back then. When Enable is true, write/read need use tid
 	// rather than pid.
 	Enable bool `json:"enable"`

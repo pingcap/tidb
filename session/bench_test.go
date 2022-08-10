@@ -324,10 +324,11 @@ func BenchmarkPreparedPointGet(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	params := expression.Args2Expressions4Test(64)
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(64))
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 		if err != nil {
 			b.Fatal(err)
 		}
