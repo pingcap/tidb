@@ -153,6 +153,7 @@ type Session interface {
 	RollbackTxn(context.Context)
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
+	PrepareGeneralStmt(sql string) error
 	// ExecutePreparedStmt executes a prepared statement.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
