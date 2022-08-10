@@ -235,6 +235,20 @@ func (e *Engine) unlock() {
 	e.mutex.Unlock()
 }
 
+func (e *Engine) TotalMemorySize() int64 {
+	var memSize int64 = 0
+	e.localWriters.Range(func(k, v interface{}) bool {
+		w := k.(*Writer)
+		if w.kvBuffer != nil {
+			w.Lock()
+			memSize += w.kvBuffer.TotalSize()
+			w.Unlock()
+		}
+		return true
+	})
+	return memSize
+}
+
 type rangeOffsets struct {
 	Size uint64
 	Keys uint64
