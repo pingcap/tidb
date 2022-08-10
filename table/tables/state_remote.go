@@ -125,16 +125,19 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 		}
 		// The old lock is outdated, clear orphan lock.
 		if now > lease {
-			succ = true
-			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
-				return errors.Trace(err)
+			if newLease > now { // Note the check, don't decrease the lease value!
+				succ = true
+				if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
+					return errors.Trace(err)
+				}
 			}
-			logutil.BgLogger().Info(">> lock for read succ, clean old orphan lock",
+			logutil.BgLogger().Info(">> lock for read by clean old orphan lock",
 				zap.Int64("tid", tid),
 				zap.Stringer("lockType", lockType),
 				zap.Uint64("oldLease", lease),
 				zap.Uint64("newLease", newLease),
-				zap.Uint64("now", now))
+				zap.Uint64("now", now),
+				zap.Bool("succ", succ))
 			return nil
 		}
 
