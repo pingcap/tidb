@@ -28,7 +28,6 @@ import (
 	"path"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -138,7 +137,6 @@ func TestCheckCN(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	// client2 can't visit server
-	time.Sleep(time.Second)
 	resp, err = util.ClientWithTLS(clientTLS2).Get(url)
 	require.Regexp(t, ".*tls: bad certificate", err.Error())
 	if resp != nil {
