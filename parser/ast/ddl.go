@@ -2571,6 +2571,10 @@ const (
 	AlterTableStatsOptions
 	// AlterTableSetTiFlashMode uses to alter the table mode of TiFlash.
 	AlterTableSetTiFlashMode
+	AlterTableDropFirstPartition
+	AlterTableAddLastPartition
+	AlterTableReorganizeLastPartition
+	AlterTableReorganizeFirstPartition
 )
 
 // LockType is the type for AlterTableSpec.
@@ -2980,6 +2984,24 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord(" PARTITIONS ")
 			ctx.WritePlainf("%d", n.Num)
 		}
+	case AlterTableDropFirstPartition:
+		ctx.WriteKeyWord("FIRST PARTITION LESS THAN (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableDropFirstPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
+		if n.NoWriteToBinlog {
+			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
+		}
+	case AlterTableAddLastPartition:
+		ctx.WriteKeyWord("LAST PARTITION LESS THAN (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableAddLastPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
+		if n.NoWriteToBinlog {
+			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
+		}
 	case AlterTablePartitionOptions:
 		restoreWithoutSpecialComment := func() error {
 			origFlags := ctx.Flags
@@ -3148,6 +3170,18 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteName(name.O)
 		}
+	case AlterTableReorganizeLastPartition:
+		ctx.WriteKeyWord("SPLIT MAXVALUE PARTITION LESS THAN (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableReorganizeLastPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
+	case AlterTableReorganizeFirstPartition:
+		ctx.WriteKeyWord("MERGE FIRST PARTITION LESS THAN (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableReorganizeLastPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
 	case AlterTableReorganizePartition:
 		ctx.WriteKeyWord("REORGANIZE PARTITION")
 		if n.NoWriteToBinlog {
@@ -3672,15 +3706,34 @@ func (n *PartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type PartitionIntervalExpr struct {
+	Expr ExprNode
+	// TimeUnitInvalid if not Time based INTERVAL!
+	TimeUnit TimeUnitType
+}
+
+type PartitionInterval struct {
+	// To be able to get original text and replace the syntactic sugar with generated
+	// partition definitions
+	node
+	IntervalExpr  PartitionIntervalExpr
+	FirstRangeEnd *ExprNode
+	LastRangeEnd  *ExprNode
+	MaxValPart    bool
+	NullPart      bool
+}
+
 // PartitionMethod describes how partitions or subpartitions are constructed.
 type PartitionMethod struct {
+	// To be able to get original text and replace the syntactic sugar with generated
+	// partition definitions
+	node
 	// Tp is the type of the partition function
 	Tp model.PartitionType
 	// Linear is a modifier to the HASH and KEY type for choosing a different
 	// algorithm
 	Linear bool
-	// Expr is an expression used as argument of HASH, RANGE, LIST and
-	// SYSTEM_TIME types
+	// Expr is an expression used as argument of HASH, RANGE AND LIST types
 	Expr ExprNode
 	// ColumnNames is a list of column names used as argument of KEY,
 	// RANGE COLUMNS and LIST COLUMNS types
@@ -3695,6 +3748,8 @@ type PartitionMethod struct {
 
 	// KeyAlgorithm is the optional hash algorithm type for `PARTITION BY [LINEAR] KEY` syntax.
 	KeyAlgorithm *PartitionKeyAlgorithm
+
+	Interval *PartitionInterval
 }
 
 type PartitionKeyAlgorithm struct {
@@ -3723,6 +3778,10 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(" ")
 			ctx.WriteKeyWord(n.Unit.String())
 		}
+		if n.Limit > 0 {
+			ctx.WriteKeyWord(" LIMIT ")
+			ctx.WritePlainf("%d", n.Limit)
+		}
 
 	case n.Expr != nil:
 		ctx.WritePlain(" (")
@@ -3747,9 +3806,30 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if n.Limit > 0 {
-		ctx.WriteKeyWord(" LIMIT ")
-		ctx.WritePlainf("%d", n.Limit)
+	if n.Interval != nil {
+		ctx.WritePlain(" INTERVAL (")
+		n.Interval.IntervalExpr.Expr.Restore(ctx)
+		if n.Interval.IntervalExpr.TimeUnit != TimeUnitInvalid {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(n.Interval.IntervalExpr.TimeUnit.String())
+		}
+		ctx.WritePlain(")")
+		if n.Interval.FirstRangeEnd != nil {
+			ctx.WritePlain(" FIRST PARTITION LESS THAN (")
+			(*n.Interval.FirstRangeEnd).Restore(ctx)
+			ctx.WritePlain(")")
+		}
+		if n.Interval.LastRangeEnd != nil {
+			ctx.WritePlain(" LAST PARTITION LESS THAN (")
+			(*n.Interval.LastRangeEnd).Restore(ctx)
+			ctx.WritePlain(")")
+		}
+		if n.Interval.NullPart {
+			ctx.WritePlain(" NULL PARTITION")
+		}
+		if n.Interval.MaxValPart {
+			ctx.WritePlain(" MAXVALUE PARTITION")
+		}
 	}
 
 	return nil
@@ -3776,7 +3856,6 @@ func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 
 // PartitionOptions specifies the partition options.
 type PartitionOptions struct {
-	node
 	PartitionMethod
 	Sub         *PartitionMethod
 	Definitions []*PartitionDefinition
@@ -3818,7 +3897,7 @@ func (n *PartitionOptions) Validate() error {
 			n.Num = 1
 		}
 	case model.PartitionTypeRange, model.PartitionTypeList:
-		if len(n.Definitions) == 0 {
+		if n.Interval == nil && len(n.Definitions) == 0 {
 			return ErrPartitionsMustBeDefined.GenWithStackByArgs(n.Tp)
 		}
 	case model.PartitionTypeSystemTime:

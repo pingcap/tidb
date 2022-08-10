@@ -48,7 +48,7 @@ type baseTxnContextProvider struct {
 	sctx                   sessionctx.Context
 	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
-	onTxnActive            func(kv.Transaction, sessiontxn.EnterNewTxnType)
+	onTxnActiveFunc        func(kv.Transaction, sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)
 	getStmtForUpdateTSFunc func() (uint64, error)
 
@@ -263,8 +263,8 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 
-	if p.onTxnActive != nil {
-		p.onTxnActive(txn, p.enterNewTxnType)
+	if p.onTxnActiveFunc != nil {
+		p.onTxnActiveFunc(txn, p.enterNewTxnType)
 	}
 
 	if p.sctx.GetSessionVars().InRestrictedSQL {
