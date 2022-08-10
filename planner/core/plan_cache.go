@@ -44,7 +44,7 @@ import (
 // GetPlanFromSessionPlanCache is the entry point of Plan Cache.
 // It tries to get a valid cached plan from this session's plan cache.
 // If there is no such a plan, it'll call the optimizer to generate a new one.
-func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
+func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *PlanCacheStmt,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
@@ -137,7 +137,7 @@ func getPointQueryPlan(prepared *ast.Prepared, sessVars *variable.SessionVars, s
 }
 
 func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt, paramTypes []*types.FieldType) (Plan,
+	is infoschema.InfoSchema, preparedStmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -189,7 +189,7 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcac
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
-func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *PlanCacheStmt,
 	ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64, paramNum int,
 	paramTypes []*types.FieldType, bindSQL string) (Plan, []*types.FieldName, error) {
 	prepared := preparedStmt.PreparedAst
@@ -539,7 +539,7 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 }
 
 func checkPreparedPriv(_ context.Context, sctx sessionctx.Context,
-	preparedObj *CachedPrepareStmt, is infoschema.InfoSchema) error {
+	preparedObj *PlanCacheStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		visitInfo := VisitInfo4PrivCheck(is, preparedObj.PreparedAst.Stmt, preparedObj.VisitInfos)
 		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
@@ -553,7 +553,7 @@ func checkPreparedPriv(_ context.Context, sctx sessionctx.Context,
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
 func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
-	preparedStmt *CachedPrepareStmt, _ infoschema.InfoSchema, p Plan) error {
+	preparedStmt *PlanCacheStmt, _ infoschema.InfoSchema, p Plan) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache || sctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return nil
 	}
@@ -600,7 +600,7 @@ func containTableDual(p Plan) bool {
 }
 
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
-func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) (string, bool) {
+func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *PlanCacheStmt) (string, bool) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
 	ignore := false
 	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
@@ -636,7 +636,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 // IsPointPlanShortPathOK check if we can execute using plan cached in prepared structure
 // Be careful with the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) (bool, error) {
+func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *PlanCacheStmt) (bool, error) {
 	prepared := preparedStmt.PreparedAst
 	if prepared.CachedPlan == nil || staleread.IsStmtStaleness(sctx) {
 		return false, nil
