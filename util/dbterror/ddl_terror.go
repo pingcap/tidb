@@ -96,7 +96,8 @@ var (
 	// ErrReorgPanic is used when reorg process is panic.
 	ErrReorgPanic = ClassDDL.NewStd(mysql.ErrReorgPanic)
 	// ErrFkColumnCannotDrop is used when foreign key column can't be dropped.
-	ErrFkColumnCannotDrop = ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
+	ErrFkColumnCannotDrop      = ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
+	ErrFkColumnCannotDropChild = ClassDDL.NewStd(mysql.ErrFkColumnCannotDropChild)
 	// ErrFKIncompatibleColumns is used when foreign key column type is incompatible.
 	ErrFKIncompatibleColumns = ClassDDL.NewStd(mysql.ErrFKIncompatibleColumns)
 

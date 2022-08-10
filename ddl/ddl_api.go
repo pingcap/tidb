@@ -4414,7 +4414,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	}
 	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
-	if err = checkColumnWithForeignKeyConstraint(is, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
+	if err = checkModifyColumnWithForeignKeyConstraint(is, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
 		return nil, err
 	}
 
@@ -4500,7 +4500,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	return job, nil
 }
 
-func checkColumnWithForeignKeyConstraint(is infoschema.InfoSchema, tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
 	if newCol.GetType() == originalCol.GetType() && newCol.GetFlen() == originalCol.GetFlen() && newCol.GetDecimal() == originalCol.GetDecimal() {
 		return nil
 	}
@@ -6444,8 +6444,27 @@ func isDroppableColumn(multiSchemaChange bool, tblInfo *model.TableInfo, colName
 		return err
 	}
 	// Check the column with foreign key.
-	if fkInfo, _ := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
+	err = checkDropColumnWithForeignKeyConstraint(tblInfo, colName.L)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func checkDropColumnWithForeignKeyConstraint(tbInfo *model.TableInfo, colName string) error {
+	for _, referredFK := range tbInfo.ReferredForeignKeys {
+		for _, col := range referredFK.Cols {
+			if col.L == colName {
+				return dbterror.ErrFkColumnCannotDropChild.GenWithStackByArgs(colName, referredFK.ChildFKName, referredFK.ChildTable)
+			}
+		}
+	}
+	for _, fkInfo := range tbInfo.ForeignKeys {
+		for _, col := range fkInfo.Cols {
+			if col.L == colName {
+				return dbterror.ErrFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
+			}
+		}
 	}
 	return nil
 }
