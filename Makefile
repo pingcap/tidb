@@ -38,7 +38,7 @@ fmt:
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 check-static:
-ifneq ("$(JenkinsCI)", "1")
+ifeq ("$(JenkinsCI)", "0")
 	@GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	@GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 endif
@@ -56,7 +56,7 @@ errdoc:tools/bin/errdoc-gen
 	./tools/check/check-errdoc.sh
 
 lint:
-ifneq ("$(JenkinsCI)", "1")
+ifeq ("$(JenkinsCI)", "0")
 	@echo "linting"
 	@GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@latest
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
