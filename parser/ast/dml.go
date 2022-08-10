@@ -1055,7 +1055,7 @@ func (c *CommonTableExpression) Restore(ctx *format.RestoreCtx) error {
 	if c.IsRecursive {
 		// If the CTE is recursive, we should make it visible for the CTE's query.
 		// Otherwise, we should put it to stack after building the CTE's query.
-		ctx.RecordCTEName(c.Name.L)
+		ctx.CTENames = append(ctx.CTENames, c.Name.L)
 	}
 	if len(c.ColNameList) > 0 {
 		ctx.WritePlain(" (")
@@ -1073,7 +1073,7 @@ func (c *CommonTableExpression) Restore(ctx *format.RestoreCtx) error {
 		return err
 	}
 	if !c.IsRecursive {
-		ctx.RecordCTEName(c.Name.L)
+		ctx.CTENames = append(ctx.CTENames, c.Name.L)
 	}
 	return nil
 }
