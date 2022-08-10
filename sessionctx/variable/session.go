@@ -562,7 +562,7 @@ type SessionVars struct {
 	DisableTxnAutoRetry bool
 	// store variables and variable types
 	UserVars struct {
-		Lock *sync.RWMutex
+		Lock sync.RWMutex
 		Vars map[string]interface{}
 	}
 	// UsersLock is a lock for user defined variables.
@@ -1370,7 +1370,7 @@ func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		//UserVarTypes: make(map[string]*types.FieldType),
 		UserVars: struct {
-			Lock *sync.RWMutex
+			Lock sync.RWMutex
 			Vars map[string]interface{}
 		}{Vars: make(map[string]interface{})},
 		systems:                     make(map[string]string),

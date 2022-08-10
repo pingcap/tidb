@@ -783,7 +783,7 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 	if len(collation) <= 0 {
 		_, collation = sessionVars.GetCharsetInfo()
 	}
-	v := types.NewCollationStringDatum(stringutil.Copy(res), collation)
+	v := types.NewCollationStringDatum(stringutil.Copy(stringutil.Copy(res)), collation)
 	tp := new(types.FieldType)
 	types.DefaultParamTypeForValue(v, tp)
 	sessionVars.UserVars.Vars[varName] = &Constant{Value: v, RetType: tp}
