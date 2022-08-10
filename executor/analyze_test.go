@@ -16,12 +16,12 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"io/ioutil"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
