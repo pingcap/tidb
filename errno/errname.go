@@ -835,6 +835,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrGeneratedColumnNonPrior:                               mysql.Message("Generated column can refer only to generated columns defined prior to it.", nil),
 	ErrDependentByGeneratedColumn:                            mysql.Message("Column '%s' has a generated column dependency.", nil),
 	ErrGeneratedColumnRefAutoInc:                             mysql.Message("Generated column '%s' cannot refer to auto-increment column.", nil),
+	ErrAccountHasBeenLocked:                                  mysql.Message("Access denied for user '%s'@'%s'. Account is locked.", nil),
 	ErrWarnConflictingHint:                                   mysql.Message("Hint %s is ignored as conflicting/duplicated.", nil),
 	ErrUnresolvedHintName:                                    mysql.Message("Unresolved name '%s' for %s hint", nil),
 	ErrInvalidFieldSize:                                      mysql.Message("Invalid size for column '%s'.", nil),
