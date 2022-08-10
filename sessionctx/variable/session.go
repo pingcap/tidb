@@ -1188,8 +1188,8 @@ type SessionVars struct {
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
 	DefaultStrMatchSelectivity float64
 
-	// TiFlashReadMode indicates in this session which read mode the queries may read on TiFlash.
-	TiFlashReadMode mysql.ReadModeEnum
+	// TiFlashFastScan indicates whether use fast scan in TiFlash
+	TiFlashFastScan bool
 
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
@@ -1454,7 +1454,7 @@ func NewSessionVars() *SessionVars {
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
-		TiFlashReadMode:             mysql.Normal,
+		TiFlashFastScan:             DefTiFlashFastScan,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

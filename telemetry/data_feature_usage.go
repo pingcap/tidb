@@ -318,30 +318,11 @@ func getGlobalKillUsageInfo() bool {
 
 // TiFlashModeStatistics records the usage info of Fast Mode
 type TiFlashModeStatistics struct {
-	FastModeTableCount   int64 `json:"fast_mode_table_count"`
-	NormalModeTableCount int64 `json:"normal_mode_table_count"`
-	AllTableCount        int64 `json:"all_table_count"`
+	EnableFastScan bool `json:"enable_fast_scan"`
 }
 
 func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
-	is := GetDomainInfoSchema(ctx)
-	var fastModeTableCount int64 = 0
-	var normalModeTableCount int64 = 0
-	var allTableCount int64 = 0
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
-			allTableCount++
-			if tbInfo.Meta().TiFlashReplica != nil {
-				if tbInfo.Meta().TiFlashMode == model.TiFlashModeFast {
-					fastModeTableCount++
-				} else {
-					normalModeTableCount++
-				}
-			}
-		}
-	}
-
-	return TiFlashModeStatistics{FastModeTableCount: fastModeTableCount, NormalModeTableCount: normalModeTableCount, AllTableCount: allTableCount}
+	return TiFlashModeStatistics{EnableFastScan: ctx.GetSessionVars().TiFlashFastScan}
 }
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {

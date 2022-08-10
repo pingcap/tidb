@@ -385,34 +385,19 @@ func TestTiFlashModeStatistics(t *testing.T) {
 
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.TiFlashModeStatistics.FastModeTableCount)
-	require.Equal(t, int64(0), usage.TiFlashModeStatistics.NormalModeTableCount)
+	require.Equal(t, false, usage.TiFlashModeStatistics.EnableFastScan)
 
-	tk.MustExec(`create table t1(a int);`)
-	tk.MustExec(`alter table t1 set tiflash replica 1;`)
-	tk.MustExec(`alter table t1 set tiflash mode fast;`)
-
-	tk.MustExec(`create table t2(a int);`)
-	tk.MustExec(`alter table t2 set tiflash replica 1;`)
-	tk.MustExec(`alter table t2 set tiflash mode normal;`)
-
-	tk.MustExec(`create table t3(a int);`)
-	tk.MustExec(`alter table t3 set tiflash replica 1;`)
-
-	tk.MustExec(`create table t4(a int);`)
+	tk.MustExec(`set @@session.tiflash_fastscan=ON`)
 
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.TiFlashModeStatistics.FastModeTableCount)
-	require.Equal(t, int64(2), usage.TiFlashModeStatistics.NormalModeTableCount)
+	require.Equal(t, true, usage.TiFlashModeStatistics.EnableFastScan)
 
-	tk.MustExec("drop table t1;")
-	tk.MustExec(`alter table t2 set tiflash mode fast;`)
+	tk.MustExec(`set @@session.tiflash_fastscan=OFF`)
 
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.TiFlashModeStatistics.FastModeTableCount)
-	require.Equal(t, int64(1), usage.TiFlashModeStatistics.NormalModeTableCount)
+	require.Equal(t, false, usage.TiFlashModeStatistics.EnableFastScan)
 }
 
 func TestPagingUsageInfo(t *testing.T) {

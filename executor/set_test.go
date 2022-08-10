@@ -1900,12 +1900,12 @@ func TestSetTiFlashReadMode(t *testing.T) {
 	tk.MustExec("insert into t values(1);")
 
 	// check the default tiflash read mode
-	tk.MustQuery("select @@session.tiflash_read_mode").Check(testkit.Rows("NORMAL"))
+	tk.MustQuery("select @@session.tiflash_fastscan").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
 
-	tk.MustExec("set @@tiflash_read_mode=auto;")
-	tk.MustQuery("select @@session.tiflash_read_mode").Check(testkit.Rows("AUTO"))
+	tk.MustExec("set @@tiflash_fastscan=ON;")
+	tk.MustQuery("select @@session.tiflash_fastscan").Check(testkit.Rows("1"))
 
-	tk.MustExec("set @@tiflash_read_mode=fast;")
-	tk.MustQuery("select @@session.tiflash_read_mode").Check(testkit.Rows("FAST"))
-
+	tk.MustExec("set GLOBAL tiflash_fastscan=OFF;")
+	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
 }
