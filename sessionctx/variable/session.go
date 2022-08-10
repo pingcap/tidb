@@ -575,6 +575,8 @@ type SessionVars struct {
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
 	SysErrorCount uint16
+	// GeneralStmts stores the general statements.
+	GeneralStmts map[string]interface{}
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -1195,6 +1197,15 @@ type SessionVars struct {
 	EnablePreparedPlanCache bool
 }
 
+// GetGeneralStmt returns the general statement specified by sql.
+func (s *SessionVars) GetGeneralStmt(sql string) (interface{}, error) {
+	stmt, ok := s.GeneralStmts[sql]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return stmt, nil
+}
+
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
 func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
 	stmtID, ok := s.PreparedStmtNameToID[stmtName]
@@ -1387,6 +1398,7 @@ func NewSessionVars() *SessionVars {
 		UserVarTypes:                make(map[string]*types.FieldType),
 		systems:                     make(map[string]string),
 		stmtVars:                    make(map[string]string),
+		GeneralStmts:                make(map[string]interface{}),
 		PreparedStmts:               make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),

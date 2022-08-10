@@ -155,6 +155,8 @@ type Session interface {
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
+	// ExecuteGeneralStmt executes a general statement.
+	ExecuteGeneralStmt(ctx context.Context, sql string, param []expression.Expression) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	// SetSessionStatesHandler sets SessionStatesHandler for type stateType.
 	SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler)
@@ -2313,31 +2315,49 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 }
 
 // ExecutePreparedStmt executes a prepared statement.
-func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []expression.Expression) (sqlexec.RecordSet, error) {
-	var err error
-	if err = s.PrepareTxnCtx(ctx); err != nil {
-		return nil, err
-	}
-
-	s.sessionVars.StartTime = time.Now()
+func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params []expression.Expression) (sqlexec.RecordSet, error) {
 	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
 	if err != nil {
 		err = plannercore.ErrStmtNotFound
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
-	preparedStmt, ok := prepStmt.(*plannercore.CachedPrepareStmt)
+	stmt, ok := prepStmt.(*plannercore.CachedPrepareStmt)
 	if !ok {
-		return nil, errors.Errorf("invalid CachedPrepareStmt type")
+		return nil, errors.Errorf("invalid PlanCacheStmt type")
+	}
+	return s.executePlanCacheStmt(ctx, stmt, params)
+}
+
+// ExecuteGeneralStmt executes a general statement.
+func (s *session) ExecuteGeneralStmt(ctx context.Context, sql string, params []expression.Expression) (sqlexec.RecordSet, error) {
+	generalStmt, err := s.sessionVars.GetGeneralStmt(sql)
+	if err != nil {
+		err = plannercore.ErrStmtNotFound
+		logutil.Logger(ctx).Error("general statement not found", zap.String("sql", sql))
+		return nil, err
+	}
+	stmt, ok := generalStmt.(*plannercore.CachedPrepareStmt)
+	if !ok {
+		return nil, errors.Errorf("invalid PlanCacheStmt type")
+	}
+	return s.executePlanCacheStmt(ctx, stmt, params)
+}
+
+func (s *session) executePlanCacheStmt(ctx context.Context, stmt *plannercore.CachedPrepareStmt, params []expression.Expression) (sqlexec.RecordSet, error) {
+	var err error
+	if err = s.PrepareTxnCtx(ctx); err != nil {
+		return nil, err
 	}
 
-	execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
+	s.sessionVars.StartTime = time.Now()
+	execStmt := &ast.ExecuteStmt{PrepStmt: stmt, BinaryArgs: params}
 	if err := executor.ResetContextOfStmt(s, execStmt); err != nil {
 		return nil, err
 	}
 
 	staleReadProcessor := staleread.NewStaleReadProcessor(s)
-	if err = staleReadProcessor.OnExecutePreparedStmt(preparedStmt.SnapshotTSEvaluator); err != nil {
+	if err = staleReadProcessor.OnExecutePreparedStmt(stmt.SnapshotTSEvaluator); err != nil {
 		return nil, err
 	}
 
@@ -2357,17 +2377,17 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		}
 	}
 
-	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
-	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
+	executor.CountStmtNode(stmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
+	s.txn.onStmtStart(stmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
 
 	if err = s.onTxnManagerStmtStartOrRetry(ctx, execStmt); err != nil {
 		return nil, err
 	}
-	s.setRequestSource(ctx, preparedStmt.PreparedAst.StmtType, preparedStmt.PreparedAst.Stmt)
+	s.setRequestSource(ctx, stmt.PreparedAst.StmtType, stmt.PreparedAst.Stmt)
 	// even the txn is valid, still need to set session variable for coprocessor usage.
-	s.sessionVars.RequestSourceType = preparedStmt.PreparedAst.StmtType
-	return s.preparedStmtExec(ctx, execStmt, preparedStmt)
+	s.sessionVars.RequestSourceType = stmt.PreparedAst.StmtType
+	return s.preparedStmtExec(ctx, execStmt, stmt)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
