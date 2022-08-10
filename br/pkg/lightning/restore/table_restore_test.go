@@ -319,10 +319,6 @@ func (w errorLocalWriter) AppendRows(context.Context, string, []string, kv.Rows)
 	return errors.New("mock write rows failed")
 }
 
-func (w errorLocalWriter) AppendRow(context.Context, string, []string, kv.Row) error {
-	return errors.New("mock write rows failed")
-}
-
 func (w errorLocalWriter) IsSynced() bool {
 	return true
 }
