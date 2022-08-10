@@ -135,15 +135,14 @@ func TestCheckCN(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "This an example server", string(body))
-	resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 
 	// client2 can't visit server
 	time.Sleep(time.Second)
 	resp, err = util.ClientWithTLS(clientTLS2).Get(url)
 	require.Regexp(t, ".*tls: bad certificate", err.Error())
 	if resp != nil {
-		err = resp.Body.Close()
-		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
 	}
 }
 
