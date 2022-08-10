@@ -491,9 +491,9 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
-["Lightning:Restore:ErrInconsistentSchema"]
+["Lightning:Restore:ErrResolveDuplicateRows"]
 error = '''
-table '%s' has inconsistent schemas
+resolve duplicate rows error on table '%s'
 '''
 
 ["Lightning:Restore:ErrInvalidMetaStatus"]
