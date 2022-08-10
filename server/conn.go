@@ -1816,6 +1816,7 @@ func (cc *clientConn) handleQueryGeneralPlanCache(ctx context.Context, sql strin
 	}
 
 	_, err = cc.writeResultset(ctx, rs, true, cc.ctx.Status(), 0)
+	fmt.Println("[DEBUG] handleQueryGeneralPlanCache:", sql)
 	return true, err
 }
 
