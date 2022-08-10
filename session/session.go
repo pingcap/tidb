@@ -2230,6 +2230,17 @@ func (s *session) rollbackOnError(ctx context.Context) {
 	}
 }
 
+// PrepareGeneralStmt ...
+func (s *session) PrepareGeneralStmt(sql string) error {
+	if stmt := s.sessionVars.GetGeneralPreparedStmt(sql); stmt != nil {
+		return nil // skip
+	}
+	ctx := context.Background()
+	prepareExec := executor.NewPrepareExec(s, sql)
+	prepareExec.IsGeneralPlanCache = true
+	return prepareExec.Next(ctx, nil)
+}
+
 // PrepareStmt is used for executing prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
 	if s.sessionVars.TxnCtx.InfoSchema == nil {

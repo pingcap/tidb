@@ -1196,6 +1196,14 @@ type SessionVars struct {
 	EnablePreparedPlanCache bool
 }
 
+// GetGeneralPreparedStmt ...
+func (s *SessionVars) GetGeneralPreparedStmt(sql string) interface{} {
+	if s.GeneralPreparedStmts == nil {
+		return nil
+	}
+	return s.GeneralPreparedStmts[sql]
+}
+
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
 func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
 	stmtID, ok := s.PreparedStmtNameToID[stmtName]
