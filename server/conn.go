@@ -1806,11 +1806,17 @@ func (cc *clientConn) handleQueryGeneralPlanCache(ctx context.Context, sql strin
 	if err := (&cc.ctx).PrepareGeneralStmt(sql); err != nil {
 		return false, err
 	}
-	rs, err := (&cc.ctx).ExecuteGeneralPreparedStmt(ctx, sql, params)
+	tidbRecordset, err := (&cc.ctx).ExecuteGeneralPreparedStmt(ctx, sql, params)
 	if err != nil {
 		return false, err
 	}
+	rs := &tidbResultSet{
+		recordSet:    tidbRecordset,
+		preparedStmt: (&cc.ctx).GetSessionVars().GetGeneralPreparedStmt(sql).(*plannercore.CachedPrepareStmt),
+	}
 
+	_, err = cc.writeResultset(ctx, rs, true, cc.ctx.Status(), 0)
+	return true, err
 }
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
