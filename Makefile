@@ -434,4 +434,4 @@ bazel_golangcilinter:
 	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml
 
 bazel_warn_cache: bazel_coverage_test
-	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci @com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint
+	bazel $(BAZEL_LOCAL_CACHE) build $(BAZEL_CMD_CONFIG) @com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint
