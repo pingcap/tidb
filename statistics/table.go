@@ -186,6 +186,9 @@ type CacheItemMemoryUsage interface {
 	ItemID() int64
 	TotalMemoryUsage() int64
 	TrackingMemUsage() int64
+	HistMemUsage() int64
+	TopnMemUsage() int64
+	CMSMemUsage() int64
 }
 
 // ColumnMemUsage records column memory usage
@@ -213,6 +216,21 @@ func (c *ColumnMemUsage) TrackingMemUsage() int64 {
 	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
 }
 
+// HistMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) HistMemUsage() int64 {
+	return c.HistogramMemUsage
+}
+
+// TopnMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) TopnMemUsage() int64 {
+	return c.TopNMemUsage
+}
+
+// CMSMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) CMSMemUsage() int64 {
+	return c.CMSketchMemUsage
+}
+
 // IndexMemUsage records index memory usage
 type IndexMemUsage struct {
 	IndexID           int64
@@ -235,6 +253,21 @@ func (c *IndexMemUsage) ItemID() int64 {
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *IndexMemUsage) TrackingMemUsage() int64 {
 	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
+}
+
+// HistMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) HistMemUsage() int64 {
+	return c.HistogramMemUsage
+}
+
+// TopnMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) TopnMemUsage() int64 {
+	return c.TopNMemUsage
+}
+
+// CMSMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) CMSMemUsage() int64 {
+	return c.CMSketchMemUsage
 }
 
 // MemoryUsage returns the total memory usage of this Table.

@@ -853,6 +853,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.Equal(t, tipb.ScalarFuncSig_DayOfMonth, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
+	// Repeat
 	function, err = NewFunction(mock.NewContext(), ast.Repeat, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_Repeat, function.(*ScalarFunction).Function.PbCode())
@@ -1169,6 +1170,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// HexInt
 	function, err = NewFunction(mock.NewContext(), ast.Hex, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// Elt
+	function, err = NewFunction(mock.NewContext(), ast.Elt, types.NewFieldType(mysql.TypeString), intColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 

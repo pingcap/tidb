@@ -1337,8 +1337,7 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 func TestPerformanceSchemaforPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tmp := testkit.NewTestKit(t, store)
-	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
-	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
+	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
 
 	tk := newTestKitWithPlanCache(t, store)
 

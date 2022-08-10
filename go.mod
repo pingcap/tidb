@@ -62,7 +62,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.1-0.20220729034404-e10841f2d158
+	github.com/tikv/client-go/v2 v2.0.1-0.20220809034808-2ed2113d1090
 	github.com/tikv/pd/client v0.0.0-20220725055910-7187a7ab72db
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -106,6 +106,7 @@ require (
 	github.com/golangci/misspell v0.3.5
 	github.com/golangci/unconvert v0.0.0-20180507085042-28b1c447d1f4
 	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
+	github.com/gostaticanalysis/forcetypeassert v0.1.0
 	github.com/kisielk/errcheck v1.6.1
 	github.com/kyoh86/exportloopref v0.1.8
 	github.com/mgechev/revive v1.2.1
