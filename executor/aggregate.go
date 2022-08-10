@@ -618,13 +618,13 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 			partialResults[i] = append(partialResults[i], partialResult)
 			allMemDelta += memDelta + 8 // the memory usage of PartialResult
 		}
-		mapper[string(groupKey[i])] = partialResults[i]
-		allMemDelta += int64(len(groupKey[i]))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		if len(mapper)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 			w.BInMap++
 		}
+		mapper[string(groupKey[i])] = partialResults[i]
+		allMemDelta += int64(len(groupKey[i]))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(allMemDelta)
@@ -1098,13 +1098,13 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 			partialResults = append(partialResults, partialResult)
 			allMemDelta += memDelta
 		}
-		e.partialResultMap[groupKey] = partialResults
-		allMemDelta += int64(len(groupKey))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(e.partialResultMap) > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		if len(e.partialResultMap)+1 > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.bInMap))
 			e.bInMap++
 		}
+		e.partialResultMap[groupKey] = partialResults
+		allMemDelta += int64(len(groupKey))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(allMemDelta)

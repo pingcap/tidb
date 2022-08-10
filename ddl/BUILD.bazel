@@ -51,6 +51,7 @@ go_library(
         "//config",
         "//ddl/label",
         "//ddl/placement",
+        "//ddl/syncer",
         "//ddl/util",
         "//distsql",
         "//domain/infosync",

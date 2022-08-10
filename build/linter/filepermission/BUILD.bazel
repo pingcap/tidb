@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "filepermission",
     srcs = ["checker.go"],
-    importpath = "github.com/pingcap/tidb/build/linter/file_permission",
+    importpath = "github.com/pingcap/tidb/build/linter/filepermission",
     visibility = ["//visibility:public"],
     deps = ["@org_golang_x_tools//go/analysis"],
 )
