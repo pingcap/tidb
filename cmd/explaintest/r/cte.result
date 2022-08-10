@@ -607,8 +607,6 @@ c1	c1	c1
 1	1	1
 2	2	2
 3	3	3
-<<<<<<< HEAD
-=======
 // Test CTE as inner side of Apply
 drop table if exists t1, t2;
 create table t1(c1 int, c2 int);
@@ -799,4 +797,3 @@ a	b
 0	4
 1	5
 1	4
->>>>>>> fa5e19010... planner: `preprocessor` add CTE recursive check when `handleTableName` (#34133)

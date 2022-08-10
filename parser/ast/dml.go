@@ -1158,36 +1158,9 @@ func (n *WithClause) Restore(ctx *format.RestoreCtx) error {
 		if i != 0 {
 			ctx.WritePlain(", ")
 		}
-<<<<<<< HEAD
-		ctx.WriteName(cte.Name.String())
-		if n.IsRecursive {
-			// If the CTE is recursive, we should make it visible for the CTE's query.
-			// Otherwise, we should put it to stack after building the CTE's query.
-			ctx.CTENames = append(ctx.CTENames, cte.Name.L)
-		}
-		if len(cte.ColNameList) > 0 {
-			ctx.WritePlain(" (")
-			for j, name := range cte.ColNameList {
-				if j != 0 {
-					ctx.WritePlain(", ")
-				}
-				ctx.WriteName(name.String())
-			}
-			ctx.WritePlain(")")
-		}
-		ctx.WriteKeyWord(" AS ")
-		err := cte.Query.Restore(ctx)
-		if err != nil {
-			return err
-		}
-		if !n.IsRecursive {
-			ctx.CTENames = append(ctx.CTENames, cte.Name.L)
-		}
-=======
 		if err := cte.Restore(ctx); err != nil {
 			return err
 		}
->>>>>>> fa5e19010... planner: `preprocessor` add CTE recursive check when `handleTableName` (#34133)
 	}
 	ctx.WritePlain(" ")
 	return nil

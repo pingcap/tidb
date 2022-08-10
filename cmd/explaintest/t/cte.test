@@ -226,8 +226,6 @@ create table tpk1(c1 int primary key);
 insert into tpk1 values(1), (2), (3);
 explain with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
 with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
-<<<<<<< HEAD
-=======
 #case 34
 --echo // Test CTE as inner side of Apply
 drop table if exists t1, t2;
@@ -316,4 +314,3 @@ drop view if exists v1;
 create view v1 as with t1 as (with t11 as (select * from t1) select * from t1, t2) select * from t1;
 use test1;
 select * from test.v1;
->>>>>>> fa5e19010... planner: `preprocessor` add CTE recursive check when `handleTableName` (#34133)
