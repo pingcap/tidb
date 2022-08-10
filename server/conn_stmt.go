@@ -724,7 +724,7 @@ func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
 	}
 	preparedObj, invalid := cc.preparedStmtID2CachePreparedStmt(stmtID)
 	if invalid {
-		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+		return "invalidate PlanCacheStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
 	}
 	if preparedObj == nil {
 		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
@@ -732,7 +732,7 @@ func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
 	return preparedObj.PreparedAst.Stmt.Text()
 }
 
-func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *plannercore.CachedPrepareStmt, invalid bool) {
+func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *plannercore.PlanCacheStmt, invalid bool) {
 	sv := cc.ctx.GetSessionVars()
 	if sv == nil {
 		return nil, false
@@ -742,7 +742,7 @@ func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *planne
 		// not found
 		return nil, false
 	}
-	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
 	if !ok {
 		// invalid cache. should never happen.
 		return nil, true
