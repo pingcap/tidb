@@ -37,6 +37,8 @@ import (
 	"math/rand"
 	"net"
 	"net/http" //nolint:goimports
+	"path/filepath"
+
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
@@ -302,7 +304,35 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	variable.RegisterStatistics(s)
 
+	variable.UpdateTLSConfig = s.updateTLSConfig
+
 	return s, nil
+}
+
+func (s *Server) updateTLSConfig(oldDirPath string) error {
+	oldCert, oldKey := filepath.Join(oldDirPath, "cert.pem"), filepath.Join(oldDirPath, "key.pem")
+	if _, err := os.Stat(oldCert); os.IsNotExist(err) {
+		return nil
+	}
+	if _, err := os.Stat(oldKey); os.IsNotExist(err) {
+		return nil
+	}
+	if key, cert := variable.GetSysVar("ssl_key").Value, variable.GetSysVar("ssl_cert").Value; cert == oldCert || key == oldKey {
+		return nil
+	}
+
+	tlsCfg, _, err := util.LoadTLSCertificates(
+		variable.GetSysVar("ssl_ca").Value,
+		"",
+		"",
+		config.GetGlobalConfig().Security.AutoTLS,
+		config.GetGlobalConfig().Security.RSAKeySize,
+	)
+	if err != nil {
+		return err
+	}
+	s.UpdateTLSConfig(tlsCfg)
+	return nil
 }
 
 func cleanupStaleSocket(socket string) error {
