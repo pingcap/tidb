@@ -1435,7 +1435,7 @@ func (fk *FKInfo) String(db, tb string) string {
 		buf.WriteString(fk.RefSchema.L)
 		buf.WriteString("`.`")
 	}
-	buf.WriteString(fk.RefTable.O)
+	buf.WriteString(fk.RefTable.L)
 	buf.WriteString("` (")
 	for i, col := range fk.RefCols {
 		if i > 0 {
