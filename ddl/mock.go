@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
@@ -29,7 +29,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-var _ util.SchemaSyncer = &MockSchemaSyncer{}
+var _ syncer.SchemaSyncer = &MockSchemaSyncer{}
 
 const mockCheckVersInterval = 2 * time.Millisecond
 
@@ -41,7 +41,7 @@ type MockSchemaSyncer struct {
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
-func NewMockSchemaSyncer() util.SchemaSyncer {
+func NewMockSchemaSyncer() syncer.SchemaSyncer {
 	return &MockSchemaSyncer{}
 }
 
@@ -118,12 +118,6 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 		}
 	}
 }
-
-// NotifyCleanExpiredPaths implements SchemaSyncer.NotifyCleanExpiredPaths interface.
-func (*MockSchemaSyncer) NotifyCleanExpiredPaths() bool { return true }
-
-// StartCleanWork implements SchemaSyncer.StartCleanWork interface.
-func (*MockSchemaSyncer) StartCleanWork() {}
 
 // Close implements SchemaSyncer.Close interface.
 func (*MockSchemaSyncer) Close() {}
