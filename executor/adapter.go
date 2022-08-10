@@ -1105,7 +1105,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog())
 
-	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
 		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
