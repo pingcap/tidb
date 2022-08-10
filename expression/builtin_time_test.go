@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -869,9 +868,9 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 	}
 
 	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
-	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), "time_zone", "+00:00")
+	err := ctx.GetSessionVars().SetSystemVar("time_zone", "+00:00")
 	require.NoError(t, err)
-	err = variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", "1234")
+	err = ctx.GetSessionVars().SetSystemVar("timestamp", "1234")
 	require.NoError(t, err)
 	fc := funcs[ast.Now]
 	resetStmtContext(ctx)
@@ -882,9 +881,9 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 	result, err := v.ToString()
 	require.NoError(t, err)
 	require.Equal(t, "1970-01-01 00:20:34", result)
-	err = variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", "0")
+	err = ctx.GetSessionVars().SetSystemVar("timestamp", "0")
 	require.NoError(t, err)
-	err = variable.SetSessionSystemVar(ctx.GetSessionVars(), "time_zone", "system")
+	err = ctx.GetSessionVars().SetSystemVar("time_zone", "system")
 	require.NoError(t, err)
 }
 
@@ -1132,7 +1131,7 @@ func TestSysDate(t *testing.T) {
 	timezones := []string{"1234", "0"}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
-		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
+		err := ctx.GetSessionVars().SetSystemVar("timestamp", timezone)
 		require.NoError(t, err)
 		f, err := fc.getFunction(ctx, datumsToConstants(nil))
 		require.NoError(t, err)
@@ -1703,7 +1702,7 @@ func TestWeekWithoutModeSig(t *testing.T) {
 			err = ctx.GetSessionVars().SetSystemVar("default_week_format", "6")
 			require.NoError(t, err)
 		} else if i == 3 {
-			err = ctx.GetSessionVars().SetSystemVar("default_week_format", "")
+			err = ctx.GetSessionVars().SetSystemVarWithoutValidation("default_week_format", "")
 			require.NoError(t, err)
 		}
 	}

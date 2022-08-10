@@ -35,8 +35,7 @@ import (
 )
 
 func TestIssue23993(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Real cast to time should return NULL
@@ -66,8 +65,7 @@ func TestIssue23993(t *testing.T) {
 }
 
 func TestIssue22201(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("SELECT HEX(WEIGHT_STRING('ab' AS BINARY(1000000000000000000)));").Check(testkit.Rows("<nil>"))
@@ -77,8 +75,7 @@ func TestIssue22201(t *testing.T) {
 }
 
 func TestIssue22941(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists m, mp")
@@ -106,8 +103,7 @@ func TestIssue22941(t *testing.T) {
 }
 
 func TestIssue23609(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -121,8 +117,7 @@ func TestIssue23609(t *testing.T) {
 }
 
 func TestIssue24091(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -135,8 +130,7 @@ func TestIssue24091(t *testing.T) {
 }
 
 func TestIssue24210(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -166,8 +160,7 @@ func TestIssue24210(t *testing.T) {
 }
 
 func TestIssue25506(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl_3, tbl_23")
@@ -180,8 +173,7 @@ func TestIssue25506(t *testing.T) {
 }
 
 func TestIssue26348(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -203,8 +195,7 @@ d decimal(15,8) DEFAULT NULL
 }
 
 func TestIssue26532(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("select greatest(cast(\"2020-01-01 01:01:01\" as datetime), cast(\"2019-01-01 01:01:01\" as datetime) )union select null;").Sort().Check(testkit.Rows("2020-01-01 01:01:01", "<nil>"))
@@ -214,8 +205,7 @@ func TestIssue26532(t *testing.T) {
 }
 
 func TestIssue25447(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -227,8 +217,7 @@ func TestIssue25447(t *testing.T) {
 }
 
 func TestIssue23602(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -246,8 +235,7 @@ func TestIssue23602(t *testing.T) {
 }
 
 func TestIssue28935(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
 	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
@@ -261,8 +249,7 @@ func TestIssue28935(t *testing.T) {
 }
 
 func TestIssue29412(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t29142_1")
@@ -274,8 +261,7 @@ func TestIssue29412(t *testing.T) {
 }
 
 func TestIssue28650(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -327,8 +313,7 @@ func TestIssue28650(t *testing.T) {
 
 func TestIssue30289(t *testing.T) {
 	fpName := "github.com/pingcap/tidb/executor/issue30289"
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -342,8 +327,7 @@ func TestIssue30289(t *testing.T) {
 }
 
 func TestIssue29498(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS t1;")
@@ -382,8 +366,7 @@ func TestIssue29498(t *testing.T) {
 }
 
 func TestIssue30971(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -410,8 +393,7 @@ func TestIssue30971(t *testing.T) {
 }
 
 func TestIndexJoin31494(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -454,8 +436,7 @@ func TestFix31038(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Instance.EnableCollectExecutionInfo = false
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t123")
@@ -466,8 +447,7 @@ func TestFix31038(t *testing.T) {
 }
 
 func TestFix31530(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -492,8 +472,7 @@ func TestFix31530(t *testing.T) {
 }
 
 func TestFix31537(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE trade (
@@ -539,8 +518,7 @@ func TestFix31537(t *testing.T) {
 }
 
 func TestIssue30382(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
@@ -572,8 +550,7 @@ func TestIssue30382(t *testing.T) {
 }
 
 func Test12201(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists e")
@@ -586,8 +563,7 @@ func Test12201(t *testing.T) {
 }
 
 func TestIssue21451(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -628,15 +604,13 @@ func TestIssue21451(t *testing.T) {
 }
 
 func TestIssue15563(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select distinct 0.7544678906163867 /  0.68234634;").Check(testkit.Rows("1.10569639842486251190"))
 }
 
 func TestIssue22231(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_issue_22231")
@@ -654,8 +628,7 @@ func TestIssue22231(t *testing.T) {
 
 // TestIssue2612 is related with https://github.com/pingcap/tidb/issues/2612
 func TestIssue2612(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t`)
@@ -674,8 +647,7 @@ func TestIssue2612(t *testing.T) {
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
 func TestIssue345(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1, t2`)
@@ -707,8 +679,7 @@ func TestIssue345(t *testing.T) {
 }
 
 func TestIssue5055(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1, t2`)
@@ -722,8 +693,7 @@ func TestIssue5055(t *testing.T) {
 
 // TestIssue4024 This tests https://github.com/pingcap/tidb/issues/4024
 func TestIssue4024(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test2")
 	tk.MustExec("use test2")
@@ -741,16 +711,14 @@ func TestIssue4024(t *testing.T) {
 }
 
 func TestIssue5666(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@profiling=1")
 	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
 }
 
 func TestIssue5341(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop table if exists test.t")
 	tk.MustExec("create table test.t(a char)")
@@ -759,8 +727,7 @@ func TestIssue5341(t *testing.T) {
 }
 
 func TestIssue16921(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -779,8 +746,7 @@ func TestIssue16921(t *testing.T) {
 }
 
 func TestIssue19100(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -795,8 +761,7 @@ func TestIssue19100(t *testing.T) {
 }
 
 func TestIssue27232(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -807,8 +772,7 @@ func TestIssue27232(t *testing.T) {
 }
 
 func TestIssue15718(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists tt;")
@@ -829,8 +793,7 @@ func TestIssue15718(t *testing.T) {
 }
 
 func TestIssue15767(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists tt;")
@@ -843,8 +806,7 @@ func TestIssue15767(t *testing.T) {
 }
 
 func TestIssue16025(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t0;")
@@ -854,8 +816,7 @@ func TestIssue16025(t *testing.T) {
 }
 
 func TestIssue16854(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -890,8 +851,7 @@ func issue20975Prepare(t *testing.T, store kv.Storage) (*testkit.TestKit, *testk
 }
 
 func TestIssue20975UpdateNoChange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1, tk2 := issue20975Prepare(t, store)
 	tk1.MustExec("begin pessimistic")
 	tk1.MustExec("update t1 set c=c")
@@ -900,8 +860,7 @@ func TestIssue20975UpdateNoChange(t *testing.T) {
 }
 
 func TestIssue20975SelectForUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1, tk2 := issue20975Prepare(t, store)
 	tk1.MustExec("begin")
 	tk1.MustExec("select * from t1 for update")
@@ -915,8 +874,7 @@ func TestIssue20975SelectForUpdate(t *testing.T) {
 }
 
 func TestIssue20975SelectForUpdatePointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1, tk2 := issue20975Prepare(t, store)
 	tk1.MustExec("begin")
 	tk1.MustExec("select * from t1 where id=1 for update")
@@ -930,8 +888,7 @@ func TestIssue20975SelectForUpdatePointGet(t *testing.T) {
 }
 
 func TestIssue20975SelectForUpdateBatchPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1, tk2 := issue20975Prepare(t, store)
 	tk1.MustExec("begin")
 	tk1.MustExec("select * from t1 where id in (1, 2) for update")
@@ -959,8 +916,7 @@ func issue20975PreparePartitionTable(t *testing.T, store kv.Storage) (*testkit.T
 }
 
 func TestIssue20975UpdateNoChangeWithPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1, tk2 := issue20975PreparePartitionTable(t, store)
 
 	tk1.MustExec("begin pessimistic")
@@ -970,8 +926,7 @@ func TestIssue20975UpdateNoChangeWithPartitionTable(t *testing.T) {
 }
 
 func TestIssue20975SelectForUpdateWithPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1, tk2 := issue20975PreparePartitionTable(t, store)
 	tk1.MustExec("begin")
 	tk1.MustExec("select * from t1 for update")
@@ -985,8 +940,7 @@ func TestIssue20975SelectForUpdateWithPartitionTable(t *testing.T) {
 }
 
 func TestIssue20975SelectForUpdatePointGetWithPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1, tk2 := issue20975PreparePartitionTable(t, store)
 	tk1.MustExec("begin")
@@ -1011,8 +965,7 @@ func TestIssue20975SelectForUpdatePointGetWithPartitionTable(t *testing.T) {
 }
 
 func TestIssue20975SelectForUpdateBatchPointGetWithPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1, tk2 := issue20975PreparePartitionTable(t, store)
 	tk1.MustExec("begin")
@@ -1047,8 +1000,7 @@ func TestIssue20975SelectForUpdateBatchPointGetWithPartitionTable(t *testing.T) 
 }
 
 func TestIssue20305(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1064,8 +1016,7 @@ func TestIssue20305(t *testing.T) {
 }
 
 func TestIssue22817(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t3")
@@ -1075,8 +1026,7 @@ func TestIssue22817(t *testing.T) {
 }
 
 func TestIssue13953(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1088,8 +1038,7 @@ func TestIssue13953(t *testing.T) {
 }
 
 func Test17780(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -1101,8 +1050,7 @@ func Test17780(t *testing.T) {
 }
 
 func TestIssue9918(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1112,16 +1060,14 @@ func TestIssue9918(t *testing.T) {
 }
 
 func Test13004(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// see https://dev.mysql.com/doc/refman/5.6/en/date-and-time-literals.html, timestamp here actually produces a datetime
 	tk.MustQuery("SELECT TIMESTAMP '9999-01-01 00:00:00'").Check(testkit.Rows("9999-01-01 00:00:00"))
 }
 
 func Test12178(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ta")
@@ -1131,8 +1077,7 @@ func Test12178(t *testing.T) {
 }
 
 func Test11883(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1158,8 +1103,7 @@ func Test11883(t *testing.T) {
 }
 
 func Test15492(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1169,8 +1113,7 @@ func Test15492(t *testing.T) {
 }
 
 func TestIssue23567(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	oriProbability := statistics.FeedbackProbability.Load()
 	statistics.FeedbackProbability.Store(1.0)
@@ -1187,8 +1130,7 @@ func TestIssue23567(t *testing.T) {
 }
 
 func TestIssue33038(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -1221,8 +1163,7 @@ func TestIssue33038(t *testing.T) {
 }
 
 func TestIssue33214(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

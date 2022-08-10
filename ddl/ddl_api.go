@@ -19,6 +19,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -46,6 +47,7 @@ import (
 	field_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -62,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -90,11 +93,11 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	// If no charset and/or collation is specified use collation_server and character_set_server
 	charsetOpt := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
-		charsetOpt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
+		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(variable.CollationServer)
 		if err != nil {
 			return err
 		}
-		charsetOpt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
+		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(variable.CharacterSetServer)
 		if err != nil {
 			return err
 		}
@@ -135,7 +138,6 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 				charsetOpt.Col = ""
 			}
 		}
-
 	}
 	dbInfo := &model.DBInfo{Name: stmt.Name}
 	chs, coll, err := ResolveCharsetCollation(charsetOpt)
@@ -285,7 +287,7 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 		}
 		for _, tbl := range dbInfo.Tables {
 			if tbl.TiFlashReplica != nil && !tbl.TiFlashReplica.Available {
-				cnt += 1
+				cnt++
 			}
 		}
 	}
@@ -494,7 +496,7 @@ func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef
 		return nil, nil
 	}
 
-	policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(placementPolicyRef.Name)
+	policy, ok := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().PolicyByName(placementPolicyRef.Name)
 	if !ok {
 		return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
 	}
@@ -762,7 +764,9 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, err
 }
 
 // OverwriteCollationWithBinaryFlag is used to handle the case like
-//   CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
+//
+//	CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
+//
 // The 'BINARY' sets the column collation to *_bin according to the table charset.
 func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
 	ignoreBinFlag := colDef.Tp.GetCharset() != "" && (colDef.Tp.GetCollate() != "" || containsColumnOption(colDef, ast.ColumnOptionCollate))
@@ -1996,6 +2000,11 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 	if err := checkGeneratedColumn(ctx, s.Cols); err != nil {
 		return errors.Trace(err)
 	}
+
+	// Check if table has a primary key if required.
+	if !ctx.GetSessionVars().InRestrictedSQL && ctx.GetSessionVars().PrimaryKeyRequired && len(tbInfo.GetPkName().String()) == 0 {
+		return infoschema.ErrTableWithoutPrimaryKey
+	}
 	if tbInfo.Partition != nil {
 		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
 			return errors.Trace(err)
@@ -2571,7 +2580,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		preSplit      func()
 		scatterRegion bool
 	)
-	val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
+	val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBScatterRegion)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
 	} else {
@@ -3086,12 +3095,16 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			err = d.AddColumn(sctx, ident, spec)
-		case ast.AlterTableAddPartitions:
+		case ast.AlterTableAddPartitions, ast.AlterTableAddLastPartition:
 			err = d.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizePartition:
 			err = errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+		case ast.AlterTableReorganizeFirstPartition:
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("MERGE FIRST PARTITION")
+		case ast.AlterTableReorganizeLastPartition:
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("SPLIT LAST PARTITION")
 		case ast.AlterTableCheckPartitions:
 			err = errors.Trace(dbterror.ErrUnsupportedCheckPartition)
 		case ast.AlterTableRebuildPartition:
@@ -3110,7 +3123,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.dropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(sctx, ident, spec)
-		case ast.AlterTableDropPartition:
+		case ast.AlterTableDropPartition, ast.AlterTableDropFirstPartition:
 			err = d.DropTablePartition(sctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
 			err = d.TruncateTablePartition(sctx, ident, spec)
@@ -3257,8 +3270,11 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.AlterTableCache(sctx, ident)
 		case ast.AlterTableNoCache:
 			err = d.AlterTableNoCache(sctx, ident)
+		case ast.AlterTableDisableKeys, ast.AlterTableEnableKeys:
+			// Nothing to do now, see https://github.com/pingcap/tidb/issues/1051
+			// MyISAM specific
 		default:
-			// Nothing to do now.
+			err = errors.Trace(dbterror.ErrUnsupportedAlterTableSpec)
 		}
 
 		if err != nil {
@@ -3617,6 +3633,20 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		Args:       []interface{}{partInfo},
 	}
 
+	if spec.Tp == ast.AlterTableAddLastPartition && spec.Partition != nil {
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			sqlMode := ctx.GetSessionVars().SQLMode
+			var buf bytes.Buffer
+			AppendPartitionDefs(partInfo, &buf, sqlMode)
+
+			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
+			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "ADD PARTITION (" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
+			defer ctx.SetValue(sessionctx.QueryString, query)
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
 	err = d.DoDDLJob(ctx, job)
 	if dbterror.ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3736,6 +3766,54 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	if spec.Tp == ast.AlterTableDropFirstPartition {
+		intervalOptions := getPartitionIntervalFromTable(ctx, meta)
+		if intervalOptions == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, does not seem like an INTERVAL partitioned table")
+		}
+		if len(spec.Partition.Definitions) != 0 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, table info already contains partition definitions")
+		}
+		spec.Partition.Interval = intervalOptions
+		err = GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
+		if err != nil {
+			return err
+		}
+		pNullOffset := 0
+		if intervalOptions.NullPart {
+			pNullOffset = 1
+		}
+		if len(spec.Partition.Definitions) == 0 ||
+			len(spec.Partition.Definitions) >= len(meta.Partition.Definitions)-pNullOffset {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, number of partitions does not match")
+		}
+		if len(spec.PartitionNames) != 0 || len(spec.Partition.Definitions) <= 1 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, given value does not generate a list of partition names to be dropped")
+		}
+		for i := range spec.Partition.Definitions {
+			spec.PartitionNames = append(spec.PartitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
+		}
+		// Use the last generated partition as First, i.e. do not drop the last name in the slice
+		spec.PartitionNames = spec.PartitionNames[:len(spec.PartitionNames)-1]
+
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			partNames := make([]string, 0, len(spec.PartitionNames))
+			sqlMode := ctx.GetSessionVars().SQLMode
+			for i := range spec.PartitionNames {
+				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
+			}
+			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
+			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "DROP PARTITION " + strings.Join(partNames, ", ") + query[syntacticStart+len(syntacticSugar):]
+			defer ctx.SetValue(sessionctx.QueryString, query)
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
 	partNames := make([]string, len(spec.PartitionNames))
 	for i, partCIName := range spec.PartitionNames {
 		partNames[i] = partCIName.L
@@ -4939,7 +5017,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 }
 
 func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
-
 	// Memory tables and system tables are not supported by TiFlash
 	if util.IsMemOrSysDB(schema.Name.L) {
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
@@ -5356,7 +5433,6 @@ func (d *ddl) dropTableObject(
 		if ok, _ := ctx.CheckTableLocked(tableInfo.Meta().ID); ok {
 			ctx.ReleaseTableLockByTableIDs([]int64{tableInfo.Meta().ID})
 		}
-
 	}
 	if len(notExistTables) > 0 && !ifExists {
 		return dropExistErr.GenWithStackByArgs(strings.Join(notExistTables, ","))
@@ -6138,6 +6214,10 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return err
 	}
 
+	if !ctx.GetSessionVars().InRestrictedSQL && ctx.GetSessionVars().PrimaryKeyRequired && isPK {
+		return infoschema.ErrTableWithoutPrimaryKey
+	}
+
 	if indexInfo == nil {
 		err = dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		if ifExists {
@@ -6254,9 +6334,21 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	switch meta.Partition.Type {
-	case model.PartitionTypeRange, model.PartitionTypeList:
+	case model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
+		}
+	case model.PartitionTypeRange:
+		if spec.Tp == ast.AlterTableAddLastPartition {
+			err := buildAddedPartitionDefs(ctx, meta, spec)
+			if err != nil {
+				return nil, err
+			}
+			spec.PartDefinitions = spec.Partition.Definitions
+		} else {
+			if len(spec.PartDefinitions) == 0 {
+				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
+			}
 		}
 	default:
 		// we don't support ADD PARTITION for all other partition types yet.
@@ -6277,6 +6369,24 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 
 	part.Definitions = defs
 	return part, nil
+}
+
+func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) error {
+	partInterval := getPartitionIntervalFromTable(ctx, meta)
+	if partInterval == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"LAST PARTITION, does not seem like an INTERVAL partitioned table")
+	}
+	if partInterval.MaxValPart {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
+	}
+
+	spec.Partition.Interval = partInterval
+
+	if len(spec.PartDefinitions) > 0 {
+		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
+	}
+	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
 }
 
 func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
@@ -6900,9 +7010,9 @@ func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore {
 		dbInfo.PlacementPolicyRef = nil
-		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		))
+		sessVars.StmtCtx.AppendNote(
+			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
 		return nil
 	}
 
@@ -6914,9 +7024,9 @@ func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error
 func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore && removeTablePlacement(tbInfo) {
-		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		))
+		sessVars.StmtCtx.AppendNote(
+			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
 		return nil
 	}
 
@@ -6941,9 +7051,9 @@ func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 func handlePartitionPlacement(ctx sessionctx.Context, partInfo *model.PartitionInfo) error {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore && removePartitionPlacement(partInfo) {
-		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		))
+		sessVars.StmtCtx.AppendNote(
+			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
 		return nil
 	}
 
@@ -6961,9 +7071,9 @@ func handlePartitionPlacement(ctx sessionctx.Context, partInfo *model.PartitionI
 func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore {
-		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		))
+		sessVars.StmtCtx.AppendNote(
+			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
 		return true
 	}
 	return false

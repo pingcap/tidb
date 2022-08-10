@@ -31,8 +31,7 @@ import (
 )
 
 func TestSetVariables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test value limit of tidb_opt_tiflash_concurrency_factor
@@ -50,8 +49,7 @@ func TestSetVariables(t *testing.T) {
 }
 
 func TestRowSizeInMPP(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -86,8 +84,7 @@ func TestRowSizeInMPP(t *testing.T) {
 }
 
 func TestEnforceMPP(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test query
@@ -120,7 +117,7 @@ func TestEnforceMPP(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	filterWarnings := func(originalWarnings []stmtctx.SQLWarn) []stmtctx.SQLWarn {
 		warnings := make([]stmtctx.SQLWarn, 0, 4)
 		for _, warning := range originalWarnings {
@@ -152,8 +149,7 @@ func TestEnforceMPP(t *testing.T) {
 
 // general cases.
 func TestEnforceMPPWarning1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test query
@@ -169,7 +165,7 @@ func TestEnforceMPPWarning1(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -223,8 +219,7 @@ func TestEnforceMPPWarning1(t *testing.T) {
 
 // partition table.
 func TestEnforceMPPWarning2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test query
@@ -253,7 +248,7 @@ func TestEnforceMPPWarning2(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -275,8 +270,7 @@ func TestEnforceMPPWarning2(t *testing.T) {
 
 // new collation.
 func TestEnforceMPPWarning3(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test query
@@ -305,7 +299,7 @@ func TestEnforceMPPWarning3(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -336,8 +330,7 @@ func TestEnforceMPPWarning3(t *testing.T) {
 
 // Test enforce mpp warning for joins
 func TestEnforceMPPWarning4(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
@@ -368,7 +361,7 @@ func TestEnforceMPPWarning4(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -390,8 +383,7 @@ func TestEnforceMPPWarning4(t *testing.T) {
 
 // Test agg push down for MPP mode
 func TestMPP2PhaseAggPushDown(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
@@ -422,7 +414,7 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -444,8 +436,7 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 
 // Test skewed group distinct aggregate rewrite for MPP mode
 func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
@@ -474,7 +465,7 @@ func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
 		Warn []string
 	}
 	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

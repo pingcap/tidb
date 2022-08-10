@@ -297,5 +297,4 @@ func TestNewAzblobStorage(t *testing.T) {
 		require.Equal(t, "user", b.GetAccountName())
 		require.Equal(t, "http://127.0.0.1:1000", b.serviceURL)
 	}
-
 }

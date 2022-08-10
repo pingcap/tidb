@@ -129,8 +129,7 @@ func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblIn
 }
 
 func TestPlacementPolicy(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -201,14 +200,14 @@ func TestPlacementPolicy(t *testing.T) {
 	tk.MustExec("drop placement policy x")
 	tk.MustGetErrCode("drop placement policy x", mysql.ErrPlacementPolicyNotExists)
 	tk.MustExec("drop placement policy if exists x")
+	//nolint:revive,all_revive
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 8239 Unknown placement policy 'x'"))
 
 	// TODO: privilege check & constraint syntax check.
 }
 
 func TestCreatePlacementPolicyWithInfo(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -303,8 +302,7 @@ func checkPolicyEquals(t *testing.T, expected *model.PolicyInfo, actual *model.P
 }
 
 func TestPlacementFollowers(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	defer tk.MustExec("drop placement policy if exists x")
@@ -347,8 +345,7 @@ func testGetPolicyByNameFromIS(t *testing.T, ctx sessionctx.Context, policy stri
 }
 
 func TestPlacementValidation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
@@ -411,8 +408,7 @@ func TestPlacementValidation(t *testing.T) {
 }
 
 func TestResetSchemaPlacement(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists TestResetPlacementDB;")
 	tk.MustExec("create placement policy `TestReset` followers=4;")
@@ -466,8 +462,7 @@ func TestResetSchemaPlacement(t *testing.T) {
 }
 
 func TestCreateOrReplacePlacementPolicy(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
@@ -495,8 +490,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 }
 
 func TestAlterPlacementPolicy(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -567,8 +561,7 @@ func TestAlterPlacementPolicy(t *testing.T) {
 }
 
 func TestCreateTableWithPlacementPolicy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -693,8 +686,7 @@ func getClonedDatabase(dom *domain.Domain, dbName string) (*model.DBInfo, bool) 
 }
 
 func TestCreateTableWithInfoPlacement(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -745,8 +737,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 }
 
 func TestCreateSchemaWithInfoPlacement(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -794,8 +785,7 @@ func TestCreateSchemaWithInfoPlacement(t *testing.T) {
 }
 
 func TestDropPlacementPolicyInUse(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create database if not exists test2")
@@ -899,8 +889,7 @@ func testGetPolicyDependency(storage kv.Storage, name string) []int64 {
 }
 
 func TestPolicyCacheAndPolicyDependency(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
@@ -973,8 +962,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 }
 
 func TestAlterTablePartitionWithPlacementPolicy(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	defer func() {
@@ -1032,8 +1020,7 @@ func testGetPartitionDefinitionsByName(t *testing.T, ctx sessionctx.Context, db 
 }
 
 func TestPolicyInheritance(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1101,7 +1088,32 @@ func TestPolicyInheritance(t *testing.T) {
 		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (200))"))
 	checkExistTableBundlesInPD(t, dom, "mydb", "t")
+	tk.MustExec("alter table t last partition less than (400)")
+	tk.MustExec("alter table t first partition less than (200)")
+	err := tk.ExecToErr("alter table t last partition less than (600) PLACEMENT POLICY=`p2`")
+	require.Error(t, err)
+	require.Equal(t, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 54 near \"PLACEMENT POLICY=`p2`\" ", err.Error())
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
+			"PARTITION BY RANGE (`a`)\n" +
+			"(PARTITION `p1` VALUES LESS THAN (200),\n" +
+			" PARTITION `P_LT_300` VALUES LESS THAN (300),\n" +
+			" PARTITION `P_LT_400` VALUES LESS THAN (400))"))
 	tk.MustExec("drop table if exists t")
+	err = tk.ExecToErr("create table t (a int) placement policy = `p2` partition by range(a) INTERVAL (100) first partition less than (100) last partition less than (300) placement policy=`p1`")
+	require.Error(t, err)
+	require.Equal(t, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 156 near \"placement policy=`p1`\" ", err.Error())
+	tk.MustExec("create table t (a int) placement policy = `p2` partition by range(a) INTERVAL (100) first partition less than (100) last partition less than (300)")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p2` */\n" +
+			"PARTITION BY RANGE (`a`)\n" +
+			"(PARTITION `P_LT_100` VALUES LESS THAN (100),\n" +
+			" PARTITION `P_LT_200` VALUES LESS THAN (200),\n" +
+			" PARTITION `P_LT_300` VALUES LESS THAN (300))"))
 
 	// test partition override table's placement rules.
 	tk.MustExec("drop table if exists t")
@@ -1116,8 +1128,7 @@ func TestPolicyInheritance(t *testing.T) {
 }
 
 func TestDatabasePlacement(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop placement policy if exists p1")
@@ -1192,8 +1203,7 @@ func TestDropDatabaseGCPlacement(t *testing.T) {
 		}
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop placement policy if exists p1")
@@ -1252,8 +1262,7 @@ func TestDropTableGCPlacement(t *testing.T) {
 		}
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0,t1")
@@ -1304,8 +1313,7 @@ func TestDropTableGCPlacement(t *testing.T) {
 }
 
 func TestAlterTablePlacement(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1385,8 +1393,7 @@ func TestDropTablePartitionGCPlacement(t *testing.T) {
 		}
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0,t1")
@@ -1466,8 +1473,7 @@ func TestDropTablePartitionGCPlacement(t *testing.T) {
 
 func TestAlterTablePartitionPlacement(t *testing.T) {
 	// clearAllBundles(t)
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tp")
@@ -1554,8 +1560,7 @@ func TestAlterTablePartitionPlacement(t *testing.T) {
 
 func TestAddPartitionWithPlacement(t *testing.T) {
 	// clearAllBundles(t)
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tp")
@@ -1626,8 +1631,7 @@ func TestAddPartitionWithPlacement(t *testing.T) {
 }
 
 func TestTruncateTableWithPlacement(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1711,8 +1715,7 @@ func TestTruncateTableGCWithPlacement(t *testing.T) {
 		}
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0,t1")
@@ -1771,8 +1774,7 @@ func TestTruncateTableGCWithPlacement(t *testing.T) {
 }
 
 func TestTruncateTablePartitionWithPlacement(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1846,8 +1848,7 @@ func TestTruncatePartitionGCWithPlacement(t *testing.T) {
 		}
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists p1")
@@ -1905,8 +1906,7 @@ func TestTruncatePartitionGCWithPlacement(t *testing.T) {
 }
 
 func TestExchangePartitionWithPlacement(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
@@ -1986,8 +1986,7 @@ func TestPDFail(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError"))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2087,8 +2086,7 @@ func TestRecoverTableWithPlacementPolicy(t *testing.T) {
 		}
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists p1")

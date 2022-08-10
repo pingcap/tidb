@@ -58,6 +58,7 @@ go_library(
 
 go_test(
     name = "infoschema_test",
+    timeout = "short",
     srcs = [
         "cache_test.go",
         "cluster_tables_test.go",

@@ -26,7 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -86,7 +86,8 @@ func (d SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateData
 	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
 }
 
-func (d SchemaTracker) createTestDB() {
+// CreateTestDB creates the `test` database, which is the default behavior of TiDB.
+func (d SchemaTracker) CreateTestDB() {
 	_ = d.CreateSchema(nil, &ast.CreateDatabaseStmt{
 		Name: model.NewCIStr("test"),
 	})
@@ -1004,7 +1005,7 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 }
 
 // TruncateTable implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error {
+func (SchemaTracker) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error {
 	return nil
 }
 
@@ -1054,32 +1055,28 @@ func (d SchemaTracker) renameTable(ctx sessionctx.Context, oldIdents, newIdents 
 }
 
 // LockTables implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
+func (SchemaTracker) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
 	return nil
 }
 
 // UnlockTables implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
+func (SchemaTracker) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
 	return nil
-
 }
 
 // CleanupTableLock implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
+func (SchemaTracker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	return nil
-
 }
 
 // UpdateTableReplicaInfo implements the DDL interface, it's no-op in DM's case.
 func (d SchemaTracker) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
 	return nil
-
 }
 
 // RepairTable implements the DDL interface, it's no-op in DM's case.
 func (d SchemaTracker) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
 	return nil
-
 }
 
 // CreateSequence implements the DDL interface, it's no-op in DM's case.
@@ -1090,30 +1087,26 @@ func (d SchemaTracker) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSe
 // DropSequence implements the DDL interface, it's no-op in DM's case.
 func (d SchemaTracker) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
 	return nil
-
 }
 
 // AlterSequence implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {
+func (SchemaTracker) AlterSequence(_ sessionctx.Context, _ *ast.AlterSequenceStmt) error {
 	return nil
 }
 
 // CreatePlacementPolicy implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error {
+func (SchemaTracker) CreatePlacementPolicy(_ sessionctx.Context, _ *ast.CreatePlacementPolicyStmt) error {
 	return nil
-
 }
 
 // DropPlacementPolicy implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error {
+func (SchemaTracker) DropPlacementPolicy(_ sessionctx.Context, _ *ast.DropPlacementPolicyStmt) error {
 	return nil
-
 }
 
 // AlterPlacementPolicy implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error {
+func (SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error {
 	return nil
-
 }
 
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
@@ -1134,7 +1127,6 @@ func (d SchemaTracker) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, pol
 // Start implements the DDL interface, it's no-op in DM's case.
 func (d SchemaTracker) Start(ctxPool *pools.ResourcePool) error {
 	return nil
-
 }
 
 // GetLease implements the DDL interface, it's no-op in DM's case.
@@ -1158,30 +1150,30 @@ func (d SchemaTracker) Stop() error {
 }
 
 // RegisterStatsHandle implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) RegisterStatsHandle(handle *handle.Handle) {}
+func (SchemaTracker) RegisterStatsHandle(handle *handle.Handle) {}
 
 // SchemaSyncer implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) SchemaSyncer() util.SchemaSyncer {
+func (SchemaTracker) SchemaSyncer() syncer.SchemaSyncer {
 	return nil
 }
 
 // OwnerManager implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) OwnerManager() owner.Manager {
+func (SchemaTracker) OwnerManager() owner.Manager {
 	return nil
 }
 
 // GetID implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) GetID() string {
+func (SchemaTracker) GetID() string {
 	return "schema-tracker"
 }
 
 // GetTableMaxHandle implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) GetTableMaxHandle(ctx *ddl.JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
+func (SchemaTracker) GetTableMaxHandle(ctx *ddl.JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
 	return nil, false, nil
 }
 
 // SetBinlogClient implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) SetBinlogClient(client *pumpcli.PumpsClient) {}
+func (SchemaTracker) SetBinlogClient(client *pumpcli.PumpsClient) {}
 
 // GetHook implements the DDL interface, it's no-op in DM's case.
 func (d SchemaTracker) GetHook() ddl.Callback {
@@ -1189,24 +1181,24 @@ func (d SchemaTracker) GetHook() ddl.Callback {
 }
 
 // SetHook implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) SetHook(h ddl.Callback) {}
+func (SchemaTracker) SetHook(h ddl.Callback) {}
 
 // GetInfoSchemaWithInterceptor implements the DDL interface.
-func (d SchemaTracker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
+func (SchemaTracker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
 	panic("not implemented")
 }
 
 // DoDDLJob implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (SchemaTracker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return nil
 }
 
 // MoveJobFromQueue2Table implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) MoveJobFromQueue2Table(b bool) error {
+func (SchemaTracker) MoveJobFromQueue2Table(b bool) error {
 	panic("implement me")
 }
 
 // MoveJobFromTable2Queue implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) MoveJobFromTable2Queue() error {
+func (SchemaTracker) MoveJobFromTable2Queue() error {
 	panic("implement me")
 }
