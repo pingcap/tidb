@@ -86,12 +86,12 @@ When `tidb_constraint_check_in_place_optimistic_only` is off, all the keys that 
 Consider the following scenario (from @cfzjywxk):
 
 ```sql
-/* init */ CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY, value int);
+/* init */ CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY, v int);
 /* init */ INSERT INTO t1 VALUES (1, 1);
 
 /* s1 */ set tidb_constraint_check_in_place_optimistic_only = off;
 /* s1 */ BEGIN PESSIMISTIC;
-/* s1 */ INSERT INTO t1 VALUES (1, 2) LAZY CHECK; -- Skip acquiring the lock. So the statement would succeed.
+/* s1 */ INSERT INTO t1 VALUES (1, 2); -- Skip acquiring the lock. So the statement would succeed.
 /* s1 */ SELECT * FROM t1 FOR UPDATE; -- Here the pessimistic lock on row key '1' would be acquired
 ```
 
@@ -150,6 +150,6 @@ With this feature enabled, we accept slight behavior changes, but we must guaran
 
 First, atomicity is not affected. Although we skip the locking phase for some of the keys, we don't skip any conflict and constraint checks that are necessary in the usual 2PC procedure. To be more secure, we can do conflict checks for the non-unique index keys just like optimistic transactions. It avoids the risk of producing duplicated write records when there are RPC retries.
 
-The uniqueness constraints are also preserved. For all the keys with a `PresumeKeyNotExists` flag, we check the constraint either when prewriting them, or when acquiring the pessimistic locks like in the case of [Locking Lazy Checked Keys](#behavior-of-locking-lazy-checked-keys) above. So we can guarantee no duplicated entry exists after committing the transaction. In the case of "delete-your-write" or "rollback to savepoint", some keys that need constraint checks may be unchanged in the end, but we will still check the constraints for them in prewrite to make sure the client does not miss any errors.
+The uniqueness constraints are also preserved. For all the keys with a `PresumeKeyNotExists` flag, we check the constraint either when prewriting them, or when acquiring the pessimistic locks like in the case of [Locking Lazy Checked Keys](#behavior-of-locking-lazy-checked-keys) above. So we can guarantee no duplicated entry exists after committing the transaction. In the case of "rollback to savepoint", some keys that need constraint checks may be unchanged in the end, but we will still check the constraints for them in prewrite to make sure the client does not miss any errors.
 
-Note that we will face the problem similar to [#24195](https://github.com/pingcap/tidb/issues/24195). When `INSERT` does not check the constraint, the result set may not always satisfy the unique constraint. But finally, such a transaction will fail to commit and will not result in any data corruption.
+Due to the "read committed" semantics of DMLs in pessimistic transactions, the late locking could succeed even if duplicated entries exist at the time of `INSERT` because other transactions remove the duplicated entry after that. From the view of our transaction, it's equivalent to the case when other transactions remove the duplicated entry before our `INSERT`. There will be no data corruption after the transaction commits.
