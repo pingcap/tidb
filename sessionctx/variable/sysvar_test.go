@@ -887,6 +887,28 @@ func TestDefaultCharsetAndCollation(t *testing.T) {
 	require.Equal(t, val, mysql.DefaultCollationName)
 }
 
+func TestInstanceConfigHasMatchingSysvar(t *testing.T) {
+	// This tests that each item in [instance] has a sysvar of the same name.
+	// The whole point of moving items to [instance] is to unify the name between
+	// config and sysvars. See: docs/design/2021-12-08-instance-scope.md#introduction
+	cfg, err := config.GetJSONConfig()
+	require.NoError(t, err)
+	var v interface{}
+	json.Unmarshal([]byte(cfg), &v)
+	data := v.(map[string]interface{})
+	for k, v := range data {
+		if k != "instance" {
+			continue
+		}
+		instanceSection := v.(map[string]interface{})
+		for instanceName := range instanceSection {
+			// Need to check there is a sysvar named instanceName.
+			sv := GetSysVar(instanceName)
+			require.NotNil(t, sv, fmt.Sprintf("config option: instance.%v requires a matching sysvar of the same name", instanceName))
+		}
+	}
+}
+
 func TestInstanceScope(t *testing.T) {
 	// Instance scope used to be settable via "SET SESSION", which is weird to any MySQL user.
 	// It is now settable via SET GLOBAL, but to work correctly a sysvar can only ever

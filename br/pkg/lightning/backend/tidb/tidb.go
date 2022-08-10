@@ -617,6 +617,10 @@ rowLoop:
 	return nil
 }
 
+func (be *tidbBackend) TotalMemoryConsume() int64 {
+	return 0
+}
+
 type stmtTask struct {
 	rows tidbRows
 	stmt string

@@ -8,8 +8,10 @@ go_library(
     deps = [
         "//br/pkg/lightning/mydump",
         "//br/pkg/storage",
+        "//errno",
         "//parser/model",
         "//store/pdtypes",
+        "//util/dbterror",
         "//util/filter",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/metapb",
@@ -18,6 +20,7 @@ go_library(
 
 go_test(
     name = "mock_test",
+    timeout = "short",
     srcs = ["mock_test.go"],
     embed = [":mock"],
     flaky = True,

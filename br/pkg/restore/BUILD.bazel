@@ -86,6 +86,7 @@ go_library(
 
 go_test(
     name = "restore_test",
+    timeout = "short",
     srcs = [
         "batcher_test.go",
         "client_test.go",

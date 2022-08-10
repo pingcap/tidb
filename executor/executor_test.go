@@ -3561,36 +3561,36 @@ func TestPointGetPreparedPlan(t *testing.T) {
 
 	ctx := context.Background()
 	// first time plan generated
-	rs, err := tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err := tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	// using the generated plan but with different params
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3"))
 
@@ -3599,98 +3599,98 @@ func TestPointGetPreparedPlan(t *testing.T) {
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	// test schema changed, cached plan should be invalidated
 	tk.MustExec("alter table t add column col4 int default 10 after c")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 
 	tk.MustExec("alter table t drop index k_b")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	tk.MustExec(`insert into t values(4, 3, 3, 11)`)
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10", "4 3 3 11"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	tk.MustExec("delete from t where a = 4")
 	tk.MustExec("alter table t add index k_b(b)")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	// use pk again
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 }
@@ -3719,12 +3719,12 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 
 	ctx := context.Background()
 	// first time plan generated
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	// using the generated plan but with different params
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
@@ -3732,7 +3732,7 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	tk1.MustExec("set autocommit = 0")
 	tk1.MustExec("begin")
 	// try to exec using point get plan(this plan should not go short path)
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
@@ -3742,7 +3742,7 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	tk2.MustExec("update t set c = c + 10 where c = 1")
 
 	// try to point get again
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
@@ -3752,11 +3752,11 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
 
 	// verify
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 11"))
 
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
 
@@ -3790,29 +3790,29 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 
 	ctx := context.Background()
 	// first time plan generated
-	rs, err := tk.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err := tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
 
 	// using the generated plan but with different params
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
 
 	// updateID2
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID2, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID2, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 8"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID2, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID2, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 10"))
@@ -3821,46 +3821,46 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 	updUkID1, _, _, err := tk.Session().PrepareStmt(`update t set c = c + 10 where b = ?`)
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().PreparedStmts[updUkID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 20"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 30"))
 
 	// test schema changed, cached plan should be invalidated
 	tk.MustExec("alter table t add column col4 int default 10 after c")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 31 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 32 10"))
 
 	tk.MustExec("alter table t drop index k_b")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 42 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 52 10"))
 
 	tk.MustExec("alter table t add unique index k_b(b)")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 62 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 72 10"))
@@ -3893,12 +3893,12 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 	require.NoError(t, err)
 
 	// first time plan generated
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
 
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
@@ -3907,7 +3907,7 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 	tk1.MustExec("set autocommit = 0")
 	tk1.MustExec("begin")
 	// try to exec using point get plan(this plan should not go short path)
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
@@ -3938,12 +3938,12 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 	// again next start a non autocommit txn
 	tk1.MustExec("set autocommit = 0")
 	tk1.MustExec("begin")
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 10"))
 
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 11"))
