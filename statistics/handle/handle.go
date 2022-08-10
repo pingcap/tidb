@@ -1119,7 +1119,8 @@ func saveTopNToStorage(ctx context.Context, exec sqlexec.SQLExecutor, tableID in
 		sql := new(strings.Builder)
 		sql.WriteString("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ")
 		for j := i; j < end; j++ {
-			val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?)", tableID, isIndex, histID, topN.TopN[j].Encoded, topN.TopN[j].Count)
+			topn := topN.TopN[j]
+			val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?)", tableID, isIndex, histID, topn.Encoded, topn.Count)
 			if j > i {
 				val = "," + val
 			}
@@ -1149,7 +1150,8 @@ func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stm
 		sql := new(strings.Builder)
 		sql.WriteString("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
 		for j := i; j < end; j++ {
-			count := hg.Buckets[j].Count
+			bucket := hg.Buckets[j]
+			count := bucket.Count
 			if j > 0 {
 				count -= hg.Buckets[j-1].Count
 			}
@@ -1166,7 +1168,7 @@ func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stm
 			if err != nil {
 				return
 			}
-			val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, isIndex, hg.ID, j, count, hg.Buckets[j].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[j].NDV)
+			val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, isIndex, hg.ID, j, count, bucket.Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), bucket.NDV)
 			if j > i {
 				val = "," + val
 			}
