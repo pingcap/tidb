@@ -56,11 +56,6 @@ const (
 	ZeroCapacity    = 0
 )
 
-// Memory constants.
-const (
-	IntMemory = int64(unsafe.Sizeof(int(0)))
-)
-
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, capacity int) *Chunk {
 	return New(fields, capacity, capacity)
