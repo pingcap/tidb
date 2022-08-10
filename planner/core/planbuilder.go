@@ -609,7 +609,7 @@ func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, pr
 	} else {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
- 
+
 	b.ctx = sctx
 	b.is = is
 	b.hintProcessor = processor
