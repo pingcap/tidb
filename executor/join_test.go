@@ -2149,8 +2149,8 @@ func TestIssue11390(t *testing.T) {
 }
 
 func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
-	plannercore.ForceUseOuterBuild4Test = true
-	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
+	plannercore.ForceUseOuterBuild4Test.Store(true)
+	defer func() { plannercore.ForceUseOuterBuild4Test.Store(false) }()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2235,8 +2235,8 @@ func TestIssue14514(t *testing.T) {
 }
 
 func TestOuterMatchStatusIssue14742(t *testing.T) {
-	plannercore.ForceUseOuterBuild4Test = true
-	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
+	plannercore.ForceUseOuterBuild4Test.Store(true)
+	defer func() { plannercore.ForceUseOuterBuild4Test.Store(false) }()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2595,9 +2595,9 @@ func TestIssue20270(t *testing.T) {
 	err := tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	require.Equal(t, executor.ErrQueryInterrupted, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk"))
-	plannercore.ForceUseOuterBuild4Test = true
+	plannercore.ForceUseOuterBuild4Test.Store(true)
 	defer func() {
-		plannercore.ForceUseOuterBuild4Test = false
+		plannercore.ForceUseOuterBuild4Test.Store(false)
 	}()
 	err = failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
 	require.NoError(t, err)
