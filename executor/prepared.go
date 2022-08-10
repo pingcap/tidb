@@ -204,7 +204,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var p plannercore.Plan
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
-	destBuilder, _ := plannercore.NewPlanBuilder(e.ctx, ret.InfoSchema, &hint.BlockHintProcessor{})
+	destBuilder, _ := plannercore.NewPlanBuilder().Init(e.ctx, ret.InfoSchema, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
 		return err
