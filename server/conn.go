@@ -1798,12 +1798,36 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 	}
 }
 
+func (cc *clientConn) handleQueryGeneralPlanCache(ctx context.Context, sql string) (ok bool, err error) {
+	sql, params, ok := plannercore.ParameterizeSQL(&cc.ctx, sql)
+	if !ok {
+		return false, nil
+	}
+	if err := (&cc.ctx).PrepareGeneralStmt(sql); err != nil {
+		return false, err
+	}
+	rs, err := (&cc.ctx).ExecuteGeneralPreparedStmt(ctx, sql, params)
+	if err != nil {
+		return false, err
+	}
+
+}
+
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
+
+	ok, err := cc.handleQueryGeneralPlanCache(ctx, sql)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)

@@ -156,6 +156,7 @@ type Session interface {
 	PrepareGeneralStmt(sql string) error
 	// ExecutePreparedStmt executes a prepared statement.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
+	ExecuteGeneralPreparedStmt(ctx context.Context, sql string, param []expression.Expression) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	// SetSessionStatesHandler sets SessionStatesHandler for type stateType.
 	SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler)
@@ -2324,14 +2325,14 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	return runStmt(ctx, s, st)
 }
 
+// ExecuteGeneralPreparedStmt ...
+func (s *session) ExecuteGeneralPreparedStmt(ctx context.Context, sql string, params []expression.Expression) (sqlexec.RecordSet, error) {
+	prepStmt := s.sessionVars.GetGeneralPreparedStmt(sql).(*plannercore.CachedPrepareStmt)
+	return s.executePreparedStmt(ctx, prepStmt, params)
+}
+
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []expression.Expression) (sqlexec.RecordSet, error) {
-	var err error
-	if err = s.PrepareTxnCtx(ctx); err != nil {
-		return nil, err
-	}
-
-	s.sessionVars.StartTime = time.Now()
 	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
 	if err != nil {
 		err = plannercore.ErrStmtNotFound
@@ -2342,8 +2343,17 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if !ok {
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
+	return s.executePreparedStmt(ctx, preparedStmt, args)
+}
 
-	execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
+func (s *session) executePreparedStmt(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt, args []expression.Expression) (sqlexec.RecordSet, error) {
+	var err error
+	if err = s.PrepareTxnCtx(ctx); err != nil {
+		return nil, err
+	}
+
+	s.sessionVars.StartTime = time.Now()
+	execStmt := &ast.ExecuteStmt{PrepStmt: preparedStmt, BinaryArgs: args}
 	if err := executor.ResetContextOfStmt(s, execStmt); err != nil {
 		return nil, err
 	}

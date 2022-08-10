@@ -670,3 +670,8 @@ func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, p
 	}
 	return ok, err
 }
+
+// ParameterizeSQL ...
+func ParameterizeSQL(sctx sessionctx.Context, sql string) (paramSQL string, params []expression.Expression, ok bool) {
+	return "", nil, false
+}
