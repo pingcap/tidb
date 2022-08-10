@@ -227,7 +227,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.ID == 0 && !e.IsGeneralStmt {
 		e.ID = vars.GetNextPreparedStmtID()
 	}
-	if e.name != "" {
+	if e.name != "" && !e.IsGeneralStmt {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 

@@ -2236,6 +2236,7 @@ func (s *session) rollbackOnError(ctx context.Context) {
 // The sql have to be parameterized, e.g. select * from t where a>?.
 func (s *session) CacheGeneralStmt(sql string) error {
 	if stmt := s.sessionVars.GetGeneralPlanCacheStmt(sql); stmt != nil {
+		// skip this step if there is already a PlanCacheStmt for this ql
 		return nil
 	}
 
