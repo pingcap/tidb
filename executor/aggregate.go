@@ -714,7 +714,7 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	memSize := getGroupKeyMemUsage(w.groupKeys)
 	w.groupKeys = w.groupKeys[:0]
 	for groupKey := range w.groupSet.StringSet {
-		w.groupKeys = append(w.groupKeys, hack.Slice(groupKey))
+		w.groupKeys = append(w.groupKeys, []byte(groupKey))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
