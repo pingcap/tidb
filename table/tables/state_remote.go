@@ -219,6 +219,14 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 			if err := h.updateRow(ctx, tid, "WRITE", ts); err != nil {
 				return errors.Trace(err)
 			}
+
+			logutil.BgLogger().Info(">> lock write once succ by clean orphan",
+				zap.Int64("tid", tid),
+				zap.Uint64("now", now),
+				zap.Stringer("lockType", lockType),
+				zap.Uint64("oldLease", lease),
+				zap.Uint64("newLease", ts))
+
 			return nil
 		}
 
@@ -232,6 +240,13 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 				_updateLocal = true
 				_lockType = CachedTableLockWrite
 				_lease = ts
+
+				logutil.BgLogger().Info(">> lock write once succ",
+					zap.Int64("tid", tid),
+					zap.Uint64("now", now),
+					zap.Uint64("oldLease", lease),
+					zap.Uint64("newLease", ts))
+
 			}
 		case CachedTableLockRead:
 			// Change from READ to INTEND
@@ -262,6 +277,14 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 					_lockType = CachedTableLockWrite
 					_lease = ts
 				}
+
+				logutil.BgLogger().Info(">> lock write once succ intend",
+					zap.Int64("tid", tid),
+					zap.Uint64("now", now),
+					zap.Uint64("oldLease", lease),
+					zap.Uint64("oldReadLease", oldReadLease),
+					zap.Uint64("newLease", ts))
+
 				return nil
 			}
 			// Otherwise, the WRITE should wait for the READ lease expire.
@@ -277,6 +300,12 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 					_lockType = CachedTableLockWrite
 					_lease = ts
 				}
+
+				logutil.BgLogger().Info(">> lock write once succ",
+					zap.Int64("tid", tid),
+					zap.Uint64("now", now),
+					zap.Uint64("oldLease", lease),
+					zap.Uint64("newLease", ts))
 			}
 		}
 		return nil
