@@ -18,11 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sync"
-	"sync/atomic"
-	"time"
-	"unsafe"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -46,6 +41,9 @@ import (
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
@@ -614,12 +612,14 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
-		partialResults[i] = make([]aggfuncs.PartialResult, len(w.aggFuncs))
+		partialResultSize := w.getPartialResultSize()
+		partialResults[i] = make([]aggfuncs.PartialResult, partialResultSize)
 		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
 			partialResults[i][j] = partialResult
-			allMemDelta += memDelta + int64(unsafe.Sizeof(partialResult)) // the memory usage of PartialResult
+			allMemDelta += memDelta // the memory usage of PartialResult
 		}
+		allMemDelta += int64(partialResultSize * 8)
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
@@ -631,6 +631,13 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(allMemDelta)
 	return partialResults
+}
+
+func (w *baseHashAggWorker) getPartialResultSize() int {
+	if len(w.aggFuncs) == 1 {
+		return 1
+	}
+	return (len(w.aggFuncs) + 1) / 2
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
