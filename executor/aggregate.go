@@ -24,13 +24,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -334,7 +334,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.executed, e.isChildDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
 	e.tmpChkForSpill = newFirstChunk(e.children[0])
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && config.GetGlobalConfig().OOMUseTmpStorage {
+	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
@@ -618,13 +618,13 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 			partialResults[i] = append(partialResults[i], partialResult)
 			allMemDelta += memDelta + 8 // the memory usage of PartialResult
 		}
-		mapper[string(groupKey[i])] = partialResults[i]
-		allMemDelta += int64(len(groupKey[i]))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		if len(mapper)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 			w.BInMap++
 		}
+		mapper[string(groupKey[i])] = partialResults[i]
+		allMemDelta += int64(len(groupKey[i]))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(allMemDelta)
@@ -1098,13 +1098,13 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 			partialResults = append(partialResults, partialResult)
 			allMemDelta += memDelta
 		}
-		e.partialResultMap[groupKey] = partialResults
-		allMemDelta += int64(len(groupKey))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(e.partialResultMap) > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		if len(e.partialResultMap)+1 > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.bInMap))
 			e.bInMap++
 		}
+		e.partialResultMap[groupKey] = partialResults
+		allMemDelta += int64(len(groupKey))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(allMemDelta)

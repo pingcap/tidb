@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -189,13 +188,12 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name         string
-	TxtProtoVars []expression.Expression // parsed variables under text protocol
-	BinProtoVars []types.Datum           // parsed variables under binary protocol
-	ExecID       uint32
-	Stmt         ast.StmtNode
-	StmtType     string
-	Plan         Plan
+	Name     string
+	Params   []expression.Expression
+	PrepStmt *CachedPrepareStmt
+	Stmt     ast.StmtNode
+	StmtType string
+	Plan     Plan
 }
 
 // Check if result of GetVar expr is BinaryLiteral
@@ -216,55 +214,31 @@ func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) 
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := sctx.GetSessionVars()
-	if e.Name != "" {
-		e.ExecID = vars.PreparedStmtNameToID[e.Name]
-	}
-	preparedPointer, ok := vars.PreparedStmts[e.ExecID]
-	if !ok {
-		return errors.Trace(ErrStmtNotFound)
-	}
-	preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
-	if !ok {
-		return errors.Errorf("invalid CachedPrepareStmt type")
-	}
+	preparedObj := e.PrepStmt
 	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
 
-	paramLen := len(e.BinProtoVars)
-	if paramLen > 0 {
-		// for binary protocol execute, argument is placed in vars.BinProtoVars
-		if len(prepared.Params) != paramLen {
-			return errors.Trace(ErrWrongParamCount)
-		}
-		vars.PreparedParams = e.BinProtoVars
-		for i, val := range vars.PreparedParams {
-			param := prepared.Params[i].(*driver.ParamMarkerExpr)
-			param.Datum = val
-			param.InExecute = true
-		}
-	} else {
-		// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
-		if len(prepared.Params) != len(e.TxtProtoVars) {
-			return errors.Trace(ErrWrongParamCount)
-		}
+	// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
+	if len(prepared.Params) != len(e.Params) {
+		return errors.Trace(ErrWrongParamCount)
+	}
 
-		for i, usingVar := range e.TxtProtoVars {
-			val, err := usingVar.Eval(chunk.Row{})
-			if err != nil {
-				return err
-			}
-			param := prepared.Params[i].(*driver.ParamMarkerExpr)
-			if isGetVarBinaryLiteral(sctx, usingVar) {
-				binVal, convErr := val.ToBytes()
-				if convErr != nil {
-					return convErr
-				}
-				val.SetBinaryLiteral(binVal)
-			}
-			param.Datum = val
-			param.InExecute = true
-			vars.PreparedParams = append(vars.PreparedParams, val)
+	for i, usingParam := range e.Params {
+		val, err := usingParam.Eval(chunk.Row{})
+		if err != nil {
+			return err
 		}
+		param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		if isGetVarBinaryLiteral(sctx, usingParam) {
+			binVal, convErr := val.ToBytes()
+			if convErr != nil {
+				return convErr
+			}
+			val.SetBinaryLiteral(binVal)
+		}
+		param.Datum = val
+		param.InExecute = true
+		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
 
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
@@ -298,7 +272,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		prepared.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
-	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.BinProtoVars, e.TxtProtoVars)
+	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.Params)
 	if err != nil {
 		return err
 	}
@@ -306,40 +280,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	e.names = names
 	e.Stmt = prepared.Stmt
 	return nil
-}
-
-// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
-func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) (string, bool) {
-	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	ignore := false
-	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
-		return "", ignore
-	}
-	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
-		return "", ignore
-	}
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
-	if bindRecord != nil {
-		enabledBinding := bindRecord.FindEnabledBinding()
-		if enabledBinding != nil {
-			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
-			return enabledBinding.BindSQL, ignore
-		}
-	}
-	globalHandle := domain.GetDomain(sctx).BindHandle()
-	if globalHandle == nil {
-		return "", ignore
-	}
-	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
-	if bindRecord != nil {
-		enabledBinding := bindRecord.FindEnabledBinding()
-		if enabledBinding != nil {
-			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
-			return enabledBinding.BindSQL, ignore
-		}
-	}
-	return "", ignore
 }
 
 // Deallocate represents deallocate plan.
@@ -666,7 +606,7 @@ func (e *Explain) prepareSchema() error {
 		e.Format = types.ExplainFormatROW
 	}
 	switch {
-	case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost:
 		if e.Analyze || e.RuntimeStatsColl != nil {
@@ -674,7 +614,7 @@ func (e *Explain) prepareSchema() error {
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
 		}
-	case format == types.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
@@ -708,7 +648,8 @@ func (e *Explain) RenderResult() error {
 	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 		pp, ok := e.TargetPlan.(PhysicalPlan)
 		if ok {
-			if _, err := pp.GetPlanCost(property.RootTaskType, CostFlagRecalculate|CostFlagUseTrueCardinality); err != nil {
+			if _, err := pp.GetPlanCost(property.RootTaskType,
+				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagUseTrueCardinality)); err != nil {
 				return err
 			}
 		} else {
@@ -878,7 +819,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
 		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			planCost, _ := pp.GetPlanCost(property.RootTaskType, 0)
+			planCost, _ := pp.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 		} else {
 			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
@@ -988,7 +929,7 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 	if op.IsPhysicalPlan {
 		p := op.Origin.(PhysicalPlan)
 		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			out.Cost, _ = p.GetPlanCost(property.RootTaskType, 0)
+			out.Cost, _ = p.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
 		} else {
 			out.Cost = p.Cost()
 		}
