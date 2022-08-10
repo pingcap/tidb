@@ -7025,17 +7025,18 @@ func TestIssue36609(t *testing.T) {
 	tk.MustQuery("select * from information_schema.statements_summary;")
 }
 
-func TestLeftShiftPushDownToTiFlash(t *testing.T) {
+func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table test.t(c1 date, c2 datetime(4))")
-	tk.MustExec("insert into test.t values('2022-01-01','2022-09-20 11:11:11.0000')")
-	tk.MustExec("insert into test.t values('2022-01-01','2022-09-20 11:11:11.1111')")
-	tk.MustExec("insert into test.t values('2022-01-01','2022-09-20 11:11:11.1234')")
-	tk.MustExec("insert into test.t values('2022-01-01','2022-09-20 11:11:11.1255')")
-	tk.MustExec("insert into test.t values('2022-01-01','2022-09-20 11:11:11.9999')")
+	tk.MustExec("create table t(a date, b datetime(4))")
+	tk.MustExec("insert into t values('2021-10-26', '2021-10-26')")
+	tk.MustExec("insert into t values('2021-10-26', '2021-10-26 11:11:11')")
+	tk.MustExec("insert into t values('2021-10-26', '2021-10-26 11:11:11.111111')")
+	tk.MustExec("insert into t values('2021-10-26', '2021-10-26 11:11:11.123456')")
+	tk.MustExec("insert into t values('2021-10-26', '2021-10-26 11:11:11.999999')")
+
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
@@ -7055,8 +7056,8 @@ func TestLeftShiftPushDownToTiFlash(t *testing.T) {
 	rows := [][]interface{}{
 		{"TableReader_9", "root", "data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
-		{"  └─Projection_4", "mpp[tiflash]", "cast(test.t.c2, time(2))->Column#4"},
+		{"  └─Projection_4", "mpp[tiflash]", "cast(test.t.b, time BINARY)->Column#4"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select cast(test.t.c2 as time(2)) from test.t;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain select cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
