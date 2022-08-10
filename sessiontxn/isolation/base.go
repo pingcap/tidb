@@ -48,7 +48,7 @@ type baseTxnContextProvider struct {
 	sctx                   sessionctx.Context
 	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
-	onTxnActive            func(kv.Transaction, sessiontxn.EnterNewTxnType)
+	onTxnActiveFunc        func(kv.Transaction, sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)
 	getStmtForUpdateTSFunc func() (uint64, error)
 
@@ -241,7 +241,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if readReplicaType.IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, readReplicaType)
 	}
-	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema))
 
 	if sessVars.StmtCtx.WeakConsistency {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
@@ -253,8 +253,8 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 
-	if p.onTxnActive != nil {
-		p.onTxnActive(txn, p.enterNewTxnType)
+	if p.onTxnActiveFunc != nil {
+		p.onTxnActiveFunc(txn, p.enterNewTxnType)
 	}
 
 	if p.sctx.GetSessionVars().InRestrictedSQL {
@@ -378,7 +378,11 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	snapshot := internal.GetSnapshotWithTS(p.sctx, snapshotTS)
+	snapshot := internal.GetSnapshotWithTS(
+		p.sctx,
+		snapshotTS,
+		temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
+	)
 
 	replicaReadType := sessVars.GetReplicaRead()
 	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
