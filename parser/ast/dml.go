@@ -1183,7 +1183,7 @@ func (n *WithClause) Accept(v Visitor) (Node, bool) {
 // Restore implements Node interface.
 func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.WithBeforeBraces {
-		defer ctx.RestoreCtx()()
+		defer ctx.RestoreCTEFunc()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1532,7 +1532,7 @@ type SetOprSelectList struct {
 // Restore implements Node interface.
 func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCtx()()
+		defer ctx.RestoreCTEFunc()()
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
 		}
@@ -1633,7 +1633,7 @@ func (*SetOprStmt) resultSet() {}
 // Restore implements Node interface.
 func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCtx()()
+		defer ctx.RestoreCTEFunc()()
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore UnionStmt.With")
 		}
@@ -2215,7 +2215,7 @@ type DeleteStmt struct {
 // Restore implements Node interface.
 func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCtx()()
+		defer ctx.RestoreCTEFunc()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -2376,7 +2376,7 @@ type UpdateStmt struct {
 // Restore implements Node interface.
 func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCtx()()
+		defer ctx.RestoreCTEFunc()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
