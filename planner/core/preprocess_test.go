@@ -35,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testValidatorSuite{})
