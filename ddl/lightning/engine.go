@@ -21,7 +21,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -31,11 +30,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-)
-
-var (
-	compactMemory      int64 = 1 * _gb
-	compactConcurrency int   = 4
 )
 
 // One engine for one index reorg task, each task will create several new writers under the
@@ -84,32 +78,18 @@ func CreateEngine(
 	engineKey string,
 	indexID int64,
 	wCnt int) (err error) {
-	var cfg backend.EngineConfig
-	cfg.Local = &backend.LocalEngineConfig{
-		Compact:            true,
-		CompactThreshold:   compactMemory,
-		CompactConcurrency: compactConcurrency,
-	}
-	// Set engine tableInfo
-	cpt := checkpoints.TidbTableInfo{
-		ID:   job.ID,
-		DB:   job.SchemaName,
-		Name: job.TableName,
-	}
-	cfg.TableInfo = &cpt
-
 	// Get a created backend to create engine under it.
 	bc := GlobalEnv.LitMemRoot.backendCache[backendKey]
-
 	// Open one engine under an existing backend.
-	en, err := bc.Backend.OpenEngine(ctx, &cfg, job.TableName, int32(indexID))
+	cfg := generateLocalEngineConfig(job.ID, job.SchemaName, job.TableName)
+	en, err := bc.Backend.OpenEngine(ctx, cfg, job.TableName, int32(indexID))
 	if err != nil {
 		errMsg := LitErrCreateEngineFail + err.Error()
 		log.L().Error(errMsg)
 		return errors.New(errMsg)
 	}
 	id := en.GetEngineUUID()
-	ei := NewEngineInfo(indexID, engineKey, &cfg, bc, en, job.TableName, id, wCnt)
+	ei := NewEngineInfo(indexID, engineKey, cfg, bc, en, job.TableName, id, wCnt)
 	GlobalEnv.LitMemRoot.EngineMgr.StoreEngineInfo(engineKey, ei)
 	bc.EngineCache[engineKey] = ei
 	return nil

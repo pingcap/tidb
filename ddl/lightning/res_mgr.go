@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -38,7 +38,7 @@ const (
 	AllocEngineInfo     defaultType = "AllocEngineInfo"
 	AllocWorkerContext  defaultType = "AllocWorkerCONTEXT"
 
-	// Used to mark the object size did not stored in map
+	// Used to mark the object size did not store in map
 	allocFailed int64 = 0
 )
 
@@ -141,21 +141,21 @@ func (m *MemoryRoot) RegisterBackendContext(ctx context.Context, unique bool, ke
 		m.updateTotalMemoryConsumption()
 		err = m.checkMemoryUsage(AllocBackendContext)
 		if err != nil {
-			log.L().Warn(LitErrAllocMemFail, zap.String("backend key", key),
+			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.String("backend key", key),
 				zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 				zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))
 			return err
 		}
 		cfg, err = generateLightningConfig(key, unique)
 		if err != nil {
-			log.L().Warn(LitErrAllocMemFail, zap.String("backend key", key),
+			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.String("backend key", key),
 				zap.String("Generate config for lightning error:", err.Error()))
 			return err
 		}
 		glue := glueLit{}
 		bd, err = createLocalBackend(ctx, cfg, glue)
 		if err != nil {
-			log.L().Error(LitErrCreateBackendFail, zap.String("backend key", key),
+			logutil.BgLogger().Error(LitErrCreateBackendFail, zap.String("backend key", key),
 				zap.String("Error", err.Error()), zap.Stack("stack trace"))
 			return err
 		}
@@ -167,7 +167,7 @@ func (m *MemoryRoot) RegisterBackendContext(ctx context.Context, unique bool, ke
 
 		// Count memory usage.
 		m.currUsage += m.structSize[string(AllocBackendContext)]
-		log.L().Info(LitInfoCreateBackend, zap.String("backend key", key),
+		logutil.BgLogger().Info(LitInfoCreateBackend, zap.String("backend key", key),
 			zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 			zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)),
 			zap.String("Unique Index:", strconv.FormatBool(unique)))
@@ -186,7 +186,7 @@ func (m *MemoryRoot) DeleteBackendContext(bcKey string) {
 	// Close backend logic
 	bc, exist := m.backendCache[bcKey]
 	if !exist {
-		log.L().Error(LitErrGetBackendFail, zap.String("backend key", bcKey))
+		logutil.BgLogger().Error(LitErrGetBackendFail, zap.String("backend key", bcKey))
 		return
 	}
 
@@ -201,7 +201,7 @@ func (m *MemoryRoot) DeleteBackendContext(bcKey string) {
 	if m.currUsage < 0 {
 		m.currUsage = 0
 	}
-	log.L().Info(LitInfoCloseBackend, zap.String("backend key", bcKey),
+	logutil.BgLogger().Info(LitInfoCloseBackend, zap.String("backend key", bcKey),
 		zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 		zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))
 }
@@ -215,20 +215,20 @@ func (m *MemoryRoot) ClearEngines(jobID int64, indexIDs ...int64) {
 			indexEngine := ei.openedEngine
 			closedEngine, err := indexEngine.Close(ei.backCtx.Ctx, ei.cfg)
 			if err != nil {
-				log.L().Error(LitErrCloseEngineErr, zap.String("Engine key", eiKey))
+				logutil.BgLogger().Error(LitErrCloseEngineErr, zap.String("Engine key", eiKey))
 			}
 			// Here the local intermediate file will be removed.
 			err = closedEngine.Cleanup(ei.backCtx.Ctx)
 			if err != nil {
-				log.L().Error(LitErrCleanEngineErr, zap.String("Engine key", eiKey))
+				logutil.BgLogger().Error(LitErrCleanEngineErr, zap.String("Engine key", eiKey))
 			}
 		}
 	}
 }
 
-// RegistEngineInfo check and allocate one EngineInfo, delete engineInfo are packed into close backend flow
+// RegisterEngineInfo check and allocate one EngineInfo, delete engineInfo are packed into close backend flow
 // The worker count means at this time the engine need pre-check memory for workers usage.
-func (m *MemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, engineKey string, indexID int64, workerCount int) (int, error) {
+func (m *MemoryRoot) RegisterEngineInfo(job *model.Job, bcKey string, engineKey string, indexID int64, workerCount int) (int, error) {
 	var err error = nil
 	m.mLock.Lock()
 	defer func() {
@@ -236,7 +236,7 @@ func (m *MemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, engineKey st
 	}()
 	bc, exist := m.backendCache[bcKey]
 	if !exist {
-		log.L().Warn(LitWarnBackendNOTExist, zap.String("Backend key", bcKey))
+		logutil.BgLogger().Warn(LitWarnBackendNOTExist, zap.String("Backend key", bcKey))
 		return 0, err
 	}
 
@@ -247,7 +247,7 @@ func (m *MemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, engineKey st
 	if !exist1 {
 		// When return workerCount is 0, means there is no memory available for lightning worker.
 		if workerCount == int(allocFailed) {
-			log.L().Warn(LitErrAllocMemFail, zap.String("Backend key", bcKey),
+			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.String("Backend key", bcKey),
 				zap.String("Engine key", engineKey),
 				zap.String("Expected worker count:", strconv.Itoa(workerCount)),
 				zap.String("Currnt alloc wroker count:", strconv.Itoa(newWorkerCount)))
@@ -257,7 +257,7 @@ func (m *MemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, engineKey st
 		m.updateTotalMemoryConsumption()
 		err = m.checkMemoryUsage(AllocEngineInfo)
 		if err != nil {
-			log.L().Warn(LitErrAllocMemFail, zap.String("Backend key", bcKey),
+			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.String("Backend key", bcKey),
 				zap.String("Engine key", engineKey),
 				zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 				zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))
@@ -276,7 +276,7 @@ func (m *MemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, engineKey st
 		// If engine exist, then add newWorkerCount.
 		en.WriterCount += newWorkerCount
 	}
-	log.L().Info(LitInfoOpenEngine, zap.String("backend key", bcKey),
+	logutil.BgLogger().Info(LitInfoOpenEngine, zap.String("backend key", bcKey),
 		zap.String("Engine key", engineKey),
 		zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 		zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)),
@@ -285,9 +285,9 @@ func (m *MemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, engineKey st
 	return newWorkerCount, nil
 }
 
-// RegistWorkerContext create one lightning local writer context for one backfill worker.
-// Also it will be clean within close backend process.
-func (m *MemoryRoot) RegistWorkerContext(engineInfoKey string, id int) (*WorkerContext, error) {
+// RegisterWorkerContext create one lightning local writer context for one backfill worker.
+// It will be clean within close backend process.
+func (m *MemoryRoot) RegisterWorkerContext(engineInfoKey string, id int) (*WorkerContext, error) {
 	var (
 		err        error
 		wCtx       *WorkerContext
@@ -301,8 +301,8 @@ func (m *MemoryRoot) RegistWorkerContext(engineInfoKey string, id int) (*WorkerC
 	m.updateTotalMemoryConsumption()
 	err = m.checkMemoryUsage(AllocWorkerContext)
 	if err != nil {
-		log.L().Error(LitErrAllocMemFail, zap.String("Engine key", engineInfoKey),
-			zap.String("worer Id:", strconv.Itoa(id)),
+		logutil.BgLogger().Error(LitErrAllocMemFail, zap.String("Engine key", engineInfoKey),
+			zap.String("worker Id:", strconv.Itoa(id)),
 			zap.String("Memory allocate:", strconv.FormatInt(memRequire, 10)),
 			zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 			zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))
@@ -312,7 +312,7 @@ func (m *MemoryRoot) RegistWorkerContext(engineInfoKey string, id int) (*WorkerC
 	wCtx = &WorkerContext{}
 	err = wCtx.InitWorkerContext(engineInfoKey, id)
 	if err != nil {
-		log.L().Error(LitErrCreateContextFail, zap.String("Engine key", engineInfoKey),
+		logutil.BgLogger().Error(LitErrCreateContextFail, zap.String("Engine key", engineInfoKey),
 			zap.String("worer Id:", strconv.Itoa(id)),
 			zap.String("Memory allocate:", strconv.FormatInt(memRequire, 10)),
 			zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
@@ -322,8 +322,8 @@ func (m *MemoryRoot) RegistWorkerContext(engineInfoKey string, id int) (*WorkerC
 
 	// Count memory usage.
 	m.currUsage += memRequire
-	log.L().Info(LitInfoCreateWrite, zap.String("Engine key", engineInfoKey),
-		zap.String("worer Id:", strconv.Itoa(id)),
+	logutil.BgLogger().Info(LitInfoCreateWrite, zap.String("Engine key", engineInfoKey),
+		zap.String("worker Id:", strconv.Itoa(id)),
 		zap.String("Memory allocate:", strconv.FormatInt(memRequire, 10)),
 		zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 		zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))
@@ -338,7 +338,7 @@ func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 	)
 	bc, exist := m.getBackendContext(bcKey, true)
 	if !exist {
-		log.L().Error(LitErrGetBackendFail, zap.String("backend key", bcKey))
+		logutil.BgLogger().Error(LitErrGetBackendFail, zap.String("backend key", bcKey))
 		return err
 	}
 	count = 0
@@ -351,7 +351,7 @@ func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 		delete(m.EngineMgr.enginePool, eiKey)
 		m.currUsage -= m.structSize[string(AllocWorkerContext)] * int64(wCnt)
 		count++
-		log.L().Info(LitInfoCloseEngine, zap.String("backend key", bcKey),
+		logutil.BgLogger().Info(LitInfoCloseEngine, zap.String("backend key", bcKey),
 			zap.String("engine id", eiKey),
 			zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 			zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))
@@ -360,7 +360,7 @@ func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 	bc.EngineCache = make(map[string]*engineInfo, 10)
 	m.currUsage -= m.structSize[string(AllocEngineInfo)] * int64(count)
 	m.engineUsage -= m.structSize[string(AllocEngineInfo)] * int64(count)
-	log.L().Info(LitInfoCloseBackend, zap.String("backend key", bcKey),
+	logutil.BgLogger().Info(LitInfoCloseBackend, zap.String("backend key", bcKey),
 		zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 		zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))
 	return err
@@ -370,7 +370,7 @@ func (m *MemoryRoot) getBackendContext(bcKey string, needLog bool) (*BackendCont
 	bc, exist := m.backendCache[bcKey]
 	if !exist {
 		if needLog {
-			log.L().Warn(LitWarnBackendNOTExist, zap.String("backend key:", bcKey))
+			logutil.BgLogger().Warn(LitWarnBackendNOTExist, zap.String("backend key:", bcKey))
 		}
 		return nil, false
 	}
@@ -443,7 +443,7 @@ func (m *MemoryRoot) workerDegree(workerCnt int, engineKey string, bcKey string)
 	return workerCnt
 }
 
-// DiskStat check total lightning disk usage and storage availale space.
+// DiskStat check total lightning disk usage and storage available space.
 func (m *MemoryRoot) DiskStat() (uint64, uint64) {
 	var totalDiskUsed int64
 	for _, bc := range m.backendCache {
@@ -452,7 +452,7 @@ func (m *MemoryRoot) DiskStat() (uint64, uint64) {
 	}
 	sz, err := common.GetStorageSize(GlobalEnv.SortPath)
 	if err != nil {
-		log.L().Error(LitErrGetStorageQuota,
+		logutil.BgLogger().Error(LitErrGetStorageQuota,
 			zap.String("OS error:", err.Error()),
 			zap.String("default disk quota", strconv.FormatInt(GlobalEnv.diskQuota, 10)))
 		return uint64(totalDiskUsed), uint64(GlobalEnv.diskQuota)

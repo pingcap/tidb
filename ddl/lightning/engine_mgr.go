@@ -43,7 +43,7 @@ func (em *EngineManager) LoadEngineInfo(key string) (*engineInfo, bool) {
 	return ei, exist
 }
 
-// ReleaseEngine delete an engineInfo from Mangager.
+// ReleaseEngine delete an engineInfo from Manager.
 func (em *EngineManager) ReleaseEngine(key string) {
 	log.L().Info(LitInfoEngineDelete, zap.String("Engine info key:", key))
 	delete(em.enginePool, key)

@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidbconf "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -53,6 +55,26 @@ func generateLightningConfig(bcKey string, unique bool) (*config.Config, error) 
 	return cfg, err
 }
 
+var (
+	compactMemory      int64 = 1 * _gb
+	compactConcurrency int   = 4
+)
+
+func generateLocalEngineConfig(id int64, db, tbName string) *backend.EngineConfig {
+	return &backend.EngineConfig{
+		Local: &backend.LocalEngineConfig{
+			Compact:            true,
+			CompactThreshold:   compactMemory,
+			CompactConcurrency: compactConcurrency,
+		},
+		TableInfo: &checkpoints.TidbTableInfo{
+			ID:   id,
+			DB:   db,
+			Name: tbName,
+		},
+	}
+}
+
 // Adjust lightning memory parameters according memory root's max limitation
 func adjustImportMemory(cfg *config.Config) {
 	var scale int64
@@ -78,7 +100,7 @@ func adjustImportMemory(cfg *config.Config) {
 
 	cfg.TikvImporter.LocalWriterMemCacheSize /= config.ByteSize(scale)
 	cfg.TikvImporter.EngineMemCacheSize /= config.ByteSize(scale)
-	// TODO: adjust range concurrency number to control total concurrency in future.
+	// TODO: adjust range concurrency number to control total concurrency in the future.
 	logutil.BgLogger().Info(LitInfoChgMemSetting,
 		zap.String("LocalWriterMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
 		zap.String("EngineMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),

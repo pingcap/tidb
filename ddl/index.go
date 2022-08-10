@@ -714,6 +714,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consistent.
 			// TODO：Should be changed after checkpoint.
 			if !canRestoreReorgTask(job, indexInfo.ID) {
+				job.SnapshotVer = 0
 				reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
 				if err != nil || reorgInfo.first {
 					return false, ver, errors.Trace(err)

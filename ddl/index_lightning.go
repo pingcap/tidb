@@ -106,7 +106,7 @@ func prepareBackend(ctx context.Context, unique bool, job *model.Job, sqlMode my
 func prepareLightningEngine(job *model.Job, indexID int64, workerCnt int) (wCnt int, err error) {
 	bcKey := lit.GenBackendContextKey(job.ID)
 	enginKey := lit.GenEngineInfoKey(job.ID, indexID)
-	wCnt, err = lit.GlobalEnv.LitMemRoot.RegistEngineInfo(job, bcKey, enginKey, indexID, workerCnt)
+	wCnt, err = lit.GlobalEnv.LitMemRoot.RegisterEngineInfo(job, bcKey, enginKey, indexID, workerCnt)
 	if err != nil {
 		lit.GlobalEnv.LitMemRoot.DeleteBackendContext(bcKey)
 	}
@@ -167,7 +167,6 @@ func canRestoreReorgTask(job *model.Job, indexID int64) bool {
 
 	// Check if backend and engine are both active in memory.
 	if !lit.CanRestoreReorgTask(job.ID, indexID) {
-		job.SnapshotVer = 0
 		return false
 	}
 	return true
@@ -178,7 +177,7 @@ type addIndexWorkerLit struct {
 	addIndexWorker
 
 	// Lightning relative variable.
-	writerContex *lit.WorkerContext
+	writerCtx *lit.WorkerContext
 }
 
 func newAddIndexWorkerLit(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext, jobID int64) (*addIndexWorkerLit, error) {
@@ -186,11 +185,11 @@ func newAddIndexWorkerLit(sessCtx sessionctx.Context, worker *worker, id int, t 
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	engineInfoKey := lit.GenEngineInfoKey(jobID, indexInfo.ID)
 
-	lwCtx, err := lit.GlobalEnv.LitMemRoot.RegistWorkerContext(engineInfoKey, id)
+	lwCtx, err := lit.GlobalEnv.LitMemRoot.RegisterWorkerContext(engineInfoKey, id)
 	if err != nil {
 		return nil, err
 	}
-	// Add build openengine process.
+	// Add build opened engine process.
 	return &addIndexWorkerLit{
 		addIndexWorker: addIndexWorker{
 			baseIndexWorker: baseIndexWorker{
@@ -205,7 +204,7 @@ func newAddIndexWorkerLit(sessCtx sessionctx.Context, worker *worker, id int, t 
 			},
 			index: index,
 		},
-		writerContex: lwCtx,
+		writerCtx: lwCtx,
 	}, err
 }
 
@@ -259,7 +258,7 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 				return errors.Trace(err)
 			}
 			// Currently, only use one kVCache, later may use multi kvCache to parallel compute/io performance.
-			err = w.writerContex.WriteRow(key, idxVal)
+			err = w.writerCtx.WriteRow(key, idxVal)
 			if err != nil {
 				return errors.Trace(err)
 			}

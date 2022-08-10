@@ -32,13 +32,13 @@ import (
 )
 
 const (
-	_kb                      = 1024
-	_mb                      = 1024 * _kb
-	_gb                      = 1024 * _mb
-	_tb                      = 1024 * _gb
-	_pb                      = 1024 * _tb
-	flushSize                = 8 * _mb
-	importThreadhold float32 = 0.15
+	_kb                     = 1024
+	_mb                     = 1024 * _kb
+	_gb                     = 1024 * _mb
+	_tb                     = 1024 * _gb
+	_pb                     = 1024 * _tb
+	flushSize               = 8 * _mb
+	importThreshold float32 = 0.15
 )
 
 // ClusterInfo store cluster info struct
@@ -101,10 +101,10 @@ func InitGlobalLightningBackendEnv() {
 	// Otherwise, the ddl maxMemLimitation is 2 GB
 	if err == nil {
 		maxMemLimit = bufferSize * 8 * _kb
-		log.L().Info(LitInfoSetMemLimit,
+		logutil.BgLogger().Info(LitInfoSetMemLimit,
 			zap.String("Memory limitation set to:", strconv.FormatUint(maxMemLimit, 10)))
 	} else {
-		log.L().Info(LitWarnGenMemLimit,
+		logutil.BgLogger().Info(LitWarnGenMemLimit,
 			zap.Error(err),
 			zap.String("will use default memory limitation:", strconv.FormatUint(maxMemLimit, 10)))
 	}
@@ -113,7 +113,7 @@ func InitGlobalLightningBackendEnv() {
 	// also if the disk quota is not a proper value
 	GlobalEnv.SortPath, err = genLightningDataDir(cfg.FastReorgLocalPath, cfg.Port)
 	if err != nil {
-		log.L().Warn(LitWarnEnvInitFail,
+		logutil.BgLogger().Warn(LitWarnEnvInitFail,
 			zap.String("Sort Path Error:", err.Error()),
 			zap.String("Lightning is initialized:", strconv.FormatBool(GlobalEnv.IsInited)))
 		return
@@ -126,7 +126,7 @@ func InitGlobalLightningBackendEnv() {
 
 	diskQuota, err = GlobalEnv.parseDiskQuota(variable.DDLDiskQuota.Load())
 	if err != nil {
-		log.L().Warn(LitWarnEnvInitFail,
+		logutil.BgLogger().Warn(LitWarnEnvInitFail,
 			zap.String("Sort Path disk quota:", err.Error()),
 			zap.String("Lightning is initialized:", strconv.FormatBool(GlobalEnv.IsInited)),
 			zap.String("Return disk quota:", strconv.FormatInt(diskQuota, 10)))
@@ -134,7 +134,7 @@ func InitGlobalLightningBackendEnv() {
 	}
 
 	GlobalEnv.IsInited = true
-	log.L().Info(LitInfoEnvInitSucc,
+	logutil.BgLogger().Info(LitInfoEnvInitSucc,
 		zap.String("Current memory usage:", strconv.FormatInt(GlobalEnv.LitMemRoot.currUsage, 10)),
 		zap.String("Memory limitation set to:", strconv.FormatUint(maxMemLimit, 10)),
 		zap.String("Sort Path disk quota:", strconv.FormatInt(GlobalEnv.diskQuota, 10)),
@@ -147,20 +147,20 @@ func InitGlobalLightningBackendEnv() {
 func (l *Env) parseDiskQuota(val int64) (int64, error) {
 	sz, err := lcom.GetStorageSize(l.SortPath)
 	if err != nil {
-		log.L().Error(LitErrGetStorageQuota,
+		logutil.BgLogger().Error(LitErrGetStorageQuota,
 			zap.String("Os error:", err.Error()),
 			zap.String("default disk quota", strconv.FormatInt(l.diskQuota, 10)))
 		return 0, err
 	}
 
-	// If the disk quato is less than 100 GB, then disable lightning
+	// If the disk quota is less than 100 GB, then disable lightning.
 	if sz.Available < uint64(GlobalEnv.diskQuota) {
-		log.L().Error(LitErrDiskQuotaLess,
+		logutil.BgLogger().Error(LitErrDiskQuotaLess,
 			zap.String("disk quota", strconv.FormatInt(int64(sz.Available), 10)))
 		return 0, errors.New(LitErrDiskQuotaLess)
 	}
 
-	// The Dist quota should be 100 GB to 1 PB
+	// The Dist quota should be 100 GB to 1 PB.
 	if val > int64(sz.Available) {
 		l.diskQuota = int64(sz.Available)
 	} else {
@@ -170,16 +170,16 @@ func (l *Env) parseDiskQuota(val int64) (int64, error) {
 	return l.diskQuota, nil
 }
 
-// Generate lightning local store dir in TiDB datadir.
-// it will append -port to be tmp_ddl surfix.
+// Generate lightning local store dir in TiDB data dir.
+// it will append -port to be tmp_ddl suffix.
 func genLightningDataDir(sortPath string, port uint) (string, error) {
-	sortPathSurfix := "/tmp_ddl-" + strconv.Itoa(int(port))
-	sortPath = filepath.Join(sortPath, sortPathSurfix)
-	defaultPath := filepath.Join("/tmp/tidb", sortPathSurfix)
-	shouldCreate := true
+	sortPathSuffix := "/tmp_ddl-" + strconv.Itoa(int(port))
+	sortPath = filepath.Join(sortPath, sortPathSuffix)
+	defaultPath := filepath.Join("/tmp/tidb", sortPathSuffix)
+
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
-			log.L().Error(LitErrStatDirFail, zap.String("Sort path:", sortPath),
+			logutil.BgLogger().Error(LitErrStatDirFail, zap.String("Sort path:", sortPath),
 				zap.String("Error:", err.Error()))
 			return defaultPath, err
 		}
@@ -188,42 +188,40 @@ func genLightningDataDir(sortPath string, port uint) (string, error) {
 		// Todo when do checkpoint should change follow logic.
 		err := os.RemoveAll(sortPath)
 		if err != nil {
-			log.L().Error(LitErrDeleteDirFail, zap.String("Sort path:", sortPath),
+			logutil.BgLogger().Error(LitErrDeleteDirFail, zap.String("Sort path:", sortPath),
 				zap.String("Error:", err.Error()))
 		}
 	}
 
-	if shouldCreate {
-		err := os.MkdirAll(sortPath, 0o700)
+	err := os.MkdirAll(sortPath, 0o700)
+	if err != nil {
+		err := os.MkdirAll(defaultPath, 0o700)
 		if err != nil {
-			err := os.MkdirAll(defaultPath, 0o700)
-			if err != nil {
-				log.L().Error(LitErrCreateDirFail, zap.String("Sort path:", sortPath),
-					zap.String("Error:", err.Error()))
-				return defaultPath, err
-			}
-			return defaultPath, nil
+			logutil.BgLogger().Error(LitErrCreateDirFail, zap.String("Sort path:", sortPath),
+				zap.String("Error:", err.Error()))
+			return defaultPath, err
 		}
+		return defaultPath, nil
 	}
-	log.L().Info(LitInfoSortDir, zap.String("data path:", sortPath))
+	logutil.BgLogger().Info(LitInfoSortDir, zap.String("data path:", sortPath))
 	return sortPath, nil
 }
 
 // NeedImportEngineData check whether need import data into TiKV, because disk available space is not enough.
 func (l *Env) NeedImportEngineData(usedStorage, availDisk uint64) bool {
-	// If Lihgting used 85% of diskQuota or there is less than 15% diskQuota left, then should ingest data to TiKV.
-	if usedStorage >= uint64((1-importThreadhold)*float32(l.diskQuota)) {
-		log.L().Info(LitInfoDiskMaxLimit, zap.String("Disk used", strconv.FormatUint(usedStorage, 10)))
+	// If Lightning used 85% of diskQuota or there is less than 15% diskQuota left, then should ingest data to TiKV.
+	if usedStorage >= uint64((1-importThreshold)*float32(l.diskQuota)) {
+		logutil.BgLogger().Info(LitInfoDiskMaxLimit, zap.String("Disk used", strconv.FormatUint(usedStorage, 10)))
 		return true
 	}
-	if availDisk <= uint64(importThreadhold*float32(l.diskQuota)) {
-		log.L().Info(LitWarnDiskShortage, zap.String("Disk available", strconv.FormatUint(availDisk, 10)))
+	if availDisk <= uint64(importThreshold*float32(l.diskQuota)) {
+		logutil.BgLogger().Info(LitWarnDiskShortage, zap.String("Disk available", strconv.FormatUint(availDisk, 10)))
 		return true
 	}
 	return false
 }
 
-// checkAndResetQuota check whether sysvar disk quota is set to a smaller value and adjust according.
+// checkAndResetQuota check whether sysVar disk quota is set to a smaller value and adjust according.
 func (l *Env) checkAndResetQuota() {
 	var newQuota int64 = variable.DDLDiskQuota.Load()
 	if newQuota == l.diskQuota {
@@ -231,10 +229,10 @@ func (l *Env) checkAndResetQuota() {
 	}
 
 	sz, err := lcom.GetStorageSize(l.SortPath)
-	// 1, When storage has enough volumn and also there at least 10% available space.
+	// 1, When storage has enough volume and also there at least 10% available space.
 	// 2, Set a small quota than before.
 	if (err != nil && sz.Capacity > uint64(newQuota) && sz.Available > uint64(newQuota/10)) || l.diskQuota >= newQuota {
-		log.L().Info(LitInfoDiskQuotaChg, zap.String("Sort Path disk quota change from", strconv.FormatInt(GlobalEnv.diskQuota, 10)),
+		logutil.BgLogger().Info(LitInfoDiskQuotaChg, zap.String("Sort Path disk quota change from", strconv.FormatInt(GlobalEnv.diskQuota, 10)),
 			zap.String("To:", strconv.FormatInt(newQuota, 10)))
 		l.diskQuota = newQuota
 	}
