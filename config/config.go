@@ -85,8 +85,8 @@ const (
 	DefExpensiveQueryTimeThreshold = 60
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
-	// DefFastReorgLocalPath is the default sort dir for add index with lightning.
-	DefFastReorgLocalPath = "/tmp/tidb"
+	// DefTempDir is the default temporary directory path for TiDB.
+	DefTempDir = "/tmp/tidb"
 )
 
 // Valid config maps
@@ -172,6 +172,7 @@ type Config struct {
 	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool   `toml:"split-table" json:"split-table"`
 	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
+	TempDir          string `toml:"temp-dir" json:"temp-dir"`
 	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
@@ -277,8 +278,6 @@ type Config struct {
 	CheckMb4ValueInUTF8        AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	EnableCollectExecutionInfo bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
-	// FastReorgLocalPath is used to specify the lighting DDL local sort path.
-	FastReorgLocalPath string `toml:"fast-reorg-local-path" json:"fast-reorg-local-path"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -814,6 +813,7 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
+	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
 	MemQuotaQuery:                1 << 30,
@@ -837,7 +837,6 @@ var defaultConf = Config{
 	TiDBEdition:                  "",
 	VersionComment:               "",
 	TiDBReleaseVersion:           "",
-	FastReorgLocalPath:           DefFastReorgLocalPath,
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
