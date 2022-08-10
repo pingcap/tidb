@@ -4414,13 +4414,8 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	}
 	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
-	// Check the column with foreign key, waiting for the default flen and decimal.
-	if fkInfo, refCol := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
-		// For now we strongly ban the all column type change for column with foreign key.
-		// Actually MySQL support change column with foreign key from varchar(m) -> varchar(m+t) and t > 0.
-		if newCol.GetType() != col.GetType() || newCol.GetFlen() != col.GetFlen() || newCol.GetDecimal() != col.GetDecimal() {
-			return nil, dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(originalColName, refCol, fkInfo.Name)
-		}
+	if err = checkColumnWithForeignKeyConstraint(is, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
+		return nil, err
 	}
 
 	// Copy index related options to the new spec.
@@ -4503,6 +4498,63 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		Args:    []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
+}
+
+func checkColumnWithForeignKeyConstraint(is infoschema.InfoSchema, tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+	if newCol.GetType() == originalCol.GetType() && newCol.GetFlen() == originalCol.GetFlen() && newCol.GetDecimal() == originalCol.GetDecimal() {
+		return nil
+	}
+	for _, referredFK := range tbInfo.ReferredForeignKeys {
+		for i, col := range referredFK.Cols {
+			if col.L == originalCol.Name.L {
+				if !is.TableExists(referredFK.ChildSchema, referredFK.ChildTable) {
+					continue
+				}
+				childTblInfo, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+				if err != nil {
+					return err
+				}
+				fk := model.FindFKInfoByName(childTblInfo.Meta().ForeignKeys, referredFK.ChildFKName.L)
+				childCol := model.FindColumnInfo(childTblInfo.Meta().Columns, fk.Cols[i].L)
+				if childCol == nil {
+					continue
+				}
+				if newCol.GetType() != childCol.GetType() {
+					return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(childCol.Name, originalCol.Name, referredFK.ChildFKName)
+				}
+				if newCol.GetFlen() < childCol.GetFlen() || newCol.GetFlen() < originalCol.GetFlen() ||
+					(newCol.GetType() == mysql.TypeNewDecimal && (newCol.GetFlen() != childCol.GetFlen() || newCol.GetDecimal() != childCol.GetDecimal())) {
+					return dbterror.ErrFkColumnCannotChangeChild.GenWithStackByArgs(originalCol.Name, referredFK.ChildFKName, referredFK.ChildSchema.L+"."+referredFK.ChildTable.L)
+				}
+			}
+		}
+	}
+
+	for _, fkInfo := range tbInfo.ForeignKeys {
+		for i, col := range fkInfo.Cols {
+			if col.L == originalCol.Name.L {
+				if !is.TableExists(fkInfo.RefSchema, fkInfo.RefTable) {
+					continue
+				}
+				referTable, err := is.TableByName(fkInfo.RefSchema, fkInfo.RefTable)
+				if err != nil {
+					return err
+				}
+				referCol := model.FindColumnInfo(referTable.Meta().Columns, fkInfo.RefCols[i].L)
+				if referCol == nil {
+					continue
+				}
+				if newCol.GetType() != referCol.GetType() {
+					return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(originalCol.Name, fkInfo.RefCols[i], fkInfo.Name)
+				}
+				if newCol.GetFlen() < referCol.GetFlen() || newCol.GetFlen() < originalCol.GetFlen() ||
+					(newCol.GetType() == mysql.TypeNewDecimal && (newCol.GetFlen() != originalCol.GetFlen() || newCol.GetDecimal() != originalCol.GetDecimal())) {
+					return dbterror.ErrFkColumnCannotChange.GenWithStackByArgs(originalCol.Name, fkInfo.Name)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.

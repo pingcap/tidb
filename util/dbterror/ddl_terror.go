@@ -396,4 +396,6 @@ var (
 	ErrTruncateIllegalFk          = ClassDDL.NewStd(mysql.ErrTruncateIllegalFk)
 	ErrForeignKeyCannotDropParent = ClassDDL.NewStd(mysql.ErrForeignKeyCannotDropParent)
 	ErrDropIndexFk                = ClassDDL.NewStd(mysql.ErrDropIndexFk)
+	ErrFkColumnCannotChange       = ClassDDL.NewStd(mysql.ErrFkColumnCannotChange)
+	ErrFkColumnCannotChangeChild  = ClassDDL.NewStd(mysql.ErrFkColumnCannotChangeChild)
 )
