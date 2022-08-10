@@ -180,11 +180,11 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 			continue
 		}
 		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count, false),
-			col.StatsLoadedStatus.ToString(), col.MemoryUsage())
+			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
 		e.histogramToRow(dbName, tblName, partitionName, idx.Info.Name.O, 1, idx.Histogram, 0,
-			idx.StatsLoadedStatus.ToString(), idx.MemoryUsage())
+			idx.StatsLoadedStatus.StatusToString(), idx.MemoryUsage())
 	}
 }
 

@@ -457,8 +457,8 @@ func (c *Column) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum, lowE
 	return float64(c.TopN.BetweenCount(lowEncoded, highEncoded)) + histBetweenCnt
 }
 
-// ToString gets the string info of StatsLoadedStatus
-func (s StatsLoadedStatus) ToString() string {
+// StatusToString gets the string info of StatsLoadedStatus
+func (s StatsLoadedStatus) StatusToString() string {
 	if !s.statsInitialized {
 		return "unInitialized"
 	}
