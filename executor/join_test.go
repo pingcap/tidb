@@ -2262,8 +2262,8 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 	// Two necessary factors to reproduce this issue:
 	// (1) taking HashLeftJoin, i.e., letting the probing tuple lay at the left side of joined tuples
 	// (2) the projection only contains a part of columns from the build side, i.e., pruning the same probe side
-	plannercore.ForcedHashLeftJoin4Test = true
-	defer func() { plannercore.ForcedHashLeftJoin4Test = false }()
+	plannercore.ForcedHashLeftJoin4Test.Store(true)
+	defer func() { plannercore.ForcedHashLeftJoin4Test.Store(false) }()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
