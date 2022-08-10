@@ -608,12 +608,12 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 	n := len(groupKey)
 	partialResults := make([][]aggfuncs.PartialResult, n)
 	allMemDelta := int64(0)
+	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
 	for i := 0; i < n; i++ {
 		var ok bool
 		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
-		partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
 		partialResults[i] = make([]aggfuncs.PartialResult, partialResultSize)
 		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
