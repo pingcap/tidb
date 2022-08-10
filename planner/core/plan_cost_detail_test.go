@@ -50,8 +50,6 @@ func TestPlanCostDetail(t *testing.T) {
 				plannercore.MemCostDetailLbl,
 				plannercore.MemCostDescLbl,
 				plannercore.DiskCostDetailLbl,
-				plannercore.DiskCostDescLbl,
-				plannercore.ProbeDiskCostDescLbl,
 			},
 		},
 		{

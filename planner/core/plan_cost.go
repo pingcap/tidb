@@ -928,23 +928,18 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 		buildCnt, probeCnt = rCnt, lCnt
 		build = p.children[1]
 	}
-	// build/probe rowCount
 	sessVars := p.ctx.GetSessionVars()
 	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
-	// build rowSize
 	rowSize := getAvgRowSize(build.statsInfo(), build.Schema())
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota) && p.storeTp != kv.TiFlash
 	// Cost of building hash table.
-	// cpu factor
 	cpuFactor := sessVars.GetCPUFactor()
 	if isMPP && p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
 		cpuFactor = sessVars.GetTiFlashCPUFactor() // use the dedicated TiFlash CPU Factor on modelVer2
 	}
 	cpuCost := buildCnt * cpuFactor
-	// memory factor
 	memoryCost := buildCnt * sessVars.GetMemoryFactor()
-	// disk factor
 	diskCost := buildCnt * sessVars.GetDiskFactor() * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
 	helper := &fullJoinRowCountHelper{
@@ -1007,8 +1002,8 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	} else {
 		diskCost = 0
 	}
-	setPhysicalHashJoinCostDetail(p, op, spill, buildCnt, probeCnt, cpuFactor,
-		rowSize, numPairs, probeCost, probeDiskCost, cpuCost, memQuota)
+	setPhysicalHashJoinCostDetail(p, op, spill, buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
+		cpuCost, probeCost, memoryCost, diskCost, probeDiskCost, memQuota)
 	return cpuCost + memoryCost + diskCost
 }
 

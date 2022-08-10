@@ -177,9 +177,10 @@ func setPhysicalIndexReaderCostDetail(p *PhysicalIndexReader, opt *physicalOptim
 	opt.appendPlanCostDetail(detail)
 }
 
-func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
-	spill bool, buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
-	probeCost, probeDiskCost, cpuCost float64, memQuota int64) {
+func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp, spill bool,
+	buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
+	cpuCost, probeCpuCost, memCost, diskCost, probeDiskCost float64,
+	memQuota int64) {
 	if opt == nil {
 		return
 	}
@@ -197,6 +198,7 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
 			HasConditions:   len(p.LeftConditions)+len(p.RightConditions) > 0,
 			Cost:            probeDiskCost,
 		},
+		Cost: diskCost,
 	}
 	memoryCostDetail := &HashJoinMemoryCostDetail{
 		Spill:         spill,
@@ -204,6 +206,7 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
 		RowSize:       rowSize,
 		BuildRowCount: buildCnt,
 		MemoryFactor:  sessVars.GetMemoryFactor(),
+		Cost:          memCost,
 	}
 	cpuCostDetail := &HashJoinCpuCostDetail{
 		BuildRowCount:     buildCnt,
@@ -214,7 +217,7 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
 			HasConditions:   len(p.LeftConditions)+len(p.RightConditions) > 0,
 			SelectionFactor: SelectionFactor,
 			ProbeRowCount:   probeCnt,
-			Cost:            probeCost,
+			Cost:            probeCpuCost,
 		},
 		HashJoinConcurrency: p.Concurrency,
 		Spill:               spill,
@@ -292,6 +295,7 @@ type HashJoinMemoryCostDetail struct {
 	RowSize       float64 `json:"rowSize"`
 	BuildRowCount float64 `json:"buildRowCount"`
 	MemoryFactor  float64 `json:"memoryFactor"`
+	Cost          float64 `json:"cost"`
 }
 
 func (h *HashJoinMemoryCostDetail) desc() string {
@@ -316,6 +320,7 @@ type HashJoinDiskCostDetail struct {
 	DiskFactor      float64                      `json:"diskFactor"`
 	RowSize         float64                      `json:"rowSize"`
 	ProbeDiskCost   *HashJoinProbeDiskCostDetail `json:"probeDiskCost"`
+	Cost            float64                      `json:"cost"`
 }
 
 func (h *HashJoinDiskCostDetail) desc() string {
