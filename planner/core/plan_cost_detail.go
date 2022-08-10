@@ -41,8 +41,8 @@ const (
 	ScanFactorLbl = "scanFactor"
 	// SelectionFactorLbl indicates selection factor
 	SelectionFactorLbl = "selectionFactor"
-	// CpuFactorLbl indicates cpu factor
-	CpuFactorLbl = "cpuFactor"
+	// CPUactorLbl indicates cpu factor
+	CPUactorLbl = "cpuFactor"
 	// MemoryFactorLbl indicates mem factor
 	MemoryFactorLbl = "memoryFactor"
 	// DiskFactorLbl indicates disk factor
@@ -262,7 +262,7 @@ type HashJoinCPUCostDetail struct {
 
 func (h *HashJoinCPUCostDetail) desc() string {
 	var cpuCostDesc string
-	buildCostDesc := fmt.Sprintf("%s*%s", BuildRowCountLbl, CpuFactorLbl)
+	buildCostDesc := fmt.Sprintf("%s*%s", BuildRowCountLbl, CPUactorLbl)
 	if h.Spill {
 		cpuCostDesc = fmt.Sprintf("%s+%s+(%s+1)*%s)+%s",
 			buildCostDesc,
@@ -281,11 +281,11 @@ func (h *HashJoinCPUCostDetail) probeCostDesc() string {
 	var probeCostDesc string
 	if h.ProbeCost.HasConditions {
 		probeCostDesc = fmt.Sprintf("(%s*%s*%s+%s*%s)/%s",
-			NumPairsLbl, CpuFactorLbl, SelectionFactorLbl,
-			ProbeRowCountLbl, CpuFactorLbl, HashJoinConcurrencyLbl)
+			NumPairsLbl, CPUactorLbl, SelectionFactorLbl,
+			ProbeRowCountLbl, CPUactorLbl, HashJoinConcurrencyLbl)
 	} else {
 		probeCostDesc = fmt.Sprintf("(%s*%s)/%s",
-			NumPairsLbl, CpuFactorLbl,
+			NumPairsLbl, CPUactorLbl,
 			HashJoinConcurrencyLbl)
 	}
 	return probeCostDesc
