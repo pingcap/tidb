@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"math"
 	"sync/atomic"
 	"time"
@@ -181,25 +182,37 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	UserVarTypes      FieldSlice
+	TxtVarTypes       FieldSlice // variable types under text protocol
+	BinVarTypes       []byte     // variable types under binary protocol
+	IsBinProto        bool       // whether this plan is under binary protocol
 	BindSQL           string
 }
 
+func (v *PlanCacheValue) varTypesUnchanged(binVarTps []byte, txtVarTps []*types.FieldType) bool {
+	if v.IsBinProto {
+		return bytes.Equal(v.BinVarTypes, binVarTps)
+	}
+	return v.TxtVarTypes.Equal(txtVarTps)
+}
+
 // NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType, bindSQL string) *PlanCacheValue {
+func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
+	isBinProto bool, binVarTypes []byte, txtVarTps []*types.FieldType, bindSQL string) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userVarTypes := make([]types.FieldType, len(userVarTps))
-	for i, tp := range userVarTps {
+	userVarTypes := make([]types.FieldType, len(txtVarTps))
+	for i, tp := range txtVarTps {
 		userVarTypes[i] = *tp
 	}
 	return &PlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
-		UserVarTypes:      userVarTypes,
+		TxtVarTypes:       userVarTypes,
+		BinVarTypes:       binVarTypes,
+		IsBinProto:        isBinProto,
 		BindSQL:           bindSQL,
 	}
 }
@@ -208,6 +221,7 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 type CachedPrepareStmt struct {
 	PreparedAst         *ast.Prepared
 	VisitInfos          []visitInfo
+	ColumnInfos         interface{}
 	Executor            interface{}
 	NormalizedSQL       string
 	NormalizedPlan      string
