@@ -81,7 +81,7 @@ var (
 			Name:      "transaction_statement_num",
 			Help:      "Bucketed histogram of statements count in each transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32768
-		}, []string{LblTxnMode, LblType})
+		}, []string{LbTxnMode, LblType})
 
 	TransactionDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -90,7 +90,7 @@ var (
 			Name:      "transaction_duration_seconds",
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-		}, []string{LblTxnMode, LblType})
+		}, []string{LbTxnMode, LblType})
 
 	StatementDeadlockDetectDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -153,7 +153,7 @@ const (
 	LblCoprType    = "copr_type"
 	LblGeneral     = "general"
 	LblInternal    = "internal"
-	LblTxnMode     = "txn_mode"
+	LbTxnMode      = "txn_mode"
 	LblPessimistic = "pessimistic"
 	LblOptimistic  = "optimistic"
 	LblStore       = "store"
@@ -165,6 +165,5 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
-	LblPhase       = "phase"
 	LblModule      = "module"
 )
