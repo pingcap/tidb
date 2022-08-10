@@ -361,12 +361,16 @@ func (b *builtinGetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk
 		varName := strings.ToLower(buf0.GetString(i))
 		if userVar, ok := sessionVars.UserVars.Vars[varName]; ok {
 			if v, ok1 := userVar.(*Constant); ok1 {
-				res, err := v.Value.ToString()
+				res, isnull, err := v.EvalString(b.ctx, input.GetRow(i))
 				if err != nil {
 					return err
 				}
-				result.AppendString(res)
-				continue
+				if isnull {
+					result.AppendNull()
+				} else {
+					result.AppendString(res)
+					continue
+				}
 			}
 		}
 		result.AppendNull()
@@ -401,8 +405,16 @@ func (b *builtinGetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		varName := strings.ToLower(buf0.GetString(i))
 		if userVar, ok := sessionVars.UserVars.Vars[varName]; ok {
 			if v, ok1 := userVar.(*Constant); ok1 {
-				i64s[i] = v.Value.GetInt64()
-				continue
+				i64, isnull, err := v.EvalInt(b.ctx, input.GetRow(i))
+				if err != nil {
+					return err
+				}
+				if isnull {
+					result.SetNull(i, true)
+				} else {
+					i64s[i] = i64
+					continue
+				}
 			}
 		}
 		result.SetNull(i, true)
@@ -437,8 +449,16 @@ func (b *builtinGetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Col
 		varName := strings.ToLower(buf0.GetString(i))
 		if userVar, ok := sessionVars.UserVars.Vars[varName]; ok {
 			if v, ok1 := userVar.(*Constant); ok1 {
-				f64s[i] = v.Value.GetFloat64()
-				continue
+				f64, isnull, err := v.EvalReal(b.ctx, input.GetRow(i))
+				if err != nil {
+					return err
+				}
+				if isnull {
+					result.SetNull(i, true)
+				} else {
+					f64s[i] = f64
+					continue
+				}
 			}
 		}
 		result.SetNull(i, true)
@@ -473,8 +493,16 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 		varName := strings.ToLower(buf0.GetString(i))
 		if userVar, ok := sessionVars.UserVars.Vars[varName]; ok {
 			if v, ok1 := userVar.(*Constant); ok1 {
-				decs[i] = *v.Value.GetMysqlDecimal()
-				continue
+				dec, isnull, err := v.EvalDecimal(b.ctx, input.GetRow(i))
+				if err != nil {
+					return err
+				}
+				if isnull {
+					result.SetNull(i, true)
+				} else {
+					decs[i] = *dec
+					continue
+				}
 			}
 		}
 		result.SetNull(i, true)
