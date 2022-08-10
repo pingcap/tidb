@@ -1684,7 +1684,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 				}
 				if types.ErrBadNumber.Equal(err) {
 					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-					return common.ErrInconsistentSchema.GenWithStackByArgs(tableName)
+					return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
 				}
 				if log.IsContextCanceledError(err) {
 					return err
