@@ -53,6 +53,7 @@ go_library(
         "//ddl/label",
         "//ddl/lightning",
         "//ddl/placement",
+        "//ddl/syncer",
         "//ddl/util",
         "//distsql",
         "//domain/infosync",
