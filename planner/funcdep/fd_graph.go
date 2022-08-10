@@ -635,10 +635,10 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //
 //		<2> constant FD from the join conditions is only used for checking other FD. We cannot keep itself.
 /*
-//			a   b  |  c     d
-//			-------+---------
-//          1   1  |  1     1
-//          1   2  | NULL NULL
+   a   b  |  c     d
+   -------+---------
+   1   1  |  1     1
+   1   2  | NULL NULL
 */
 //          left join with (a,b) * (c,d) on (a=c and d=1), some rhs rows will be substituted with null values, and FD on rhs
 //          {d=1} are lost.
