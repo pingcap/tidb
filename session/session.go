@@ -153,6 +153,8 @@ type Session interface {
 	RollbackTxn(context.Context)
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
+	// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
+	CacheGeneralStmt(sql string) error
 	// ExecutePreparedStmt executes a prepared statement.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
 	// ExecuteGeneralStmt executes a general statement.
@@ -2232,6 +2234,19 @@ func (s *session) rollbackOnError(ctx context.Context) {
 	}
 }
 
+// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
+// The sql have to be parameterized, e.g. select * from t where a>?.
+func (s *session) CacheGeneralStmt(sql string) error {
+	if stmt := s.sessionVars.GetGeneralPlanCacheStmt(sql); stmt != nil {
+		// skip this step if there is already a PlanCacheStmt for this ql
+		return nil
+	}
+
+	prepareExec := executor.NewPrepareExec(s, sql)
+	prepareExec.IsGeneralStmt = true
+	return prepareExec.Next(context.Background(), nil)
+}
+
 // PrepareStmt is used for executing prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
@@ -2331,7 +2346,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 
 // ExecuteGeneralStmt executes a general statement.
 func (s *session) ExecuteGeneralStmt(ctx context.Context, sql string, params []expression.Expression) (sqlexec.RecordSet, error) {
-	generalStmt, err := s.sessionVars.GetGeneralStmt(sql)
+	generalStmt, err := s.sessionVars.GetGeneralPlanCacheStmt(sql)
 	if err != nil {
 		err = plannercore.ErrStmtNotFound
 		logutil.Logger(ctx).Error("general statement not found", zap.String("sql", sql))
