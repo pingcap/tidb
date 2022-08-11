@@ -104,12 +104,11 @@ func TestRewriteValueForTable(t *testing.T) {
 
 	sr := MockEmptySchemasReplace(nil)
 	tableCount := 0
-	sr.OnNewTableInfo = func(ctx context.Context, tableInfo *model.TableInfo) error {
+	sr.AfterTableRewritten = func(deleted bool, tableInfo *model.TableInfo) {
 		tableCount++
 		tableInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count: 1,
 		}
-		return nil
 	}
 	newValue, needRewrite, err := sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)

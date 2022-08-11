@@ -552,6 +552,21 @@ func (rc *Client) GetTableSchema(
 	return table.Meta(), nil
 }
 
+func (rc *Client) makeSetTiFLashReplicaDDL(domain *domain.Domain, id int64, replica int64) string {
+	info := domain.InfoSchema()
+	table, ok := info.TableByID(id)
+	if !ok {
+		log.Warn("Table do not exist, skipping", zap.Int64("id", id))
+		return ""
+	}
+	schema, ok := info.SchemaByTable(table.Meta())
+	if !ok {
+		log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
+		return ""
+	}
+	return fmt.Sprintf("ALTER TABLE %s SET TIFLASH REPLICA %d", utils.EncloseDBAndTable(schema.Name.O, table.Meta().Name.O))
+}
+
 // CreatePolicies creates all policies in full restore.
 func (rc *Client) CreatePolicies(ctx context.Context, policyMap *sync.Map) error {
 	var err error
@@ -2016,6 +2031,7 @@ func (rc *Client) updatePlacementRuleForTiFlash(ctx context.Context, tableInfo *
 	if replicaInfo == nil {
 		return nil
 	}
+	log.Info("Setting placement rule for table in incremental restore.", zap.Int64("table-id", tableInfo.ID), zap.Any("replica", replicaInfo))
 	if pi := tableInfo.GetPartitionInfo(); pi != nil {
 		if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.LocationLabels, tableInfo.ID); e != nil {
 			return errors.Annotatef(e, "failed to add tiflash replica for partition")

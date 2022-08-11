@@ -62,7 +62,7 @@ type SchemasReplace struct {
 	insertDeleteRangeForTable func(jobID int64, tableIDs []int64)
 	insertDeleteRangeForIndex func(jobID int64, elementID *int64, tableID int64, indexIDs []int64)
 
-	OnNewTableInfo func(ctx context.Context, tableInfo *model.TableInfo) error
+	AfterTableRewritten func(deleted bool, tableInfo *model.TableInfo)
 }
 
 // NewTableReplace creates a TableReplace struct.
@@ -303,11 +303,8 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 		}
 	}
 
-	if sr.OnNewTableInfo != nil {
-		err := sr.OnNewTableInfo(context.TODO(), newTableInfo)
-		if err != nil {
-			return nil, false, errors.Annotatef(err, "failed when calling the hook function of table %s", newTableInfo.Name)
-		}
+	if sr.AfterTableRewritten != nil {
+		sr.AfterTableRewritten(false, newTableInfo)
 	}
 
 	// marshal to json
@@ -324,23 +321,34 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 		return nil, errors.Trace(err)
 	}
 
-	newValue, needWrite, err := sr.rewriteValue(
+	result, err := sr.rewriteValueV2(
 		e.Value,
 		cf,
 		func(value []byte) ([]byte, bool, error) {
 			return sr.rewriteTableInfo(value, dbID)
 		},
 	)
-	if err != nil || !needWrite {
+	if err != nil || !result.NeedRewrite {
 		return nil, errors.Trace(err)
 	}
 
-	newKey, needWrite, err := sr.rewriteKeyForTable(e.Key, cf, meta.ParseTableKey, meta.TableKey)
+	newTableID := 0
+	newKey, needWrite, err := sr.rewriteKeyForTable(e.Key, cf, meta.ParseTableKey, func(tableID int64) []byte {
+		newTableID = int(tableID)
+		return meta.TableKey(tableID)
+	})
 	if err != nil || !needWrite {
 		return nil, errors.Trace(err)
 	}
+	// NOTE: the normal path is in the `SchemaReplace.rewriteTableInfo`
+	//       for now, we rewrite key and value separately hence we cannot
+	//       get a view of (is_delete, table_id, table_info) at the same time :(.
+	//       Maybe we can extract the rewrite part from rewriteTableInfo.
+	if result.Deleted && sr.AfterTableRewritten != nil {
+		sr.AfterTableRewritten(true, &model.TableInfo{ID: int64(newTableID)})
+	}
 
-	return &kv.Entry{Key: newKey, Value: newValue}, nil
+	return &kv.Entry{Key: newKey, Value: result.NewValue}, nil
 }
 
 func (sr *SchemasReplace) rewriteEntryForAutoTableIDKey(e *kv.Entry, cf string) (*kv.Entry, error) {
@@ -385,34 +393,73 @@ func (sr *SchemasReplace) rewriteEntryForAutoRandomTableIDKey(e *kv.Entry, cf st
 	return &kv.Entry{Key: newKey, Value: e.Value}, nil
 }
 
+type rewriteResult struct {
+	Deleted     bool
+	NeedRewrite bool
+	NewValue    []byte
+}
+
+// rewriteValueV2 likes rewriteValueV1, but provides a richer return value.
+func (sr *SchemasReplace) rewriteValueV2(value []byte, cf string, rewrite func([]byte) ([]byte, bool, error)) (rewriteResult, error) {
+	switch cf {
+	case DefaultCF:
+		newValue, needRewrite, err := rewrite(value)
+		if err != nil {
+			return rewriteResult{}, nil
+		}
+		return rewriteResult{
+			NeedRewrite: needRewrite,
+			NewValue:    newValue,
+			Deleted:     false,
+		}, nil
+	case WriteCF:
+		rawWriteCFValue := new(RawWriteCFValue)
+		if err := rawWriteCFValue.ParseFrom(value); err != nil {
+			return rewriteResult{}, errors.Trace(err)
+		}
+
+		if rawWriteCFValue.t == WriteTypeDelete {
+			return rewriteResult{
+				NewValue:    value,
+				NeedRewrite: true,
+				Deleted:     true,
+			}, nil
+		}
+		if !rawWriteCFValue.HasShortValue() {
+			return rewriteResult{
+				NewValue:    value,
+				NeedRewrite: true,
+			}, nil
+		}
+
+		shortValue, needWrite, err := rewrite(rawWriteCFValue.GetShortValue())
+		if err != nil {
+			return rewriteResult{}, errors.Trace(err)
+		}
+		if !needWrite {
+			return rewriteResult{
+				NeedRewrite: false,
+			}, nil
+		}
+
+		rawWriteCFValue.UpdateShortValue(shortValue)
+		return rewriteResult{NewValue: rawWriteCFValue.EncodeTo(), NeedRewrite: true}, nil
+	default:
+		panic(fmt.Sprintf("not support cf:%s", cf))
+	}
+
+}
+
 func (sr *SchemasReplace) rewriteValue(
 	value []byte,
 	cf string,
 	cbRewrite func([]byte) ([]byte, bool, error),
 ) ([]byte, bool, error) {
-	switch cf {
-	case DefaultCF:
-		return cbRewrite(value)
-	case WriteCF:
-		rawWriteCFValue := new(RawWriteCFValue)
-		if err := rawWriteCFValue.ParseFrom(value); err != nil {
-			return nil, false, errors.Trace(err)
-		}
-
-		if !rawWriteCFValue.HasShortValue() {
-			return value, true, nil
-		}
-
-		shortValue, needWrite, err := cbRewrite(rawWriteCFValue.GetShortValue())
-		if err != nil || !needWrite {
-			return nil, needWrite, errors.Trace(err)
-		}
-
-		rawWriteCFValue.UpdateShortValue(shortValue)
-		return rawWriteCFValue.EncodeTo(), true, nil
-	default:
-		panic(fmt.Sprintf("not support cf:%s", cf))
+	r, err := sr.rewriteValueV2(value, cf, cbRewrite)
+	if err != nil {
+		return nil, false, err
 	}
+	return r.NewValue, r.NeedRewrite, nil
 }
 
 // RewriteKvEntry uses to rewrite tableID/dbID in entry.key and entry.value
