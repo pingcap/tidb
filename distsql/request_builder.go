@@ -163,7 +163,7 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 		builder.Request.Tp = kv.ReqTypeAnalyze
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
-		builder.Request.IsolationLevel = kv.SI
+		builder.Request.IsolationLevel = kv.RC
 		builder.Request.Priority = kv.PriorityLow
 	}
 
