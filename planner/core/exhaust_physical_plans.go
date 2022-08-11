@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -366,11 +367,11 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 
 // ForceUseOuterBuild4Test is a test option to control forcing use outer input as build.
 // TODO: use hint and remove this variable
-var ForceUseOuterBuild4Test = false
+var ForceUseOuterBuild4Test = atomic.NewBool(false)
 
 // ForcedHashLeftJoin4Test is a test option to force using HashLeftJoin
 // TODO: use hint and remove this variable
-var ForcedHashLeftJoin4Test = false
+var ForcedHashLeftJoin4Test = atomic.NewBool(false)
 
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
@@ -381,21 +382,21 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 	case LeftOuterJoin:
-		if ForceUseOuterBuild4Test {
+		if ForceUseOuterBuild4Test.Load() {
 			joins = append(joins, p.getHashJoin(prop, 1, true))
 		} else {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 			joins = append(joins, p.getHashJoin(prop, 1, true))
 		}
 	case RightOuterJoin:
-		if ForceUseOuterBuild4Test {
+		if ForceUseOuterBuild4Test.Load() {
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		} else {
 			joins = append(joins, p.getHashJoin(prop, 0, false))
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		}
 	case InnerJoin:
-		if ForcedHashLeftJoin4Test {
+		if ForcedHashLeftJoin4Test.Load() {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 		} else {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
