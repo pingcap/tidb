@@ -10,7 +10,6 @@ go_test(
         "session_fail_test.go",
     ],
     flaky = True,
-    shard_count = 50,
     deps = [
         "//config",
         "//executor",
