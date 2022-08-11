@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1815,7 +1814,7 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	args := []types.Datum{types.NewDatum(3401544)}
+	args := expression.Args2Expressions4Test(3401544)
 	is := se.GetInfoSchema()
 
 	b.ResetTimer()

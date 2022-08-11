@@ -9,7 +9,6 @@ go_library(
         "//kv",
         "//sessionctx",
         "//sessionctx/variable",
-        "//table/temptable",
         "//util/logutil",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@org_uber_go_zap//:zap",
