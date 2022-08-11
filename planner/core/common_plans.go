@@ -16,14 +16,12 @@ package core
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
@@ -190,7 +188,6 @@ type Execute struct {
 	Params   []expression.Expression
 	PrepStmt *PlanCacheStmt
 	Stmt     ast.StmtNode
-	StmtType string
 	Plan     Plan
 }
 
@@ -207,20 +204,6 @@ func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) 
 		}
 	}
 	return res
-}
-
-// OptimizePreparedPlan optimizes the prepared statement.
-func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
-	preparedObj := e.PrepStmt
-	prepared := preparedObj.PreparedAst
-	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.Params)
-	if err != nil {
-		return err
-	}
-	e.Plan = plan
-	e.names = names
-	e.Stmt = prepared.Stmt
-	return nil
 }
 
 // Deallocate represents deallocate plan.
