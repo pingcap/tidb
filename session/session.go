@@ -2508,7 +2508,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	if err != nil {
 		return dbterror.ClassSession.NewStd(mysql.ErrAccessDenied).FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if err = pm.ConnectionVerification(authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
+	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
 		return err
 	}
 	user.AuthUsername = authUser.Username

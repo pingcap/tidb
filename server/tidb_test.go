@@ -193,6 +193,7 @@ func TestAuth(t *testing.T) {
 
 	ts.runTestAuth(t)
 	ts.runTestIssue3682(t)
+	// TODO: Test account lock here
 }
 
 func TestIssues(t *testing.T) {
