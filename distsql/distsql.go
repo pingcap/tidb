@@ -21,7 +21,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -154,13 +153,6 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
-	failpoint.Inject("assertAnalyzeIsolationLevel", func(val failpoint.Value) {
-		if val.(bool) {
-			if kvReq.IsolationLevel != kv.SI {
-				panic("Analyze request's IsolationLevel should be SI")
-			}
-		}
-	})
 
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
 	kvReq.RequestSource.RequestSourceInternal = true

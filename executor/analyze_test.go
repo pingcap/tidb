@@ -21,7 +21,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -338,16 +337,4 @@ func TestAnalyzePartitionTableForFloat(t *testing.T) {
 		tk.MustExec(sql)
 	}
 	tk.MustExec("analyze table t1")
-}
-
-// fix https://github.com/pingcap/tidb/issues/36983
-func TestAnalyzeIsolationLevel(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int);")
-	tk.MustExec("insert into t values (1);")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/distsql/assertAnalyzeIsolationLevel", `return(true)`))
-	tk.MustExec("analyze table t")
-	failpoint.Disable("github.com/pingcap/tidb/distsql/assertAnalyzeIsolationLevel")
 }
