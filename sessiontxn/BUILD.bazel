@@ -37,6 +37,7 @@ go_test(
         "//sessionctx",
         "//sessiontxn/internal",
         "//sessiontxn/staleread",
+        "//table/temptable",
         "//tablecodec",
         "//testkit",
         "//testkit/testfork",
