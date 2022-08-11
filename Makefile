@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test bazel_warn_cache bazel_golangcilinter
 
 default: server buildsucc
 
@@ -29,7 +29,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
-check-setup:tools/bin/revive
+check-setup:lint
 
 check: check-file-perm check-parallel lint tidy testSuite errdoc bazel_golangcilinter bazel_all_build
 
@@ -37,8 +37,11 @@ fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-check-static: tools/bin/golangci-lint
-	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
+check-static:
+ifeq ("$(JenkinsCI)", "0")
+	@GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
+endif
 
 check-file-perm:
 	@echo "check file permission"
@@ -52,9 +55,12 @@ errdoc:tools/bin/errdoc-gen
 	@echo "generator errors.toml"
 	./tools/check/check-errdoc.sh
 
-lint:tools/bin/revive
+lint:
+ifeq ("$(JenkinsCI)", "0")
 	@echo "linting"
+	@GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@latest
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+endif
 
 vet:
 	@echo "vet"
@@ -208,18 +214,11 @@ tools/bin/xprog: tools/check/xprog.go
 	cd tools/check; \
 	$(GO) build -o ../bin/xprog xprog.go
 
-tools/bin/revive:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@v1.2.1
-
 tools/bin/failpoint-ctl:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@2eaa328
 
 tools/bin/errdoc-gen:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/errors/errdoc-gen@518f63d
-
-tools/bin/golangci-lint:
-	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
 
 tools/bin/vfsgendev:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
@@ -385,47 +384,43 @@ dumpling_bins:
 generate_grafana_scripts:
 	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
 
-bazel_ci_prepare:
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
-
 bazel_prepare:
-	bazel run //:gazelle
+	bazel $(BAZEL_LOCAL_CACHE) run $(BAZEL_CMD_CONFIG) //:gazelle
 
-bazel_test: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
+bazel_test: failpoint-enable bazel_prepare
+	bazel $(BAZEL_LOCAL_CACHE) test $(BAZEL_CMD_CONFIG) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
-
-bazel_coverage_test: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
+bazel_coverage_test: failpoint-enable bazel_prepare
+	bazel $(BAZEL_LOCAL_CACHE) coverage $(BAZEL_CMD_CONFIG) \
 		--build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
+	bazel $(BAZEL_LOCAL_CACHE) coverage $(BAZEL_CMD_CONFIG) \
 		--build_event_json_file=bazel_2.json --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=featuretag \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
-bazel_all_build: bazel_ci_prepare
+bazel_all_build: bazel_prepare
 	mkdir -p bin
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+	bazel $(BAZEL_LOCAL_CACHE) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=true
 
-bazel_build: bazel_ci_prepare
+bazel_build: bazel_prepare
 	mkdir -p bin
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+	bazel $(BAZEL_LOCAL_CACHE) build $(BAZEL_CMD_CONFIG) \
 		//cmd/importer:importer //tidb-server:tidb-server //tidb-server:tidb-server-check --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
 
-bazel_fail_build:  failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+bazel_fail_build:  failpoint-enable bazel_prepare
+	bazel $(BAZEL_LOCAL_CACHE) build $(BAZEL_CMD_CONFIG) \
 		//...
 
 bazel_clean:
-	bazel $(BAZEL_GLOBAL_CONFIG) clean
+	bazel $(BAZEL_LOCAL_CACHE) clean
 
 bazel_junit:
 	bazel_collect
@@ -433,7 +428,10 @@ bazel_junit:
 	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
 
 bazel_golangcilinter:
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
+	bazel $(BAZEL_LOCAL_CACHE) run $(BAZEL_CMD_CONFIG) \
 		--run_under="cd $(CURDIR) && " \
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
 	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml
+
+bazel_warn_cache: bazel_coverage_test
+	bazel $(BAZEL_LOCAL_CACHE) build $(BAZEL_CMD_CONFIG) @com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint
