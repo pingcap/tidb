@@ -79,7 +79,7 @@ message PrewriteRequest {
 
 Because `enum` is compatible with `bool` on the wire, we can seamlessly extend the  `is_pessimistic_lock` field. In a TiDB cluster, TiKV instances are upgraded before TiDB. So, we can make sure TiKV can handle it correctly when TiDB starts using the new protocol.
 
-When `tidb_constraint_check_in_place_optimistic_only` is off, all the keys that have `PresumeKeyNotExists` flags don't need to be locked when executing the DML. When the transaction commits, TiDB will set the actions of these keys to `DO_CONSTRAINT_CHECK`. So, TiKV will not check the existence of pessimistic transactions of these keys. Instead, constraint checks should be done for these keys.
+When `tidb_constraint_check_in_place_optimistic_only` is off, all the keys that have `PresumeKeyNotExists` flags don't need to be locked when executing the DML. They will be marked with a new special flag `NeedConflictCheckInPrewrite`. When the transaction commits, TiDB will set the actions of these keys to `DO_CONSTRAINT_CHECK`. So, TiKV will not check the existence of pessimistic transactions of these keys. Instead, constraint checks should be done for these keys.
 
 #### Behavior of locking lazy checked keys
 
@@ -95,11 +95,11 @@ Consider the following scenario (from @cfzjywxk):
 /* s1 */ SELECT * FROM t1 FOR UPDATE; -- Here the pessimistic lock on row key '1' would be acquired
 ```
 
-The `INSERT` statement puts the row with `id = 1` in the transaction write buffer of TiDB without checking the constraint. The later `SELECT FOR UPDATE` will read and lock the row with `id = 1` in TiKV. If the `SELECT FOR UPDATE` succeeded, it would be difficult to decide the result set. Returning `(1, 1), (1, 2)` breaks the unique constraint, while returning `(1, 1)` or `(1, 2)` may be all strange semantically.
+The `INSERT` statement puts the row with `id = 1` in the transaction write buffer of TiDB without checking the constraint. The later `SELECT FOR UPDATE` will read and lock the row with `id = 1` in TiKV. If the `SELECT FOR UPDATE` succeeded, it would be difficult to decide the result set. Returning `(1, 1), (1, 2)` breaks the unique constraint, while returning `(1, 1)` or `(1, 2)` may be all strange semantically. Using the wrong result set for following operations may even cause data inconsistency.
 
-So, we choose to do the missing constraint check when acquiring locks. Whenever we are going to acquire the pessimistic lock of a key with a `PresumeKeyNotExists` flag that is already in the write buffer, we will bring the constraint check to TiKV immediately.
+So, we choose to do the missing constraint check and locking whenever a key that skipped constraint check before is read from the transaction buffer. In union scan or point get executors, if we involve any key in the buffer with a `NeedConflictCheckInPrewrite` flag, we will reset the flag and add it again to the staging buffer. Later, we can acquire locks and check the constraints for these keys. In this way, the result set will not break any constraint.
 
-This means the `SELECT FOR UPDATE` will throw a "duplicate entry" error in the case above. It may be strange that a read-only statement raises errors like this. We should make the user aware of the behavior.
+This means the read-only statements like the `SELECT FOR UPDATE` above will throw a "duplicate entry" error in the case above. It may be strange that a read-only statement raises errors like this. We should make the user aware of the behavior.
 
 ### Applicable Scenarios
 
