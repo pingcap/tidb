@@ -548,12 +548,14 @@ func validateReadConsistencyLevel(val string) error {
 	}
 }
 
+// GetUserVar get the value and type of user variables.
 func (s *SessionVars) GetUserVar(name string) (types.Datum, bool, *types.FieldType, bool) {
 	dt, ok1 := s.userVars.vars[name]
 	ft, ok2 := s.userVars.types[name]
 	return dt, ok1, ft, ok2
 }
 
+// SetUserVar set the value and type of user variables.
 func (s *SessionVars) SetUserVar(name string, dt types.Datum, ft *types.FieldType) {
 	s.userVars.vars[name] = dt
 	s.userVars.types[name] = ft
