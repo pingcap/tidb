@@ -437,3 +437,23 @@ bazel_golangcilinter:
 		--run_under="cd $(CURDIR) && " \
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
 	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml
+
+bazel_brietest:
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
+		-- //tests/realtikvtest/biretest/....
+
+bazel_pessimistictest:
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
+		-- //tests/realtikvtest/pessimistictest/....
+
+bazel_sessiontest:
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
+		-- //tests/realtikvtest/sessiontest/....
+
+bazel_statisticstest:
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
+		-- //tests/realtikvtest/statisticstest/....
+
+bazel_txntest:
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
+		-- //tests/realtikvtest/txntest/....
