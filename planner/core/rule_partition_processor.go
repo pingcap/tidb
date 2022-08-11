@@ -975,6 +975,56 @@ func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expres
 							panic("Not a constant!?!")
 						}
 					}
+					if len(res.Ranges[idx].LowVal) < len(columnsPruner.lessThan[i]) {
+						// Not all columns given
+						if res.Ranges[idx].LowExclude {
+							// prefix cols > const, do not include this partition
+							return false
+						}
+
+						colIdx := len(res.Ranges[idx].LowVal)
+						col := columnsPruner.partCols[colIdx]
+						conExpr := columnsPruner.lessThan[i][colIdx]
+						if conExpr == nil {
+							// MAXVALUE
+							return true
+						}
+
+						// Possible to optimize by getting minvalue of the column type of
+						// and if lessThan is equal to that
+						// we can return false, since the partition definition is
+						// LESS THAN (..., colN, minvalofColM, ... ) which cannot match colN == LowVal
+						if !mysql.HasNotNullFlag(col.RetType.GetFlag()) {
+							// TODO: Check if NULL can be part of the partitioning expression?
+							// NULL is allowed and will be considered as lower than any other value
+							// so this partition needs to be included!
+							return true
+						}
+						if con, ok := (*conExpr).(*expression.Constant); ok && col != nil {
+							switch col.RetType.EvalType() {
+							case types.ETInt:
+								if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
+									if con.Value.GetUint64() == 0 {
+										return false
+									}
+								} else {
+									if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetType().GetType()) {
+										return false
+									}
+								}
+							case types.ETDatetime:
+								// TODO: Check issue with ZERO DATE and INTERVAL partitioning's NULL PARTITION
+								if con.Value.GetMysqlTime().IsZero() {
+									return false
+								}
+							case types.ETString:
+								if len(con.Value.GetString()) == 0 {
+									return false
+								}
+							}
+						}
+						return true
+					}
 					return false
 				}
 				maxComparer := func(i int) bool {
@@ -1013,7 +1063,7 @@ func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expres
 				}
 				rangeOr = append(rangeOr, partitionRange{start, end})
 			}
-			return result.intersection(rangeOr)
+			return result.intersection(rangeOr).simplify()
 		}
 	}
 	for i := 0; i < len(exprs); i++ {

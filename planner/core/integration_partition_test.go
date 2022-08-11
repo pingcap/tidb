@@ -1259,7 +1259,17 @@ func TestRangeColumnsTemp(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database RColumnsMulti")
 	tk.MustExec("use RColumnsMulti")
-	tk.MustExec(`create table t (a int, b datetime, c varchar(255), key (a,b,c))`)
+	tk.MustExec(`create table t (a int, b datetime, c varchar(255), key (a,b,c))` +
+		` partition by range columns (a,b,c) ` +
+		`(partition p0 values less than (-2147483648, '0000-01-01', ""),` +
+		` partition p1 values less than (-2147483648, '0001-01-01', ""),` +
+		` partition p2 values less than (-2, '0001-01-01', ""),` +
+		` partition p3 values less than (0, '0001-01-01', ""),` +
+		` partition p4 values less than (0, '2031-01-01', ""),` +
+		` partition p5 values less than (0, '2031-01-01', "Wow"),` +
+		` partition p6 values less than (0, '2031-01-01', MAXVALUE),` +
+		` partition p7 values less than (0, MAXVALUE, MAXVALUE),` +
+		` partition p8 values less than (MAXVALUE, MAXVALUE, MAXVALUE))`)
 	tk.MustGetErrCode(`insert into t values (`+strconv.FormatInt(math.MinInt32, 10)+`,'0000-00-00',null)`, mysql.ErrTruncatedWrongValue)
 	tk.MustExec(`insert into t values (NULL,NULL,NULL)`)
 	tk.MustExec(`set @@sql_mode = ''`)
@@ -1273,9 +1283,66 @@ func TestRangeColumnsTemp(t *testing.T) {
 	tk.MustExec(`insert into t values (10,'2022-01-01',"Hi")`)
 	tk.MustExec(`insert into t values (10,'2022-01-01',"Wow")`)
 	tk.MustExec(`insert into t values (11,'2022-01-01',"Wow")`)
+	tk.MustExec(`insert into t values (0,'2020-01-01',"Wow")`)
 	tk.MustExec(`insert into t values (1,null,"Wow")`)
 	tk.MustExec(`insert into t values (NULL,'2022-01-01',"Wow")`)
 	tk.MustExec(`insert into t values (11,null,"Wow")`)
-	tk.MustExec(`select a,b from t where b = '2022-01-01'`)
-	tk.MustExec(`select a,b,c from t where a = 1`)
+	tk.MustQuery(`select a,b from t where b = '2022-01-01'`).Sort().Check(testkit.Rows(
+		"10 2022-01-01 00:00:00",
+		"10 2022-01-01 00:00:00",
+		"11 2022-01-01 00:00:00",
+		"<nil> 2022-01-01 00:00:00"))
+	tk.MustQuery(`select a,b,c from t where a = 1`).Check(testkit.Rows("1 <nil> Wow"))
+	tk.MustQuery(`select a,b,c from t where a = 1 AND c = "Wow"`).Check(testkit.Rows("1 <nil> Wow"))
+	tk.MustQuery(`explain format = 'brief' select a,b,c from t where a = 1 AND c = "Wow"`).Check(testkit.Rows(
+		`IndexReader 0.01 root partition:p8 index:Selection`,
+		`└─Selection 0.01 cop[tikv]  eq(rcolumnsmulti.t.c, "Wow")`,
+		`  └─IndexRangeScan 10.00 cop[tikv] table:t, index:a(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
+	// WAS HERE, Why is the start return TRUE making this to work and FALSE disapear?
+	tk.MustQuery(`select a,b,c from t where a = 0 AND c = "Wow"`).Check(testkit.Rows("0 2020-01-01 00:00:00 Wow"))
+	tk.MustQuery(`explain format = 'brief' select a,b,c from t where a = 0 AND c = "Wow"`).Check(testkit.Rows(
+		`IndexReader 0.01 root partition:p3,p4,p5,p6,p7,p8 index:Selection`,
+		`└─Selection 0.01 cop[tikv]  eq(rcolumnsmulti.t.c, "Wow")`,
+		`  └─IndexRangeScan 10.00 cop[tikv] table:t, index:a(a, b, c) range:[0,0], keep order:false, stats:pseudo`))
+}
+
+func TestRangeColumnsExpr(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database rce`)
+	tk.MustExec(`use rce`)
+	tk.MustExec(`create table t (a int unsigned, b int, c int) partition by range columns (a,b) ` +
+		`(partition p0 values less than (3, MAXVALUE), ` +
+		` partition p1 values less than (4, -2147483648), ` +
+		` partition p2 values less than (4, 1), ` +
+		` partition p3 values less than (4, 4), ` +
+		` partition p4 values less than (4, 7), ` +
+		` partition p5 values less than (4, 11), ` +
+		` partition p6 values less than (4, 14), ` +
+		` partition p7 values less than (4, 17), ` +
+		` partition p8 values less than (4, MAXVALUE), ` +
+		` partition p9 values less than (7, 0), ` +
+		` partition p10 values less than (11, MAXVALUE), ` +
+		` partition p11 values less than (14, -2147483648), ` +
+		` partition p12 values less than (17, 17), ` +
+		` partition p13 values less than (MAXVALUE, -2147483648))`)
+	tk.MustExec(`insert into t values (null, null, null), (0,0,0), (null, -2147483648, null), (3, 1<<31 - 1, 9),` +
+		`(4,null,4),(4,-2147483648,-2147483648)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`explain format = 'brief' select * from t where c = 3`).Check(testkit.Rows(
+		`TableReader 0.00 root partition:all data:Selection`,
+		`└─Selection 0.00 cop[tikv]  eq(rce.t.c, 3)`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where b > 3 and c = 3`).Check(testkit.Rows(
+		`TableReader 0.00 root partition:all data:Selection`,
+		`└─Selection 0.00 cop[tikv]  eq(rce.t.c, 3), gt(rce.t.b, 3)`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 5 and c = 3`).Check(testkit.Rows(
+		`TableReader 0.00 root partition:p9 data:Selection`,
+		`└─Selection 0.00 cop[tikv]  eq(rce.t.a, 5), eq(rce.t.c, 3)`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 4 and c = 3`).Check(testkit.Rows(
+		`TableReader 0.00 root partition:p1,p2,p3,p4,p5,p6,p7,p8,p9 data:Selection`,
+		`└─Selection 0.00 cop[tikv]  eq(rce.t.a, 4), eq(rce.t.c, 3)`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
 }

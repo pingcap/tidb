@@ -412,7 +412,20 @@ func TestPartitionRangePruner2Date(t *testing.T) {
 func TestPartitionRangeColumnsForExpr(t *testing.T) {
 	tc := prepareTestCtx(t, "create table t (a int unsigned, b int, c int)", "a,b")
 	lessThan := make([][]*expression.Expression, 0, 6)
-	partDefs := [][]int64{{3, -99}, {4, math.MinInt64}, {4, 1}, {4, 4}, {4, 7}, {4, 11}, {4, 14}, {4, 17}, {4, -99}, {7, 0}, {11, -99}, {14, math.MinInt64}, {17, 17}, {-99, math.MinInt64}}
+	partDefs := [][]int64{{3, -99},
+		{4, math.MinInt64},
+		{4, 1},
+		{4, 4},
+		{4, 7},
+		{4, 11}, // p5
+		{4, 14},
+		{4, 17},
+		{4, -99},
+		{7, 0},
+		{11, -99}, // p10
+		{14, math.MinInt64},
+		{17, 17},
+		{-99, math.MinInt64}}
 	for i := range partDefs {
 		l := make([]*expression.Expression, 0, 2)
 		for j := range []int{0, 1} {
@@ -430,41 +443,47 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		}
 		lessThan = append(lessThan, l)
 	}
-	pruner := &rangeColumnsPruner{lessThan, tc.columns}
+	pruner := &rangeColumnsPruner{lessThan, tc.columns[:2]}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
 	}{
 		{"c = 3", partitionRangeOR{{0, len(partDefs)}}},
 		{"b > 3 AND c = 3", partitionRangeOR{{0, len(partDefs)}}},
-		{"a = 5 AND c = 3", partitionRangeOR{{8, 9}}},
-		// Should really be 2..8 ?!? it is equal!?!
-		{"a = 4 AND c = 3", partitionRangeOR{{1, 9}}},
+		{"a = 5 AND c = 3", partitionRangeOR{{9, 10}}},
+		{"a = 4 AND c = 3", partitionRangeOR{{1, 10}}},
 		{"b > 3", partitionRangeOR{{0, len(partDefs)}}},
-		{"a > 3", partitionRangeOR{{0, len(partDefs)}}},
+		{"a > 3", partitionRangeOR{{1, len(partDefs)}}},
 		{"a < 3", partitionRangeOR{{0, 1}}},
-		{"a >= 11", partitionRangeOR{{3, 6}}},
-		{"a > 11", partitionRangeOR{{3, 6}}},
-		{"a < 11", partitionRangeOR{{0, 3}}},
-		{"a = 16", partitionRangeOR{{4, 5}}},
-		{"a > 66", partitionRangeOR{{5, 6}}},
-		{"a > 2 and a < 10", partitionRangeOR{{0, 3}}},
-		{"a < 2 or a >= 15", partitionRangeOR{{0, 1}, {4, 6}}},
+		{"a >= 11", partitionRangeOR{{10, len(partDefs)}}},
+		{"a > 11", partitionRangeOR{{11, len(partDefs)}}},
+		{"a > 4", partitionRangeOR{{9, len(partDefs)}}},
+		{"a >= 4", partitionRangeOR{{1, len(partDefs)}}},
+		{"a < 11", partitionRangeOR{{0, 11}}},
+		{"a = 16", partitionRangeOR{{12, 13}}},
+		{"a > 66", partitionRangeOR{{13, 14}}},
+		{"a > 2 and a < 10", partitionRangeOR{{0, 11}}},
+		{"a < 2 or a >= 15", partitionRangeOR{{0, 1}, {12, 14}}},
 		{"a is null", partitionRangeOR{{0, 1}}},
-		{"12 > a", partitionRangeOR{{0, 4}}},
-		{"4 <= a", partitionRangeOR{{1, 6}}},
-		{"(a,b) < (4,4)", partitionRangeOR{{0, 3}}},
-		{"a < 4 OR (a = 4 AND b < 4)", partitionRangeOR{{0, 3}}},
-		{"(a,b,c) < (4,4,4)", partitionRangeOR{{0, 4}}},
-		{"a < 4 OR (a = 4 AND b < 4) OR (a = 4 AND b = 4 AND c < 4)", partitionRangeOR{{0, 4}}},
-		{"(a,b,c) >= (4,7,4)", partitionRangeOR{{4, len(partDefs)}}},
+		{"12 > a", partitionRangeOR{{0, 12}}},
+		{"4 <= a", partitionRangeOR{{1, 14}}},
+		// The expression is converted to 'if ...', see constructBinaryOpFunction, so not possible to break down to ranges
+		{"(a,b) < (4,4)", partitionRangeOR{{0, 14}}},
+		{"(a,b) = (4,4)", partitionRangeOR{{4, 5}}},
+		{"a < 4 OR (a = 4 AND b < 4)", partitionRangeOR{{0, 4}}},
+		// The expression is converted to 'if ...', see constructBinaryOpFunction, so not possible to break down to ranges
+		{"(a,b,c) < (4,4,4)", partitionRangeOR{{0, 14}}},
+		{"a < 4 OR (a = 4 AND b < 4) OR (a = 4 AND b = 4 AND c < 4)", partitionRangeOR{{0, 5}}},
+		{"(a,b,c) >= (4,7,4)", partitionRangeOR{{0, len(partDefs)}}},
+		{"(a,b,c) = (4,7,4)", partitionRangeOR{{5, 6}}},
 	}
 
 	for _, ca := range cases {
-		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
+		exprs, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
-		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
+		e := expression.SplitCNFItems(exprs[0])
+		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
