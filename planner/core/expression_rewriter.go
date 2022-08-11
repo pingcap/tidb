@@ -1280,12 +1280,12 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
 			// GetVar has not been executed to fill the SessionVars.Users.
 			sessionVars.UsersLock.Lock()
-			sessionVars.UserVarTypes[name] = tp
+			sessionVars.SetUserVarType(name, tp)
 			sessionVars.UsersLock.Unlock()
 			return
 		}
 		sessionVars.UsersLock.RLock()
-		tp, ok := sessionVars.UserVarTypes[name]
+		_, _, tp, ok := sessionVars.GetUserVar(name)
 		sessionVars.UsersLock.RUnlock()
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)

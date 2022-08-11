@@ -559,6 +559,11 @@ func (s *SessionVars) SetUserVar(name string, dt types.Datum, ft *types.FieldTyp
 	s.userVars.types[name] = ft
 }
 
+// SetUserVarType is only used by rewriteVariable
+func (s *SessionVars) SetUserVarType(name string, ft *types.FieldType) {
+	s.userVars.types[name] = ft
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -576,8 +581,8 @@ type SessionVars struct {
 	}
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
-	//Users map[string]types.Datum
-	UserVarTypes map[string]*types.FieldType
+	// Users map[string]types.Datum
+	// UserVarTypes map[string]*types.FieldType
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// stmtVars variables are temporarily set by SET_VAR hint
@@ -1395,7 +1400,6 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		UserVarTypes: make(map[string]*types.FieldType),
 		userVars: struct {
 			vars  map[string]types.Datum
 			types map[string]*types.FieldType
