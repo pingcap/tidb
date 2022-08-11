@@ -2390,7 +2390,7 @@ func TestExchangePartitionHook(t *testing.T) {
 }
 
 func TestExchangePartitionAutoID(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
@@ -2407,12 +2407,10 @@ func TestExchangePartitionAutoID(t *testing.T) {
 	tk.MustExec(`insert into pt values (0), (4)`)
 	tk.MustExec("insert into nt values (1)")
 
-	hook := &ddl.TestDDLCallback{Do: dom}
-	dom.DDL().SetHook(hook)
-	hookFunc := func(ctx context.Context) {
-		tk.MustExec(`insert into pt values (40000000)`)
-	}
-	hook.OnWatchedExported = hookFunc
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
+	}()
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustExec("insert into nt values (NULL)")
