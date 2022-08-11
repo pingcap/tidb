@@ -345,7 +345,7 @@ func (s *session) cleanRetryInfo() {
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
-			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+			preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
@@ -2269,7 +2269,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStmt, prepareStmt *plannercore.CachedPrepareStmt) (sqlexec.RecordSet, error) {
+func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStmt, prepareStmt *plannercore.PlanCacheStmt) (sqlexec.RecordSet, error) {
 	failpoint.Inject("assertTxnManagerInPreparedStmtExec", func() {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInPreparedStmtExec", true)
 		if prepareStmt.SnapshotTSEvaluator != nil {
@@ -2326,9 +2326,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
-	preparedStmt, ok := prepStmt.(*plannercore.CachedPrepareStmt)
+	preparedStmt, ok := prepStmt.(*plannercore.PlanCacheStmt)
 	if !ok {
-		return nil, errors.Errorf("invalid CachedPrepareStmt type")
+		return nil, errors.Errorf("invalid PlanCacheStmt type")
 	}
 
 	execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
