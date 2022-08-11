@@ -49,6 +49,9 @@ type txnManager struct {
 
 	stmtNode    ast.StmtNode
 	ctxProvider sessiontxn.TxnContextProvider
+
+	// We always reuse the same OptimisticTxnContextProvider in one session to reduce memory allocation cost for every new txn.
+	reservedOptimisticProvider isolation.OptimisticTxnContextProvider
 }
 
 func newTxnManager(sctx sessionctx.Context) *txnManager {
@@ -223,7 +226,8 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 	switch txnMode {
 	case "", ast.Optimistic:
 		// When txnMode is 'OPTIMISTIC' or '', the transaction should be optimistic
-		return isolation.NewOptimisticTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
+		m.reservedOptimisticProvider.ResetForNewTxn(m.sctx, r.CausalConsistencyOnly)
+		return &m.reservedOptimisticProvider, nil
 	case ast.Pessimistic:
 		// When txnMode is 'PESSIMISTIC', the provider should be determined by the isolation level
 		switch sessVars.IsolationLevelForNewTxn() {

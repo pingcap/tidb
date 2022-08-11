@@ -113,19 +113,20 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
 
 // dumpSingle will dump the information about a single sql.
 // The files will be organized into the following format:
-// |-meta.txt
-// |-schema.sql
-// |-stats
-// |   |-stats1.json
-// |   |-stats2.json
-// |   |-....
-// |-config.toml
-// |-variables.toml
-// |-bindings.sql
-// |-sqls.sql
-// |_explain
-//     |-explain.txt
-//
+/*
+ |-meta.txt
+ |-schema.sql
+ |-stats
+ |   |-stats1.json
+ |   |-stats2.json
+ |   |-....
+ |-config.toml
+ |-variables.toml
+ |-bindings.sql
+ |-sqls.sql
+ |_explain
+     |-explain.txt
+*/
 func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err error) {
 	// Create path
 	err = os.MkdirAll(path, os.ModePerm)

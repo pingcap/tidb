@@ -227,7 +227,7 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 	tblStructMap, err := ig.GetAllTableStructures(ctx)
 	require.Nil(t, err)
@@ -400,7 +400,7 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 	mockTarget := mock.NewMockTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 
 	mdDBMeta := mockSrc.GetAllDBFileMetas()[0]
@@ -490,7 +490,7 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 	mockTarget := mock.NewMockTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 
 	sizeResult, err := ig.EstimateSourceDataSize(ctx)
