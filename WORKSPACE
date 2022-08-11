@@ -19,6 +19,7 @@ http_archive(
 )
 
 load("@io_bazel_rules_go//go:deps.bzl", "go_register_toolchains", "go_rules_dependencies")
+load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies")
 load("//:DEPS.bzl", "go_deps")
 load("//build:lint.bzl", "nogo_deps")
 
@@ -26,8 +27,6 @@ load("//build:lint.bzl", "nogo_deps")
 go_deps()
 
 nogo_deps()
-
-load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies", "go_repository")
 
 go_rules_dependencies()
 

@@ -199,9 +199,13 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
+	return cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+}
+
+func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}, args []expression.Expression, useCursor bool) (err error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
-	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
 		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
 		if txnErr != nil {
@@ -210,7 +214,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 		if retryable && action == sessiontxn.StmtActionRetryReady {
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
-			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
 			return err
 		}
@@ -224,7 +228,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		defer func() {
 			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
-		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
 		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
 	}
