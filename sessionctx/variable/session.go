@@ -1825,12 +1825,12 @@ func (s *SessionVars) AddGeneralPlanCacheStmt(sql string, stmt interface{}) {
 }
 
 // GetGeneralPlanCacheStmt gets the PlanCacheStmt.
-func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) (interface{}, error) {
+func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) interface{} {
 	if s.generalPlanCacheStmts == nil {
-		return nil, ErrStmtNotFound
+		return nil
 	}
 	stmt, _ := s.generalPlanCacheStmts.Get(planCacheStmtKey(sql))
-	return stmt, nil
+	return stmt
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.

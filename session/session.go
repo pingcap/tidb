@@ -2346,9 +2346,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 
 // ExecuteGeneralStmt executes a general statement.
 func (s *session) ExecuteGeneralStmt(ctx context.Context, sql string, params []expression.Expression) (sqlexec.RecordSet, error) {
-	generalStmt, err := s.sessionVars.GetGeneralPlanCacheStmt(sql)
-	if err != nil {
-		err = plannercore.ErrStmtNotFound
+	generalStmt := s.sessionVars.GetGeneralPlanCacheStmt(sql)
+	if generalStmt == nil {
+		err := plannercore.ErrStmtNotFound
 		logutil.Logger(ctx).Error("general statement not found", zap.String("sql", sql))
 		return nil, err
 	}
