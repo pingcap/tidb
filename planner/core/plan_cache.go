@@ -82,7 +82,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	}
 
 	if stmtAst.UseCache && !ignorePlanCache { // for general plans
-		if plan, names, ok, err := getGeneralPlan(ctx, sctx, cacheKey, bindSQL, is, stmt,
+		if plan, names, ok, err := getGeneralPlan(sctx, cacheKey, bindSQL, is, stmt,
 			paramTypes); err != nil || ok {
 			return plan, names, err
 		}
@@ -136,14 +136,14 @@ func getPointQueryPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmtC
 	return plan, names, true, nil
 }
 
-func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
+func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
 	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
 	if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-		if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
+		if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
 			return nil, nil, false, err
 		}
 		cachedVals := cacheValue.([]*PlanCacheValue)
@@ -537,8 +537,8 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 	return
 }
 
-func checkPreparedPriv(_ context.Context, sctx sessionctx.Context,
-	stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
+// CheckPreparedPriv checks the privilege of the prepared statement
+func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		visitInfo := VisitInfo4PrivCheck(is, stmt.PreparedAst.Stmt, stmt.VisitInfos)
 		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {

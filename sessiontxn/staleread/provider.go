@@ -124,7 +124,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 			TxnScope:    txnScope,
 		},
 	}
-	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx, is))
 
 	p.is = is
 	err = p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, "")
@@ -209,7 +209,11 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	snapshot := internal.GetSnapshotWithTS(p.sctx, p.ts)
+	snapshot := internal.GetSnapshotWithTS(
+		p.sctx,
+		p.ts,
+		temptable.SessionSnapshotInterceptor(p.sctx, p.is),
+	)
 
 	replicaReadType := sessVars.GetReplicaRead()
 	if replicaReadType.IsFollowerRead() {
