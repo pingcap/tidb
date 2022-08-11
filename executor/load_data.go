@@ -629,7 +629,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		if col == nil || col.isNull() {
 			sessionVars.UnsetUserVar(name)
 		} else {
-			sessionVars.SetUserVar(name, string(col.str), mysql.DefaultCollationName)
+			sessionVars.DoSetUserVar(name, string(col.str), mysql.DefaultCollationName)
 		}
 		sessionVars.UsersLock.Unlock()
 	}

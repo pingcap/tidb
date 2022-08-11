@@ -111,7 +111,7 @@ func TestSetVar(t *testing.T) {
 		if tc.args[1] != nil {
 			key, ok := tc.args[0].(string)
 			require.Equal(t, true, ok)
-			sessionVar, ok := ctx.GetSessionVars().Users[key]
+			sessionVar, ok, _, _ := ctx.GetSessionVars().GetUserVar(key)
 			require.Equal(t, true, ok)
 			require.Equal(t, tc.res, sessionVar.GetValue())
 		}
@@ -135,7 +135,6 @@ func TestGetVar(t *testing.T) {
 		{"h", timeDec},
 	}
 	for _, kv := range sessionVars {
-		ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
 		var tp *types.FieldType
 		if _, ok := kv.val.(types.Time); ok {
 			tp = types.NewFieldType(mysql.TypeDatetime)
@@ -143,7 +142,7 @@ func TestGetVar(t *testing.T) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
 		types.DefaultParamTypeForValue(kv.val, tp)
-		ctx.GetSessionVars().UserVarTypes[kv.key] = tp
+		ctx.GetSessionVars().SetUserVar(kv.key, types.NewDatum(kv.val), tp)
 	}
 
 	testCases := []struct {
@@ -246,7 +245,7 @@ func TestSetVarFromColumn(t *testing.T) {
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
-	sessionVar, ok := sessionVars.Users["a"]
+	sessionVar, ok, _, _ := sessionVars.GetUserVar("a")
 	require.Equal(t, true, ok)
 	require.Equal(t, "a", sessionVar.GetString())
 }
