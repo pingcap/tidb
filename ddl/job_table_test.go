@@ -39,9 +39,7 @@ func TestDDLSchedulingMultiTimes(t *testing.T) {
 	if !variable.EnableConcurrentDDL.Load() {
 		t.Skipf("test requires concurrent ddl")
 	}
-	for i := 0; i < 3; i++ {
-		testDDLScheduling(t)
-	}
+	testDDLScheduling(t)
 }
 
 // testDDLScheduling tests the DDL scheduling. See Concurrent DDL RFC for the rules of DDL scheduling.
