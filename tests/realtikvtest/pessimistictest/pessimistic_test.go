@@ -58,6 +58,7 @@ func createAsyncCommitTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 }
 
 // TODO: figure out a stable way to run Test1PCWithSchemaChange
+//
 //nolint:unused
 func create1PCTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
@@ -490,37 +491,6 @@ func TestLockUnchangedRowKey(t *testing.T) {
 
 	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
 	tk2.MustExec("rollback")
-}
-
-func TestLockUnchangedUniqueKey(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk2.MustExec("use test")
-
-	// ref https://github.com/pingcap/tidb/issues/36438
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (i varchar(10), unique key(i))")
-	tk.MustExec("insert into t values ('a')")
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("update t set i = 'a'")
-
-	errCh := make(chan error, 1)
-	go func() {
-		_, err := tk2.Exec("insert into t values ('a')")
-		errCh <- err
-	}()
-
-	select {
-	case <-errCh:
-		require.Fail(t, "insert is not blocked by update")
-	case <-time.After(500 * time.Millisecond):
-		tk.MustExec("rollback")
-	}
-
-	require.Error(t, <-errCh)
 }
 
 func TestOptimisticConflicts(t *testing.T) {

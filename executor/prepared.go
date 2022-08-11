@@ -75,6 +75,8 @@ type PrepareExec struct {
 	ParamCount int
 	Fields     []*ast.ResultField
 
+	IsGeneralStmt bool
+
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
 	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
 	// They both generate a PrepareExec struct, but the second case needs to reset the statement context while the first already do that.
@@ -222,14 +224,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !isNoResultPlan(p) {
 		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
 	}
-	if e.ID == 0 {
+	if e.ID == 0 && !e.IsGeneralStmt {
 		e.ID = vars.GetNextPreparedStmtID()
 	}
-	if e.name != "" {
+	if e.name != "" && !e.IsGeneralStmt {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
-	preparedObj := &plannercore.CachedPrepareStmt{
+	preparedObj := &plannercore.PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              e.ctx.GetSessionVars().CurrentDB,
 		StmtText:            stmt.Text(),
@@ -241,6 +243,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		NormalizedSQL4PC:    normalizedSQL4PC,
 		SQLDigest4PC:        digest4PC,
 	}
+	if err = plannercore.CheckPreparedPriv(e.ctx, preparedObj, ret.InfoSchema); err != nil {
+		return err
+	}
+	if e.IsGeneralStmt {
+		vars.AddGeneralPlanCacheStmt(e.sqlText, preparedObj)
+		return nil
+	}
+
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
 
@@ -256,7 +266,6 @@ type ExecuteExec struct {
 	stmtExec      Executor
 	stmt          ast.StmtNode
 	plan          plannercore.Plan
-	id            uint32
 	lowerPriority bool
 	outputNames   []*types.FieldName
 }
@@ -296,9 +305,9 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
 	preparedPointer := vars.PreparedStmts[id]
-	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
 	if !ok {
-		return errors.Errorf("invalid CachedPrepareStmt type")
+		return errors.Errorf("invalid PlanCacheStmt type")
 	}
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
@@ -324,6 +333,16 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
+
+	preparedObj, err := plannercore.GetPreparedStmt(execStmt, sctx.GetSessionVars())
+	if err != nil {
+		return nil, err
+	}
+	pointPlanShortPathOK, err := plannercore.IsPointPlanShortPathOK(sctx, is, preparedObj)
+	if err != nil {
+		return nil, err
+	}
+
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
@@ -343,15 +362,24 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		OutputNames: names,
 		Ti:          &TelemetryInfo{},
 	}
-	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execStmt.ExecID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+
+	// handle point plan short path specially
+	if pointPlanShortPathOK {
+		if ep, ok := execPlan.(*plannercore.Execute); ok {
+			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
+				stmtCtx.SetPlan(execPlan)
+				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
+				stmt.Plan = pointPlan
+				stmt.PsStmt = preparedObj
+			} else {
+				// invalid the previous cached point plan
+				preparedObj.PreparedAst.CachedPlan = nil
+			}
 		}
-		stmtCtx := sctx.GetSessionVars().StmtCtx
-		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-		stmtCtx.OriginalSQL = stmt.Text
-		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
 	return stmt, nil
 }
