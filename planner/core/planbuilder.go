@@ -105,7 +105,7 @@ type limitHintInfo struct {
 	preferLimitToCop bool
 }
 
-//MergeHintInfo ...one bool flag for cte
+// MergeHintInfo ...one bool flag for cte
 type MergeHintInfo struct {
 	preferMerge bool
 }

@@ -242,7 +242,7 @@ type ExecStmt struct {
 
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
-	PsStmt      *plannercore.CachedPrepareStmt
+	PsStmt      *plannercore.PlanCacheStmt
 	Ti          *TelemetryInfo
 }
 

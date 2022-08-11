@@ -219,8 +219,8 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 	}
 }
 
-// CachedPrepareStmt store prepared ast from PrepareExec and other related fields
-type CachedPrepareStmt struct {
+// PlanCacheStmt store prepared ast from PrepareExec and other related fields
+type PlanCacheStmt struct {
 	PreparedAst         *ast.Prepared
 	StmtDB              string // which DB the statement will be processed over
 	VisitInfos          []visitInfo
@@ -244,9 +244,9 @@ type CachedPrepareStmt struct {
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
-func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCacheStmt, error) {
 	if stmt.PrepStmt != nil {
-		return stmt.PrepStmt.(*CachedPrepareStmt), nil
+		return stmt.PrepStmt.(*PlanCacheStmt), nil
 	}
 	if stmt.Name != "" {
 		prepStmt, err := vars.GetPreparedStmtByName(stmt.Name)
@@ -254,7 +254,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*Cached
 			return nil, err
 		}
 		stmt.PrepStmt = prepStmt
-		return prepStmt.(*CachedPrepareStmt), nil
+		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, ErrStmtNotFound
 }
