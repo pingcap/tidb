@@ -2921,7 +2921,7 @@ func TestPartitionUniqueKeyNeedAllFieldsInPf(t *testing.T) {
                partition p1 values less than (7, 9),
                partition p2 values less than (11, 22)
         )`
-	tk.MustGetErrCode(sql11, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql11, errno.ErrUniqueKeyNeedAllFieldsInPf)
 
 	sql12 := `create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),
