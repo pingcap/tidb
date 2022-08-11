@@ -10,8 +10,8 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/Shopify/sarama v1.29.0
-	github.com/blacktear23/go-proxyprotocol v1.0.2
 	github.com/aws/aws-sdk-go v1.36.30
+	github.com/blacktear23/go-proxyprotocol v1.0.2
 	github.com/carlmjohnson/flagext v0.21.0
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
