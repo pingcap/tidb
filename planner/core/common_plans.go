@@ -190,7 +190,7 @@ type Execute struct {
 
 	Name     string
 	Params   []expression.Expression
-	PrepStmt *CachedPrepareStmt
+	PrepStmt *PlanCacheStmt
 	Stmt     ast.StmtNode
 	StmtType string
 	Plan     Plan

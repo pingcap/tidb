@@ -52,13 +52,14 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
-	return &TestKit{
+	tk := &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
 		t:       t,
 		store:   store,
-		session: newSession(t, store),
 	}
+	tk.RefreshSession()
+	return tk
 }
 
 // NewTestKitWithSession returns a new *TestKit.
@@ -75,11 +76,15 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = newSession(tk.t, tk.store)
+	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
+	tk.MustExec("select 3")
 }
 
 // SetSession set the session of testkit
 func (tk *TestKit) SetSession(session session.Session) {
 	tk.session = session
+	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
+	tk.MustExec("select 3")
 }
 
 // Session return the session associated with the testkit

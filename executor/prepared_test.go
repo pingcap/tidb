@@ -1252,8 +1252,8 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	require.Equal(t, rows[len(rows)-1][2], "cop[tiflash]")
 
 	require.Equal(t, 1, len(tk.Session().GetSessionVars().PreparedStmts))
-	require.Equal(t, "select * from `t`", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL)
-	require.Equal(t, "", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedPlan)
+	require.Equal(t, "select * from `t`", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.PlanCacheStmt).NormalizedSQL)
+	require.Equal(t, "", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.PlanCacheStmt).NormalizedPlan)
 }
 
 func TestPreparePC4Binding(t *testing.T) {
@@ -1267,7 +1267,7 @@ func TestPreparePC4Binding(t *testing.T) {
 
 	tk.MustExec("prepare stmt from \"select * from t\"")
 	require.Equal(t, 1, len(tk.Session().GetSessionVars().PreparedStmts))
-	require.Equal(t, "select * from `test` . `t`", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL4PC)
+	require.Equal(t, "select * from `test` . `t`", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.PlanCacheStmt).NormalizedSQL4PC)
 
 	tk.MustQuery("execute stmt")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
