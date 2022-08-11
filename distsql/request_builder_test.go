@@ -494,7 +494,7 @@ func TestRequestBuilder5(t *testing.T) {
 		KeepOrder:        true,
 		Desc:             false,
 		Concurrency:      15,
-		IsolationLevel:   kv.RC,
+		IsolationLevel:   kv.SI,
 		Priority:         1,
 		NotFillCache:     true,
 		ReadReplicaScope: kv.GlobalReplicaScope,
