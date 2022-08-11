@@ -1276,12 +1276,6 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
 				er.ctxStack[stkLen-1])
 			er.ctxNameStk[stkLen-1] = types.EmptyName
-			// Store the field type of the variable into SessionVars.UserVarTypes.
-			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
-			// GetVar has not been executed to fill the SessionVars.Users.
-			sessionVars.UsersLock.Lock()
-			sessionVars.SetUserVarType(name, tp)
-			sessionVars.UsersLock.Unlock()
 			return
 		}
 		sessionVars.UsersLock.RLock()
