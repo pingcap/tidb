@@ -61,7 +61,7 @@ func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
 
 	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*core.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*core.PlanCacheStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
