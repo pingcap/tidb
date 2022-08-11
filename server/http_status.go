@@ -225,6 +225,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
 		return config.GetGlobalConfig(), nil
 	}))
+	router.Handle("/labels", labelHandler{}).Name("Labels")
 
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")

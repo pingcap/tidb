@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -309,7 +309,7 @@ func TestTxnInfoWithPSProtocol(t *testing.T) {
 	require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "pause"))
 	ch := make(chan interface{})
 	go func() {
-		_, err := tk.Session().ExecutePreparedStmt(context.Background(), idInsert, types.MakeDatums(1))
+		_, err := tk.Session().ExecutePreparedStmt(context.Background(), idInsert, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		ch <- nil
 	}()
@@ -338,12 +338,12 @@ func TestTxnInfoWithPSProtocol(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id1, types.MakeDatums(1))
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id1, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
 	go func() {
-		_, err := tk.Session().ExecutePreparedStmt(context.Background(), id2, types.MakeDatums(1))
+		_, err := tk.Session().ExecutePreparedStmt(context.Background(), id2, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		ch <- nil
 	}()

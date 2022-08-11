@@ -362,7 +362,6 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprint(GlobalLogMaxDays.Load()), val)
 }
-
 func TestSecureAuth(t *testing.T) {
 	sv := GetSysVar(SecureAuth)
 	vars := NewSessionVars()
