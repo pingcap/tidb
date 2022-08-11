@@ -325,7 +325,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	if len(pwd) == 0 && len(authentication) == 0 {
 		p.user = user
 		p.host = record.Host
-		return errAccessDenied.FastGenByArgs(user, host, hasPassword)
+		return nil
 	}
 
 	if len(pwd) == 0 || len(authentication) == 0 {
