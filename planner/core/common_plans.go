@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -36,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
@@ -213,65 +211,8 @@ func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) 
 
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
-	vars := sctx.GetSessionVars()
 	preparedObj := e.PrepStmt
 	prepared := preparedObj.PreparedAst
-	vars.StmtCtx.StmtType = prepared.StmtType
-
-	// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
-	if len(prepared.Params) != len(e.Params) {
-		return errors.Trace(ErrWrongParamCount)
-	}
-
-	for i, usingParam := range e.Params {
-		val, err := usingParam.Eval(chunk.Row{})
-		if err != nil {
-			return err
-		}
-		param := prepared.Params[i].(*driver.ParamMarkerExpr)
-		if isGetVarBinaryLiteral(sctx, usingParam) {
-			binVal, convErr := val.ToBytes()
-			if convErr != nil {
-				return convErr
-			}
-			val.SetBinaryLiteral(binVal)
-		}
-		param.Datum = val
-		param.InExecute = true
-		vars.PreparedParams = append(vars.PreparedParams, val)
-	}
-
-	if prepared.SchemaVersion != is.SchemaMetaVersion() {
-		// In order to avoid some correctness issues, we have to clear the
-		// cached plan once the schema version is changed.
-		// Cached plan in prepared struct does NOT have a "cache key" with
-		// schema version like prepared plan cache key
-		prepared.CachedPlan = nil
-		preparedObj.Executor = nil
-		preparedObj.ColumnInfos = nil
-		// If the schema version has changed we need to preprocess it again,
-		// if this time it failed, the real reason for the error is schema changed.
-		// Example:
-		// When running update in prepared statement's schema version distinguished from the one of execute statement
-		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
-		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
-		ret := &PreprocessorReturn{InfoSchema: is}
-		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
-		if err != nil {
-			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
-		}
-		prepared.SchemaVersion = is.SchemaMetaVersion()
-	}
-	// If the lastUpdateTime less than expiredTimeStamp4PC,
-	// it means other sessions have executed 'admin flush instance plan_cache'.
-	// So we need to clear the current session's plan cache.
-	// And update lastUpdateTime to the newest one.
-	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
-	if prepared.UseCache && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
-		sctx.PreparedPlanCache().DeleteAll()
-		prepared.CachedPlan = nil
-		vars.LastUpdateTime4PC = expiredTimeStamp4PC
-	}
 	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.Params)
 	if err != nil {
 		return err
