@@ -1689,13 +1689,13 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 }
 
 // SetStringUserVar set the value and collation for user defined variable.
-func (s *SessionVars) SetStringUserVar(varName string, svalue string, collation string) {
-	varName = strings.ToLower(varName)
+func (s *SessionVars) SetStringUserVar(name string, strVal string, collation string) {
+	name = strings.ToLower(name)
 	if len(collation) > 0 {
-		s.SetUserVarVal(varName, types.NewCollationStringDatum(stringutil.Copy(svalue), collation))
+		s.SetUserVarVal(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
 	} else {
 		_, collation = s.GetCharsetInfo()
-		s.SetUserVarVal(varName, types.NewCollationStringDatum(stringutil.Copy(svalue), collation))
+		s.SetUserVarVal(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
 	}
 }
 
