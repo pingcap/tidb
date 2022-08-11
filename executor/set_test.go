@@ -1884,7 +1884,7 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	tk.MustExec("set global tiflash_fine_grained_shuffle_batch_size = 8192")
 }
 
-func TestSetTiFlashReadMode(t *testing.T) {
+func TestSetTiFlashFastScanVariable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

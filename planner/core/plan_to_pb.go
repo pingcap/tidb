@@ -191,8 +191,8 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	tsExec.Desc = p.Desc
 	keepOrder := p.KeepOrder
 	tsExec.KeepOrder = &keepOrder
-
 	tsExec.IsFastScan = &(ctx.GetSessionVars().TiFlashFastScan)
+
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
