@@ -243,6 +243,9 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		NormalizedSQL4PC:    normalizedSQL4PC,
 		SQLDigest4PC:        digest4PC,
 	}
+	if err = plannercore.CheckPreparedPriv(e.ctx, preparedObj, ret.InfoSchema); err != nil {
+		return err
+	}
 	if e.IsGeneralStmt {
 		vars.AddGeneralPlanCacheStmt(e.sqlText, preparedObj)
 		return nil
