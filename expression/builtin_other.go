@@ -776,7 +776,7 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 	if err != nil {
 		return "", isNull, err
 	}
-	sessionVars.SetUserVar(varName, stringutil.Copy(res), datum.Collation())
+	sessionVars.SetStringUserVar(varName, stringutil.Copy(res), datum.Collation())
 	return res, false, nil
 }
 

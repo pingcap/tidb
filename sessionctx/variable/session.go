@@ -551,32 +551,32 @@ func validateReadConsistencyLevel(val string) error {
 
 // SetUserVarVal set user defined variables' value
 func (s *SessionVars) SetUserVarVal(name string, dt types.Datum) {
-	s.userVarLock.Lock()
-	defer s.userVarLock.Unlock()
-	s.userVarValues[name] = dt
+	s.userVars.lock.Lock()
+	defer s.userVars.lock.Unlock()
+	s.userVars.values[name] = dt
 }
 
 // GetUserVarVal get user defined variables' value
 func (s *SessionVars) GetUserVarVal(name string) (types.Datum, bool) {
-	s.userVarLock.RLock()
-	defer s.userVarLock.RUnlock()
-	dt, ok := s.userVarValues[name]
+	s.userVars.lock.RLock()
+	defer s.userVars.lock.RUnlock()
+	dt, ok := s.userVars.values[name]
 	return dt, ok
 }
 
 // SetUserVarType set user defined variables' type
-func (s *SessionVars) SetUserVarType(name string, fd *types.FieldType) {
-	s.userVarLock.Lock()
-	defer s.userVarLock.Unlock()
-	s.userVarTypes[name] = fd
+func (s *SessionVars) SetUserVarType(name string, ft *types.FieldType) {
+	s.userVars.lock.Lock()
+	defer s.userVars.lock.Unlock()
+	s.userVars.types[name] = ft
 }
 
 // GetUserVarType get user defined variables' type
 func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
-	s.userVarLock.RLock()
-	defer s.userVarLock.RUnlock()
-	fd, ok := s.userVarTypes[name]
-	return fd, ok
+	s.userVars.lock.RLock()
+	defer s.userVars.lock.RUnlock()
+	ft, ok := s.userVars.types[name]
+	return ft, ok
 }
 
 // SessionVars is to handle user-defined or global variables in the current session.
@@ -589,13 +589,14 @@ type SessionVars struct {
 	DMLBatchSize        int
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
-	// userVarLock is a lock for user defined variables.
-	// userVarValues and userVarTypes is read/write protected by usersLock.
-	userVarLock sync.RWMutex
-	// userVarValues stores the Datum for user variables
-	userVarValues map[string]types.Datum
-	// userVarTypes stores the FieldType for user variables, it cannot be inferred from userVarValues when userVarValues have not been set yet.
-	userVarTypes map[string]*types.FieldType
+	userVars            struct {
+		// lock is for user defined variables. values and types is read/write protected.
+		lock sync.RWMutex
+		// values stores the Datum for user variables
+		values map[string]types.Datum
+		// types stores the FieldType for user variables, it cannot be inferred from values when values have not been set yet.
+		types map[string]*types.FieldType
+	}
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// stmtVars variables are temporarily set by SET_VAR hint
@@ -1415,8 +1416,14 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		userVarValues:               make(map[string]types.Datum),
-		userVarTypes:                make(map[string]*types.FieldType),
+		userVars: struct {
+			lock   sync.RWMutex
+			values map[string]types.Datum
+			types  map[string]*types.FieldType
+		}{
+			values: make(map[string]types.Datum),
+			types:  make(map[string]*types.FieldType),
+		},
 		systems:                     make(map[string]string),
 		stmtVars:                    make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
@@ -1681,8 +1688,8 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	}
 }
 
-// SetUserVar set the value and collation for user defined variable.
-func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
+// SetStringUserVar set the value and collation for user defined variable.
+func (s *SessionVars) SetStringUserVar(varName string, svalue string, collation string) {
 	varName = strings.ToLower(varName)
 	if len(collation) > 0 {
 		s.SetUserVarVal(varName, types.NewCollationStringDatum(stringutil.Copy(svalue), collation))
@@ -1695,10 +1702,10 @@ func (s *SessionVars) SetUserVar(varName string, svalue string, collation string
 // UnsetUserVar unset an user defined variable by name.
 func (s *SessionVars) UnsetUserVar(varName string) {
 	varName = strings.ToLower(varName)
-	s.userVarLock.Lock()
-	defer s.userVarLock.Unlock()
-	delete(s.userVarValues, varName)
-	delete(s.userVarTypes, varName)
+	s.userVars.lock.Lock()
+	defer s.userVars.lock.Unlock()
+	delete(s.userVars.values, varName)
+	delete(s.userVars.types, varName)
 }
 
 // SetLastInsertID saves the last insert id to the session context.
@@ -2079,12 +2086,14 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 // EncodeSessionStates saves session states into SessionStates.
 func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
-	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVarValues))
-	for name, userVar := range s.userVarValues {
+	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
+	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.userVars.types))
+	s.userVars.lock.RLock()
+	defer s.userVars.lock.RUnlock()
+	for name, userVar := range s.userVars.values {
 		sessionStates.UserVars[name] = userVar.Clone()
 	}
-	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.userVarTypes))
-	for name, userVarType := range s.userVarTypes {
+	for name, userVarType := range s.userVars.types {
 		sessionStates.UserVarTypes[name] = userVarType.Clone()
 	}
 
@@ -2115,11 +2124,11 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 // DecodeSessionStates restores session states from SessionStates.
 func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
-	s.userVarValues = make(map[string]types.Datum, len(sessionStates.UserVars))
+	s.userVars.values = make(map[string]types.Datum, len(sessionStates.UserVars))
 	for name, userVar := range sessionStates.UserVars {
 		s.SetUserVarVal(name, *userVar.Clone())
 	}
-	s.userVarTypes = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
+	s.userVars.types = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
 	for name, userVarType := range sessionStates.UserVarTypes {
 		s.SetUserVarType(name, userVarType.Clone())
 	}
