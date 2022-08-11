@@ -215,8 +215,8 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 			panic("panic test")
 		}
 	})
-	fetchTag := "AddIndexLightningFetchdata" + strconv.Itoa(w.id)
-	writeTag := "AddIndexLightningWritedata" + strconv.Itoa(w.id)
+	fetchTag := "AddIndexLightningFetchData" + strconv.Itoa(w.id)
+	writeTag := "AddIndexLightningWriteData" + strconv.Itoa(w.id)
 	txnTag := "AddIndexLightningBackfillDataInTxn" + strconv.Itoa(w.id)
 	// Set a big batch size to enhance performance.
 	w.batchCnt *= 16

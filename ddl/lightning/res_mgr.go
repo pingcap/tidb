@@ -30,17 +30,23 @@ import (
 	"go.uber.org/zap"
 )
 
-type defaultType string
+// Used to mark the object size did not store in map
+const allocFailed int64 = 0
 
-// Default struct need to be count.
-const (
-	AllocBackendContext defaultType = "AllocBackendContext"
-	AllocEngineInfo     defaultType = "AllocEngineInfo"
-	AllocWorkerContext  defaultType = "AllocWorkerCONTEXT"
-
-	// Used to mark the object size did not store in map
-	allocFailed int64 = 0
+var (
+	// StructSizeBackendCtx is the size of BackendContext.
+	StructSizeBackendCtx int64
+	// StructSizeEngineInfo is the size of EngineInfo.
+	StructSizeEngineInfo int64
+	// StructSizeWorkerCtx is the size of WorkerContext.
+	StructSizeWorkerCtx int64
 )
+
+func init() {
+	StructSizeBackendCtx = int64(unsafe.Sizeof(BackendContext{}))
+	StructSizeEngineInfo = int64(unsafe.Sizeof(engineInfo{}))
+	StructSizeWorkerCtx = int64(unsafe.Sizeof(WorkerContext{}))
+}
 
 // MemoryRoot traces the memory usage of all light DDL environment.
 type MemoryRoot struct {
@@ -70,20 +76,6 @@ func (m *MemoryRoot) init(maxMemUsage int64) {
 	m.backendCache = make(map[string]*BackendContext, 10)
 	m.EngineMgr.init()
 	m.structSize = make(map[string]int64, 10)
-	m.initDefaultStructMemSize()
-}
-
-// init calculates the memory struct size and save it into map.
-func (m *MemoryRoot) initDefaultStructMemSize() {
-	var (
-		bc   BackendContext
-		ei   engineInfo
-		wCtx WorkerContext
-	)
-
-	m.structSize[string(AllocBackendContext)] = int64(unsafe.Sizeof(bc))
-	m.structSize[string(AllocEngineInfo)] = int64(unsafe.Sizeof(ei))
-	m.structSize[string(AllocWorkerContext)] = int64(unsafe.Sizeof(wCtx))
 }
 
 // Reset memory quota. but not less than flushSize(8 MB)
@@ -101,19 +93,7 @@ func (m *MemoryRoot) Reset(maxMemUsage int64) {
 }
 
 // checkMemoryUsage check if there is enough memory to allocate struct for lighting execution.
-func (m *MemoryRoot) checkMemoryUsage(t defaultType) error {
-	var requiredMem int64
-	switch t {
-	case AllocBackendContext:
-		requiredMem = m.structSize[string(AllocBackendContext)]
-	case AllocEngineInfo:
-		requiredMem = m.structSize[string(AllocEngineInfo)]
-	case AllocWorkerContext:
-		requiredMem = m.structSize[string(AllocWorkerContext)]
-	default:
-		return errors.New(LitErrUnknownMemType)
-	}
-
+func (m *MemoryRoot) checkMemoryUsage(requiredMem int64) error {
 	if m.currUsage+requiredMem > m.maxLimit {
 		return errors.New(LitErrOutMaxMem)
 	}
@@ -139,7 +119,7 @@ func (m *MemoryRoot) RegisterBackendContext(ctx context.Context, unique bool, ke
 	if !exist {
 		// Firstly, update real time memory usage, check if memory is enough.
 		m.updateTotalMemoryConsumption()
-		err = m.checkMemoryUsage(AllocBackendContext)
+		err = m.checkMemoryUsage(StructSizeBackendCtx)
 		if err != nil {
 			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.String("backend key", key),
 				zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
@@ -166,7 +146,7 @@ func (m *MemoryRoot) RegisterBackendContext(ctx context.Context, unique bool, ke
 		m.backendCache[key] = newBackendContext(ctx, key, &bd, cfg, sysVars)
 
 		// Count memory usage.
-		m.currUsage += m.structSize[string(AllocBackendContext)]
+		m.currUsage += StructSizeBackendCtx
 		logutil.BgLogger().Info(LitInfoCreateBackend, zap.String("backend key", key),
 			zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 			zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)),
@@ -197,7 +177,7 @@ func (m *MemoryRoot) DeleteBackendContext(bcKey string) {
 	// Reclaim memory.
 	m.currUsage -= m.structSize[bc.Key]
 	delete(m.structSize, bcKey)
-	m.currUsage -= m.structSize[string(AllocBackendContext)]
+	m.currUsage -= StructSizeBackendCtx
 	if m.currUsage < 0 {
 		m.currUsage = 0
 	}
@@ -255,7 +235,7 @@ func (m *MemoryRoot) RegisterEngineInfo(job *model.Job, bcKey string, engineKey 
 		}
 		// Firstly, update and check the current memory usage
 		m.updateTotalMemoryConsumption()
-		err = m.checkMemoryUsage(AllocEngineInfo)
+		err = m.checkMemoryUsage(StructSizeEngineInfo)
 		if err != nil {
 			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.String("Backend key", bcKey),
 				zap.String("Engine key", engineKey),
@@ -270,8 +250,8 @@ func (m *MemoryRoot) RegisterEngineInfo(job *model.Job, bcKey string, engineKey 
 		}
 
 		// Count memory usage.
-		m.currUsage += m.structSize[string(AllocEngineInfo)]
-		m.engineUsage += m.structSize[string(AllocEngineInfo)]
+		m.currUsage += StructSizeEngineInfo
+		m.engineUsage += StructSizeEngineInfo
 	} else {
 		// If engine exist, then add newWorkerCount.
 		en.WriterCount += newWorkerCount
@@ -291,7 +271,7 @@ func (m *MemoryRoot) RegisterWorkerContext(engineInfoKey string, id int) (*Worke
 	var (
 		err        error
 		wCtx       *WorkerContext
-		memRequire int64 = m.structSize[string(AllocWorkerContext)]
+		memRequire int64 = StructSizeWorkerCtx
 	)
 	m.mLock.Lock()
 	defer func() {
@@ -299,7 +279,7 @@ func (m *MemoryRoot) RegisterWorkerContext(engineInfoKey string, id int) (*Worke
 	}()
 	// First to check the memory usage
 	m.updateTotalMemoryConsumption()
-	err = m.checkMemoryUsage(AllocWorkerContext)
+	err = m.checkMemoryUsage(StructSizeWorkerCtx)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrAllocMemFail, zap.String("Engine key", engineInfoKey),
 			zap.String("worker Id:", strconv.Itoa(id)),
@@ -342,14 +322,14 @@ func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 		return err
 	}
 	count = 0
-	// Delete EngienInfo registered in m.engineManager.engineCache
+	// Delete EngineInfo registered in m.engineManager.engineCache
 	for _, ei := range bc.EngineCache {
 		eiKey := ei.key
 		wCnt := ei.WriterCount
 		m.currUsage -= m.structSize[eiKey]
 		delete(m.structSize, eiKey)
 		delete(m.EngineMgr.enginePool, eiKey)
-		m.currUsage -= m.structSize[string(AllocWorkerContext)] * int64(wCnt)
+		m.currUsage -= StructSizeWorkerCtx * int64(wCnt)
 		count++
 		logutil.BgLogger().Info(LitInfoCloseEngine, zap.String("backend key", bcKey),
 			zap.String("engine id", eiKey),
@@ -358,8 +338,8 @@ func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 	}
 
 	bc.EngineCache = make(map[string]*engineInfo, 10)
-	m.currUsage -= m.structSize[string(AllocEngineInfo)] * int64(count)
-	m.engineUsage -= m.structSize[string(AllocEngineInfo)] * int64(count)
+	m.currUsage -= StructSizeEngineInfo * int64(count)
+	m.engineUsage -= StructSizeEngineInfo * int64(count)
 	logutil.BgLogger().Info(LitInfoCloseBackend, zap.String("backend key", bcKey),
 		zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 		zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))

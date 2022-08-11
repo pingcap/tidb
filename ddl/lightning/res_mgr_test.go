@@ -37,10 +37,10 @@ func TestMemoryControl(t *testing.T) {
 	require.NoError(t, err)
 	GlobalEnv.LitMemRoot.backendCache[bcKey] = newBackendContext(ctx, bcKey, nil, cfg, sysVars)
 
-	// Run one add index with 8 wroker, memory consumption
-	requireMem := GlobalEnv.LitMemRoot.structSize[string(AllocBackendContext)]
+	// Run one add index with 8 workers, test memory consumption.
+	requireMem := StructSizeBackendCtx
 	GlobalEnv.LitMemRoot.currUsage += requireMem
-	requireMem = GlobalEnv.LitMemRoot.structSize[string(AllocEngineInfo)]
+	requireMem = StructSizeEngineInfo
 	GlobalEnv.LitMemRoot.currUsage += requireMem
 	engineKey := "enKey1"
 	wCnt := GlobalEnv.LitMemRoot.workerDegree(8, engineKey, bcKey)
@@ -76,9 +76,9 @@ func TestMemoryControl(t *testing.T) {
 	for _, test := range tests {
 		// Run second add index with 16 worker, memory consumption
 		bcKey = test.bcKey
-		requireMem = GlobalEnv.LitMemRoot.structSize[string(AllocBackendContext)]
+		requireMem = StructSizeBackendCtx
 		GlobalEnv.LitMemRoot.currUsage += requireMem
-		requireMem = GlobalEnv.LitMemRoot.structSize[string(AllocEngineInfo)]
+		requireMem = StructSizeEngineInfo
 		GlobalEnv.LitMemRoot.currUsage += requireMem
 		engineKey = test.enKey
 		GlobalEnv.LitMemRoot.backendCache[bcKey] = newBackendContext(ctx, bcKey, nil, cfg, sysVars)
@@ -88,12 +88,18 @@ func TestMemoryControl(t *testing.T) {
 
 	for _, test := range tests {
 		GlobalEnv.LitMemRoot.currUsage -= GlobalEnv.LitMemRoot.structSize[test.enKey]
-		GlobalEnv.LitMemRoot.currUsage -= GlobalEnv.LitMemRoot.structSize[string(AllocEngineInfo)]
-		GlobalEnv.LitMemRoot.currUsage -= GlobalEnv.LitMemRoot.structSize[string(AllocBackendContext)]
+		GlobalEnv.LitMemRoot.currUsage -= StructSizeEngineInfo
+		GlobalEnv.LitMemRoot.currUsage -= StructSizeBackendCtx
 	}
 
 	GlobalEnv.LitMemRoot.currUsage -= GlobalEnv.LitMemRoot.structSize["enKey1"]
-	GlobalEnv.LitMemRoot.currUsage -= GlobalEnv.LitMemRoot.structSize[string(AllocEngineInfo)]
-	GlobalEnv.LitMemRoot.currUsage -= GlobalEnv.LitMemRoot.structSize[string(AllocBackendContext)]
+	GlobalEnv.LitMemRoot.currUsage -= StructSizeEngineInfo
+	GlobalEnv.LitMemRoot.currUsage -= StructSizeBackendCtx
 	require.Equal(t, int64(0), GlobalEnv.LitMemRoot.currUsage)
+}
+
+func TestStructSize(t *testing.T) {
+	require.Greater(t, StructSizeBackendCtx, int64(0))
+	require.Greater(t, StructSizeEngineInfo, int64(0))
+	require.Greater(t, StructSizeWorkerCtx, int64(0))
 }

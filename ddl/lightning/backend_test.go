@@ -61,7 +61,7 @@ func TestLightningBackend(t *testing.T) {
 
 	// Memory allocate failed
 	GlobalEnv.LitMemRoot.currUsage = GlobalEnv.LitMemRoot.maxLimit
-	err = GlobalEnv.LitMemRoot.checkMemoryUsage(AllocBackendContext)
+	err = GlobalEnv.LitMemRoot.checkMemoryUsage(StructSizeBackendCtx)
 	require.Error(t, err)
 
 	// variable test

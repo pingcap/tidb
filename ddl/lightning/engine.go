@@ -23,11 +23,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -85,7 +85,7 @@ func CreateEngine(
 	en, err := bc.Backend.OpenEngine(ctx, cfg, job.TableName, int32(indexID))
 	if err != nil {
 		errMsg := LitErrCreateEngineFail + err.Error()
-		log.L().Error(errMsg)
+		logutil.BgLogger().Error(errMsg)
 		return errors.New(errMsg)
 	}
 	id := en.GetEngineUUID()
@@ -109,12 +109,12 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 
 	keyMsg = "backend key:" + ei.backCtx.Key + "Engine key:" + ei.key
 	// Close engine and finish local tasks of lightning.
-	log.L().Info(LitInfoCloseEngine, zap.String("backend key", ei.backCtx.Key), zap.String("Engine key", ei.key))
+	logutil.BgLogger().Info(LitInfoCloseEngine, zap.String("backend key", ei.backCtx.Key), zap.String("Engine key", ei.key))
 	indexEngine := ei.openedEngine
 	closeEngine, err1 := indexEngine.Close(ei.backCtx.Ctx, ei.cfg)
 	if err1 != nil {
 		errMsg = LitErrCloseEngineErr + keyMsg
-		log.L().Error(errMsg)
+		logutil.BgLogger().Error(errMsg)
 		return errors.New(errMsg)
 	}
 
@@ -122,13 +122,13 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 	GlobalEnv.checkAndResetQuota()
 
 	// Ingest data to TiKV
-	log.L().Info(LitInfoStartImport, zap.String("backend key", ei.backCtx.Key),
+	logutil.BgLogger().Info(LitInfoStartImport, zap.String("backend key", ei.backCtx.Key),
 		zap.String("Engine key", ei.key),
 		zap.String("Split Region Size", strconv.FormatInt(int64(config.SplitRegionSize), 10)))
 	err = closeEngine.Import(ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		errMsg = LitErrIngestDataErr + keyMsg
-		log.L().Error(errMsg)
+		logutil.BgLogger().Error(errMsg)
 		return errors.New(errMsg)
 	}
 
@@ -136,7 +136,7 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 	err = closeEngine.Cleanup(ctx)
 	if err != nil {
 		errMsg = LitErrCloseEngineErr + keyMsg
-		log.L().Error(errMsg)
+		logutil.BgLogger().Error(errMsg)
 		return errors.New(errMsg)
 	}
 
@@ -148,11 +148,11 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 		}, ei.id)
 		if err != nil {
 			errMsg = LitErrRemoteDupCheckrr + keyMsg
-			log.L().Error(errMsg)
+			logutil.BgLogger().Error(errMsg)
 			return errors.New(errMsg)
 		} else if hasDupe {
 			errMsg = LitErrRemoteDupExistErr + keyMsg
-			log.L().Error(errMsg)
+			logutil.BgLogger().Error(errMsg)
 			return tikv.ErrKeyExists
 		}
 	}
@@ -163,7 +163,7 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 func FlushEngine(engineKey string, ei *engineInfo) error {
 	err := ei.openedEngine.Flush(ei.backCtx.Ctx)
 	if err != nil {
-		log.L().Error(LitErrFlushEngineErr, zap.String("Engine key:", engineKey))
+		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.String("Engine key:", engineKey))
 		return err
 	}
 	return nil
@@ -174,7 +174,7 @@ func UnsafeImportEngineData(jobID int64, indexID int64) error {
 	engineKey := GenEngineInfoKey(jobID, indexID)
 	ei, exist := GlobalEnv.LitMemRoot.EngineMgr.LoadEngineInfo(engineKey)
 	if !exist {
-		log.L().Error(LitErrGetEngineFail, zap.String("Engine key:", engineKey))
+		logutil.BgLogger().Error(LitErrGetEngineFail, zap.String("Engine key:", engineKey))
 		return errors.New(LitErrGetEngineFail)
 	}
 
@@ -187,10 +187,10 @@ func UnsafeImportEngineData(jobID int64, indexID int64) error {
 		if err != nil {
 			return err
 		}
-		log.L().Info(LitInfoUnsafeImport, zap.String("Engine key:", engineKey), zap.String("Current total available disk:", strconv.FormatUint(totalStorageAvail, 10)))
+		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.String("Engine key:", engineKey), zap.String("Current total available disk:", strconv.FormatUint(totalStorageAvail, 10)))
 		err = ei.backCtx.Backend.UnsafeImportAndReset(ei.backCtx.Ctx, ei.uuid, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys))
 		if err != nil {
-			log.L().Error(LitErrIngestDataErr, zap.String("Engine key:", engineKey),
+			logutil.BgLogger().Error(LitErrIngestDataErr, zap.String("Engine key:", engineKey),
 				zap.String("import partial file failed, current disk storage remains", strconv.FormatUint(totalStorageAvail, 10)))
 			return err
 		}
