@@ -1171,7 +1171,7 @@
         "SQL": "select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;",
         "Plan": [
           "IndexMergeJoin 3.00 root  left outer join, inner:Projection, outer key:Column#9, inner key:test.t.c",
-          "├─Projection(Build) 3.00 root  cast(test.t.a, decimal(20,0) BINARY)->Column#9",
+          "├─Projection(Build) 3.00 root  cast(test.t.a, decimal(10,0) BINARY)->Column#9",
           "│ └─TableReader 3.00 root  data:TableFullScan",
           "│   └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─Projection(Probe) 1.00 root  test.t.a, test.t.c, test.t.d",
@@ -5487,7 +5487,7 @@
           "              └─HashJoin(Probe) 12487.50 mpp[tiflash]  inner join, equal:[eq(test.tt.col_varchar_key, test.tt.col_varchar_64) eq(Column#19, test.tt.col_decimal_30_10_key)]",
           "                ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "                │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.col_varchar_key, collate: utf8mb4_bin]",
-          "                │   └─Projection 9990.00 mpp[tiflash]  test.tt.col_varchar_key, cast(test.tt.col_tinyint, decimal(20,0) BINARY)->Column#19",
+          "                │   └─Projection 9990.00 mpp[tiflash]  test.tt.col_varchar_key, cast(test.tt.col_tinyint, decimal(3,0) BINARY)->Column#19",
           "                │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.col_varchar_key))",
           "                │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "                └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
@@ -5787,7 +5787,7 @@
           "            └─ExchangeReceiver 6400.00 mpp[tiflash]  ",
           "              └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.value, collate: binary]",
           "                └─HashAgg 6400.00 mpp[tiflash]  group by:test.t.id, test.t.value, ",
-          "                  └─Selection 8000.00 mpp[tiflash]  gt(cast(test.t.id, decimal(20,0) BINARY), test.t.value)",
+          "                  └─Selection 8000.00 mpp[tiflash]  gt(cast(test.t.id, decimal(10,0) BINARY), test.t.value)",
           "                    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },

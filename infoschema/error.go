@@ -82,4 +82,6 @@ var (
 	ErrEmptyDatabase = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
 	// ErrForbidSchemaChange returns when the schema change is illegal
 	ErrForbidSchemaChange = dbterror.ClassSchema.NewStd(mysql.ErrForbidSchemaChange)
+	// ErrTableWithoutPrimaryKey returns when there is no primary key on a table and sql_require_primary_key is set
+	ErrTableWithoutPrimaryKey = dbterror.ClassSchema.NewStd(mysql.ErrTableWithoutPrimaryKey)
 )
