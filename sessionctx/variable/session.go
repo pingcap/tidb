@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -594,6 +595,8 @@ type SessionVars struct {
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
 	SysErrorCount uint16
+	// generalPlanCacheStmts stores PlanCacheStmts for general plan cache.
+	generalPlanCacheStmts *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -1832,6 +1835,30 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	}
 }
 
+type planCacheStmtKey string
+
+func (k planCacheStmtKey) Hash() []byte {
+	return []byte(k)
+}
+
+// AddGeneralPlanCacheStmt adds this PlanCacheStmt into general-plan-cache-stmt cache
+func (s *SessionVars) AddGeneralPlanCacheStmt(sql string, stmt interface{}) {
+	if s.generalPlanCacheStmts == nil {
+		// TODO: make it configurable
+		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(100, 0, 0)
+	}
+	s.generalPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
+}
+
+// GetGeneralPlanCacheStmt gets the PlanCacheStmt.
+func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) interface{} {
+	if s.generalPlanCacheStmts == nil {
+		return nil
+	}
+	stmt, _ := s.generalPlanCacheStmts.Get(planCacheStmtKey(sql))
+	return stmt
+}
+
 // AddPreparedStmt adds prepareStmt to current session and count in global.
 func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
@@ -2898,9 +2925,10 @@ func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
 
 // GetNegateStrMatchDefaultSelectivity means the default selectivity for not like and not regexp.
 // Note:
-//     0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
-//     0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
-//   keep the default selectivity of like/regexp and not like/regexp all 0.8.
+//
+//	  0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
+//	  0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
+//	keep the default selectivity of like/regexp and not like/regexp all 0.8.
 func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 	if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
 		return DefTiDBDefaultStrMatchSelectivity

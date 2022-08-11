@@ -40,6 +40,7 @@ import (
 //   - Provides some methods like `activateTxn` and `prepareTxn` to manage the inner transaction.
 //   - Provides default methods `GetTxnInfoSchema`, `GetStmtReadTS` and `GetStmtForUpdateTS` and return the snapshot information schema or ts when `tidb_snapshot` is set.
 //   - Provides other default methods like `Advise`, `OnStmtStart`, `OnStmtRetry` and `OnStmtErrorForNextAction`
+//
 // The subclass can set some inner property of `baseTxnContextProvider` when it is constructed.
 // For example, `getStmtReadTSFunc` and `getStmtForUpdateTSFunc` should be set, and they will be called when `GetStmtReadTS`
 // or `GetStmtForUpdate` to get the timestamp that should be used by the corresponding isolation level.
@@ -161,7 +162,7 @@ func (p *baseTxnContextProvider) GetReadReplicaScope() string {
 	return kv.GlobalReplicaScope
 }
 
-//GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
