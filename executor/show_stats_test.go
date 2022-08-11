@@ -53,7 +53,7 @@ func TestShowStatsHistograms(t *testing.T) {
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_histograms")
-	require.Len(t, result.Rows(), 0)
+	require.Len(t, result.Rows(), 2)
 	tk.MustExec("insert into t values(1,1)")
 	tk.MustExec("analyze table t")
 	result = tk.MustQuery("show stats_histograms").Sort()
@@ -72,6 +72,7 @@ func TestShowStatsHistograms(t *testing.T) {
 	tk.MustExec("analyze table t index idx_b")
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_b'")
 	require.Len(t, res.Rows(), 1)
+	res.CheckAt([]int{10}, [][]interface{}{{"allLoaded"}})
 }
 
 func TestShowStatsBuckets(t *testing.T) {

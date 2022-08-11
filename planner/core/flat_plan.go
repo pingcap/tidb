@@ -54,8 +54,9 @@ type FlatPlanTree []*FlatOperator
 
 // GetSelectPlan skips Insert, Delete and Update at the beginning of the FlatPlanTree.
 // Note:
-//     It returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
-//     Since you get a part of the original slice, you need to adjust the FlatOperator.Depth and FlatOperator.ChildrenIdx when using them.
+//
+//	It returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
+//	Since you get a part of the original slice, you need to adjust the FlatOperator.Depth and FlatOperator.ChildrenIdx when using them.
 func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
 	if len(e) == 0 {
 		return nil

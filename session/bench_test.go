@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -324,10 +323,11 @@ func BenchmarkPreparedPointGet(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	params := expression.Args2Expressions4Test(64)
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(64))
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1809,12 +1809,16 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	prepStmt, err := se.GetSessionVars().GetPreparedStmtByID(stmtID)
+	if err != nil {
+		b.Fatal(err)
+	}
 
-	args := []types.Datum{types.NewDatum(3401544)}
+	args := expression.Args2Expressions4Test(3401544)
 	is := se.GetInfoSchema()
 
 	b.ResetTimer()
-	stmtExec := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
+	stmtExec := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
 	for i := 0; i < b.N; i++ {
 		_, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, is.(infoschema.InfoSchema))
 		if err != nil {
@@ -1827,7 +1831,8 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 // TestBenchDaily collects the daily benchmark test result and generates a json output file.
 // The format of the json output is described by the BenchOutput.
 // Used by this command in the Makefile
-// 	make bench-daily TO=xxx.json
+//
+//	make bench-daily TO=xxx.json
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkPreparedPointGet,
