@@ -141,8 +141,7 @@ type aggOrderByResolver struct {
 
 func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	a.exprDepth++
-	switch n := inNode.(type) {
-	case *driver.ParamMarkerExpr:
+	if n, ok := inNode.(*driver.ParamMarkerExpr); ok {
 		if a.exprDepth == 1 {
 			_, isNull, isExpectedType := getUintFromNode(a.ctx, n)
 			// For constant uint expression in top level, it should be treated as position expression.
@@ -155,8 +154,7 @@ func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
-	switch v := inNode.(type) {
-	case *ast.PositionExpr:
+	if v, ok := inNode.(*ast.PositionExpr); ok {
 		pos, isNull, err := expression.PosFromPositionExpr(a.ctx, v)
 		if err != nil {
 			a.err = err
@@ -342,10 +340,12 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 			cte.recursiveRef = false
 		}
 	}()
-	return b.buildResultSetNode(ctx, from.TableRefs)
+	return b.buildResultSetNode(ctx, from.TableRefs, false)
 }
 
-func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode) (p LogicalPlan, err error) {
+func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode, IsCTE bool) (p LogicalPlan, err error) {
+	//If it is building the CTE queries, we will mark them.
+	b.isCTE = IsCTE
 	switch x := node.(type) {
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
@@ -686,19 +686,19 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
 	// and we only build the left "ResultSetNode".
 	if joinNode.Right == nil {
-		return b.buildResultSetNode(ctx, joinNode.Left)
+		return b.buildResultSetNode(ctx, joinNode.Left, false)
 	}
 
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	// Add join reorder flag regardless of inner join or outer join.
 	b.optFlag = b.optFlag | flagJoinReOrder
 
-	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left)
+	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left, false)
 	if err != nil {
 		return nil, err
 	}
 
-	rightPlan, err := b.buildResultSetNode(ctx, joinNode.Right)
+	rightPlan, err := b.buildResultSetNode(ctx, joinNode.Right, false)
 	if err != nil {
 		return nil, err
 	}
@@ -771,12 +771,10 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	joinPlan.fullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
 	for _, lName := range lFullNames {
 		name := *lName
-		name.Redundant = true
 		joinPlan.fullNames = append(joinPlan.fullNames, &name)
 	}
 	for _, rName := range rFullNames {
 		name := *rName
-		name.Redundant = true
 		joinPlan.fullNames = append(joinPlan.fullNames, &name)
 	}
 
@@ -977,6 +975,14 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 			return err
 		}
 		conds = append(conds, cond)
+		if p.fullSchema != nil {
+			// since fullSchema is derived from left and right schema in upper layer, so rc/lc must be in fullSchema.
+			if joinTp == ast.RightJoin {
+				p.fullNames[p.fullSchema.ColumnIndex(lc)].Redundant = true
+			} else {
+				p.fullNames[p.fullSchema.ColumnIndex(rc)].Redundant = true
+			}
+		}
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
@@ -1065,7 +1071,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectF
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
-func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Context, field *ast.SelectField) (model.CIStr, error) {
+func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context, field *ast.SelectField) (model.CIStr, error) {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, nil
@@ -1505,7 +1511,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
-func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnionAll) error {
+func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAll) error {
 	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
 	names := make([]*types.FieldName, 0, u.children[0].Schema().Len())
 
@@ -1797,7 +1803,7 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, selects []LogicalPlan, aft
 // divide rule ref:
 //		https://dev.mysql.com/doc/refman/5.7/en/union.html
 // "Mixed UNION types are treated such that a DISTINCT union overrides any ALL union to its left."
-func (b *PlanBuilder) divideUnionSelectPlans(ctx context.Context, selects []LogicalPlan, setOprTypes []*ast.SetOprType) (distinctSelects []LogicalPlan, allSelects []LogicalPlan, err error) {
+func (b *PlanBuilder) divideUnionSelectPlans(_ context.Context, selects []LogicalPlan, setOprTypes []*ast.SetOprType) (distinctSelects []LogicalPlan, allSelects []LogicalPlan, err error) {
 	firstUnionAllIdx := 0
 	columnNums := selects[0].Schema().Len()
 	for i := len(selects) - 1; i > 0; i-- {
@@ -1826,8 +1832,7 @@ type itemTransformer struct {
 }
 
 func (t *itemTransformer) Enter(inNode ast.Node) (ast.Node, bool) {
-	switch n := inNode.(type) {
-	case *driver.ParamMarkerExpr:
+	if n, ok := inNode.(*driver.ParamMarkerExpr); ok {
 		newNode := expression.ConstructPositionExpr(n)
 		return newNode, true
 	}
@@ -2509,8 +2514,7 @@ type correlatedAggregateResolver struct {
 
 // Enter implements Visitor interface.
 func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
-	switch v := n.(type) {
-	case *ast.SelectStmt:
+	if v, ok := n.(*ast.SelectStmt); ok {
 		if r.outerPlan != nil {
 			outerSchema := r.outerPlan.Schema()
 			r.b.outerSchemas = append(r.b.outerSchemas, outerSchema)
@@ -2664,8 +2668,7 @@ func (r *correlatedAggregateResolver) collectFromWhere(p LogicalPlan, where ast.
 
 // Leave implements Visitor interface.
 func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
-	switch n.(type) {
-	case *ast.SelectStmt:
+	if _, ok := n.(*ast.SelectStmt); ok {
 		if r.outerPlan != nil {
 			r.b.outerSchemas = r.b.outerSchemas[0 : len(r.b.outerSchemas)-1]
 			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
@@ -3297,8 +3300,7 @@ type aggColNameResolver struct {
 }
 
 func (c *aggColNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
-	switch inNode.(type) {
-	case *ast.ColumnNameExpr:
+	if _, ok := inNode.(*ast.ColumnNameExpr); ok {
 		return inNode, true
 	}
 	return inNode, false
@@ -3328,8 +3330,7 @@ func (c *colNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (c *colNameResolver) Leave(inNode ast.Node) (ast.Node, bool) {
-	switch v := inNode.(type) {
-	case *ast.ColumnNameExpr:
+	if v, ok := inNode.(*ast.ColumnNameExpr); ok {
 		idx, err := expression.FindFieldName(c.p.OutputNames(), v.Name)
 		if err == nil && idx >= 0 {
 			c.names[c.p.OutputNames()[idx]] = struct{}{}
@@ -3797,10 +3798,20 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
-	// Determines whether to use the Merge hint in a CTE query.
-	if b.buildingCTE {
-		if hints := b.TableHints(); hints != nil {
-			b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
+	// Verify Merge hints in the current query, we will update parameters for those that meet the rules, and warn those that do not.
+	//If the current query uses Merge Hint and the query is a CTE, we update the HINT information for the current query.
+	//If the current query is not a CTE query (it may be a subquery within a CTE query or an external non-CTE query), we will give a warning.
+	//In particular, recursive CTE have separate warnings, so they are no longer called.
+	if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
+		if b.buildingCTE {
+			if b.isCTE {
+				b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
+			} else if !b.buildingRecursivePartForCTE {
+				//If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."))
+			}
+		} else if !b.buildingCTE && !b.isCTE {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."))
 		}
 	}
 
@@ -4020,11 +4031,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	// If Merge hint is using in outer query, we will not apply this hint.
-	if hints := b.TableHints(); hints.MergeHints.preferMerge && !b.buildingCTE && len(b.tableHintInfo) == 1 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in outer query, you should use this hint in CTE inner query."))
-	}
-
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
@@ -4198,6 +4204,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				b.outerCTEs = b.outerCTEs[:i]
 				o := b.buildingCTE
 				b.buildingCTE = false
+				//nolint:all_revive,revive
 				defer func() {
 					b.outerCTEs = append(b.outerCTEs, saveCte...)
 					b.buildingCTE = o
@@ -4228,7 +4235,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (LogicalPlan, error) {
-	p, err := b.buildResultSetNode(ctx, cte.Query.Query)
+	p, err := b.buildResultSetNode(ctx, cte.Query.Query, true)
 	if err != nil {
 		return nil, err
 	}
@@ -4834,6 +4841,23 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
+
+	//For the case that views appear in CTE queries,
+	//we need to save the CTEs after the views are established.
+	var saveCte []*cteInfo
+	if len(b.outerCTEs) > 0 {
+		saveCte = make([]*cteInfo, len(b.outerCTEs))
+		copy(saveCte, b.outerCTEs)
+	} else {
+		saveCte = nil
+	}
+	o := b.buildingCTE
+	b.buildingCTE = false
+	defer func() {
+		b.outerCTEs = saveCte
+		b.buildingCTE = o
+	}()
+
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
@@ -4869,7 +4893,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
 }
 
-func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
+func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
 	columnInfo := tableInfo.Cols()
 	cols := selectLogicalPlan.Schema().Clone().Columns
 	outputNamesOfUnderlyingSelect := selectLogicalPlan.OutputNames().Shallow()
@@ -5142,7 +5166,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 	}
 
-	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs)
+	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs, false)
 	if err != nil {
 		return nil, err
 	}
@@ -5524,7 +5548,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		}
 	}
 
-	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs)
+	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs, false)
 	if err != nil {
 		return nil, err
 	}
@@ -5884,7 +5908,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 // buildWindowFunctionFrameBound builds the bounds of window function frames.
 // For type `Rows`, the bound expr must be an unsigned integer.
 // For type `Range`, the bound expr must be temporal or numeric types.
-func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
+func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
 	if bound.UnBounded {
@@ -6476,8 +6500,7 @@ func (u *updatableTableListResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (u *updatableTableListResolver) Leave(inNode ast.Node) (ast.Node, bool) {
-	switch v := inNode.(type) {
-	case *ast.TableSource:
+	if v, ok := inNode.(*ast.TableSource); ok {
 		if s, ok := v.Source.(*ast.TableName); ok {
 			if v.AsName.L != "" {
 				newTableName := *s
@@ -6695,7 +6718,7 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 		}
 		b.buildingRecursivePartForCTE = saveCheck
 	} else {
-		p, err = b.buildResultSetNode(ctx, cte.Query.Query)
+		p, err = b.buildResultSetNode(ctx, cte.Query.Query, true)
 		if err != nil {
 			return nil, err
 		}
@@ -6713,6 +6736,7 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 
 // buildRecursiveCTE handles the with clause `with recursive xxx as xx`.
 func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNode) error {
+	b.isCTE = true
 	cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 	switch x := (cte).(type) {
 	case *ast.SetOprStmt:
@@ -6855,7 +6879,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 		}
 		return nil
 	default:
-		p, err := b.buildResultSetNode(ctx, x)
+		p, err := b.buildResultSetNode(ctx, x, true)
 		if err != nil {
 			// Refine the error message.
 			if errors.ErrorEqual(err, ErrCTERecursiveRequiresNonRecursiveFirst) {
@@ -6944,11 +6968,13 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
 		b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
 		b.optFlag = saveFlag
+		// each cte (select statement) will generate a handle map, pop it out here.
+		b.handleHelper.popMap()
 	}
 	return nil
 }
 
-func (b *PlanBuilder) buildProjection4CTEUnion(ctx context.Context, seed LogicalPlan, recur LogicalPlan) (LogicalPlan, error) {
+func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed LogicalPlan, recur LogicalPlan) (LogicalPlan, error) {
 	if seed.Schema().Len() != recur.Schema().Len() {
 		return nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 	}

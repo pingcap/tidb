@@ -589,9 +589,8 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 			// there is no checkpoint
 			log.FromContext(ctx).Debug("no checkpoint detected", zap.String("table", uniqueName))
 			return nil, nil
-		} else {
-			return nil, errors.Trace(err)
 		}
+		return nil, errors.Trace(err)
 	}
 	// if checkpoint enable and not missing, we skip the check table empty progress.
 	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMissing {
@@ -872,7 +871,7 @@ func (ci *csvHeaderCheckItem) GetCheckItemID() CheckItemID {
 // 3. checks if the content of those first rows are compatible with the table schema, and whether the
 //    two rows are identical, to determine if the first rows are a header rows.
 func (ci *csvHeaderCheckItem) Check(ctx context.Context) (*CheckResult, error) {
-	// if cfg set header = ture but source files actually contain not header, former SchemaCheck should
+	// if cfg set header = true but source files actually contain not header, former SchemaCheck should
 	// return error in this situation, so we need do it again.
 	if ci.cfg.Mydumper.CSV.Header {
 		return nil, nil
@@ -1142,7 +1141,6 @@ loop:
 			case <-gCtx.Done():
 				break loop
 			}
-
 		}
 	}
 	close(ch)

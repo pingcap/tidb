@@ -98,8 +98,7 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 }
 
 func TestWeakConsistencyRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -167,8 +166,7 @@ func TestMarshalSQLWarn(t *testing.T) {
 		},
 	}
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// First query can trigger loading global variables, which produces warnings.
 	tk.MustQuery("select 1")

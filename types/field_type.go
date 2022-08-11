@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	ast "github.com/pingcap/tidb/parser/types"
@@ -40,12 +41,13 @@ type FieldType = ast.FieldType
 // with a type and other information about field type.
 func NewFieldType(tp byte) *FieldType {
 	charset1, collate1 := DefaultCharsetForType(tp)
+	flen, decimal := minFlenAndDecimalForType(tp)
 	return NewFieldTypeBuilder().
 		SetType(tp).
 		SetCharset(charset1).
 		SetCollate(collate1).
-		SetFlen(UnspecifiedLength).
-		SetDecimal(UnspecifiedLength).
+		SetFlen(flen).
+		SetDecimal(decimal).
 		BuildP()
 }
 
@@ -328,6 +330,17 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.SetDecimal(UnspecifiedLength)
 		tp.SetCharset(charset.CharsetUTF8MB4)
 		tp.SetCollate(charset.CollationUTF8MB4)
+	}
+}
+
+// minFlenAndDecimalForType returns the minimum flen/decimal that can hold all the data for `tp`.
+func minFlenAndDecimalForType(tp byte) (int, int) {
+	switch tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		return mysql.GetDefaultFieldLengthAndDecimal(tp)
+	default:
+		// todo support non-integer type
+		return UnspecifiedLength, UnspecifiedLength
 	}
 }
 
@@ -1447,4 +1460,18 @@ func checkTypeChangeSupported(origin *FieldType, to *FieldType) bool {
 func ConvertBetweenCharAndVarchar(oldCol, newCol byte) bool {
 	return (IsTypeVarchar(oldCol) && newCol == mysql.TypeString) ||
 		(oldCol == mysql.TypeString && IsTypeVarchar(newCol) && collate.NewCollationEnabled())
+}
+
+// IsVarcharTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
+func IsVarcharTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error {
+	desc, err := charset.GetCharsetInfo(setCharset)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	maxFlen := mysql.MaxFieldVarCharLength
+	maxFlen /= desc.Maxlen
+	if colDefTpFlen != UnspecifiedLength && colDefTpFlen > maxFlen {
+		return ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDefName, maxFlen)
+	}
+	return nil
 }

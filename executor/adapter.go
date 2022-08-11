@@ -1207,7 +1207,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	binaryPlan := ""
 	if variable.GenerateBinaryPlan.Load() {
 		binaryPlan = getBinaryPlan(a.Ctx)
-		binaryPlan = variable.SlowLogBinaryPlanPrefix + binaryPlan + variable.SlowLogPlanSuffix
+		if len(binaryPlan) > 0 {
+			binaryPlan = variable.SlowLogBinaryPlanPrefix + binaryPlan + variable.SlowLogPlanSuffix
+		}
 	}
 
 	resultRows := GetResultRowsCount(stmtCtx, a.Plan)

@@ -51,6 +51,7 @@ import (
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -789,16 +790,20 @@ func upgrade(s Session) {
 	}
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
-	original := variable.EnableConcurrentDDL.Load()
 	if ver < version92 && !domain.GetDomain(s).DDL().OwnerManager().IsOwner() {
-		variable.EnableConcurrentDDL.Store(false)
+		if err := waitOwner(context.Background(), domain.GetDomain(s)); err != nil {
+			logutil.BgLogger().Fatal("[Upgrade] upgrade failed", zap.Error(err))
+		}
+		// use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
+		// overwrite variable EnableConcurrentDDL.
+		variable.DDLForce2Queue.Store(true)
 	}
 	// Do upgrade works then update bootstrap version.
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
 
-	variable.EnableConcurrentDDL.Store(original)
+	variable.DDLForce2Queue.Store(false)
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
@@ -826,6 +831,25 @@ func upgrade(s Session) {
 			zap.Int64("from", ver),
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
+	}
+}
+
+// waitOwner is used to wait the DDL owner to be elected in the cluster.
+func waitOwner(ctx context.Context, dom *domain.Domain) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	logutil.BgLogger().Info("Waiting for the DDL owner to be elected in the cluster")
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			_, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
+			if err == concurrency.ErrElectionNoLeader {
+				continue
+			}
+			return err
+		}
 	}
 }
 
@@ -2002,7 +2026,6 @@ func inTestSuite() bool {
 
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
-// TODO: sanitize.
 func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
 	if config.GetGlobalConfig().Security.SecureBootstrap {
@@ -2033,7 +2056,7 @@ func doDMLWorks(s Session) {
 		vVal := v.Value
 		switch v.Name {
 		case variable.TiDBTxnMode:
-			if config.GetGlobalConfig().Store == "tikv" {
+			if config.GetGlobalConfig().Store == "tikv" || config.GetGlobalConfig().Store == "unistore" {
 				vVal = "pessimistic"
 			}
 		case variable.TiDBEnableAsyncCommit, variable.TiDBEnable1PC:
@@ -2062,10 +2085,9 @@ func doDMLWorks(s Session) {
 			vVal = variable.AssertionFastStr
 		case variable.TiDBEnableMutationChecker:
 			vVal = variable.On
-		case variable.TiDBEnablePaging:
-			vVal = variable.BoolToOnOff(variable.DefTiDBEnablePaging)
 		}
-		value := fmt.Sprintf(`("%s", "%s")`, k, vVal)
+		// sanitize k and vVal
+		value := fmt.Sprintf(`("%s", "%s")`, sqlexec.EscapeString(k), sqlexec.EscapeString(vVal))
 		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,

@@ -596,4 +596,7 @@ const (
 	PrimaryKeyName = "PRIMARY"
 	// DefaultDecimal defines the default decimal value when the value out of range.
 	DefaultDecimal = "99999999999999999999999999999999999999999999999999999999999999999"
+	// PartitionCountLimit is limit of the number of partitions in a table.
+	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
+	PartitionCountLimit = 8192
 )

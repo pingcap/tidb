@@ -32,6 +32,7 @@ go_library(
 
 go_test(
     name = "autoid_test",
+    timeout = "short",
     srcs = [
         "autoid_test.go",
         "bench_test.go",
