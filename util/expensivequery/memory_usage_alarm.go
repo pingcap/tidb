@@ -15,6 +15,7 @@
 package expensivequery
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,6 +47,7 @@ type s3Config struct {
 	disableSSL            bool
 	s3ForcePathStyle      bool
 	enableUploadOOMRecord bool
+	timeoutSeconds        int
 }
 
 type memoryUsageAlarm struct {
@@ -72,28 +74,32 @@ func (record *memoryUsageAlarm) initS3Config() {
 		record.s3Conf.disableSSL = config.GetGlobalConfig().S3.DisableSSL
 		record.s3Conf.s3ForcePathStyle = config.GetGlobalConfig().S3.S3ForcePathStyle
 		record.s3Conf.enableUploadOOMRecord = config.GetGlobalConfig().S3.EnableUploadOOMRecord
+		record.s3Conf.timeoutSeconds = config.GetGlobalConfig().S3.TimeoutSeconds
 	}
 }
 
-func (record *memoryUsageAlarm) uploadFileToS3(filename string, uploader *s3manager.Uploader) {
+func (record *memoryUsageAlarm) uploadFileToS3(filename string, uploader *s3manager.Uploader, timeout time.Duration) {
 	file, err := os.OpenFile(filename, os.O_RDONLY, 0600)
 	if err != nil {
 		logutil.BgLogger().Error("open record file fail", zap.Error(err))
 		return
 	}
-	if _, err = uploader.Upload(&s3manager.UploadInput{
+	ctx, cancel := context.WithTimeout(aws.BackgroundContext(), timeout)
+	if _, err = uploader.UploadWithContext(ctx, &s3manager.UploadInput{
 		Bucket: aws.String(record.s3Conf.bucketName),
 		Key:    aws.String(filename),
 		Body:   file,
 	}); err != nil {
+		cancel()
 		logutil.BgLogger().Error("upload to s3 fail", zap.Error(err))
 		return
 	}
 	defer func() {
+		cancel()
 		if err := file.Close(); err != nil {
 			logutil.BgLogger().Error("close record file fail", zap.Error(err))
-			return
 		}
+		return
 	}()
 }
 
@@ -112,7 +118,7 @@ func (record *memoryUsageAlarm) createSessionAndUploadFilesToS3(filenames []stri
 		}
 		uploader := s3manager.NewUploader(sess)
 		for _, filename := range filenames {
-			record.uploadFileToS3(filename, uploader)
+			go record.uploadFileToS3(filename, uploader, time.Second*time.Duration(record.s3Conf.timeoutSeconds))
 		}
 	}
 }

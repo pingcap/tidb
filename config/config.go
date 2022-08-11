@@ -625,6 +625,7 @@ type S3 struct {
 	DisableSSL            bool   `toml:"disable-ssl" json:"disable-ssl"`
 	S3ForcePathStyle      bool   `toml:"s3-force-path-style" json:"s3-force-path-style"`
 	EnableUploadOOMRecord bool   `toml:"enable-upload-oom-record" json:"enable-upload-oom-record"`
+	TimeoutSeconds        int    `toml:"timeout_seconds" json:"timeout_seconds"`
 }
 
 // Performance is the performance section of the config.
