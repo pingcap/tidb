@@ -552,30 +552,30 @@ func validateReadConsistencyLevel(val string) error {
 // SetUserVarVal set user defined variables' value
 func (s *SessionVars) SetUserVarVal(name string, dt types.Datum) {
 	s.userVarLock.Lock()
+	defer s.userVarLock.Unlock()
 	s.userVarValues[name] = dt
-	s.userVarLock.Unlock()
 }
 
 // GetUserVarVal get user defined variables' value
 func (s *SessionVars) GetUserVarVal(name string) (types.Datum, bool) {
 	s.userVarLock.RLock()
+	defer s.userVarLock.RUnlock()
 	dt, ok := s.userVarValues[name]
-	s.userVarLock.RUnlock()
 	return dt, ok
 }
 
 // SetUserVarType set user defined variables' type
 func (s *SessionVars) SetUserVarType(name string, fd *types.FieldType) {
 	s.userVarLock.Lock()
+	defer s.userVarLock.Unlock()
 	s.userVarTypes[name] = fd
-	s.userVarLock.Unlock()
 }
 
 // GetUserVarType get user defined variables' type
 func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
 	s.userVarLock.RLock()
+	defer s.userVarLock.RUnlock()
 	fd, ok := s.userVarTypes[name]
-	s.userVarLock.RUnlock()
 	return fd, ok
 }
 
@@ -589,17 +589,13 @@ type SessionVars struct {
 	DMLBatchSize        int
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
-	// usersLock is a lock for user defined variables.
-	//  UsersLock sync.RWMutex
-	// users are user defined variables.
-	// Users map[string]types.Datum
-	// userVarTypes stores the FieldType for user variables, it cannot be inferred from userVarValues when userVarValues have not been set yet.
-	// It is read/write protected by usersLock.
-	// UserVarTypes map[string]*types.FieldType
-	// usersLock is a lock for user defined variables.
-	userVarLock   sync.RWMutex
+	// userVarLock is a lock for user defined variables.
+	// userVarValues and userVarTypes is read/write protected by usersLock.
+	userVarLock sync.RWMutex
+	// userVarValues stores the Datum for user variables
 	userVarValues map[string]types.Datum
-	userVarTypes  map[string]*types.FieldType
+	// userVarTypes stores the FieldType for user variables, it cannot be inferred from userVarValues when userVarValues have not been set yet.
+	userVarTypes map[string]*types.FieldType
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// stmtVars variables are temporarily set by SET_VAR hint
@@ -1700,9 +1696,9 @@ func (s *SessionVars) SetUserVar(varName string, svalue string, collation string
 func (s *SessionVars) UnsetUserVar(varName string) {
 	varName = strings.ToLower(varName)
 	s.userVarLock.Lock()
+	defer s.userVarLock.Unlock()
 	delete(s.userVarValues, varName)
 	delete(s.userVarTypes, varName)
-	s.userVarLock.Unlock()
 }
 
 // SetLastInsertID saves the last insert id to the session context.
