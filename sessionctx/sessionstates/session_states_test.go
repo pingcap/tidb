@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
@@ -855,8 +855,7 @@ func TestPreparedStatements(t *testing.T) {
 				return stmtID
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
-				datum := []types.Datum{types.NewDatum(1)}
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), datum)
+				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), expression.Args2Expressions4Test(1))
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
 			},
@@ -878,8 +877,7 @@ func TestPreparedStatements(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
 				tk.MustQuery("execute stmt").Check(testkit.Rows("10"))
-				datum := []types.Datum{types.NewDatum(1)}
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), datum)
+				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), expression.Args2Expressions4Test(1))
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
 			},
@@ -911,8 +909,7 @@ func TestPreparedStatements(t *testing.T) {
 				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[1], nil)
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows())
-				datum := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-				_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[0], datum)
+				_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[0], expression.Args2Expressions4Test(1, 2, 3))
 				require.NoError(t, err)
 				rs, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[1], nil)
 				require.NoError(t, err)

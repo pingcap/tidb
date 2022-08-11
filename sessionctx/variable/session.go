@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -168,9 +169,8 @@ type TxnCtxNoNeedToRestore struct {
 	currentShard int64
 	shardRand    *rand.Rand
 
-	// unchangedLockKeys is used to store the unchanged keys that needs to lock for pessimistic transaction, including
-	// row keys and unique keys.
-	unchangedLockKeys map[string]struct{}
+	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
+	unchangedRowKeys map[string]struct{}
 
 	PessimisticCacheHit int
 
@@ -239,20 +239,20 @@ func (tc *TransactionContext) updateShard() {
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
-// AddUnchangedLockKey adds an unchanged key in update statement for pessimistic lock.
-func (tc *TransactionContext) AddUnchangedLockKey(key []byte) {
-	if tc.unchangedLockKeys == nil {
-		tc.unchangedLockKeys = map[string]struct{}{}
+// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
+	if tc.unchangedRowKeys == nil {
+		tc.unchangedRowKeys = map[string]struct{}{}
 	}
-	tc.unchangedLockKeys[string(key)] = struct{}{}
+	tc.unchangedRowKeys[string(key)] = struct{}{}
 }
 
-// CollectUnchangedLockKeys collects unchanged keys for pessimistic lock.
-func (tc *TransactionContext) CollectUnchangedLockKeys(buf []kv.Key) []kv.Key {
-	for key := range tc.unchangedLockKeys {
+// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedRowKeys {
 		buf = append(buf, kv.Key(key))
 	}
-	tc.unchangedLockKeys = nil
+	tc.unchangedRowKeys = nil
 	return buf
 }
 
@@ -575,6 +575,8 @@ type SessionVars struct {
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
 	SysErrorCount uint16
+	// generalPlanCacheStmts stores PlanCacheStmts for general plan cache.
+	generalPlanCacheStmts *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -1187,6 +1189,30 @@ type SessionVars struct {
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
 	DefaultStrMatchSelectivity float64
+
+	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
+	PrimaryKeyRequired bool
+
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
+}
+
+// GetPreparedStmtByName returns the prepared statement specified by stmtName.
+func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
+	stmtID, ok := s.PreparedStmtNameToID[stmtName]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return s.GetPreparedStmtByID(stmtID)
+}
+
+// GetPreparedStmtByID returns the prepared statement specified by stmtID.
+func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
+	stmt, ok := s.PreparedStmts[stmtID]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return stmt, nil
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1252,6 +1278,12 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
 		SkipPositionRecording:       true,
 	}
+}
+
+// AllocNewPlanID alloc new ID
+func (s *SessionVars) AllocNewPlanID() int {
+	s.PlanID++
+	return s.PlanID
 }
 
 const (
@@ -1422,7 +1454,6 @@ func NewSessionVars() *SessionVars {
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnablePointGetCache:         DefTiDBPointGetCache,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                    kv.NewDefaultTxnScopeVar(),
@@ -1776,6 +1807,30 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	default:
 		s.DDLReorgPriority = kv.PriorityLow
 	}
+}
+
+type planCacheStmtKey string
+
+func (k planCacheStmtKey) Hash() []byte {
+	return []byte(k)
+}
+
+// AddGeneralPlanCacheStmt adds this PlanCacheStmt into general-plan-cache-stmt cache
+func (s *SessionVars) AddGeneralPlanCacheStmt(sql string, stmt interface{}) {
+	if s.generalPlanCacheStmts == nil {
+		// TODO: make it configurable
+		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(100, 0, 0)
+	}
+	s.generalPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
+}
+
+// GetGeneralPlanCacheStmt gets the PlanCacheStmt.
+func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) interface{} {
+	if s.generalPlanCacheStmts == nil {
+		return nil
+	}
+	stmt, _ := s.generalPlanCacheStmts.Get(planCacheStmtKey(sql))
+	return stmt
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.

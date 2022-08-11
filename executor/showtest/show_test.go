@@ -465,6 +465,13 @@ func TestShowCreateTable(t *testing.T) {
 			"  `a` set('a','b') CHARACTER SET binary COLLATE binary DEFAULT NULL,\n"+
 			"  `b` enum('a','b') CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a bit default (rand()))`)
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` bit(1) DEFAULT rand()\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {
@@ -692,9 +699,9 @@ func TestShowWarnings(t *testing.T) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert show_warnings values ('a')")
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect int value: 'a' for column 'a' at row 1"))
 	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect int value: 'a' for column 'a' at row 1"))
 	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 
 	// Test Warning level 'Error'
