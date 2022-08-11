@@ -404,10 +404,34 @@ var defaultSysVars = []*SysVar{
 		return strconv.FormatUint(atomic.LoadUint64(&ExpensiveQueryTimeThreshold), 10), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBMemoryUsageAlarmRatio, Value: strconv.FormatFloat(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(s *SessionVars, val string) error {
-		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
+		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.7))
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBAutoGcMemoryRatio, Value: strconv.FormatFloat(DefTiDBAutoGcMemoryRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(s *SessionVars, val string) error {
+		AutoGcMemoryRatio.Store(tidbOptFloat64(val, 0.8))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return fmt.Sprintf("%g", AutoGcMemoryRatio.Load()), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBMemoryUsageAlarmDesensitizationEnable, Value: BoolToOnOff(DefTiDBMemoryUsageAlarmDesensitizationEnable), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		MemoryUsageAlarmDesensitizationEnable.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(MemoryUsageAlarmDesensitizationEnable.Load()), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBMemoryUsageAlarmTruncationEnable, Value: BoolToOnOff(DefTiDBMemoryUsageAlarmTruncationEnable), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		MemoryUsageAlarmTruncationEnable.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(MemoryUsageAlarmTruncationEnable.Load()), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBMemoryUsageAlarmIntervalSeconds, Value: strconv.Itoa(DefTiDBMemoryUsageAlarmIntervalSeconds), Type: TypeUnsigned, MinValue: int64(0), MaxValue: math.MaxUint64, SetGlobal: func(s *SessionVars, val string) error {
+		MemoryUsageAlarmIntervalSeconds.Store(uint64(tidbOptPositiveInt32(val, DefTiDBMemoryUsageAlarmIntervalSeconds)))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatUint(MemoryUsageAlarmIntervalSeconds.Load(), 10), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(DefTiDBEnableCollectExecutionInfo), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
 		oldConfig := config.GetGlobalConfig()

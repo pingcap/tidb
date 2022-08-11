@@ -51,12 +51,16 @@ type s3Config struct {
 }
 
 type memoryUsageAlarm struct {
-	err                    error
-	initialized            bool
-	isServerMemoryQuotaSet bool
-	serverMemoryQuota      uint64
-	memoryUsageAlarmRatio  float64
-	lastCheckTime          time.Time
+	err                                   error
+	initialized                           bool
+	isServerMemoryQuotaSet                bool
+	serverMemoryQuota                     uint64
+	memoryUsageAlarmRatio                 float64
+	autoGcRatio                           float64
+	memoryUsageAlarmDesensitizationEnable bool
+	memoryUsageAlarmTruncationEnable      bool
+	memoryUsageAlarmIntervalSeconds       uint64
+	lastCheckTime                         time.Time
 
 	tmpDir              string
 	lastLogFileName     []string

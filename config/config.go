@@ -476,12 +476,16 @@ type Instance struct {
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
 
-	EnableSlowLog         AtomicBool `toml:"tidb_enable_slow_log" json:"tidb_enable_slow_log"`
-	SlowThreshold         uint64     `toml:"tidb_slow_log_threshold" json:"tidb_slow_log_threshold"`
-	RecordPlanInSlowLog   uint32     `toml:"tidb_record_plan_in_slow_log" json:"tidb_record_plan_in_slow_log"`
-	CheckMb4ValueInUTF8   AtomicBool `toml:"tidb_check_mb4_value_in_utf8" json:"tidb_check_mb4_value_in_utf8"`
-	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
-	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
+	EnableSlowLog                         AtomicBool `toml:"tidb_enable_slow_log" json:"tidb_enable_slow_log"`
+	SlowThreshold                         uint64     `toml:"tidb_slow_log_threshold" json:"tidb_slow_log_threshold"`
+	RecordPlanInSlowLog                   uint32     `toml:"tidb_record_plan_in_slow_log" json:"tidb_record_plan_in_slow_log"`
+	CheckMb4ValueInUTF8                   AtomicBool `toml:"tidb_check_mb4_value_in_utf8" json:"tidb_check_mb4_value_in_utf8"`
+	ForcePriority                         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
+	MemoryUsageAlarmRatio                 float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
+	MemoryUsageAlarmIntervalSeconds       uint64     `toml:"tidb_memory_usage_alarm_interval_seconds" json:"tidb_memory_usage_alarm_interval_seconds"`
+	MemoryUsageAlarmDesensitizationEnable bool       `toml:"tidb_memory_usage_alarm_desensitization_enable" json:"tidb_memory_usage_alarm_desensitization_enable"`
+	AutoGcMemoryRatio                     float64    `toml:"tidb_auto_gc_memory_ratio" json:"tidb_auto_gc_memory_ratio"`
+	MemoryUsageAlarmTruncationEnable      bool       `toml:"tidb_memory_usage_alarm_truncation_enable" json:"tidb_memory_usage_alarm_truncation_enable"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
@@ -625,7 +629,7 @@ type S3 struct {
 	DisableSSL            bool   `toml:"disable-ssl" json:"disable-ssl"`
 	S3ForcePathStyle      bool   `toml:"s3-force-path-style" json:"s3-force-path-style"`
 	EnableUploadOOMRecord bool   `toml:"enable-upload-oom-record" json:"enable-upload-oom-record"`
-	TimeoutSeconds        int    `toml:"timeout_seconds" json:"timeout_seconds"`
+	TimeoutSeconds        int    `toml:"timeout-seconds" json:"timeout-seconds"`
 }
 
 // Performance is the performance section of the config.
@@ -897,6 +901,7 @@ var defaultConf = Config{
 		DisableSSL:            true,
 		S3ForcePathStyle:      true,
 		EnableUploadOOMRecord: false,
+		TimeoutSeconds:        300,
 	},
 	Performance: Performance{
 		MaxMemory:             0,
@@ -1259,6 +1264,10 @@ func (c *Config) Valid() error {
 
 	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {
 		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
+	}
+
+	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {
+		return fmt.Errorf("tidb_auto_gc_memory_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
 	if len(c.IsolationRead.Engines) < 1 {
