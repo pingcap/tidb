@@ -1389,7 +1389,6 @@ func NewSessionVars() *SessionVars {
 		UserVarTypes:                make(map[string]*types.FieldType),
 		systems:                     make(map[string]string),
 		stmtVars:                    make(map[string]string),
-		GeneralStmts:                make(map[string]interface{}),
 		PreparedStmts:               make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),
