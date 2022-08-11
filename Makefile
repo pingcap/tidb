@@ -390,6 +390,7 @@ bazel_ci_prepare:
 
 bazel_prepare:
 	bazel run //:gazelle
+	bazel run //:gazelle -- update-repos -from_file=go.mod -build_file_proto_mode=disable
 
 bazel_test: failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
@@ -437,3 +438,23 @@ bazel_golangcilinter:
 		--run_under="cd $(CURDIR) && " \
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
 	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml
+
+bazel_brietest:
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/brietest/...
+
+bazel_pessimistictest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/pessimistictest/...
+
+bazel_sessiontest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/sessiontest/...
+
+bazel_statisticstest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/statisticstest/...
+
+bazel_txntest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/txntest/...
