@@ -589,21 +589,27 @@ func TestShowCreateTablePlacement(t *testing.T) {
 	))
 
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	// RANGE COLUMNS with multiple columns is not supported!
+
 	tk.MustExec("create table t(a int, b varchar(255))" +
 		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
 		"PARTITION BY RANGE COLUMNS (a,b)\n" +
 		"(PARTITION pLow VALUES less than (1000000,'1000000') COMMENT 'a comment' placement policy 'x'," +
 		" PARTITION pMidLow VALUES less than (1000000,MAXVALUE) COMMENT 'another comment' placement policy 'x'," +
-		" PARTITION pMadMax VALUES less than (MAXVALUE,'1000000') COMMENT ='Not a comment' placement policy 'x'," +
-		"partition pMax values LESS THAN (MAXVALUE, MAXVALUE))")
+		" PARTITION pMadMax VALUES less than (9000000,'1000000') COMMENT ='Not a comment' placement policy 'x'," +
+		"partition pMax values LESS THAN (MAXVALUE, 'Does not matter...'))")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
-		"t CREATE TABLE `t` (\n"+
-		"  `a` int(11) DEFAULT NULL,\n"+
-		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */",
-	))
+	tk.MustExec(`insert into t values (1,'1')`)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) DEFAULT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n" +
+			"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
+			"(PARTITION `pLow` VALUES LESS THAN (1000000,'1000000') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
+			" PARTITION `pMidLow` VALUES LESS THAN (1000000,MAXVALUE) COMMENT 'another comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
+			" PARTITION `pMadMax` VALUES LESS THAN (9000000,'1000000') COMMENT 'Not a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,'Does not matter...'))"))
 
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec("create table t(a int, b varchar(255))" +
