@@ -17,6 +17,7 @@ package expensivequery
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -108,7 +109,7 @@ func (record *memoryUsageAlarm) uploadFileToS3(filename string, uploader *s3mana
 }
 
 func (record *memoryUsageAlarm) createSessionAndUploadFilesToS3(filenames []string) {
-	if record.s3Conf.enableUploadOOMRecord && record.initialized && time.Since(record.lastCheckTime) > 600*time.Second {
+	if record.initialized && time.Since(record.lastCheckTime) > time.Duration(record.memoryUsageAlarmIntervalSeconds)*time.Second {
 		sess, err := session.NewSession(&aws.Config{
 			Credentials:      credentials.NewStaticCredentials(record.s3Conf.accessKey, record.s3Conf.secretKey, ""),
 			Endpoint:         aws.String(record.s3Conf.endPoint),
@@ -129,6 +130,11 @@ func (record *memoryUsageAlarm) createSessionAndUploadFilesToS3(filenames []stri
 
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	record.initS3Config()
+	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
+	record.memoryUsageAlarmDesensitizationEnable = variable.MemoryUsageAlarmDesensitizationEnable.Load()
+	record.memoryUsageAlarmTruncationEnable = variable.MemoryUsageAlarmTruncationEnable.Load()
+	record.autoGcRatio = variable.AutoGcMemoryRatio.Load()
+	record.memoryUsageAlarmIntervalSeconds = variable.MemoryUsageAlarmIntervalSeconds.Load()
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
 		record.serverMemoryQuota = quota
 		record.isServerMemoryQuotaSet = true
@@ -170,14 +176,14 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
-	if record.memoryUsageAlarmRatio <= 0.0 || record.memoryUsageAlarmRatio >= 1.0 {
-		return
-	}
 	if !record.initialized {
 		record.initMemoryUsageAlarmRecord()
 		if record.err != nil {
 			return
 		}
+	}
+	if record.memoryUsageAlarmRatio <= 0.0 || record.memoryUsageAlarmRatio >= 1.0 {
+		return
 	}
 
 	var memoryUsage uint64
@@ -204,9 +210,9 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		}
 		interval := time.Since(record.lastCheckTime)
 		if interval > time.Duration(record.memoryUsageAlarmIntervalSeconds)*time.Second {
+			record.lastCheckTime = time.Now()
 			record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm)
 		}
-		record.lastCheckTime = time.Now()
 	}
 }
 
@@ -230,16 +236,20 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 		return
 	}
 
-	recordSQLFile := record.recordSQL(sm)
-	recordProfileFiles := record.recordProfile()
-
-	if recordSQLFile != "" && len(recordProfileFiles) != 0 {
-		recordFiles := make([]string, 0, len(recordProfileFiles)+1)
-		recordFiles = append(recordFiles, recordSQLFile)
-		recordFiles = append(recordFiles, recordProfileFiles...)
+	var recordSQLFile string
+	var recordProfileFiles []string
+	if recordSQLFile, record.err = record.recordSQL(sm); record.err != nil {
+		return
+	}
+	if recordProfileFiles, record.err = record.recordProfile(); record.err != nil {
+		return
+	}
+	println(recordSQLFile)
+	recordFiles := make([]string, 0, len(recordProfileFiles)+1)
+	recordFiles = append(recordFiles, recordSQLFile)
+	recordFiles = append(recordFiles, recordProfileFiles...)
+	if record.s3Conf.enableUploadOOMRecord {
 		record.createSessionAndUploadFilesToS3(recordFiles)
-	} else {
-		logutil.BgLogger().Error("get record file names fail")
 	}
 
 	tryRemove := func(filename *[]string) {
@@ -258,7 +268,16 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 }
 
-func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) string {
+func getRelevantSystemVariableBuf() strings.Builder {
+	var buf strings.Builder
+	buf.WriteString(fmt.Sprintf("System variables : \n"))
+	buf.WriteString(fmt.Sprintf("oom-action: %v \n", config.GetGlobalConfig().OOMAction))
+	buf.WriteString(fmt.Sprintf("mem-quota-query : %v \n", config.GetGlobalConfig().MemQuotaQuery))
+	buf.WriteString(fmt.Sprintf("server-memory-quota : %v \n", config.GetGlobalConfig().Performance.ServerMemoryQuota))
+	return buf
+}
+
+func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error) {
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
@@ -272,7 +291,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) string {
 	f, err := os.Create(fileName)
 	if err != nil {
 		logutil.BgLogger().Error("create oom record file fail", zap.Error(err))
-		return ""
+		return "", err
 	}
 	defer func() {
 		err := f.Close()
@@ -280,6 +299,12 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) string {
 			logutil.BgLogger().Error("close oom record file fail", zap.Error(err))
 		}
 	}()
+
+	buf := getRelevantSystemVariableBuf()
+	if _, err = f.WriteString(buf.String()); err != nil {
+		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
+	}
+
 	printTop10 := func(cmp func(i, j *util.ProcessInfo) bool) {
 		slices.SortFunc(pinfo, cmp)
 		list := pinfo
@@ -303,7 +328,9 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) string {
 			}
 		}
 		buf.WriteString("\n")
-		_, err = f.WriteString(buf.String())
+		if _, err = f.WriteString(buf.String()); err != nil {
+			logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
+		}
 	}
 
 	_, err = f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n")
@@ -315,10 +342,10 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) string {
 	printTop10(func(i, j *util.ProcessInfo) bool {
 		return i.Time.Before(j.Time)
 	})
-	return fileName
+	return fileName, nil
 }
 
-func (record *memoryUsageAlarm) recordProfile() []string {
+func (record *memoryUsageAlarm) recordProfile() ([]string, error) {
 	items := []struct {
 		name  string
 		debug int
@@ -334,8 +361,16 @@ func (record *memoryUsageAlarm) recordProfile() []string {
 		f, err := os.Create(fileName)
 		if err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
-			return profileFilenames
+			return profileFilenames, err
 		}
+
+		p := rpprof.Lookup(item.name)
+		err = p.WriteTo(f, item.debug)
+		if err != nil {
+			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
+			return profileFilenames, err
+		}
+
 		//nolint: revive
 		defer func() {
 			err := f.Close()
@@ -343,12 +378,6 @@ func (record *memoryUsageAlarm) recordProfile() []string {
 				logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.name), zap.Error(err))
 			}
 		}()
-		p := rpprof.Lookup(item.name)
-		err = p.WriteTo(f, item.debug)
-		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
-			return profileFilenames
-		}
 	}
-	return profileFilenames
+	return profileFilenames, nil
 }

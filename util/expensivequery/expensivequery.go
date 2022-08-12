@@ -87,12 +87,6 @@ func (eqh *Handle) Run() {
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 
-			record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
-			record.memoryUsageAlarmDesensitizationEnable = variable.MemoryUsageAlarmDesensitizationEnable.Load()
-			record.memoryUsageAlarmTruncationEnable = variable.MemoryUsageAlarmTruncationEnable.Load()
-			record.autoGcRatio = variable.AutoGcMemoryRatio.Load()
-			record.memoryUsageAlarmIntervalSeconds = variable.MemoryUsageAlarmIntervalSeconds.Load()
-
 			if record.err == nil {
 				record.alarm4ExcessiveMemUsage(sm)
 			}

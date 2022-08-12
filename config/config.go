@@ -84,7 +84,15 @@ const (
 	// DefExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	DefExpensiveQueryTimeThreshold = 60
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
-	DefMemoryUsageAlarmRatio = 0.8
+	DefMemoryUsageAlarmRatio = 0.7
+	// DefTiDBAutoGcMemoryRatio is the threshold triggering gc which the memory usage of tidb-server instance exceeds.
+	DefTiDBAutoGcMemoryRatio = 0.8
+	// DefTiDBMemoryUsageAlarmDesensitizationEnable indicates whether to desensitize the alarm information.
+	DefTiDBMemoryUsageAlarmDesensitizationEnable = true
+	// DefTiDBMemoryUsageAlarmTruncationEnable indicates whether to truncate the alarm information.
+	DefTiDBMemoryUsageAlarmTruncationEnable = true
+	// DefTiDBMemoryUsageAlarmIntervalSeconds indicates the alarm interval when memory usage of the tidb-server exceeds.
+	DefTiDBMemoryUsageAlarmIntervalSeconds = 10
 )
 
 // Valid config maps
@@ -865,20 +873,24 @@ var defaultConf = Config{
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
 	Instance: Instance{
-		TiDBGeneralLog:              false,
-		EnablePProfSQLCPU:           false,
-		DDLSlowOprThreshold:         DefDDLSlowOprThreshold,
-		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,
-		EnableSlowLog:               *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
-		SlowThreshold:               logutil.DefaultSlowThreshold,
-		RecordPlanInSlowLog:         logutil.DefaultRecordPlanInSlowLog,
-		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
-		ForcePriority:               "NO_PRIORITY",
-		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
-		EnableCollectExecutionInfo:  true,
-		PluginDir:                   "/data/deploy/plugin",
-		PluginLoad:                  "",
-		MaxConnections:              0,
+		TiDBGeneralLog:                        false,
+		EnablePProfSQLCPU:                     false,
+		DDLSlowOprThreshold:                   DefDDLSlowOprThreshold,
+		ExpensiveQueryTimeThreshold:           DefExpensiveQueryTimeThreshold,
+		EnableSlowLog:                         *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
+		SlowThreshold:                         logutil.DefaultSlowThreshold,
+		RecordPlanInSlowLog:                   logutil.DefaultRecordPlanInSlowLog,
+		CheckMb4ValueInUTF8:                   *NewAtomicBool(true),
+		ForcePriority:                         "NO_PRIORITY",
+		MemoryUsageAlarmRatio:                 DefMemoryUsageAlarmRatio,
+		AutoGcMemoryRatio:                     DefTiDBAutoGcMemoryRatio,
+		MemoryUsageAlarmIntervalSeconds:       DefTiDBMemoryUsageAlarmIntervalSeconds,
+		MemoryUsageAlarmDesensitizationEnable: DefTiDBMemoryUsageAlarmDesensitizationEnable,
+		MemoryUsageAlarmTruncationEnable:      DefTiDBMemoryUsageAlarmTruncationEnable,
+		EnableCollectExecutionInfo:            true,
+		PluginDir:                             "/data/deploy/plugin",
+		PluginLoad:                            "",
+		MaxConnections:                        0,
 	},
 	Status: Status{
 		ReportStatus:          true,
