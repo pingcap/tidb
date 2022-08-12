@@ -164,7 +164,6 @@ func checkConstraint(stmt *ast.NonTransactionalDeleteStmt, se Session) error {
 // single-threaded worker. work on the key range [start, end]
 func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDeleteStmt,
 	tableName *ast.TableName, se Session, originalCondition ast.ExprNode) ([]string, error) {
-
 	// prepare for the construction of statement
 	var shardColumnRefer *ast.ResultField
 	var shardColumnType types.FieldType
@@ -346,7 +345,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 			zap.Int("jobSize", job.jobSize), zap.String("deleteSQL", deleteSQLInLog))
 	}
 	if rs != nil {
-		rs.Close()
+		_ = rs.Close()
 	}
 	return ""
 }
@@ -377,7 +376,9 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 		return nil, errors.Errorf("Non-transactional delete, expecting 1 record set, but got %d", len(rss))
 	}
 	rs := rss[0]
-	defer rs.Close()
+	defer func() {
+		_ = rs.Close()
+	}()
 
 	batchSize := int(stmt.Limit)
 	if batchSize <= 0 {
@@ -638,6 +639,6 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 	logutil.Logger(ctx).Error("Non-transactional delete failed",
 		zap.Int("num_failed_jobs", len(failedJobs)), zap.String("failed_jobs", errStr))
 
-	return nil, errors.New(fmt.Sprintf("%d/%d jobs failed in the non-transactional DML: %s, ...(more in logs)",
-		len(failedJobs), len(jobs), errStr[:mathutil.Min(500, len(errStr)-1)]))
+	return nil, fmt.Errorf("%d/%d jobs failed in the non-transactional DML: %s, ...(more in logs)",
+		len(failedJobs), len(jobs), errStr[:mathutil.Min(500, len(errStr)-1)])
 }

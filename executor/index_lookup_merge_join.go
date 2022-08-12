@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
-	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
@@ -257,7 +257,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 	}
 	req.Reset()
 	if e.task == nil {
-		e.getFinishedTask(ctx)
+		e.loadFinishedTask(ctx)
 	}
 	for e.task != nil {
 		select {
@@ -266,7 +266,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 				if e.task.doneErr != nil {
 					return e.task.doneErr
 				}
-				e.getFinishedTask(ctx)
+				e.loadFinishedTask(ctx)
 				continue
 			}
 			req.SwapColumns(result.chk)
@@ -280,14 +280,13 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 	return nil
 }
 
-func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
+// TODO: reuse the finished task memory to build tasks.
+func (e *IndexLookUpMergeJoin) loadFinishedTask(ctx context.Context) {
 	select {
 	case e.task = <-e.resultCh:
 	case <-ctx.Done():
 		e.task = nil
 	}
-
-	// TODO: reuse the finished task memory to build tasks.
 }
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
@@ -295,7 +294,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		if r := recover(); r != nil {
 			task := &lookUpMergeJoinTask{
-				doneErr: errors.New(fmt.Sprintf("%v", r)),
+				doneErr: fmt.Errorf("%v", r),
 				results: make(chan *indexMergeJoinResult, numResChkHold),
 			}
 			close(task.results)
@@ -449,8 +448,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
 	// In this case, we need sort the outer side.
 	if imw.outerMergeCtx.needOuterSort {
-		sort.Slice(task.outerOrderIdx, func(i, j int) bool {
-			idxI, idxJ := task.outerOrderIdx[i], task.outerOrderIdx[j]
+		slices.SortFunc(task.outerOrderIdx, func(idxI, idxJ chunk.RowPtr) bool {
 			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
 			var cmp int64
 			var err error

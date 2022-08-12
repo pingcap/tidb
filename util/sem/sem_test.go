@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-
 	"github.com/stretchr/testify/assert"
 )
 

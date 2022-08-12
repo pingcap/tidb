@@ -23,7 +23,6 @@ import (
 	"math"
 	"math/rand"
 	"net"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -49,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -59,6 +58,7 @@ import (
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 )
 
 // PreparedStmtCount is exported for test.
@@ -549,6 +549,36 @@ func validateReadConsistencyLevel(val string) error {
 	}
 }
 
+// SetUserVarVal set user defined variables' value
+func (s *SessionVars) SetUserVarVal(name string, dt types.Datum) {
+	s.userVars.lock.Lock()
+	defer s.userVars.lock.Unlock()
+	s.userVars.values[name] = dt
+}
+
+// GetUserVarVal get user defined variables' value
+func (s *SessionVars) GetUserVarVal(name string) (types.Datum, bool) {
+	s.userVars.lock.RLock()
+	defer s.userVars.lock.RUnlock()
+	dt, ok := s.userVars.values[name]
+	return dt, ok
+}
+
+// SetUserVarType set user defined variables' type
+func (s *SessionVars) SetUserVarType(name string, ft *types.FieldType) {
+	s.userVars.lock.Lock()
+	defer s.userVars.lock.Unlock()
+	s.userVars.types[name] = ft
+}
+
+// GetUserVarType get user defined variables' type
+func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
+	s.userVars.lock.RLock()
+	defer s.userVars.lock.RUnlock()
+	ft, ok := s.userVars.types[name]
+	return ft, ok
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -559,13 +589,14 @@ type SessionVars struct {
 	DMLBatchSize        int
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
-	// UsersLock is a lock for user defined variables.
-	UsersLock sync.RWMutex
-	// Users are user defined variables.
-	Users map[string]types.Datum
-	// UserVarTypes stores the FieldType for user variables, it cannot be inferred from Users when Users have not been set yet.
-	// It is read/write protected by UsersLock.
-	UserVarTypes map[string]*types.FieldType
+	userVars            struct {
+		// lock is for user defined variables. values and types is read/write protected.
+		lock sync.RWMutex
+		// values stores the Datum for user variables
+		values map[string]types.Datum
+		// types stores the FieldType for user variables, it cannot be inferred from values when values have not been set yet.
+		types map[string]*types.FieldType
+	}
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// stmtVars variables are temporarily set by SET_VAR hint
@@ -575,6 +606,8 @@ type SessionVars struct {
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
 	SysErrorCount uint16
+	// generalPlanCacheStmts stores PlanCacheStmts for general plan cache.
+	generalPlanCacheStmts *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -688,6 +721,9 @@ type SessionVars struct {
 
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
+
+	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
+	EnableSkewDistinctAgg bool
 
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
@@ -917,7 +953,7 @@ type SessionVars struct {
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
 
-	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
+	// ConnectionInfo indicates current connection info used by current session.
 	ConnectionInfo *ConnectionInfo
 
 	// NoopFuncsMode allows OFF/ON/WARN values as 0/1/2.
@@ -972,6 +1008,9 @@ type SessionVars struct {
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
+	// ReplicaClosestReadThreshold is the minimum response body size that a cop request should be sent to the closest replica.
+	// this variable only take effect when `tidb_follower_read` = 'closest-adaptive'
+	ReplicaClosestReadThreshold int64
 
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
@@ -1041,10 +1080,10 @@ type SessionVars struct {
 	LastTxnInfo string
 
 	// LastQueryInfo keeps track the info of last query.
-	LastQueryInfo QueryInfo
+	LastQueryInfo sessionstates.QueryInfo
 
 	// LastDDLInfo keeps track the info of last DDL.
-	LastDDLInfo LastDDLInfo
+	LastDDLInfo sessionstates.LastDDLInfo
 
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
@@ -1158,6 +1197,53 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// TiFlash related optimization, only for MPP.
+	TiFlashFineGrainedShuffleStreamCount int64
+	TiFlashFineGrainedShuffleBatchSize   uint64
+
+	// RequestSourceType is the type of inner request.
+	RequestSourceType string
+
+	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
+	MemoryDebugModeMinHeapInUse int64
+	// MemoryDebugModeAlarmRatio indicated the allowable bias ratio of memory tracking accuracy check.
+	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
+	MemoryDebugModeAlarmRatio int64
+
+	// EnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// When it is false, ANALYZE reads the latest data.
+	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
+	EnableAnalyzeSnapshot bool
+
+	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
+	// when > 0: it's the selectivity for the expression.
+	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
+	DefaultStrMatchSelectivity float64
+
+	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
+	PrimaryKeyRequired bool
+
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
+}
+
+// GetPreparedStmtByName returns the prepared statement specified by stmtName.
+func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
+	stmtID, ok := s.PreparedStmtNameToID[stmtName]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return s.GetPreparedStmtByID(stmtID)
+}
+
+// GetPreparedStmtByID returns the prepared statement specified by stmtID.
+func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
+	stmt, ok := s.PreparedStmts[stmtID]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return stmt, nil
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1225,6 +1311,12 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	}
 }
 
+// AllocNewPlanID alloc new ID
+func (s *SessionVars) AllocNewPlanID() int {
+	s.PlanID++
+	return s.PlanID
+}
+
 const (
 	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
 	PlacementModeStrict string = "STRICT"
@@ -1283,7 +1375,7 @@ func (pps PreparedParams) String() string {
 	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
 }
 
-// ConnectionInfo present connection used by audit.
+// ConnectionInfo presents the connection information, which is mainly used by audit logs.
 type ConnectionInfo struct {
 	ConnectionID      uint64
 	ConnectionType    string
@@ -1303,11 +1395,35 @@ type ConnectionInfo struct {
 	DB                string
 }
 
+const (
+	// ConnTypeSocket indicates socket without TLS.
+	ConnTypeSocket string = "Socket"
+	// ConnTypeUnixSocket indicates Unix Socket.
+	ConnTypeUnixSocket string = "UnixSocket"
+	// ConnTypeTLS indicates socket with TLS.
+	ConnTypeTLS string = "SSL/TLS"
+)
+
+// IsSecureTransport checks whether the connection is secure.
+func (connInfo *ConnectionInfo) IsSecureTransport() bool {
+	switch connInfo.ConnectionType {
+	case ConnTypeUnixSocket, ConnTypeTLS:
+		return true
+	}
+	return false
+}
+
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                       make(map[string]types.Datum),
-		UserVarTypes:                make(map[string]*types.FieldType),
+		userVars: struct {
+			lock   sync.RWMutex
+			values map[string]types.Datum
+			types  map[string]*types.FieldType
+		}{
+			values: make(map[string]types.Datum),
+			types:  make(map[string]*types.FieldType),
+		},
 		systems:                     make(map[string]string),
 		stmtVars:                    make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
@@ -1375,7 +1491,6 @@ func NewSessionVars() *SessionVars {
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnablePointGetCache:         DefTiDBPointGetCache,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                    kv.NewDefaultTxnScopeVar(),
@@ -1394,6 +1509,7 @@ func NewSessionVars() *SessionVars {
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
@@ -1420,6 +1536,8 @@ func NewSessionVars() *SessionVars {
 		IndexLookupSize:    DefIndexLookupSize,
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
+		MinPagingSize:      DefMinPagingSize,
+		MaxPagingSize:      DefMaxPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
@@ -1429,11 +1547,6 @@ func NewSessionVars() *SessionVars {
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
-	enableChunkRPC := "0"
-	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
-		enableChunkRPC = "1"
-	}
-	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
 		case kv.TiFlash.Name():
@@ -1564,7 +1677,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 // GetParseParams gets the parse parameters from session variables.
 func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	chs, coll := s.GetCharsetInfo()
-	cli, err := GetSessionOrGlobalSystemVar(s, CharacterSetClient)
+	cli, err := s.GetSessionOrGlobalSystemVar(CharacterSetClient)
 	if err != nil {
 		cli = ""
 	}
@@ -1575,15 +1688,24 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	}
 }
 
-// SetUserVar set the value and collation for user defined variable.
-func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
-	varName = strings.ToLower(varName)
+// SetStringUserVar set the value and collation for user defined variable.
+func (s *SessionVars) SetStringUserVar(name string, strVal string, collation string) {
+	name = strings.ToLower(name)
 	if len(collation) > 0 {
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
+		s.SetUserVarVal(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
 	} else {
 		_, collation = s.GetCharsetInfo()
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
+		s.SetUserVarVal(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
 	}
+}
+
+// UnsetUserVar unset an user defined variable by name.
+func (s *SessionVars) UnsetUserVar(varName string) {
+	varName = strings.ToLower(varName)
+	s.userVars.lock.Lock()
+	defer s.userVars.lock.Unlock()
+	delete(s.userVars.values, varName)
+	delete(s.userVars.types, varName)
 }
 
 // SetLastInsertID saves the last insert id to the session context.
@@ -1593,7 +1715,7 @@ func (s *SessionVars) SetLastInsertID(insertID uint64) {
 }
 
 // SetStatusFlag sets the session server status variable.
-// If on is ture sets the flag in session status,
+// If on is true sets the flag in session status,
 // otherwise removes the flag.
 func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	if on {
@@ -1684,6 +1806,11 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
+// SetNextPreparedStmtID sets the next prepared statement id. It's only used in restoring session states.
+func (s *SessionVars) SetNextPreparedStmtID(preparedStmtID uint32) {
+	s.preparedStmtID = preparedStmtID
+}
+
 // Location returns the value of time_zone session variable. If it is nil, then return time.Local.
 func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
@@ -1719,6 +1846,30 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	default:
 		s.DDLReorgPriority = kv.PriorityLow
 	}
+}
+
+type planCacheStmtKey string
+
+func (k planCacheStmtKey) Hash() []byte {
+	return []byte(k)
+}
+
+// AddGeneralPlanCacheStmt adds this PlanCacheStmt into general-plan-cache-stmt cache
+func (s *SessionVars) AddGeneralPlanCacheStmt(sql string, stmt interface{}) {
+	if s.generalPlanCacheStmts == nil {
+		// TODO: make it configurable
+		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(100, 0, 0)
+	}
+	s.generalPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
+}
+
+// GetGeneralPlanCacheStmt gets the PlanCacheStmt.
+func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) interface{} {
+	if s.generalPlanCacheStmts == nil {
+		return nil
+	}
+	stmt, _ := s.generalPlanCacheStmts.Get(planCacheStmtKey(sql))
+	return stmt
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
@@ -1762,7 +1913,7 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 }
 
 // SetStmtVar sets the value of a system variable temporarily
-func (s *SessionVars) SetStmtVar(name string, val string) error {
+func (s *SessionVars) setStmtVar(name string, val string) error {
 	s.stmtVars[name] = val
 	return nil
 }
@@ -1772,12 +1923,107 @@ func (s *SessionVars) ClearStmtVars() {
 	s.stmtVars = make(map[string]string)
 }
 
+// GetSessionOrGlobalSystemVar gets a system variable.
+// If it is a session only variable, use the default value defined in code.
+// Returns error if there is no such variable.
+func (s *SessionVars) GetSessionOrGlobalSystemVar(name string) (string, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if sv.HasNoneScope() {
+		return sv.Value, nil
+	}
+	if sv.HasSessionScope() {
+		// Populate the value to s.systems if it is not there already.
+		// in future should be already loaded on session init
+		if sv.GetSession != nil {
+			// shortcut to the getter, we won't use the value
+			return sv.GetSessionFromHook(s)
+		}
+		if _, ok := s.systems[sv.Name]; !ok {
+			if sv.HasGlobalScope() {
+				if val, err := s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name); err == nil {
+					s.systems[sv.Name] = val
+				}
+			} else {
+				s.systems[sv.Name] = sv.Value // no global scope, use default
+			}
+		}
+		return sv.GetSessionFromHook(s)
+	}
+	return sv.GetGlobalFromHook(s)
+}
+
+// GetSessionStatesSystemVar gets the session variable value for session states.
+// It's only used for encoding session states when migrating a session.
+// The returned boolean indicates whether to keep this value in the session states.
+func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	// Call GetStateValue first if it exists. Otherwise, call GetSession.
+	if sv.GetStateValue != nil {
+		return sv.GetStateValue(s)
+	}
+	if sv.GetSession != nil {
+		val, err := sv.GetSessionFromHook(s)
+		return val, err == nil, err
+	}
+	// Only get the cached value. No need to check the global or default value.
+	if val, ok := s.systems[sv.Name]; ok {
+		return val, true, nil
+	}
+	return "", false, nil
+}
+
+// GetGlobalSystemVar gets a global system variable.
+func (s *SessionVars) GetGlobalSystemVar(name string) (string, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	return sv.GetGlobalFromHook(s)
+}
+
+// SetStmtVar sets system variable and updates SessionVars states.
+func (s *SessionVars) SetStmtVar(name string, value string) error {
+	name = strings.ToLower(name)
+	sysVar := GetSysVar(name)
+	if sysVar == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	sVal, err := sysVar.Validate(s, value, ScopeSession)
+	if err != nil {
+		return err
+	}
+	return s.setStmtVar(name, sVal)
+}
+
 // SetSystemVar sets the value of a system variable for session scope.
-// Validation is expected to be performed before calling this function,
-// and the values should been normalized.
-// i.e. oN / on / 1 => ON
+// Values are automatically normalized (i.e. oN / on / 1 => ON)
+// and the validation function is run. To set with less validation, see
+// SetSystemVarWithRelaxedValidation.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	sv := GetSysVar(name)
+	if sv == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	val, err := sv.Validate(s, val, ScopeSession)
+	if err != nil {
+		return err
+	}
+	return sv.SetSessionFromHook(s, val)
+}
+
+// SetSystemVarWithoutValidation sets the value of a system variable for session scope.
+// Deprecated: Values are NOT normalized or Validated.
+func (s *SessionVars) SetSystemVarWithoutValidation(name string, val string) error {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
 	return sv.SetSessionFromHook(s, val)
 }
 
@@ -1840,32 +2086,76 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 // EncodeSessionStates saves session states into SessionStates.
 func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
-	s.UsersLock.RLock()
-	sessionStates.UserVars = make(map[string]*types.Datum, len(s.Users))
-	for name, userVar := range s.Users {
+	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
+	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.userVars.types))
+	s.userVars.lock.RLock()
+	defer s.userVars.lock.RUnlock()
+	for name, userVar := range s.userVars.values {
 		sessionStates.UserVars[name] = userVar.Clone()
 	}
-	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.UserVarTypes))
-	for name, userVarType := range s.UserVarTypes {
+	for name, userVarType := range s.userVars.types {
 		sessionStates.UserVarTypes[name] = userVarType.Clone()
 	}
-	s.UsersLock.RUnlock()
+
+	// Encode other session contexts.
+	sessionStates.PreparedStmtID = s.preparedStmtID
+	sessionStates.Status = s.Status
+	sessionStates.CurrentDB = s.CurrentDB
+	sessionStates.LastTxnInfo = s.LastTxnInfo
+	if s.LastQueryInfo.StartTS != 0 {
+		sessionStates.LastQueryInfo = &s.LastQueryInfo
+	}
+	if s.LastDDLInfo.SeqNum != 0 {
+		sessionStates.LastDDLInfo = &s.LastDDLInfo
+	}
+	sessionStates.LastFoundRows = s.LastFoundRows
+	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
+	sessionStates.MPPStoreLastFailTime = s.MPPStoreLastFailTime
+	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
+	sessionStates.FoundInBinding = s.PrevFoundInBinding
+
+	// Encode StatementContext. We encode it here to avoid circle dependency.
+	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
+	sessionStates.LastInsertID = s.StmtCtx.PrevLastInsertID
+	sessionStates.Warnings = s.StmtCtx.GetWarnings()
 	return
 }
 
 // DecodeSessionStates restores session states from SessionStates.
 func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
-	s.UsersLock.Lock()
-	s.Users = make(map[string]types.Datum, len(sessionStates.UserVars))
+	s.userVars.values = make(map[string]types.Datum, len(sessionStates.UserVars))
 	for name, userVar := range sessionStates.UserVars {
-		s.Users[name] = *userVar.Clone()
+		s.SetUserVarVal(name, *userVar.Clone())
 	}
-	s.UserVarTypes = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
+	s.userVars.types = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
 	for name, userVarType := range sessionStates.UserVarTypes {
-		s.UserVarTypes[name] = userVarType.Clone()
+		s.SetUserVarType(name, userVarType.Clone())
 	}
-	s.UsersLock.Unlock()
+
+	// Decode other session contexts.
+	s.preparedStmtID = sessionStates.PreparedStmtID
+	s.Status = sessionStates.Status
+	s.CurrentDB = sessionStates.CurrentDB
+	s.LastTxnInfo = sessionStates.LastTxnInfo
+	if sessionStates.LastQueryInfo != nil {
+		s.LastQueryInfo = *sessionStates.LastQueryInfo
+	}
+	if sessionStates.LastDDLInfo != nil {
+		s.LastDDLInfo = *sessionStates.LastDDLInfo
+	}
+	s.LastFoundRows = sessionStates.LastFoundRows
+	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
+	if sessionStates.MPPStoreLastFailTime != nil {
+		s.MPPStoreLastFailTime = sessionStates.MPPStoreLastFailTime
+	}
+	s.FoundInPlanCache = sessionStates.FoundInPlanCache
+	s.FoundInBinding = sessionStates.FoundInBinding
+
+	// Decode StatementContext.
+	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
+	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
 }
 
@@ -2109,6 +2399,12 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// MinPagingSize defines the min size used by the coprocessor paging protocol.
+	MinPagingSize int
+
+	// MinPagingSize defines the max size used by the coprocessor paging protocol.
+	MaxPagingSize int
 }
 
 const (
@@ -2200,8 +2496,12 @@ const (
 	SlowLogPlan = "Plan"
 	// SlowLogPlanDigest is used to record the query plan digest.
 	SlowLogPlanDigest = "Plan_digest"
+	// SlowLogBinaryPlan is used to record the binary plan.
+	SlowLogBinaryPlan = "Binary_plan"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
+	// SlowLogBinaryPlanPrefix is the prefix of the binary plan value.
+	SlowLogBinaryPlanPrefix = ast.TiDBDecodeBinaryPlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
 	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
@@ -2228,6 +2528,10 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 )
 
+// GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
+// It's controlled by the global variable `tidb_generate_binary_plan`.
+var GenerateBinaryPlan atomic2.Bool
+
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
@@ -2253,6 +2557,7 @@ type SlowQueryLogItems struct {
 	PrevStmt          string
 	Plan              string
 	PlanDigest        string
+	BinaryPlan        string
 	RewriteInfo       RewritePhaseInfo
 	KVTotal           time.Duration
 	PDTotal           time.Duration
@@ -2368,7 +2673,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 			for backoff := range logItems.CopTasks.TotBackoffTimes {
 				backoffs = append(backoffs, backoff)
 			}
-			sort.Strings(backoffs)
+			slices.Sort(backoffs)
 
 			if logItems.CopTasks.NumCopTasks == 1 {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
@@ -2436,6 +2741,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.PlanDigest) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
 	}
+	if len(logItems.BinaryPlan) != 0 {
+		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
+	}
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
@@ -2456,20 +2764,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
-}
-
-// QueryInfo represents the information of last executed query. It's used to expose information for test purpose.
-type QueryInfo struct {
-	TxnScope    string `json:"txn_scope"`
-	StartTS     uint64 `json:"start_ts"`
-	ForUpdateTS uint64 `json:"for_update_ts"`
-	ErrMsg      string `json:"error,omitempty"`
-}
-
-// LastDDLInfo represents the information of last DDL. It's used to expose information for test purpose.
-type LastDDLInfo struct {
-	Query  string `json:"query"`
-	SeqNum uint64 `json:"seq_num"`
 }
 
 // TxnReadTS indicates the value and used situation for tx_read_ts
@@ -2627,4 +2921,32 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		return s.seekFactorV2
 	}
 	return s.seekFactor
+}
+
+// EnableEvalTopNEstimationForStrMatch means if we need to evaluate expression with TopN to improve estimation.
+// Currently, it's only for string matching functions (like and regexp).
+func (s *SessionVars) EnableEvalTopNEstimationForStrMatch() bool {
+	return s.DefaultStrMatchSelectivity == 0
+}
+
+// GetStrMatchDefaultSelectivity means the default selectivity for like and regexp.
+// Note: 0 is a special value, which means the default selectivity is 0.1 and TopN assisted estimation is enabled.
+func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == 0 {
+		return 0.1
+	}
+	return s.DefaultStrMatchSelectivity
+}
+
+// GetNegateStrMatchDefaultSelectivity means the default selectivity for not like and not regexp.
+// Note:
+//
+//	  0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
+//	  0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
+//	keep the default selectivity of like/regexp and not like/regexp all 0.8.
+func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
+		return DefTiDBDefaultStrMatchSelectivity
+	}
+	return 1 - s.GetStrMatchDefaultSelectivity()
 }

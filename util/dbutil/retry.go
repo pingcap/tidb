@@ -58,7 +58,8 @@ func IsRetryableError(err error) bool {
 		errno.ErrInfoSchemaChanged,
 		errno.ErrWriteConflictInTiDB,
 		errno.ErrTxnRetryable,
-		errno.ErrWriteConflict:
+		errno.ErrWriteConflict,
+		errno.ErrColumnInChange:
 		return true // retryable error in TiDB
 	case errno.ErrUnknown: // the old version of TiDB uses `1105` frequently, this should be compatible.
 		for _, msg := range Retryable1105Msgs {

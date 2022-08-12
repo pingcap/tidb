@@ -29,6 +29,7 @@ go_library(
 
 go_test(
     name = "codec_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "bytes_test.go",
@@ -38,6 +39,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":codec"],
+    flaky = True,
     deps = [
         "//parser/mysql",
         "//parser/terror",

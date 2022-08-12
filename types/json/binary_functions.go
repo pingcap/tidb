@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
+	"golang.org/x/exp/slices"
 )
 
 // Type returns type of BinaryJSON as string.
@@ -207,8 +208,9 @@ func quoteString(s string) string {
 }
 
 // Extract receives several path expressions as arguments, matches them in bj, and returns:
-//  ret: target JSON matched any path expressions. maybe autowrapped as an array.
-//  found: true if any path expressions matched.
+//
+//	ret: target JSON matched any path expressions. maybe autowrapped as an array.
+//	found: true if any path expressions matched.
 func (bj BinaryJSON) Extract(pathExprList []PathExpression) (ret BinaryJSON, found bool) {
 	buf := make([]BinaryJSON, 0, 1)
 	for _, pathExpr := range pathExprList {
@@ -221,6 +223,10 @@ func (bj BinaryJSON) Extract(pathExprList []PathExpression) (ret BinaryJSON, fou
 		// even if len(pathExprList) equals to 1.
 		found = true
 		ret = buf[0]
+		// Fix https://github.com/pingcap/tidb/issues/30352
+		if pathExprList[0].ContainsAnyAsterisk() {
+			ret = buildBinaryArray(buf)
+		}
 	} else {
 		found = true
 		ret = buildBinaryArray(buf)
@@ -854,8 +860,8 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 		for key := range keyValMap {
 			keys = append(keys, []byte(key))
 		}
-		sort.Slice(keys, func(i, j int) bool {
-			return bytes.Compare(keys[i], keys[j]) < 0
+		slices.SortFunc(keys, func(i, j []byte) bool {
+			return bytes.Compare(i, j) < 0
 		})
 		length = len(keys)
 		values := make([]BinaryJSON, 0, len(keys))
@@ -937,8 +943,8 @@ func mergeBinaryObject(objects []BinaryJSON) BinaryJSON {
 			}
 		}
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return bytes.Compare(keys[i], keys[j]) < 0
+	slices.SortFunc(keys, func(i, j []byte) bool {
+		return bytes.Compare(i, j) < 0
 	})
 	values := make([]BinaryJSON, len(keys))
 	for i, key := range keys {
@@ -1098,14 +1104,15 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 	default:
 		return CreateBinary(result), false, nil
 	}
-
 }
 
 // extractCallbackFn the type of CALLBACK function for extractToCallback
 type extractCallbackFn func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error)
 
 // extractToCallback callback alternative of extractTo
-//     would be more effective when walk through the whole JSON is unnecessary
+//
+//	would be more effective when walk through the whole JSON is unnecessary
+//
 // NOTICE: path [0] & [*] for JSON object other than array is INVALID, which is different from extractTo.
 func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extractCallbackFn, fullpath PathExpression) (stop bool, err error) {
 	if len(pathExpr.legs) == 0 {

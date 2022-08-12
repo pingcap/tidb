@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/rawkv"
-
 	"go.uber.org/zap"
 )
 
