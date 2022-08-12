@@ -209,12 +209,12 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			continue
 		}
 
-		if colHist := coll.Columns[c.UniqueID]; colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
+		colHist := coll.Columns[c.UniqueID]
+		recordUsedItemStatsStatus(ctx, colHist, nil, coll.PhysicalID, c.UniqueID, false)
+		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
 			ret *= 1.0 / pseudoEqualRate
 			continue
 		}
-
-		colHist := coll.Columns[c.UniqueID]
 		if colHist.Histogram.NDV > 0 {
 			ret *= 1 / float64(colHist.Histogram.NDV)
 		} else {
@@ -227,6 +227,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	for id, colInfo := range coll.Columns {
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
 		if col != nil {
+			recordUsedItemStatsStatus(ctx, colInfo, nil, coll.PhysicalID, id, false)
 			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
@@ -260,6 +261,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	for id, idxInfo := range coll.Indices {
 		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxInfo.ID])
 		if len(idxCols) > 0 {
+			recordUsedItemStatsStatus(ctx, nil, idxInfo, coll.PhysicalID, id, true)
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxInfo.Info.Columns); i++ {
 				lengths = append(lengths, idxInfo.Info.Columns[i].Length)

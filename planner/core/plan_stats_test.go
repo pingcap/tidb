@@ -279,3 +279,17 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		t.Error("unexpected plan:", pp)
 	}
 }
+
+func TestPlanStatsStatusRecord(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (b int,key b(b))`)
+	tk.MustExec("insert into t (b) values (1)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select * from t where b >= 1")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus, 2)
+	for _, status := range tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus {
+		require.Equal(t, status, "allLoaded")
+	}
+}

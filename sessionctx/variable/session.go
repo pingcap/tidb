@@ -2489,6 +2489,8 @@ const (
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
 	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
+	// SlowLogStatsLoadStatus is used to indicate the stats load status in memory
+	SlowLogStatsLoadStatus = "StatsLoadStatus"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -2531,6 +2533,7 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
+	StatsLoadStatus   string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2721,6 +2724,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
 		buf.WriteString(";")
 	}
+
+	if len(logItems.StatsLoadStatus) > 0 {
+		writeSlowLogItem(&buf, SlowLogStatsLoadStatus, logItems.StatsLoadStatus)
+	}
+
 	return buf.String()
 }
 

@@ -1246,6 +1246,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
+		StatsLoadStatus:   convertStatusIntoString(a.Ctx, stmtCtx.StatsLoadStatus),
 	}
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
@@ -1608,4 +1609,39 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 		planDigest = d.Bytes()
 	}
 	return sqlDigest, planDigest
+}
+
+func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) string {
+	if len(statsLoadStatus) < 1 {
+		return ""
+	}
+	b := bytes.NewBufferString("[")
+	is := domain.GetDomain(sctx).InfoSchema()
+	i := 0
+	for item, status := range statsLoadStatus {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		t, ok := is.TableByID(item.TableID)
+		if !ok {
+			continue
+		}
+		itemName := ""
+		if item.IsIndex {
+			itemName = t.Meta().FindIndexNameByID(item.ID)
+		} else {
+			itemName = t.Meta().FindColumnNameByID(item.ID)
+		}
+		if len(itemName) < 1 {
+			continue
+		}
+		b.WriteString(t.Meta().Name.L)
+		b.WriteString(".")
+		b.WriteString(itemName)
+		b.WriteString(":")
+		b.WriteString(status)
+		i++
+	}
+	b.WriteString("]")
+	return b.String()
 }

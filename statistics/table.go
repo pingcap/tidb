@@ -524,10 +524,10 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (float64, error) {
+func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (result float64, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
-	var result float64
 	c, ok := coll.Columns[colID]
+	recordUsedItemStatsStatus(sctx, c, nil, coll.PhysicalID, colID, false)
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		if len(intRanges) == 0 {
 			return 0, nil
@@ -542,7 +542,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 		}
 		return result, nil
 	}
-	result, err := c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
+	result, err = c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
@@ -553,6 +553,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID int64, colRanges []*ranger.Range) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
+	recordUsedItemStatsStatus(sctx, c, nil, coll.PhysicalID, colID, false)
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		result, err := GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
@@ -577,6 +578,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 			colNames = append(colNames, col.Name.O)
 		}
 	}
+	recordUsedItemStatsStatus(sctx, nil, idx, coll.PhysicalID, idxID, true)
 	if !ok || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
@@ -1370,4 +1372,21 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	}
 	// This table has no statistics yet. We can directly return true.
 	return true
+}
+
+func recordUsedItemStatsStatus(sctx sessionctx.Context, col *Column, idx *Index,
+	tableID, id int64, isIndex bool) {
+	if sctx.GetSessionVars().InRestrictedSQL {
+		return
+	}
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	item := model.TableItemID{TableID: tableID, ID: id, IsIndex: isIndex}
+	unIntializedStatus := StatsLoadedStatus{statsInitialized: false}
+	status := unIntializedStatus.StatusToString()
+	if isIndex && idx != nil {
+		status = idx.StatusToString()
+	} else if !isIndex && col != nil {
+		status = col.StatusToString()
+	}
+	stmtCtx.StatsLoadStatus[item] = status
 }
