@@ -52,8 +52,6 @@ func init() {
 type MemoryRoot struct {
 	maxLimit     int64
 	currUsage    int64
-	engineUsage  int64
-	writeBuffer  int64
 	backendCache map[string]*BackendContext
 	EngineMgr    EngineManager
 	// This map is used to store all object memory allocated size.
@@ -70,8 +68,6 @@ func (m *MemoryRoot) init(maxMemUsage int64) {
 	}
 
 	m.currUsage = 0
-	m.engineUsage = 0
-	m.writeBuffer = 0
 
 	m.backendCache = make(map[string]*BackendContext, 10)
 	m.EngineMgr.init()
@@ -251,7 +247,6 @@ func (m *MemoryRoot) RegisterEngineInfo(job *model.Job, bcKey string, engineKey 
 
 		// Count memory usage.
 		m.currUsage += StructSizeEngineInfo
-		m.engineUsage += StructSizeEngineInfo
 	} else {
 		// If engine exist, then add newWorkerCount.
 		en.writerCount += newWorkerCount
@@ -339,7 +334,6 @@ func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 
 	bc.engineCache = make(map[string]*engineInfo, 10)
 	m.currUsage -= StructSizeEngineInfo * int64(count)
-	m.engineUsage -= StructSizeEngineInfo * int64(count)
 	logutil.BgLogger().Info(LitInfoCloseBackend, zap.String("backend key", bcKey),
 		zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 		zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))

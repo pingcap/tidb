@@ -4,6 +4,7 @@ go_library(
     name = "lightning",
     srcs = [
         "backend.go",
+        "config.go",
         "engine.go",
         "engine_mgr.go",
         "env.go",
