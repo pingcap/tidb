@@ -1012,6 +1012,8 @@ type addIndexWorker struct {
 
 func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *addIndexWorker {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
+		logutil.BgLogger().Error("Element type for addIndexWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
+			zap.String("reorgInfo", reorgInfo.String()))
 		return nil
 	}
 	var index table.Index
