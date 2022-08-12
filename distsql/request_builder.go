@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -553,13 +554,25 @@ func PartitionHandlesToKVRanges(handles []kv.Handle) []kv.KeyRange {
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
 func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
-	return IndexRangesToKVRangesForTables(sc, []int64{tid}, idxID, ranges, fb)
+	return IndexRangesToKVRangesWithInterruptSignal(sc, tid, idxID, ranges, fb, nil, nil)
+}
+
+// IndexRangesToKVRangesWithInterruptSignal converts index ranges to "KeyRange".
+// The process can be interrupted by set `interruptSignal` to true.
+func IndexRangesToKVRangesWithInterruptSignal(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback, memTracker *memory.Tracker, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
+	return indexRangesToKVRangesForTablesWithInterruptSignal(sc, []int64{tid}, idxID, ranges, fb, memTracker, interruptSignal)
 }
 
 // IndexRangesToKVRangesForTables converts indexes ranges to "KeyRange".
 func IndexRangesToKVRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+	return indexRangesToKVRangesForTablesWithInterruptSignal(sc, tids, idxID, ranges, fb, nil, nil)
+}
+
+// IndexRangesToKVRangesForTablesWithInterruptSignal converts indexes ranges to "KeyRange".
+// The process can be interrupted by set `interruptSignal` to true.
+func indexRangesToKVRangesForTablesWithInterruptSignal(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback, memTracker *memory.Tracker, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
 	if fb == nil || fb.Hist == nil {
-		return indexRangesToKVWithoutSplit(sc, tids, idxID, ranges)
+		return indexRangesToKVWithoutSplit(sc, tids, idxID, ranges, memTracker, interruptSignal)
 	}
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
@@ -644,17 +657,36 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 	return true
 }
 
-func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
+func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
-	for _, ran := range ranges {
+	const CheckSignalStep = 8
+	var estimatedMemUsage int64
+	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
+	// check the interrupt signal periodically.
+	for i, ran := range ranges {
 		low, high, err := encodeIndexKey(sc, ran)
 		if err != nil {
 			return nil, err
 		}
+		if i == 0 {
+			estimatedMemUsage += int64(cap(low) + cap(high))
+		}
 		for _, tid := range tids {
 			startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
 			endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
+			if i == 0 {
+				estimatedMemUsage += int64(cap(startKey)) + int64(cap(endKey))
+			}
 			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		}
+		if i%CheckSignalStep == 0 {
+			if i == 0 && memTracker != nil {
+				estimatedMemUsage *= int64(len(ranges))
+				memTracker.Consume(estimatedMemUsage)
+			}
+			if interruptSignal != nil && interruptSignal.Load().(bool) {
+				return nil, nil
+			}
 		}
 	}
 	return krs, nil

@@ -113,9 +113,9 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				err = sc.HandleOverflow(err, err)
 			}
 		case types.KindMysqlEnum:
-			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlEnum().ToNumber()), comparable)
+			b = encodeUnsignedInt(b, vals[i].GetMysqlEnum().Value, comparable)
 		case types.KindMysqlSet:
-			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlSet().ToNumber()), comparable)
+			b = encodeUnsignedInt(b, vals[i].GetMysqlSet().Value, comparable)
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			var val uint64
@@ -156,9 +156,9 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 	case types.KindMysqlDecimal:
 		l = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac()) + 1
 	case types.KindMysqlEnum:
-		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlEnum().ToNumber()))
+		l = valueSizeOfUnsignedInt(val.GetMysqlEnum().Value)
 	case types.KindMysqlSet:
-		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlSet().ToNumber()))
+		l = valueSizeOfUnsignedInt(val.GetMysqlSet().Value)
 	case types.KindMysqlBit, types.KindBinaryLiteral:
 		val, err := val.GetBinaryLiteral().ToInt(sc)
 		terror.Log(errors.Trace(err))
@@ -352,11 +352,11 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	case mysql.TypeEnum:
 		if mysql.HasEnumSetAsIntFlag(tp.Flag) {
 			flag = uvarintFlag
-			v := uint64(row.GetEnum(idx).ToNumber())
+			v := row.GetEnum(idx).Value
 			b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
 		} else {
 			flag = compactBytesFlag
-			v := uint64(row.GetEnum(idx).ToNumber())
+			v := row.GetEnum(idx).Value
 			str := ""
 			if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
 				// str will be empty string if v out of definition of enum.
@@ -566,11 +566,11 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = !ignoreNull
 			} else if mysql.HasEnumSetAsIntFlag(tp.Flag) {
 				buf[0] = uvarintFlag
-				v := uint64(column.GetEnum(i).ToNumber())
+				v := column.GetEnum(i).Value
 				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
 			} else {
 				buf[0] = compactBytesFlag
-				v := uint64(column.GetEnum(i).ToNumber())
+				v := column.GetEnum(i).Value
 				str := ""
 				if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
 					// str will be empty string if v out of definition of enum.
@@ -664,8 +664,8 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 // If two rows are logically equal, it will generate the same bytes.
 func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
 	var b []byte
-	for _, idx := range colIdx {
-		buf[0], b, err = encodeHashChunkRowIdx(sc, row, allTypes[idx], idx)
+	for i, idx := range colIdx {
+		buf[0], b, err = encodeHashChunkRowIdx(sc, row, allTypes[i], idx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -687,13 +687,16 @@ func EqualChunkRow(sc *stmtctx.StatementContext,
 	row1 chunk.Row, allTypes1 []*types.FieldType, colIdx1 []int,
 	row2 chunk.Row, allTypes2 []*types.FieldType, colIdx2 []int,
 ) (bool, error) {
+	if len(colIdx1) != len(colIdx2) {
+		return false, errors.Errorf("Internal error: Hash columns count mismatch, col1: %d, col2: %d", len(colIdx1), len(colIdx2))
+	}
 	for i := range colIdx1 {
 		idx1, idx2 := colIdx1[i], colIdx2[i]
-		flag1, b1, err := encodeHashChunkRowIdx(sc, row1, allTypes1[idx1], idx1)
+		flag1, b1, err := encodeHashChunkRowIdx(sc, row1, allTypes1[i], idx1)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		flag2, b2, err := encodeHashChunkRowIdx(sc, row2, allTypes2[idx2], idx2)
+		flag2, b2, err := encodeHashChunkRowIdx(sc, row2, allTypes2[i], idx2)
 		if err != nil {
 			return false, errors.Trace(err)
 		}

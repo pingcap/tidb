@@ -456,6 +456,10 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 		res = append(res, &point{value: d, excl: false, start: false})
 	}
 
+	if op == ast.NullEQ && val.IsNull() {
+		res = append(res, &point{start: true}, &point{}) // null point
+	}
+
 	tmpEnum := types.Enum{}
 	for i := 0; i <= len(ft.Elems); i++ {
 		if i == 0 {
@@ -484,7 +488,7 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 				if v >= 0 {
 					appendPointFunc(d)
 				}
-			case ast.EQ:
+			case ast.EQ, ast.NullEQ:
 				if v == 0 {
 					appendPointFunc(d)
 				}

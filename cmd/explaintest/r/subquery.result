@@ -22,9 +22,9 @@ Projection	5.00	root		Column#22
   ├─TableReader(Build)	5.00	root		data:TableFullScan
   │ └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
   └─StreamAgg(Probe)	1.00	root		funcs:count(1)->Column#21
-    └─IndexJoin	0.22	root		inner join, inner:TableReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
-      ├─IndexReader(Build)	0.45	root		index:IndexRangeScan
-      │ └─IndexRangeScan	0.45	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(test.t.b, 1) eq(test.t.c, 1) eq(test.t.d, test.t.a)], keep order:false
+    └─IndexJoin	0.50	root		inner join, inner:TableReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+      ├─IndexReader(Build)	1.00	root		index:IndexRangeScan
+      │ └─IndexRangeScan	1.00	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(test.t.b, 1) eq(test.t.c, 1) eq(test.t.d, test.t.a)], keep order:false
       └─TableReader(Probe)	1.00	root		data:TableRangeScan
         └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:false
 drop table if exists t;

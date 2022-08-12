@@ -510,6 +510,8 @@ type PlanBuilder struct {
 	isForUpdateRead             bool
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
+	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
+	disableSubQueryPreprocessing bool
 }
 
 type handleColHelper struct {
@@ -611,14 +613,31 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
+// PlanBuilderOpt is used to adjust the plan builder.
+type PlanBuilderOpt interface {
+	Apply(builder *PlanBuilder)
+}
+
+// PlanBuilderOptNoExecution means the plan builder should not run any executor during Build().
+type PlanBuilderOptNoExecution struct{}
+
+// Apply implements the interface PlanBuilderOpt.
+func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
+	builder.disableSubQueryPreprocessing = true
+}
+
 // NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder() *PlanBuilder {
-	return &PlanBuilder{
+func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
+	builder := &PlanBuilder{
 		outerCTEs:           make([]*cteInfo, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 	}
+	for _, opt := range opts {
+		opt.Apply(builder)
+	}
+	return builder
 }
 
 // Init initialize a PlanBuilder.
@@ -2482,10 +2501,6 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		}
 	case *ast.BRIEStmt:
 		p.setSchemaAndNames(buildBRIESchema())
-		if sem.IsEnabled() && strings.EqualFold(raw.Storage[:8], "local://") {
-			// Local storage is not permitted to be local when SEM is enabled.
-			return nil, ErrNotSupportedWithSem.GenWithStackByArgs("local://")
-		}
 		if raw.Kind == ast.BRIEKindRestore {
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTORE_ADMIN", false, err)

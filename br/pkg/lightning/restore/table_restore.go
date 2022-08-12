@@ -434,6 +434,11 @@ func (tr *TableRestore) restoreEngine(
 		}
 	}()
 
+	setError := func(err error) {
+		chunkErr.Set(err)
+		cancel()
+	}
+
 	// Restore table data
 	for chunkIndex, chunk := range cp.Chunks {
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
@@ -472,7 +477,8 @@ func (tr *TableRestore) restoreEngine(
 		// 	4. flush kvs data (into tikv node)
 		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
 		if err != nil {
-			return nil, errors.Trace(err)
+			setError(err)
+			break
 		}
 		var remainChunkCnt float64
 		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
@@ -480,19 +486,23 @@ func (tr *TableRestore) restoreEngine(
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
 		}
 
-		restoreWorker := rc.regionWorkers.Apply()
-		wg.Add(1)
-
 		dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
 		if err != nil {
-			return nil, errors.Trace(err)
+			cr.close()
+			setError(err)
+			break
 		}
 
 		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 		if err != nil {
-			return nil, errors.Trace(err)
+			_, _ = dataWriter.Close(ctx)
+			cr.close()
+			setError(err)
+			break
 		}
 
+		restoreWorker := rc.regionWorkers.Apply()
+		wg.Add(1)
 		go func(w *worker.Worker, cr *chunkRestore) {
 			// Restore a chunk.
 			defer func() {
@@ -527,8 +537,7 @@ func (tr *TableRestore) restoreEngine(
 				}
 			} else {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Add(remainChunkCnt)
-				chunkErr.Set(err)
-				cancel()
+				setError(err)
 			}
 		}(restoreWorker, cr)
 	}
@@ -645,10 +654,7 @@ func (tr *TableRestore) postProcess(
 	forcePostProcess bool,
 	metaMgr tableMetaMgr,
 ) (bool, error) {
-	// there are no data in this table, no need to do post process
-	// this is important for tables that are just the dump table of views
-	// because at this stage, the table was already deleted and replaced by the related view
-	if !rc.backend.ShouldPostProcess() || len(cp.Engines) == 1 {
+	if !rc.backend.ShouldPostProcess() {
 		return false, nil
 	}
 
@@ -956,8 +962,8 @@ func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) 
 	threshold := totalRawFileSize / 512
 	threshold = utils.NextPowerOfTwo(threshold)
 	if threshold < compactionLowerThreshold {
-		// disable compaction if threshold is smaller than lower bound
-		threshold = 0
+		// too may small SST files will cause inaccuracy of region range estimation,
+		threshold = compactionLowerThreshold
 	} else if threshold > compactionUpperThreshold {
 		threshold = compactionUpperThreshold
 	}

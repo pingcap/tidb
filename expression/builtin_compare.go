@@ -634,11 +634,7 @@ func (b *builtinGreatestTimeSig) Clone() builtinFunc {
 
 // evalString evals a builtinGreatestTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	var (
-		strRes  string
-		timeRes types.Time
-	)
+func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
@@ -657,16 +653,8 @@ func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (res string, isNull b
 		if i == 0 || strings.Compare(v, strRes) > 0 {
 			strRes = v
 		}
-		if i == 0 || t.Compare(timeRes) > 0 {
-			timeRes = t
-		}
 	}
-	if timeRes.IsZero() {
-		res = strRes
-	} else {
-		res = timeRes.String()
-	}
-	return res, false, nil
+	return strRes, false, nil
 }
 
 type leastFunctionClass struct {
@@ -852,12 +840,7 @@ func (b *builtinLeastTimeSig) Clone() builtinFunc {
 
 // evalString evals a builtinLeastTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	var (
-		// timeRes will be converted to a strRes only when the arguments is a valid datetime value.
-		strRes  string     // Record the strRes of each arguments.
-		timeRes types.Time // Record the time representation of a valid arguments.
-	)
+func (b *builtinLeastTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
@@ -875,17 +858,9 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		if i == 0 || strings.Compare(v, strRes) < 0 {
 			strRes = v
 		}
-		if i == 0 || t.Compare(timeRes) < 0 {
-			timeRes = t
-		}
 	}
 
-	if timeRes.IsZero() {
-		res = strRes
-	} else {
-		res = timeRes.String()
-	}
-	return res, false, nil
+	return strRes, false, nil
 }
 
 type intervalFunctionClass struct {

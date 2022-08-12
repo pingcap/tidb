@@ -87,6 +87,27 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
 }
 
+func (s *testChunkSuite) TestIssue29947(c *check.C) {
+	mutRow := MutRowFromTypes(allTypes)
+	nilDatum := types.NewDatum(nil)
+
+	dataBefore := make([][]byte, 0, len(mutRow.c.columns))
+	elemBufBefore := make([][]byte, 0, len(mutRow.c.columns))
+	for _, col := range mutRow.c.columns {
+		dataBefore = append(dataBefore, col.data)
+		elemBufBefore = append(elemBufBefore, col.elemBuf)
+	}
+	for i, col := range mutRow.c.columns {
+		mutRow.SetDatum(i, nilDatum)
+		c.Assert(col.IsNull(0), check.IsTrue)
+		for _, off := range col.offsets {
+			c.Assert(off, check.Equals, int64(0))
+		}
+		c.Assert(string(col.data), check.Equals, string(dataBefore[i]))
+		c.Assert(string(col.elemBuf), check.Equals, string(elemBufBefore[i]))
+	}
+}
+
 func BenchmarkMutRowSetRow(b *testing.B) {
 	b.ReportAllocs()
 	rowChk := newChunk(8, 0)

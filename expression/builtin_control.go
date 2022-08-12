@@ -227,6 +227,14 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf.tp = fieldTp
+	if fieldTp.Tp == mysql.TypeEnum || fieldTp.Tp == mysql.TypeSet {
+		switch tp {
+		case types.ETInt:
+			fieldTp.Tp = mysql.TypeLonglong
+		case types.ETString:
+			fieldTp.Tp = mysql.TypeVarchar
+		}
+	}
 
 	switch tp {
 	case types.ETInt:

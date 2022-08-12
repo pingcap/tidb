@@ -520,6 +520,16 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
 
+	// test for tidb_keep_pruned_conds
+	tk.MustQuery(`select @@tidb_keep_pruned_conds`).Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_keep_pruned_conds = 1`)
+	tk.MustQuery(`select @@global.tidb_keep_pruned_conds`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_keep_pruned_conds = 0`)
+	tk.MustQuery(`select @@global.tidb_keep_pruned_conds`).Check(testkit.Rows("0"))
+	tk.MustExec(`set tidb_keep_pruned_conds=1`)
+	tk.MustQuery(`select @@global.tidb_keep_pruned_conds`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_keep_pruned_conds`).Check(testkit.Rows("1"))
+
 	// test for tidb_opt_enable_correlation_adjustment
 	tk.MustQuery(`select @@tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
 	tk.MustExec(`set global tidb_opt_enable_correlation_adjustment = 0`)
