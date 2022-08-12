@@ -195,10 +195,15 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 
 	// TODO: Consider NextGC to record SQLs.
 	if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.memoryUsageAlarmRatio {
-		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
+		// At least ten seconds between two recordings that memory usage is less than threshold (default 70% system memory).
 		// If the memory is still exceeded, only records once.
+
+		if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.autoGcRatio {
+			// if memory usage is more than threshold (default 80% system memory), doing GC actively to avoid OOM risk.
+			runtime.GC()
+		}
 		interval := time.Since(record.lastCheckTime)
-		if interval > 10*time.Second {
+		if interval > time.Duration(record.memoryUsageAlarmIntervalSeconds)*time.Second {
 			record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm)
 		}
 		record.lastCheckTime = time.Now()
@@ -284,7 +289,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) string {
 		var buf strings.Builder
 		for i, info := range list {
 			buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
-			fields := genLogFields(record.lastCheckTime.Sub(info.Time), info)
+			fields := genLogFields(record.lastCheckTime.Sub(info.Time), info, record.memoryUsageAlarmTruncationEnable, record.memoryUsageAlarmDesensitizationEnable)
 			for _, field := range fields {
 				switch field.Type {
 				case zapcore.StringType:
