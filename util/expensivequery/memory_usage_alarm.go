@@ -349,6 +349,7 @@ type item struct {
 	Name  string
 	Debug int
 }
+
 func (record *memoryUsageAlarm) recordProfile() ([]string, error) {
 	items := []item{
 		{Name: "heap"},
@@ -362,29 +363,30 @@ func (record *memoryUsageAlarm) recordProfile() ([]string, error) {
 		}
 		profileFilenames = append(profileFilenames, fileName)
 	}
+	return profileFilenames, nil
 }
 
-func (record *memoryUsageAlarm) write(i int, item item) string, error {
-	fileName := filepath.Join(record.tmpDir, item.name+record.lastCheckTime.Format(time.RFC3339))
+func (record *memoryUsageAlarm) write(i int, item item) (string, error) {
+	fileName := filepath.Join(record.tmpDir, item.Name+record.lastCheckTime.Format(time.RFC3339))
 	record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
 	f, err := os.Create(fileName)
 	if err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
-		return profileFilenames, err
+		logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.Name), zap.Error(err))
+		return fileName, err
 	}
 
-	p := rpprof.Lookup(item.name)
-	err = p.WriteTo(f, item.debug)
+	p := rpprof.Lookup(item.Name)
+	err = p.WriteTo(f, item.Debug)
 	if err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
-		return profileFilenames, err
+		logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.Name), zap.Error(err))
+		return fileName, err
 	}
 
 	//nolint: revive
 	defer func() {
 		err := f.Close()
 		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.name), zap.Error(err))
+			logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.Name), zap.Error(err))
 		}
 	}()
 	return fileName, nil
