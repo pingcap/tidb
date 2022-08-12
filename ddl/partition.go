@@ -2040,6 +2040,21 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	failpoint.Inject("exchangePartitionAutoID", func(val failpoint.Value) {
+		if val.(bool) {
+			se, err := w.sessPool.get()
+			defer w.sessPool.put(se)
+			if err != nil {
+				failpoint.Return(ver, err)
+			}
+			sess := newSession(se)
+			_, err = sess.execute(context.Background(), "insert into test.pt values (40000000)", "exchange_partition_test")
+			if err != nil {
+				failpoint.Return(ver, err)
+			}
+		}
+	})
+
 	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
 	if err != nil {
 		job.State = model.JobStateCancelled
