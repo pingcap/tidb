@@ -656,11 +656,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	// CastTimeAsDuration
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), durationColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
 	// Substring2ArgsUTF8
 	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	require.NoError(t, err)
@@ -1190,6 +1185,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	pushed, remained = PushDownExprsWithExtraInfo(sc, exprs, client, kv.TiFlash, true)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
+
+	// CastTimeAsDuration
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), durationColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
 }
 
 func TestExprOnlyPushDownToFlash(t *testing.T) {
