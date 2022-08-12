@@ -9,11 +9,13 @@ go_library(
 
 go_test(
     name = "hack_test",
+    timeout = "short",
     srcs = [
         "hack_test.go",
         "main_test.go",
     ],
     embed = [":hack"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@org_uber_go_goleak//:goleak",

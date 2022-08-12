@@ -15,16 +15,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-sql-driver/mysql"
-	"github.com/pingcap/tidb/util/promutil"
-
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/util/promutil"
+	"github.com/stretchr/testify/require"
 )
 
 var showIndexHeaders = []string{
@@ -427,7 +425,6 @@ func TestShowCreatePolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1", createPolicySQL)
 	require.NoError(t, mock.ExpectationsWereMet())
-
 }
 
 func TestListPolicyNames(t *testing.T) {

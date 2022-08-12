@@ -153,7 +153,8 @@ var mapServerStatus2Str = map[uint16]string{
 // Param state is a bit-field. (e.g. 0x0003 = "in transaction; autocommit").
 func serverStatus2Str(state uint16) string {
 	// l collect server status strings.
-	var l []string // nolint: prealloc
+	//nolint: prealloc
+	var l []string
 	// check each defined server status, if match, append to collector.
 	for _, s := range ascServerStatus {
 		if state&s == 0 {
@@ -184,17 +185,19 @@ type SessionManager interface {
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
 // 64 bits version:
-//  63 62                 41 40                                   1   0
-// +--+---------------------+--------------------------------------+------+
-// |  |      serverId       |             local connId             |markup|
-// |=0|       (22b)         |                 (40b)                |  =1  |
-// +--+---------------------+--------------------------------------+------+
-// 32 bits version(coming soon):
-//  31                          1   0
-// +-----------------------------+------+
-// |             ???             |markup|
-// |             ???             |  =0  |
-// +-----------------------------+------+
+/*
+  63 62                 41 40                                   1   0
+ +--+---------------------+--------------------------------------+------+
+ |  |      serverId       |             local connId             |markup|
+ |=0|       (22b)         |                 (40b)                |  =1  |
+ +--+---------------------+--------------------------------------+------+
+ 32 bits version(coming soon):
+  31                          1   0
+ +-----------------------------+------+
+ |             ???             |markup|
+ |             ???             |  =0  |
+ +-----------------------------+------+
+*/
 type GlobalConnID struct {
 	ServerID       uint64
 	LocalConnID    uint64
@@ -250,7 +253,8 @@ func (g *GlobalConnID) NextID() uint64 {
 }
 
 // ParseGlobalConnID parses an uint64 to GlobalConnID.
-//   `isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
+//
+//	`isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
 func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) {
 	if id&0x80000000_00000000 > 0 {
 		return GlobalConnID{}, false, errors.New("Unexpected connectionID excceeds int64")

@@ -56,21 +56,28 @@ var replace = map[rune]string{
 // nest. The Formatter writes to io.Writer 'w' and inserts one 'indent'
 // string per current indent level value.
 // Behaviour of commands reaching negative indent levels is undefined.
-//  IndentFormatter(os.Stdout, "\t").Format("abc%d%%e%i\nx\ny\n%uz\n", 3)
+//
+//	IndentFormatter(os.Stdout, "\t").Format("abc%d%%e%i\nx\ny\n%uz\n", 3)
+//
 // output:
-//  abc3%e
-//      x
-//      y
-//  z
+//
+//	abc3%e
+//	    x
+//	    y
+//	z
+//
 // The Go quoted string literal form of the above is:
-//  "abc%%e\n\tx\n\tx\nz\n"
+//
+//	"abc%%e\n\tx\n\tx\nz\n"
+//
 // The commands can be scattered between separate invocations of Format(),
 // i.e. the formatter keeps track of the indent level and knows if it is
 // positioned on start of a line and should emit indentation(s).
 // The same output as above can be produced by e.g.:
-//  f := IndentFormatter(os.Stdout, " ")
-//  f.Format("abc%d%%e%i\nx\n", 3)
-//  f.Format("y\n%uz\n")
+//
+//	f := IndentFormatter(os.Stdout, " ")
+//	f.Format("abc%d%%e%i\nx\n", 3)
+//	f.Format("y\n%uz\n")
 func IndentFormatter(w io.Writer, indent string) Formatter {
 	return &indentFormatter{w, []byte(indent), 0, stBOL}
 }
@@ -169,9 +176,12 @@ type flatFormatter indentFormatter
 //
 // The FlatFormatter is intended for flattening of normally nested structure textual representation to
 // a one top level structure per line form.
-//  FlatFormatter(os.Stdout, " ").Format("abc%d%%e%i\nx\ny\n%uz\n", 3)
+//
+//	FlatFormatter(os.Stdout, " ").Format("abc%d%%e%i\nx\ny\n%uz\n", 3)
+//
 // output in the form of a Go quoted string literal:
-//  "abc3%%e x y z\n"
+//
+//	"abc3%%e x y z\n"
 func FlatFormatter(w io.Writer) Formatter {
 	return (*flatFormatter)(IndentFormatter(w, "").(*indentFormatter))
 }
@@ -195,7 +205,7 @@ func OutputFormat(s string) string {
 	return buf.String()
 }
 
-//RestoreFlag mark the Restore format
+// RestoreFlags mark the Restore format
 type RestoreFlags uint64
 
 // Mutually exclusive group of `RestoreFlags`:
@@ -228,6 +238,7 @@ const (
 )
 
 const (
+	// DefaultRestoreFlags is the default value of RestoreFlags.
 	DefaultRestoreFlags = RestoreStringSingleQuotes | RestoreKeyWordUppercase | RestoreNameBackQuotes
 )
 
@@ -285,22 +296,27 @@ func (rf RestoreFlags) HasSpacesAroundBinaryOperationFlag() bool {
 	return rf.has(RestoreSpacesAroundBinaryOperation)
 }
 
+// HasRestoreBracketAroundBinaryOperation returns a boolean indicating whether `rf` has `RestoreBracketAroundBinaryOperation` flag.
 func (rf RestoreFlags) HasRestoreBracketAroundBinaryOperation() bool {
 	return rf.has(RestoreBracketAroundBinaryOperation)
 }
 
+// HasStringWithoutDefaultCharset returns a boolean indicating whether `rf` has `RestoreStringWithoutDefaultCharset` flag.
 func (rf RestoreFlags) HasStringWithoutDefaultCharset() bool {
 	return rf.has(RestoreStringWithoutDefaultCharset)
 }
 
+// HasStringWithoutCharset returns a boolean indicating whether `rf` has `RestoreStringWithoutCharset` flag.
 func (rf RestoreFlags) HasStringWithoutCharset() bool {
 	return rf.has(RestoreStringWithoutCharset)
 }
 
+// HasTiDBSpecialCommentFlag returns a boolean indicating whether `rf` has `RestoreTiDBSpecialComment` flag.
 func (rf RestoreFlags) HasTiDBSpecialCommentFlag() bool {
 	return rf.has(RestoreTiDBSpecialComment)
 }
 
+// HasSkipPlacementRuleForRestoreFlag returns a boolean indicating whether `rf` has `SkipPlacementRuleForRestore` flag.
 func (rf RestoreFlags) HasSkipPlacementRuleForRestoreFlag() bool {
 	return rf.has(SkipPlacementRuleForRestore)
 }
@@ -330,6 +346,7 @@ func (ctx *RestoreCtx) WriteKeyWord(keyWord string) {
 	fmt.Fprint(ctx.In, keyWord)
 }
 
+// WriteWithSpecialComments writes a string with a special comment wrapped.
 func (ctx *RestoreCtx) WriteWithSpecialComments(featureID string, fn func() error) error {
 	if !ctx.Flags.HasTiDBSpecialCommentFlag() {
 		return fn()
@@ -410,10 +427,12 @@ func (c *CTERestorer) IsCTETableName(nameL string) bool {
 	return false
 }
 
+// RecordCTEName records the CTE name.
 func (c *CTERestorer) RecordCTEName(nameL string) {
 	c.CTENames = append(c.CTENames, nameL)
 }
 
+// RestoreCTEFunc is used to restore CTE.
 func (c *CTERestorer) RestoreCTEFunc() func() {
 	l := len(c.CTENames)
 	return func() {

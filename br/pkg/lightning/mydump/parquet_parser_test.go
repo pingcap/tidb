@@ -196,6 +196,36 @@ func TestParquetVariousTypes(t *testing.T) {
 			assert.Equal(t, val.GetValue(), reader.lastRow.Row[i].GetValue())
 		}
 	}
+
+	type TestBool struct {
+		BoolVal bool `parquet:"name=bool_val, type=BOOLEAN"`
+	}
+
+	fileName = "test.bool.parquet"
+	testPath = filepath.Join(dir, fileName)
+	pf, err = local.NewLocalFileWriter(testPath)
+	require.NoError(t, err)
+	writer, err = writer2.NewParquetWriter(pf, new(TestBool), 2)
+	require.NoError(t, err)
+	require.NoError(t, writer.Write(&TestBool{false}))
+	require.NoError(t, writer.Write(&TestBool{true}))
+	require.NoError(t, writer.WriteStop())
+	require.NoError(t, pf.Close())
+
+	r, err = store.Open(context.TODO(), fileName)
+	require.NoError(t, err)
+	reader, err = NewParquetParser(context.TODO(), store, r, fileName)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	// because we always reuse the datums in reader.lastRow.Row, so we can't directly
+	// compare will `DeepEqual` here
+	assert.NoError(t, reader.ReadRow())
+	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
+	assert.Equal(t, uint64(0), reader.lastRow.Row[0].GetValue())
+	assert.NoError(t, reader.ReadRow())
+	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
+	assert.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
 }
 
 func TestParquetAurora(t *testing.T) {

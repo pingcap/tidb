@@ -16,13 +16,19 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -30,8 +36,7 @@ import (
 )
 
 func TestDDLStatsInfo(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := domain.DDL()
 
 	dbInfo, err := testSchemaInfo(store, "test_stat")
@@ -84,6 +89,80 @@ func TestDDLStatsInfo(t *testing.T) {
 			require.Equal(t, "1", varMap[ddlJobReorgHandle])
 		}
 	}
+}
+
+func TestGetDDLInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	sess := tk.Session()
+	tk.MustExec("begin")
+	txn, err := sess.Txn(true)
+	require.NoError(t, err)
+
+	dbInfo2 := &model.DBInfo{
+		ID:    2,
+		Name:  model.NewCIStr("b"),
+		State: model.StateNone,
+	}
+	job := &model.Job{
+		ID:       1,
+		SchemaID: dbInfo2.ID,
+		Type:     model.ActionCreateSchema,
+		RowCount: 0,
+	}
+	job1 := &model.Job{
+		ID:       2,
+		SchemaID: dbInfo2.ID,
+		Type:     model.ActionAddIndex,
+		RowCount: 0,
+	}
+
+	err = addDDLJobs(sess, txn, job)
+	require.NoError(t, err)
+
+	info, err := ddl.GetDDLInfo(sess)
+	require.NoError(t, err)
+	require.Len(t, info.Jobs, 1)
+	require.Equal(t, job, info.Jobs[0])
+	require.Nil(t, info.ReorgHandle)
+
+	// two jobs
+	err = addDDLJobs(sess, txn, job1)
+	require.NoError(t, err)
+
+	info, err = ddl.GetDDLInfo(sess)
+	require.NoError(t, err)
+	require.Len(t, info.Jobs, 2)
+	require.Equal(t, job, info.Jobs[0])
+	require.Equal(t, job1, info.Jobs[1])
+	require.Nil(t, info.ReorgHandle)
+
+	tk.MustExec("rollback")
+}
+
+func addDDLJobs(sess session.Session, txn kv.Transaction, job *model.Job) error {
+	if variable.EnableConcurrentDDL.Load() {
+		b, err := job.Encode(true)
+		if err != nil {
+			return err
+		}
+		_, err = sess.Execute(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), fmt.Sprintf("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values (%d, %t, %s, %s, %s, %d, %t)",
+			job.ID, job.MayNeedReorg(), strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), strconv.Quote(strconv.FormatInt(job.TableID, 10)), wrapKey2String(b), job.Type, false))
+		return err
+	}
+	m := meta.NewMeta(txn)
+	if job.MayNeedReorg() {
+		return m.EnQueueDDLJob(job, meta.AddIndexJobListKey)
+	}
+	return m.EnQueueDDLJob(job)
+}
+
+func wrapKey2String(key []byte) string {
+	if len(key) == 0 {
+		return "''"
+	}
+	return fmt.Sprintf("0x%x", key)
 }
 
 func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {

@@ -17,11 +17,13 @@ go_library(
 
 go_test(
     name = "table-filter_test",
+    timeout = "short",
     srcs = [
         "column_filter_test.go",
         "compat_test.go",
         "table_filter_test.go",
     ],
+    flaky = True,
     deps = [
         ":table-filter",
         "@com_github_stretchr_testify//require",

@@ -22,10 +22,13 @@ go_library(
 
 go_test(
     name = "errormanager_test",
+    timeout = "short",
     srcs = ["errormanager_test.go"],
     embed = [":errormanager"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/config",
+        "//br/pkg/lightning/log",
         "//br/pkg/utils",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_stretchr_testify//require",

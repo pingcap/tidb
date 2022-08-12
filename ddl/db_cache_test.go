@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
@@ -41,8 +40,7 @@ func checkTableCacheStatus(t *testing.T, tk *testkit.TestKit, dbName, tableName 
 }
 
 func TestAlterPartitionCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -71,8 +69,7 @@ func TestAlterPartitionCache(t *testing.T) {
 }
 
 func TestAlterViewTableCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -83,8 +80,7 @@ func TestAlterViewTableCache(t *testing.T) {
 }
 
 func TestAlterTableNoCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -107,8 +103,7 @@ func TestAlterTableNoCache(t *testing.T) {
 }
 
 func TestIndexOnCacheTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -143,12 +138,11 @@ func TestAlterTableCache(t *testing.T) {
 
 	dom.SetStatsUpdating(true)
 
-	clean := func() {
+	t.Cleanup(func() {
 		dom.Close()
 		err := store.Close()
 		require.NoError(t, err)
-	}
-	defer clean()
+	})
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -170,8 +164,7 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1;")
 	tk2.MustExec("alter table t1 cache;")
-	_, err = tk.Exec("commit")
-	require.True(t, terror.ErrorEqual(domain.ErrInfoSchemaChanged, err))
+	tk.MustGetDBError("commit", domain.ErrInfoSchemaChanged)
 	/* Test can skip schema checker */
 	tk.MustExec("begin")
 	tk.MustExec("alter table t1 nocache")
@@ -203,8 +196,7 @@ func TestAlterTableCache(t *testing.T) {
 }
 
 func TestCacheTableSizeLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -258,8 +250,7 @@ func TestCacheTableSizeLimit(t *testing.T) {
 }
 
 func TestIssue32692(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -272,9 +263,9 @@ func TestIssue32692(t *testing.T) {
 }
 
 func TestIssue34069(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	sem.Enable()
+	defer sem.Disable()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)

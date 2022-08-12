@@ -19,8 +19,10 @@ go_library(
 
 go_test(
     name = "cpuprofile_test",
+    timeout = "short",
     srcs = ["cpuprofile_test.go"],
     embed = [":cpuprofile"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "//util/cpuprofile/testutil",

@@ -43,6 +43,7 @@ go_library(
 
 go_test(
     name = "mydump_test",
+    timeout = "short",
     srcs = [
         "charset_convertor_test.go",
         "csv_parser_test.go",
@@ -59,6 +60,7 @@ go_test(
         "examples/*",
     ]),
     embed = [":mydump"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",

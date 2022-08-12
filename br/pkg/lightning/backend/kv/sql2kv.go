@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -33,7 +32,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql" //nolint: goimports
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -42,9 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-
-	// Import tidb/planner/core to initialize expression.RewriteAstExpr
-	_ "github.com/pingcap/tidb/planner/core"
+	"golang.org/x/exp/slices"
 )
 
 var ExtraHandleColumnInfo = model.NewExtraHandleColInfo()
@@ -66,13 +64,22 @@ type tableKVEncoder struct {
 	metrics  *metric.Metrics
 }
 
-func NewTableKVEncoder(tbl table.Table, options *SessionOptions, metrics *metric.Metrics) (Encoder, error) {
+func GetSession4test(encoder Encoder) sessionctx.Context {
+	return encoder.(*tableKVEncoder).se
+}
+
+func NewTableKVEncoder(
+	tbl table.Table,
+	options *SessionOptions,
+	metrics *metric.Metrics,
+	logger log.Logger,
+) (Encoder, error) {
 	if metrics != nil {
 		metrics.KvEncoderCounter.WithLabelValues("open").Inc()
 	}
 	meta := tbl.Meta()
 	cols := tbl.Cols()
-	se := newSession(options)
+	se := newSession(options, logger)
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
 	recordCtx := tables.NewCommonAddRecordCtx(len(cols))
 	tables.SetAddRecordCtx(se, recordCtx)
@@ -184,8 +191,8 @@ func collectGeneratedColumns(se *session, meta *model.TableInfo, cols []*table.C
 	}
 
 	// order the result by column offset so they match the evaluation order.
-	sort.Slice(genCols, func(i, j int) bool {
-		return cols[genCols[i].index].Offset < cols[genCols[j].index].Offset
+	slices.SortFunc(genCols, func(i, j genCol) bool {
+		return cols[i.index].Offset < cols[j.index].Offset
 	})
 	return genCols, nil
 }
@@ -267,7 +274,7 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 		log.ShortError(err),
 	)
 
-	log.L().Error("failed to covert kv value", logutil.RedactAny("origVal", original.GetValue()),
+	logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
 		zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
 		zap.Int("columnID", j+1))
 	return errors.Annotatef(
@@ -318,17 +325,25 @@ func KvPairsFromRows(rows Rows) []common.KvPair {
 	return rows.(*KvPairs).pairs
 }
 
-func evaluateGeneratedColumns(se *session, record []types.Datum, cols []*table.Column, genCols []genCol) (err error, errCol *model.ColumnInfo) {
+// KvPairsFromRow converts a Row instance constructed from MakeRowFromKvPairs
+// back into a slice of KvPair. This method panics if the Row is not
+// constructed in such way.
+// nolint:golint // kv.KvPairsFromRow sounds good.
+func KvPairsFromRow(row Row) []common.KvPair {
+	return row.(*KvPairs).pairs
+}
+
+func evaluateGeneratedColumns(se *session, record []types.Datum, cols []*table.Column, genCols []genCol) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.index].ToInfo()
 		evaluated, err := gc.expr.Eval(mutRow.ToRow())
 		if err != nil {
-			return err, col
+			return col, err
 		}
 		value, err := table.CastValue(se, evaluated, col, false, false)
 		if err != nil {
-			return err, col
+			return col, err
 		}
 		mutRow.SetDatum(gc.index, value)
 		record[gc.index] = value
@@ -352,7 +367,7 @@ func (kvcodec *tableKVEncoder) Encode(
 
 	var value types.Datum
 	var err error
-	//nolint:prealloc // This is a placeholder.
+	//nolint: prealloc
 	var record []types.Datum
 
 	if kvcodec.recordCache != nil {
@@ -411,7 +426,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 
 	if len(kvcodec.genCols) > 0 {
-		if err, errCol := evaluateGeneratedColumns(kvcodec.se, record, cols, kvcodec.genCols); err != nil {
+		if errCol, err := evaluateGeneratedColumns(kvcodec.se, record, cols, kvcodec.genCols); err != nil {
 			return nil, logEvalGenExprFailed(logger, row, errCol, err)
 		}
 	}
@@ -443,6 +458,21 @@ func isAutoIncCol(colInfo *model.ColumnInfo) bool {
 
 func isPKCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasPriKeyFlag(colInfo.GetFlag())
+}
+
+// GetEncoderIncrementalID return Auto increment id.
+func GetEncoderIncrementalID(encoder Encoder, id int64) int64 {
+	return encoder.(*tableKVEncoder).autoIDFn(id)
+}
+
+// GetEncoderSe return session.
+func GetEncoderSe(encoder Encoder) *session {
+	return encoder.(*tableKVEncoder).se
+}
+
+// GetActualDatum export getActualDatum function.
+func GetActualDatum(encoder Encoder, rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
+	return encoder.(*tableKVEncoder).getActualDatum(70, 0, inputDatum)
 }
 
 func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {

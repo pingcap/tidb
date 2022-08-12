@@ -30,17 +30,20 @@ go_library(
         "//util/collate",
         "//util/dbterror",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
     ],
 )
 
 go_test(
     name = "ranger_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "ranger_test.go",
         "types_test.go",
     ],
     data = glob(["testdata/**"]),
+    flaky = True,
     deps = [
         ":ranger",
         "//config",

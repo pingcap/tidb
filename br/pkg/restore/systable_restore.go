@@ -5,6 +5,7 @@ package restore
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -33,16 +34,7 @@ var unRecoverableTable = map[string]struct{}{
 	"tidb":             {},
 	"global_variables": {},
 
-	// all user related tables cannot be recovered for now.
 	"column_stats_usage":               {},
-	"columns_priv":                     {},
-	"db":                               {},
-	"default_roles":                    {},
-	"global_grants":                    {},
-	"global_priv":                      {},
-	"role_edges":                       {},
-	"tables_priv":                      {},
-	"user":                             {},
 	"capture_plan_baselines_blacklist": {},
 	// gc info don't need to recover.
 	"gc_delete_range":      {},
@@ -50,6 +42,21 @@ var unRecoverableTable = map[string]struct{}{
 
 	// schema_index_usage has table id need to be rewrite.
 	"schema_index_usage": {},
+}
+
+// tables in this map is restored when fullClusterRestore=true
+// the value part is the filter in SQL where clause which is used to
+// skip clearing or restoring 'cloud_admin'@'%' which is a special
+// user on TiDB Cloud
+var sysPrivilegeTableMap = map[string]string{
+	"user":          "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"db":            "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"tables_priv":   "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"columns_priv":  "not (user = 'cloud_admin' and host = '%')",       // since v1.0.0
+	"default_roles": "not (user = 'cloud_admin' and host = '%')",       // since v3.0.0
+	"role_edges":    "not (to_user = 'cloud_admin' and to_host = '%')", // since v3.0.0
+	"global_priv":   "not (user = 'cloud_admin' and host = '%')",       // since v3.0.8
+	"global_grants": "not (user = 'cloud_admin' and host = '%')",       // since v5.0.3
 }
 
 func isUnrecoverableTable(tableName string) bool {
@@ -70,7 +77,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 	temporaryDB := utils.TemporaryDBName(sysDB)
 	defer rc.cleanTemporaryDatabase(ctx, sysDB)
 
-	if !f.MatchSchema(sysDB) {
+	if !f.MatchSchema(sysDB) || !rc.withSysTable {
 		log.Debug("system database filtered out", zap.String("database", sysDB))
 		return
 	}
@@ -90,7 +97,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 	for _, table := range originDatabase.Tables {
 		tableName := table.Info.Name
 		if f.MatchTable(sysDB, tableName.O) {
-			if err := rc.replaceTemporaryTableToSystable(ctx, tableName.L, db); err != nil {
+			if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, db); err != nil {
 				log.Warn("error during merging temporary tables into system tables",
 					logutil.ShortError(err),
 					zap.Stringer("table", tableName),
@@ -139,18 +146,24 @@ func (rc *Client) afterSystemTablesReplaced(tables []string) error {
 	for _, table := range tables {
 		switch {
 		case table == "user":
-			// We cannot execute `rc.dom.NotifyUpdatePrivilege` here, because there isn't
-			// sessionctx.Context provided by the glue.
-			// TODO: update the glue type and allow we retrieve a session context from it.
-			err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
-				"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
+			if rc.fullClusterRestore {
+				log.Info("privilege system table restored, please reconnect to make it effective")
+				err = rc.dom.NotifyUpdatePrivilege()
+			} else {
+				// to make it compatible with older version
+				// todo: should we allow restore system table in non-fresh cluster in later br version?
+				// if we don't, we can check it at first place.
+				err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
+					"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
+			}
 		}
 	}
 	return err
 }
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
-func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, tableName string, db *database) error {
+func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+	tableName := ti.Name.L
 	execSQL := func(sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.se.Execute(ctx, sql); err != nil {
@@ -188,12 +201,32 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, tableName
 	}
 
 	if db.ExistingTables[tableName] != nil {
-		log.Info("table existing, using replace into for restore",
+		whereClause := ""
+		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
+			// cloud_admin is a special user on tidb cloud, need to skip it.
+			whereClause = fmt.Sprintf("WHERE %s", sysPrivilegeTableMap[tableName])
+			log.Info("full cluster restore, delete existing data",
+				zap.String("table", tableName), zap.Stringer("schema", db.Name))
+			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
+				utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
+			if err := execSQL(deleteSQL); err != nil {
+				return err
+			}
+		}
+		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
-		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s SELECT * FROM %s;",
+		// target column order may different with source cluster
+		columnNames := make([]string, 0, len(ti.Columns))
+		for _, col := range ti.Columns {
+			columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+		}
+		colListStr := strings.Join(columnNames, ",")
+		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s %s;",
 			utils.EncloseDBAndTable(db.Name.L, tableName),
-			utils.EncloseDBAndTable(db.TemporaryName.L, tableName))
+			colListStr, colListStr,
+			utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
+			whereClause)
 		return execSQL(replaceIntoSQL)
 	}
 

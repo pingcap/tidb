@@ -850,6 +850,144 @@ func (cli *testServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRow
 	require.Equal(t, strings.Join(expectedRows, "\n"), strings.Join(result, "\n"))
 }
 
+func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *Server) {
+	fp, err := os.CreateTemp("", "load_data_test.csv")
+	require.NoError(t, err)
+	path := fp.Name()
+	require.NotNil(t, fp)
+	defer func() {
+		err = fp.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+
+	_, err = fp.WriteString("dsadasdas\n" +
+		"\"1\",\"1\",,\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"\n" +
+		"\"1\",\"2\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"\n" +
+		"\"1\",\"3\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"\n" +
+		"\"1\",\"4\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"")
+
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (k,id,c,dt,vv,ts)", path))
+		rows := db.MustQuery("select * from t66")
+		var (
+			id sql.NullString
+			k  sql.NullString
+			c  sql.NullString
+			dt sql.NullString
+			vv sql.NullString
+			ts sql.NullString
+		)
+		columns := []*sql.NullString{&k, &id, &c, &dt, &vv, &ts}
+		require.Truef(t, rows.Next(), "unexpected data")
+		err := rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,1,,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,2,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,3,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,4,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+	})
+
+	// Also test cases where column list only specifies partial columns
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (k,id,c)", path))
+		rows := db.MustQuery("select * from t66")
+		var (
+			id sql.NullString
+			k  sql.NullString
+			c  sql.NullString
+			dt sql.NullString
+			vv sql.NullString
+			ts sql.NullString
+		)
+		columns := []*sql.NullString{&k, &id, &c, &dt, &vv, &ts}
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,1,,,,", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,2,a,,,", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,3,a,,,", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,4,a,,,", ","))
+	})
+
+	// Also test for case-insensitivity
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+		// We modify the upper case and lower case in the column list to test the case-insensitivity
+		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (K,Id,c,dT,Vv,Ts)", path))
+		rows := db.MustQuery("select * from t66")
+		var (
+			id sql.NullString
+			k  sql.NullString
+			c  sql.NullString
+			dt sql.NullString
+			vv sql.NullString
+			ts sql.NullString
+		)
+		columns := []*sql.NullString{&k, &id, &c, &dt, &vv, &ts}
+		require.Truef(t, rows.Next(), "unexpected data")
+		err := rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,1,,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,2,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,3,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,4,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+	})
+}
+
+func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []string) {
+	require.Equal(t, len(columns), len(expected))
+
+	for i := 0; i < len(columns); i++ {
+		require.Equal(t, expected[i], columns[i].String)
+	}
+}
+
 func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
@@ -1497,6 +1635,7 @@ func (cli *testServerClient) runTestExplainForConn(t *testing.T) {
 
 func (cli *testServerClient) runTestErrorCode(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "ErrorCode", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@tidb_txn_mode=''")
 		dbt.MustExec("create table test (c int PRIMARY KEY);")
 		dbt.MustExec("insert into test values (1);")
 		txn1, err := dbt.GetDB().Begin()
@@ -1734,7 +1873,6 @@ func (cli *testServerClient) runTestStatusAPI(t *testing.T) {
 
 func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "FailedMultiStatements", func(dbt *testkit.DBTestKit) {
-
 		// Default is now OFF in new installations.
 		// It is still WARN in upgrade installations (for now)
 		_, err := dbt.GetDB().Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
@@ -1795,7 +1933,6 @@ func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 }
 
 func (cli *testServerClient) runTestMultiStatements(t *testing.T) {
-
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.Params["multiStatements"] = "true"
 	}, "MultiStatements", func(dbt *testkit.DBTestKit) {
@@ -2028,7 +2165,6 @@ func (cli *testServerClient) waitUntilServerOnline() {
 }
 
 func (cli *testServerClient) runTestInitConnect(t *testing.T) {
-
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());SET @a=1;"`)
 		dbt.MustExec(`CREATE USER init_nonsuper`)
@@ -2062,8 +2198,6 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "", a)
 		require.NoError(t, rows.Close())
-		// change the init-connect to invalid.
-		dbt.MustExec(`SET GLOBAL init_connect="invalidstring"`)
 	})
 	// set global init_connect to empty to avoid fail other tests
 	defer cli.runTests(t, func(config *mysql.Config) {
@@ -2076,17 +2210,14 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "init_nonsuper"
 	}))
-	require.NoError(t, err)      // doesn't fail because of lazy loading
-	defer db.Close()             // may already be closed
-	_, err = db.Exec("SELECT 1") // fails because of init sql
-	require.Error(t, err)
+	require.NoError(t, err) // doesn't fail because of lazy loading
+	defer db.Close()        // may already be closed
 }
 
 // Client errors are only incremented when using the TiDB Server protocol,
 // and not internal SQL statements. Thus, this test is in the server-test suite.
 func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "clientErrors", func(dbt *testkit.DBTestKit) {
-
 		clientErrors := []struct {
 			stmt              string
 			incrementWarnings bool
@@ -2116,7 +2247,6 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 
 		for _, test := range clientErrors {
 			for _, tbl := range sources {
-
 				var errors, warnings int
 				rows := dbt.MustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
 				if rows.Next() {
@@ -2151,6 +2281,5 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 				require.Equalf(t, warnings, newWarnings, "source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt)
 			}
 		}
-
 	})
 }

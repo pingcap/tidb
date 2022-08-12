@@ -15,7 +15,7 @@ package auth
 
 import (
 	"bytes"
-	"crypto/sha1"
+	"crypto/sha1" //nolint: gosec
 	"encoding/hex"
 	"fmt"
 
@@ -25,20 +25,22 @@ import (
 
 // CheckScrambledPassword check scrambled password received from client.
 // The new authentication is performed in following manner:
-//   SERVER:  public_seed=create_random_string()
-//            send(public_seed)
-//   CLIENT:  recv(public_seed)
-//            hash_stage1=sha1("password")
-//            hash_stage2=sha1(hash_stage1)
-//            reply=xor(hash_stage1, sha1(public_seed,hash_stage2)
-//            // this three steps are done in scramble()
-//            send(reply)
-//   SERVER:  recv(reply)
-//            hash_stage1=xor(reply, sha1(public_seed,hash_stage2))
-//            candidate_hash2=sha1(hash_stage1)
-//            check(candidate_hash2==hash_stage2)
-//            // this three steps are done in check_scramble()
+//
+//	SERVER:  public_seed=create_random_string()
+//	         send(public_seed)
+//	CLIENT:  recv(public_seed)
+//	         hash_stage1=sha1("password")
+//	         hash_stage2=sha1(hash_stage1)
+//	         reply=xor(hash_stage1, sha1(public_seed,hash_stage2)
+//	         // this three steps are done in scramble()
+//	         send(reply)
+//	SERVER:  recv(reply)
+//	         hash_stage1=xor(reply, sha1(public_seed,hash_stage2))
+//	         candidate_hash2=sha1(hash_stage1)
+//	         check(candidate_hash2==hash_stage2)
+//	         // this three steps are done in check_scramble()
 func CheckScrambledPassword(salt, hpwd, auth []byte) bool {
+	//nolint: gosec
 	crypt := sha1.New()
 	_, err := crypt.Write(salt)
 	terror.Log(errors.Trace(err))
@@ -58,6 +60,7 @@ func CheckScrambledPassword(salt, hpwd, auth []byte) bool {
 
 // Sha1Hash is an util function to calculate sha1 hash.
 func Sha1Hash(bs []byte) []byte {
+	//nolint: gosec
 	crypt := sha1.New()
 	_, err := crypt.Write(bs)
 	terror.Log(errors.Trace(err))

@@ -39,6 +39,7 @@ go_library(
 
 go_test(
     name = "common_test",
+    timeout = "short",
     srcs = [
         "errors_test.go",
         "main_test.go",
@@ -50,6 +51,7 @@ go_test(
         "util_test.go",
     ],
     embed = [":common"],
+    flaky = True,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/log",
