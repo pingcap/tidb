@@ -314,7 +314,7 @@ func TestRewriteFileKeys(t *testing.T) {
 		StartKey: tablecodec.GenTableRecordPrefix(1),
 		EndKey:   tablecodec.GenTableRecordPrefix(1).PrefixNext(),
 	}
-	start, end, err := restore.RewriteFileKeys(&rawKeyFile, &rewriteRules, true)
+	start, end, err := restore.GetRewriteRawKeys(&rawKeyFile, &rewriteRules)
 	require.NoError(t, err)
 	_, end, err = codec.DecodeBytes(end, nil)
 	require.NoError(t, err)
@@ -328,7 +328,7 @@ func TestRewriteFileKeys(t *testing.T) {
 		StartKey: codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1)),
 		EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1).PrefixNext()),
 	}
-	start, end, err = restore.RewriteFileKeys(&encodeKeyFile, &rewriteRules, false)
+	start, end, err = restore.GetRewriteEncodedKeys(&encodeKeyFile, &rewriteRules)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2)), start)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2).PrefixNext()), end)
@@ -340,12 +340,12 @@ func TestRewriteFileKeys(t *testing.T) {
 		EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(767).PrefixNext()),
 	}
 	// use raw rewrite should no error but not equal
-	start, end, err = restore.RewriteFileKeys(&encodeKeyFile767, &rewriteRules, true)
+	start, end, err = restore.GetRewriteRawKeys(&encodeKeyFile767, &rewriteRules)
 	require.NoError(t, err)
 	require.NotEqual(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
 	require.NotEqual(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)
 	// use encode rewrite should no error and equal
-	start, end, err = restore.RewriteFileKeys(&encodeKeyFile767, &rewriteRules, false)
+	start, end, err = restore.GetRewriteEncodedKeys(&encodeKeyFile767, &rewriteRules)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)
