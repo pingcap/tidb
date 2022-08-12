@@ -4306,6 +4306,7 @@ func TestPushDownSelectionForMPP(t *testing.T) {
 	}
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb';")
 
 	var input []string
 	var output []struct {

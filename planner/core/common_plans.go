@@ -190,7 +190,7 @@ type Execute struct {
 
 	Name     string
 	Params   []expression.Expression
-	PrepStmt *CachedPrepareStmt
+	PrepStmt *PlanCacheStmt
 	Stmt     ast.StmtNode
 	StmtType string
 	Plan     Plan
@@ -204,7 +204,7 @@ func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) 
 		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
 		if err != nil || isNull {
 			res = false
-		} else if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
+		} else if dt, ok2 := sctx.GetSessionVars().GetUserVarVal(name); ok2 {
 			res = dt.Kind() == types.KindBinaryLiteral
 		}
 	}
@@ -357,7 +357,8 @@ type Simple struct {
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
-//   Used for simple statements executing in coprocessor.
+//
+//	Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
 	basePhysicalPlan
 	Inner Simple
