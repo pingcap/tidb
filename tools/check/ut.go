@@ -423,6 +423,7 @@ var race bool
 var except string
 var only string
 
+//nolint:typecheck
 func main() {
 	junitfile = handleFlags("--junitfile")
 	coverprofile = handleFlags("--coverprofile")
