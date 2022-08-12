@@ -1117,7 +1117,6 @@ func TestRangeColumnsMultiColumn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database RangeColumnsMulti")
 	tk.MustExec("use RangeColumnsMulti")
-	// TODO: Add experimental flag like tidb_enable_multi_column_range_columns_partitioning ?
 
 	tk.MustGetErrCode(`create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)`+
 		`(partition p0 values less than (NULL,NULL,NULL))`,
