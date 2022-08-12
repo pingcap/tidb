@@ -1213,11 +1213,20 @@ func TestRangeColumnsMultiColumn(t *testing.T) {
 		"-2147483648 0000-00-00 00:00:00 ",
 		"10 2022-01-01 00:00:00 Hi",
 		"5 0000-00-00 00:00:00 Hi"))
-	// TODO: p3 should not be included!!! The range optimizer will just use a <= 10 here :(
+	// Possible optimization: p3 should not be included!!! The range optimizer will just use a <= 10 here
+	// But same with non-partitioned index, so the range optimizer needs to be improved.
 	tk.MustQuery(`explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow"`).Check(testkit.Rows(
 		`TableReader 1.50 root partition:p1,p2,p3 data:Selection`,
 		`└─Selection 1.50 cop[tikv]  le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")`,
 		`  └─TableFullScan 12.00 cop[tikv] table:t keep order:false`))
+	tk.MustExec(`create table tref (a int, b datetime, c varchar(255), key (a,b,c))`)
+	tk.MustExec(`set @@sql_mode = ''`)
+	tk.MustExec(`insert into tref select * from t`)
+	tk.MustExec(`set @@sql_mode = DEFAULT`)
+	tk.MustQuery(`explain format = 'brief' select * from tref where a <= 10 and b <= '2022-01-01' and c < "Wow"`).Check(testkit.Rows(
+		`IndexReader 367.05 root  index:Selection`,
+		`└─Selection 367.05 cop[tikv]  le(rangecolumnsmulti.tref.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.tref.c, "Wow")`,
+		`  └─IndexRangeScan 3323.33 cop[tikv] table:tref, index:a(a, b, c) range:[-inf,10], keep order:false, stats:pseudo`))
 	tk.MustQuery(`explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow"`).Check(testkit.Rows(
 		`TableReader 4.00 root partition:p1,p2,p3 data:Selection`,
 		`└─Selection 4.00 cop[tikv]  le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")`,
