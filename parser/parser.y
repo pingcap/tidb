@@ -702,6 +702,7 @@ import (
 	tokudbSmall           "TOKUDB_SMALL"
 	tokudbUncompressed    "TOKUDB_UNCOMPRESSED"
 	tokudbZlib            "TOKUDB_ZLIB"
+	tokudbZstd            "TOKUDB_ZSTD"
 	top                   "TOP"
 	trim                  "TRIM"
 	variance              "VARIANCE"
@@ -6414,6 +6415,7 @@ NotKeywordToken:
 |	"TOKUDB_SMALL"
 |	"TOKUDB_UNCOMPRESSED"
 |	"TOKUDB_ZLIB"
+|	"TOKUDB_ZSTD"
 |	"TOP"
 |	"TRIM"
 |	"NEXT_ROW_ID"
@@ -11759,6 +11761,10 @@ RowFormat:
 |	"ROW_FORMAT" EqOpt "TOKUDB_ZLIB"
 	{
 		$$ = ast.TokuDBRowFormatZlib
+	}
+|	"ROW_FORMAT" EqOpt "TOKUDB_ZSTD"
+	{
+		$$ = ast.TokuDBRowFormatZstd
 	}
 |	"ROW_FORMAT" EqOpt "TOKUDB_QUICKLZ"
 	{
