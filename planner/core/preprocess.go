@@ -1182,7 +1182,7 @@ func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecificat
 
 // checkIndexInfo checks index name, index column names and prefix lengths.
 func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification, isPK bool) error {
-	if strings.EqualFold(indexName, mysql.PrimaryKeyName) && !isPK {
+	if !isPK && strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
 	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
