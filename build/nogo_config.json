@@ -157,6 +157,7 @@
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
+      "planner/core/plan.go": "planner/core/plan.go",
       "errno/": "only table code"
     }
   },
@@ -300,6 +301,7 @@
       "planner/implementation": "planner code",
       "planner/cascades": "planner code",
       "planner/core/plan_cache.go": "planner code",
+      "planner/core/plan.go": "planner/core/plan.go",
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code"
@@ -637,6 +639,7 @@
     },
     "only_files": {
       "expression/builtin_cast.go": "enable expression/builtin_cast.go",
+      "planner/core/plan.go": "planner/core/plan.go",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
