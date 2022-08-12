@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sem",
+    srcs = ["sem.go"],
+    importpath = "github.com/pingcap/tidb/util/sem",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/mysql",
+        "//sessionctx/variable",
+        "//util/logutil",
+    ],
+)
+
+go_test(
+    name = "sem_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "sem_test.go",
+    ],
+    embed = [":sem"],
+    flaky = True,
+    deps = [
+        "//parser/mysql",
+        "//sessionctx/variable",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//assert",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

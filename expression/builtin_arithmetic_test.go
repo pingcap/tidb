@@ -31,66 +31,65 @@ import (
 
 func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 	ret := &types.FieldType{}
-	a := &types.FieldType{
-		Decimal: 1,
-		Flen:    3,
-	}
-	b := &types.FieldType{
-		Decimal: 0,
-		Flen:    2,
-	}
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, 4, ret.Flen)
+	a := &types.FieldType{}
+	a.SetDecimal(1)
+	a.SetFlen(3)
 
-	b.Flen = 65
+	b := &types.FieldType{}
+	b.SetDecimal(0)
+	b.SetFlag(2)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, mysql.MaxRealWidth, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, 4, ret.GetFlen())
+
+	b.SetFlen(65)
+	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, mysql.MaxRealWidth, ret.GetFlen())
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, false, false)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, mysql.MaxDecimalWidth, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, mysql.MaxDecimalWidth, ret.GetFlen())
 
-	b.Flen = types.UnspecifiedLength
+	b.SetFlen(types.UnspecifiedLength)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, types.UnspecifiedLength, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
-	b.Decimal = types.UnspecifiedLength
+	b.SetDecimal(types.UnspecifiedLength)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, types.UnspecifiedLength, ret.Decimal)
-	require.Equal(t, types.UnspecifiedLength, ret.Flen)
+	require.Equal(t, types.UnspecifiedLength, ret.GetDecimal())
+	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
 	ret = &types.FieldType{}
-	a = &types.FieldType{
-		Decimal: 1,
-		Flen:    3,
-	}
-	b = &types.FieldType{
-		Decimal: 0,
-		Flen:    2,
-	}
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, 6, ret.Flen)
+	a = &types.FieldType{}
+	a.SetDecimal(1)
+	a.SetFlen(3)
 
-	b.Flen = 65
+	b = &types.FieldType{}
+	b.SetDecimal(0)
+	b.SetFlen(2)
+
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, mysql.MaxRealWidth, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, 6, ret.GetFlen())
+
+	b.SetFlen(65)
+	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, mysql.MaxRealWidth, ret.GetFlen())
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, false, true)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, mysql.MaxDecimalWidth, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, mysql.MaxDecimalWidth, ret.GetFlen())
 
-	b.Flen = types.UnspecifiedLength
+	b.SetFlen(types.UnspecifiedLength)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, types.UnspecifiedLength, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
-	b.Decimal = types.UnspecifiedLength
+	b.SetDecimal(types.UnspecifiedLength)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, types.UnspecifiedLength, ret.Decimal)
-	require.Equal(t, types.UnspecifiedLength, ret.Flen)
+	require.Equal(t, types.UnspecifiedLength, ret.GetDecimal())
+	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 }
 
 func TestArithmeticPlus(t *testing.T) {

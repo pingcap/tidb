@@ -15,6 +15,7 @@
 package ddltest
 
 import (
+	goctx "context"
 	"fmt"
 	"math"
 	"sync"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/table"
 	"github.com/stretchr/testify/require"
-	goctx "golang.org/x/net/context"
 )
 
 func getIndex(t table.Table, name string) table.Index {
@@ -87,6 +87,7 @@ func TestIndex(t *testing.T) {
 		done := s.runDDL(col.Query)
 
 		ticker := time.NewTicker(time.Duration(*lease) * time.Second / 2)
+		//nolint:all_revive,revive
 		defer ticker.Stop()
 	LOOP:
 		for {

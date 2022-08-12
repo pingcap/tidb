@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/stretchr/testify/require"
 )
@@ -54,13 +55,19 @@ func TestRun(t *testing.T) {
 	cfg := config.NewConfig()
 	err := cfg.LoadFromGlobal(globalConfig)
 	require.NoError(t, err)
-	err = lightning.RunOnce(context.Background(), cfg, nil)
+	err = lightning.RunOnceWithOptions(context.Background(), cfg)
 	require.Error(t, err)
 	require.Regexp(t, "`mydumper.data-source-dir` does not exist$", err.Error())
 
 	path, _ := filepath.Abs(".")
 	ctx := context.Background()
 	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
+	o := &options{
+		glue:         invalidGlue,
+		promRegistry: lightning.promRegistry,
+		promFactory:  lightning.promFactory,
+		logger:       log.L(),
+	}
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
@@ -71,7 +78,7 @@ func TestRun(t *testing.T) {
 			Enable: true,
 			Driver: "invalid",
 		},
-	}, invalidGlue)
+	}, o)
 	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
 
 	err = lightning.run(ctx, &config.Config{
@@ -84,7 +91,7 @@ func TestRun(t *testing.T) {
 			Driver: "file",
 			DSN:    "any-file",
 		},
-	}, invalidGlue)
+	}, o)
 	require.Error(t, err)
 }
 

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -73,6 +74,31 @@ type tableScanAndPartitionInfo struct {
 	partitionInfo PartitionInfo
 }
 
+// ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
+type ReadReqType uint8
+
+const (
+	// Cop means read from storage by cop request.
+	Cop ReadReqType = iota
+	// BatchCop means read from storage by BatchCop request, only used for TiFlash
+	BatchCop
+	// MPP means read from storage by MPP request, only used for TiFlash
+	MPP
+)
+
+// Name returns the name of read request type.
+func (r ReadReqType) Name() string {
+	switch r {
+	case BatchCop:
+		return "batchCop"
+	case MPP:
+		return "mpp"
+	default:
+		// return cop by default
+		return "cop"
+	}
+}
+
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
 	physicalSchemaProducer
@@ -84,8 +110,9 @@ type PhysicalTableReader struct {
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
 
-	// BatchCop = true means the cop task in the physical table reader will be executed in batch mode(use in TiFlash only)
-	BatchCop bool
+	// ReadReqType is the read request type for current physical table reader, there are 3 kinds of read request: Cop,
+	// BatchCop and MPP, currently, the latter two are only used in TiFlash
+	ReadReqType ReadReqType
 
 	IsCommonHandle bool
 
@@ -129,14 +156,19 @@ func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
 	return tableScans[0], nil
 }
 
-// SetMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
-func SetMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
+// GetAvgRowSize return the average row size of this plan.
+func (p *PhysicalTableReader) GetAvgRowSize() float64 {
+	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+}
+
+// setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
+func setMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 	if ts, ok := curPlan.(*PhysicalTableScan); ok {
 		ts.IsMPPOrBatchCop = true
 	}
 	children := curPlan.Children()
 	for _, child := range children {
-		SetMppOrBatchCopForTableScan(child)
+		setMppOrBatchCopForTableScan(child)
 	}
 }
 
@@ -173,7 +205,7 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.StoreType = p.StoreType
-	cloned.BatchCop = p.BatchCop
+	cloned.ReadReqType = p.ReadReqType
 	cloned.IsCommonHandle = p.IsCommonHandle
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
@@ -196,6 +228,19 @@ func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
+}
+
+func (p *PhysicalTableReader) buildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.buildPlanTrace()
+	if p.tablePlan != nil {
+		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+	}
+	return rp
+}
+
+func (p *PhysicalTableReader) appendChildCandidate(op *physicalOptimizeOp) {
+	p.basePhysicalPlan.appendChildCandidate(op)
+	appendChildCandidate(p, p.tablePlan, op)
 }
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -236,7 +281,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
-		case *PhysicalHashAgg, *PhysicalStreamAgg:
+		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
 			p.schema = p.indexPlan.Schema()
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -258,6 +303,21 @@ func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
+}
+
+func (p *PhysicalIndexReader) buildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.buildPlanTrace()
+	if p.indexPlan != nil {
+		rp.Children = append(rp.Children, p.indexPlan.buildPlanTrace())
+	}
+	return rp
+}
+
+func (p *PhysicalIndexReader) appendChildCandidate(op *physicalOptimizeOp) {
+	p.basePhysicalPlan.appendChildCandidate(op)
+	if p.indexPlan != nil {
+		appendChildCandidate(p, p.indexPlan, op)
+	}
 }
 
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
@@ -293,6 +353,10 @@ type PhysicalIndexLookUpReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+
+	// required by cost calculation
+	expectedCnt uint64
+	keepOrder   bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -335,6 +399,37 @@ func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expressi
 	return corCols
 }
 
+// GetIndexNetDataSize return the estimated total size in bytes via network transfer.
+func (p *PhysicalIndexLookUpReader) GetIndexNetDataSize() float64 {
+	return getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
+}
+
+// GetAvgTableRowSize return the average row size of each final row.
+func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
+	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+}
+
+func (p *PhysicalIndexLookUpReader) buildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.buildPlanTrace()
+	if p.indexPlan != nil {
+		rp.Children = append(rp.Children, p.indexPlan.buildPlanTrace())
+	}
+	if p.tablePlan != nil {
+		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+	}
+	return rp
+}
+
+func (p *PhysicalIndexLookUpReader) appendChildCandidate(op *physicalOptimizeOp) {
+	p.basePhysicalPlan.appendChildCandidate(op)
+	if p.indexPlan != nil {
+		appendChildCandidate(p, p.indexPlan, op)
+	}
+	if p.tablePlan != nil {
+		appendChildCandidate(p, p.tablePlan, op)
+	}
+}
+
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
@@ -352,6 +447,11 @@ type PhysicalIndexMergeReader struct {
 	PartitionInfo PartitionInfo
 }
 
+// GetAvgTableRowSize return the average row size of table plan.
+func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
+	return getTblStats(p.TablePlans[len(p.TablePlans)-1]).GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+}
+
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
@@ -366,6 +466,27 @@ func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expressio
 		}
 	}
 	return corCols
+}
+
+func (p *PhysicalIndexMergeReader) buildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.buildPlanTrace()
+	if p.tablePlan != nil {
+		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+	}
+	for _, partialPlan := range p.partialPlans {
+		rp.Children = append(rp.Children, partialPlan.buildPlanTrace())
+	}
+	return rp
+}
+
+func (p *PhysicalIndexMergeReader) appendChildCandidate(op *physicalOptimizeOp) {
+	p.basePhysicalPlan.appendChildCandidate(op)
+	if p.tablePlan != nil {
+		appendChildCandidate(p, p.tablePlan, op)
+	}
+	for _, partialPlan := range p.partialPlans {
+		appendChildCandidate(p, partialPlan, op)
+	}
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -398,7 +519,7 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	physicalTableID int64
 
-	GenExprs map[model.TableColumnID]expression.Expression
+	GenExprs map[model.TableItemID]expression.Expression
 
 	isPartition bool
 	Desc        bool
@@ -408,6 +529,12 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 
 	NeedCommonHandle bool
+
+	// required by cost model
+	// tblColHists contains all columns before pruning, which are used to calculate row-size
+	tblColHists   *statistics.HistColl
+	pkIsHandleCol *expression.Column
+	prop          *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
@@ -504,6 +631,12 @@ type PhysicalTableScan struct {
 	PartitionInfo PartitionInfo
 
 	SampleInfo *TableSampleInfo
+
+	// required by cost model
+	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
+	tblCols     []*expression.Column
+	tblColHists *statistics.HistColl
+	prop        *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1038,7 +1171,7 @@ type basePhysicalAgg struct {
 	MppPartitionCols []*property.MPPPartitionColumn
 }
 
-func (p *basePhysicalAgg) isFinalAgg() bool {
+func (p *basePhysicalAgg) IsFinalAgg() bool {
 	if len(p.AggFuncs) > 0 {
 		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
 			return true
@@ -1153,11 +1286,15 @@ type PhysicalSort struct {
 	basePhysicalPlan
 
 	ByItems []*util.ByItems
+	// whether this operator only need to sort the data of one partition.
+	// it is true only if it is used to sort the sharded data of the window function.
+	IsPartialSort bool
 }
 
 // Clone implements PhysicalPlan interface.
 func (ls *PhysicalSort) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSort)
+	cloned.IsPartialSort = ls.IsPartialSort
 	base, err := ls.basePhysicalPlan.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
@@ -1226,6 +1363,11 @@ type PhysicalSelection struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+
+	// The flag indicates whether this Selection is from a DataSource.
+	// The flag is only used by cost model for compatibility and will be removed later.
+	// Please see https://github.com/pingcap/tidb/issues/36243 for more details.
+	fromDataSource bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1252,6 +1394,17 @@ func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColu
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
 	basePhysicalPlan
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalMaxOneRow) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalMaxOneRow)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	return cloned, nil
 }
 
 // PhysicalTableDual is the physical operator of dual.
@@ -1283,6 +1436,9 @@ type PhysicalWindow struct {
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
 	Frame           *WindowFrame
+
+	// on which store the window function executes.
+	storeTp kv.StoreType
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -1308,14 +1464,45 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 	return corCols
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalWindow)
+	*cloned = *p
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
+	}
+	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
+	for _, it := range p.OrderBy {
+		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
+	}
+	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
+	for _, it := range p.WindowFuncDescs {
+		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
+	}
+	if p.Frame != nil {
+		cloned.Frame = p.Frame.Clone()
+	}
+
+	return cloned, nil
+}
+
 // PhysicalShuffle represents a shuffle plan.
 // `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
-//  to build the child executors chain.
+//
+//	to build the child executors chain.
+//
 // Take `Window` operator for example:
-//  Shuffle -> Window -> Sort -> DataSource, will be separated into:
-//    ==> Shuffle: for main thread
-//    ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
-//    ==> DataSource: for `fetchDataAndSplit` thread
+//
+//	Shuffle -> Window -> Sort -> DataSource, will be separated into:
+//	  ==> Shuffle: for main thread
+//	  ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
+//	  ==> DataSource: for `fetchDataAndSplit` thread
 type PhysicalShuffle struct {
 	basePhysicalPlan
 
@@ -1462,19 +1649,14 @@ func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// AccessObject implements physicalScan interface.
-func (p *PhysicalCTE) AccessObject(normalized bool) string {
-	return fmt.Sprintf("CTE:%s", p.cteAsName.L)
-}
-
 // OperatorInfo implements dataAccesser interface.
-func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
+func (p *PhysicalCTE) OperatorInfo(_ bool) string {
 	return fmt.Sprintf("data:%s", (*CTEDefinition)(p).ExplainID())
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalCTE) ExplainInfo() string {
-	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+	return p.AccessObject().String() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainID overrides the ExplainID.
@@ -1514,4 +1696,18 @@ func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
+}
+
+func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {
+	candidate := &tracing.CandidatePlanTrace{
+		PlanTrace: &tracing.PlanTrace{
+			ID:          pp.ID(),
+			TP:          pp.TP(),
+			Cost:        pp.Cost(),
+			ExplainInfo: pp.ExplainInfo(),
+		},
+	}
+	op.tracer.AppendCandidate(candidate)
+	pp.appendChildCandidate(op)
+	op.tracer.Candidates[origin.ID()].ChildrenID = append(op.tracer.Candidates[origin.ID()].ChildrenID, pp.ID())
 }

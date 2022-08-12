@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 )
@@ -37,7 +36,7 @@ func boolToInt64(v bool) int64 {
 }
 
 // IsValidCurrentTimestampExpr returns true if exprNode is a valid CurrentTimestamp expression.
-// Here `valid` means it is consistent with the given fieldType's Decimal.
+// Here `valid` means it is consistent with the given fieldType's decimal.
 func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldType) bool {
 	fn, isFuncCall := exprNode.(*ast.FuncCallExpr)
 	if !isFuncCall || fn.FnName.L != ast.CurrentTimestamp {
@@ -46,11 +45,11 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 
 	containsArg := len(fn.Args) > 0
 	// Fsp represents fractional seconds precision.
-	containsFsp := fieldType != nil && fieldType.Decimal > 0
+	containsFsp := fieldType != nil && fieldType.GetDecimal() > 0
 	var isConsistent bool
 	if containsArg {
 		v, ok := fn.Args[0].(*driver.ValueExpr)
-		isConsistent = ok && fieldType != nil && v.Datum.GetInt64() == int64(fieldType.Decimal)
+		isConsistent = ok && fieldType != nil && v.Datum.GetInt64() == int64(fieldType.GetDecimal())
 	}
 
 	return (containsArg && isConsistent) || (!containsArg && !containsFsp)
@@ -165,7 +164,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := variable.GetSessionOrGlobalSystemVar(sessionVars, "timestamp")
+	timestampStr, err := sessionVars.GetSessionOrGlobalSystemVar("timestamp")
 	if err != nil {
 		return now, err
 	}

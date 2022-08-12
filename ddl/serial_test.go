@@ -24,12 +24,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/util"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -41,21 +39,19 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestTruncateAllPartitions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table partition_table (v int) partition by hash (v) partitions 10")
@@ -65,8 +61,7 @@ func TestTruncateAllPartitions(t *testing.T) {
 }
 
 func TestIssue23872(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -89,13 +84,12 @@ func TestIssue23872(t *testing.T) {
 		require.NoError(t, err)
 		cols := rs.Fields()
 		require.NoError(t, rs.Close())
-		require.Equal(t, test.flag, cols[0].Column.Flag)
+		require.Equal(t, test.flag, cols[0].Column.GetFlag())
 	}
 }
 
 func TestChangeMaxIndexLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	defer config.RestoreFunc()()
@@ -111,8 +105,7 @@ func TestChangeMaxIndexLength(t *testing.T) {
 }
 
 func TestCreateTableWithLike(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// for the same database
 	tk.MustExec("create database ctwl_db")
@@ -134,14 +127,14 @@ func TestCreateTableWithLike(t *testing.T) {
 	require.Nil(t, tbl1Info.ForeignKeys)
 	require.True(t, tbl1Info.PKIsHandle)
 	col := tbl1Info.Columns[0]
-	hasNotNull := mysql.HasNotNullFlag(col.Flag)
+	hasNotNull := mysql.HasNotNullFlag(col.GetFlag())
 	require.True(t, hasNotNull)
 	tbl2, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbl2Info := tbl2.Meta()
 	require.Nil(t, tbl2Info.ForeignKeys)
 	require.True(t, tbl2Info.PKIsHandle)
-	require.True(t, mysql.HasNotNullFlag(tbl2Info.Columns[0].Flag))
+	require.True(t, mysql.HasNotNullFlag(tbl2Info.Columns[0].GetFlag()))
 
 	// for different databases
 	tk.MustExec("create database ctwl_db1")
@@ -229,8 +222,7 @@ func TestCreateTableWithLike(t *testing.T) {
 }
 
 func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// Test create table like at temporary mode.
@@ -280,7 +272,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec(`create table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored)`)
 	tk.MustExec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
 	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
-	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
@@ -309,7 +301,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b))")
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
-	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_foreign_key_temp"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -393,7 +385,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table foreign_key_table1 (a int, b int)")
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
-	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("foreign_key_tmp"))
 	require.NoError(t, err)
 	tableInfo = table.Meta()
@@ -414,7 +406,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
 }
 
-func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domain, clean func()) {
+func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domain) {
 	session.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
@@ -424,17 +416,16 @@ func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domai
 	require.NoError(t, err)
 	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
-	clean = func() {
+	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
-	}
+	})
 	return
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func TestCancelAddIndexPanic(t *testing.T) {
-	store, dom, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`))
 	defer func() {
@@ -443,6 +434,8 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int)")
+
+	tkCancel := testkit.NewTestKit(t, store)
 	defer tk.MustExec("drop table t")
 	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
@@ -451,37 +444,10 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			txn, err = hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	dom.DDL().SetHook(hook)
@@ -492,15 +458,11 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	require.NoError(t, checkErr)
 	require.Error(t, err)
 	errMsg := err.Error()
-	// Cancelling the job can either succeed or not, it depends on whether the cancelled job takes affect.
-	// For now, there's no way to guarantee that cancelling will always take effect.
-	// TODO: After issue #17904 is fixed, there is no need to tolerate it here.
-	require.True(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job") || strings.HasPrefix(errMsg, "[ddl:8211]DDL job rollback"))
+	require.Truef(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job"), "%v", errMsg)
 }
 
 func TestRecoverTableByJobID(t *testing.T) {
-	store, _, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, _ := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -616,8 +578,7 @@ func TestRecoverTableByJobID(t *testing.T) {
 }
 
 func TestRecoverTableByJobIDFail(t *testing.T) {
-	store, dom, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -685,8 +646,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 }
 
 func TestRecoverTableByTableNameFail(t *testing.T) {
-	store, dom, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -745,8 +705,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 }
 
 func TestCancelJobByErrorCountLimit(t *testing.T) {
-	store, _, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, _ := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`))
 	defer func() {
@@ -757,7 +716,7 @@ func TestCancelJobByErrorCountLimit(t *testing.T) {
 
 	limit := variable.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 16")
-	err := ddlutil.LoadDDLVars(tk.Session())
+	err := util.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
@@ -766,8 +725,7 @@ func TestCancelJobByErrorCountLimit(t *testing.T) {
 }
 
 func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`))
 	tk.MustExec("use test")
@@ -775,7 +733,7 @@ func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 
 	limit := variable.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
-	err := ddlutil.LoadDDLVars(tk.Session())
+	err := util.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
@@ -788,8 +746,7 @@ func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 }
 
 func TestCanceledJobTakeTime(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_cjtt(a int)")
@@ -798,7 +755,8 @@ func TestCanceledJobTakeTime(t *testing.T) {
 	once := sync.Once{}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		once.Do(func() {
-			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
 				err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
 				if err != nil {
@@ -821,8 +779,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 }
 
 func TestTableLocksEnable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int)")
@@ -844,8 +801,7 @@ func TestTableLocksEnable(t *testing.T) {
 }
 
 func TestAutoRandomOnTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists auto_random_temporary")
@@ -856,8 +812,7 @@ func TestAutoRandomOnTemporaryTable(t *testing.T) {
 }
 
 func TestAutoRandom(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
 	tk.MustExec("use auto_random_db")
@@ -1076,8 +1031,7 @@ func TestAutoRandom(t *testing.T) {
 }
 
 func TestAutoRandomWithPreSplitRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
 	tk.MustExec("use auto_random_db")
@@ -1099,8 +1053,7 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 }
 
 func TestModifyingColumn4NewCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database dct")
 	tk.MustExec("use dct")
@@ -1134,8 +1087,7 @@ func TestModifyingColumn4NewCollations(t *testing.T) {
 }
 
 func TestForbidUnsupportedCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	mustGetUnsupportedCollation := func(sql string, coll string) {
@@ -1163,6 +1115,7 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 	tk.MustExec("create table t1(a varchar(20))")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
+	//nolint:revive,all_revive
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
 
 	// TODO(bb7133): fix the following cases by setting charset from collate firstly.
@@ -1171,8 +1124,7 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 }
 
 func TestCreateTableNoBlock(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`))
 	defer func() {
@@ -1190,8 +1142,7 @@ func TestCreateTableNoBlock(t *testing.T) {
 }
 
 func TestCheckEnumLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustGetErrCode("create table t1 (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
@@ -1217,12 +1168,11 @@ func TestCheckEnumLength(t *testing.T) {
 
 func TestGetReverseKey(t *testing.T) {
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t,
+	store, dom := testkit.CreateMockStoreAndDomain(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cluster = c
 		}))
-	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database db_get")
 	tk.MustExec("use db_get")
@@ -1280,8 +1230,7 @@ func TestGetReverseKey(t *testing.T) {
 }
 
 func TestLocalTemporaryTableBlockedDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")

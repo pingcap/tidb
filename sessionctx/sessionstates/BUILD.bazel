@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sessionstates",
+    srcs = [
+        "session_states.go",
+        "session_token.go",
+    ],
+    importpath = "github.com/pingcap/tidb/sessionctx/sessionstates",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//parser/types",
+        "//sessionctx/stmtctx",
+        "//types",
+        "//util/dbterror",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "sessionstates_test",
+    timeout = "short",
+    srcs = [
+        "session_states_test.go",
+        "session_token_test.go",
+    ],
+    embed = [":sessionstates"],
+    flaky = True,
+    shard_count = 2,
+    deps = [
+        "//config",
+        "//errno",
+        "//expression",
+        "//parser/mysql",
+        "//parser/terror",
+        "//server",
+        "//sessionctx/variable",
+        "//testkit",
+        "//util",
+        "//util/sem",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

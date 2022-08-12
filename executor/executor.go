@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -27,12 +26,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
@@ -101,6 +103,8 @@ var (
 	GlobalMemoryUsageTracker *memory.Tracker
 	// GlobalDiskUsageTracker is the ancestor of all the Executors' disk tracker
 	GlobalDiskUsageTracker *disk.Tracker
+	// GlobalAnalyzeMemoryTracker is the ancestor of all the Analyze jobs' memory tracker and child of global Tracker
+	GlobalAnalyzeMemoryTracker *memory.Tracker
 )
 
 var (
@@ -134,6 +138,8 @@ const (
 	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
 	// globalPanicMemoryExceed represents the panic message when out of memory limit.
 	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
+	// globalPanicAnalyzeMemoryExceed represents the panic message when out of analyze memory limit.
+	globalPanicAnalyzeMemoryExceed string = "Out Of Global Analyze Memory Limit!"
 )
 
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
@@ -148,6 +154,16 @@ func init() {
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
 	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
+	GlobalAnalyzeMemoryTracker = memory.NewTracker(memory.LabelForGlobalAnalyzeMemory, -1)
+	GlobalAnalyzeMemoryTracker.SetActionOnExceed(action)
+	// register quota funcs
+	variable.SetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.SetBytesLimit
+	variable.GetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.GetBytesLimit
+	// TODO: do not attach now to avoid impact to global, will attach later when analyze memory track is stable
+	//GlobalAnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+
+	schematracker.ConstructResultOfShowCreateDatabase = ConstructResultOfShowCreateDatabase
+	schematracker.ConstructResultOfShowCreateTable = ConstructResultOfShowCreateTable
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -163,6 +179,8 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 		msg = globalPanicStorageExceed
 	case memory.LabelForGlobalMemory:
 		msg = globalPanicMemoryExceed
+	case memory.LabelForGlobalAnalyzeMemory:
+		msg = globalPanicAnalyzeMemoryExceed
 	default:
 		msg = "Out of Unknown Resource Quota!"
 	}
@@ -299,6 +317,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if trace.IsEnabled() {
 		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
+	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CAS(false, true) {
+		registerSQLAndPlanInExecForTopSQL(sessVars)
+	}
 	err := e.Next(ctx, req)
 
 	if err != nil {
@@ -323,11 +344,13 @@ type CancelDDLJobsExec struct {
 // Open implements the Executor Open interface.
 func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
-	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
-		e.errs, err = admin.CancelJobs(txn, e.jobIDs)
-		return
-	})
-	return errInTxn
+	newSess, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	e.errs, err = ddl.CancelJobs(newSess, e.ctx.GetStore(), e.jobIDs)
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -339,7 +362,7 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendString(0, strconv.FormatInt(e.jobIDs[i], 10))
-		if e.errs[i] != nil {
+		if e.errs != nil && e.errs[i] != nil {
 			req.AppendString(1, fmt.Sprintf("error: %v", e.errs[i]))
 		} else {
 			req.AppendString(1, "successful")
@@ -380,8 +403,10 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		switch alloc.GetType() {
 		case autoid.RowIDAllocType, autoid.AutoIncrementType:
 			idType = "AUTO_INCREMENT"
-			if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
-				colName = col.Name.O
+			if tblMeta.PKIsHandle {
+				if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
+					colName = col.Name.O
+				}
 			} else {
 				colName = model.ExtraHandleName.O
 			}
@@ -412,7 +437,7 @@ type ShowDDLExec struct {
 
 	ddlOwnerID string
 	selfID     string
-	ddlInfo    *admin.DDLInfo
+	ddlInfo    *ddl.Info
 	done       bool
 }
 
@@ -461,13 +486,14 @@ type ShowDDLJobsExec struct {
 
 	jobNumber int
 	is        infoschema.InfoSchema
+	sess      sessionctx.Context
 }
 
 // DDLJobRetriever retrieve the DDLJobs.
 // nolint:structcheck
 type DDLJobRetriever struct {
 	runningJobs    []*model.Job
-	historyJobIter *meta.LastJobIterator
+	historyJobIter meta.LastJobIterator
 	cursor         int
 	is             infoschema.InfoSchema
 	activeRoles    []*auth.RoleIdentity
@@ -475,13 +501,13 @@ type DDLJobRetriever struct {
 	TZLoc          *time.Location
 }
 
-func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
-	jobs, err := admin.GetDDLJobs(txn)
+func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
+	m := meta.NewMeta(txn)
+	jobs, err := ddl.GetAllDDLJobs(sess, m)
 	if err != nil {
 		return err
 	}
-	m := meta.NewMeta(txn)
-	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIterator(m)
 	if err != nil {
 		return err
 	}
@@ -550,6 +576,22 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		req.AppendNull(10)
 	}
 	req.AppendString(11, job.State.String())
+	if job.Type == model.ActionMultiSchemaChange {
+		for _, subJob := range job.MultiSchemaInfo.SubJobs {
+			req.AppendInt64(0, job.ID)
+			req.AppendString(1, schemaName)
+			req.AppendString(2, tableName)
+			req.AppendString(3, subJob.Type.String()+" /* subjob */")
+			req.AppendString(4, subJob.SchemaState.String())
+			req.AppendInt64(5, job.SchemaID)
+			req.AppendInt64(6, job.TableID)
+			req.AppendInt64(7, subJob.RowCount)
+			req.AppendNull(8)
+			req.AppendNull(9)
+			req.AppendNull(10)
+			req.AppendString(11, subJob.State.String())
+		}
+	}
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {
@@ -572,18 +614,36 @@ type ShowDDLJobQueriesExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
+	var err error
+	var jobs []*model.Job
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
+	session, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	jobs, err := admin.GetDDLJobs(txn)
+	err = sessiontxn.NewTxn(context.Background(), session)
 	if err != nil {
 		return err
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	defer func() {
+		// releaseSysSession will rollbacks txn automatically.
+		e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), session)
+	}()
+	txn, err := session.Txn(true)
+	if err != nil {
+		return err
+	}
+	session.GetSessionVars().SetInTxn(true)
+
+	m := meta.NewMeta(txn)
+	jobs, err = ddl.GetAllDDLJobs(session, m)
+	if err != nil {
+		return err
+	}
+
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(m, ddl.DefNumHistoryJobs)
 	if err != nil {
 		return err
 	}
@@ -615,24 +675,105 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	return nil
 }
 
+// ShowDDLJobQueriesWithRangeExec represents a show DDL job queries with range executor.
+// The jobs id that is given by 'admin show ddl job queries' statement,
+// can be searched within a specified range in history jobs using offset and limit.
+type ShowDDLJobQueriesWithRangeExec struct {
+	baseExecutor
+
+	cursor int
+	jobs   []*model.Job
+	offset uint64
+	limit  uint64
+}
+
+// Open implements the Executor Open interface.
+func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
+	var err error
+	var jobs []*model.Job
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	session, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	err = sessiontxn.NewTxn(context.Background(), session)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// releaseSysSession will rollbacks txn automatically.
+		e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), session)
+	}()
+	txn, err := session.Txn(true)
+	if err != nil {
+		return err
+	}
+	session.GetSessionVars().SetInTxn(true)
+
+	m := meta.NewMeta(txn)
+	jobs, err = ddl.GetAllDDLJobs(session, m)
+	if err != nil {
+		return err
+	}
+
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(m, int(e.offset+e.limit))
+	if err != nil {
+		return err
+	}
+
+	e.jobs = append(e.jobs, jobs...)
+	e.jobs = append(e.jobs, historyJobs...)
+
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.maxChunkSize)
+	if e.cursor >= len(e.jobs) {
+		return nil
+	}
+	if int(e.limit) > len(e.jobs) {
+		return nil
+	}
+	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
+	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+		if i >= int(e.offset) && i < int(e.offset+e.limit) {
+			req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
+			req.AppendString(1, e.jobs[i].Query)
+		}
+	}
+	e.cursor += numCurBatch
+	return nil
+}
+
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
 	e.DDLJobRetriever.is = e.is
 	if e.jobNumber == 0 {
-		e.jobNumber = admin.DefNumHistoryJobs
+		e.jobNumber = ddl.DefNumHistoryJobs
 	}
-	err = e.DDLJobRetriever.initial(txn)
+	sess, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	return nil
+	e.sess = sess
+	err = sessiontxn.NewTxn(context.Background(), sess)
+	if err != nil {
+		return err
+	}
+	txn, err := sess.Txn(true)
+	if err != nil {
+		return err
+	}
+	sess.GetSessionVars().SetInTxn(true)
+	err = e.DDLJobRetriever.initial(txn, sess)
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -669,6 +810,12 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.cursor += len(e.cacheJobs)
 	}
 	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *ShowDDLJobsExec) Close() error {
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), e.sess)
+	return e.baseExecutor.Close()
 }
 
 func getSchemaName(is infoschema.InfoSchema, id int64) string {
@@ -872,6 +1019,7 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 
 // ShowSlowExec represents the executor of showing the slow queries.
 // It is build from the "admin show slow" statement:
+//
 //	admin show slow top [internal | all] N
 //	admin show slow recent N
 type ShowSlowExec struct {
@@ -1008,6 +1156,15 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					physTblID := tblID
 					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
 						physTblID = row.GetInt64(physTblColIdx)
+						if physTblID == 0 {
+							// select * from t1 left join t2 on t1.c = t2.c for update
+							// The join right side might be added NULL in left join
+							// In that case, physTblID is 0, so skip adding the lock.
+							//
+							// Note, we can't distinguish whether it's the left join case,
+							// or a bug that TiKV return without correct physical ID column.
+							continue
+						}
 					}
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 				}
@@ -1025,12 +1182,20 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for id := range e.tblID2Handle {
 		e.updateDeltaForTableID(id)
 	}
-
-	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime, len(e.keys)), e.keys...)
+	lockCtx, err := newLockCtx(e.ctx, lockWaitTime, len(e.keys))
+	if err != nil {
+		return err
+	}
+	return doLockKeys(ctx, e.ctx, lockCtx, e.keys...)
 }
 
-func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *tikvstore.LockCtx {
-	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
+func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
+	seVars := sctx.GetSessionVars()
+	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.Killed
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
@@ -1065,7 +1230,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *
 	if lockCtx.ForUpdateTS > 0 && seVars.AssertionLevel != variable.AssertionLevelOff {
 		lockCtx.InitCheckExistence(numKeys)
 	}
-	return lockCtx
+	return lockCtx, nil
 }
 
 // doLockKeys is the main entry for pessimistic lock keys
@@ -1263,7 +1428,7 @@ func init() {
 			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
 
-		e := &executorBuilder{is: is, ctx: sctx}
+		e := newExecutorBuilder(sctx, is, nil)
 		exec := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -1544,21 +1709,22 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // UnionExec pulls all it's children's result and returns to its parent directly.
 // A "resultPuller" is started for every child to pull result from that child and push it to the "resultPool", the used
 // "Chunk" is obtained from the corresponding "resourcePool". All resultPullers are running concurrently.
-//                             +----------------+
-//   +---> resourcePool 1 ---> | resultPuller 1 |-----+
-//   |                         +----------------+     |
-//   |                                                |
-//   |                         +----------------+     v
-//   +---> resourcePool 2 ---> | resultPuller 2 |-----> resultPool ---+
-//   |                         +----------------+     ^               |
-//   |                               ......           |               |
-//   |                         +----------------+     |               |
-//   +---> resourcePool n ---> | resultPuller n |-----+               |
-//   |                         +----------------+                     |
-//   |                                                                |
-//   |                          +-------------+                       |
-//   |--------------------------| main thread | <---------------------+
-//                              +-------------+
+//
+//	                          +----------------+
+//	+---> resourcePool 1 ---> | resultPuller 1 |-----+
+//	|                         +----------------+     |
+//	|                                                |
+//	|                         +----------------+     v
+//	+---> resourcePool 2 ---> | resultPuller 2 |-----> resultPool ---+
+//	|                         +----------------+     ^               |
+//	|                               ......           |               |
+//	|                         +----------------+     |               |
+//	+---> resourcePool n ---> | resultPuller n |-----+               |
+//	|                         +----------------+                     |
+//	|                                                                |
+//	|                          +-------------+                       |
+//	|--------------------------| main thread | <---------------------+
+//	                           +-------------+
 type UnionExec struct {
 	baseExecutor
 	concurrency int
@@ -1637,10 +1803,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("resultPuller panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
 			result.err = errors.Errorf("%v", r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)
@@ -1765,19 +1928,25 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
-	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
+		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
+		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
+	} else {
+		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+	}
+
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
-	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
-	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
+	if variable.EnableTmpStorageOnOOM.Load() && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
-	switch globalConfig.OOMAction {
-	case config.OOMActionCancel:
+	switch variable.OOMAction.Load() {
+	case variable.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
-	case config.OOMActionLog:
+	case variable.OOMActionLog:
 		fallthrough
 	default:
 		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
@@ -1798,7 +1967,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
+			sc.IsSQLRegistered.Store(true)
+			topsql.AttachAndRegisterSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
 			if s.LockInfo == nil {
@@ -1822,6 +1992,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// We should set only two variables (
 	// IgnoreErr and StrictSQLMode) to avoid setting the same bool variables and
 	// pushing them down to TiKV as flags.
+
+	sc.InRestrictedSQL = vars.InRestrictedSQL
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
 		ResetUpdateStmtCtx(sc, stmt, vars)
@@ -1881,11 +2053,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
-		// Try to mark the `RCCheckTS` flag for the first time execution of in-transaction read requests
-		// using read-consistency isolation level.
-		if NeedSetRCCheckTSFlag(ctx, stmt) {
-			sc.RCCheckTS = true
-		}
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
@@ -1896,12 +2063,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors {
+		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
 	case *ast.SplitRegionStmt:
 		sc.IgnoreTruncate = false
+		sc.IgnoreZeroInDate = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	case *ast.SetSessionStatesStmt:
+		sc.InSetSessionStatesStmt = true
+		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
@@ -1911,7 +2083,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc.SkipUTF8Check = vars.SkipUTF8Check
 	sc.SkipASCIICheck = vars.SkipASCIICheck
-	sc.SkipUTF8MB4Check = !globalConfig.CheckMb4ValueInUTF8.Load()
+	sc.SkipUTF8MB4Check = !globalConfig.Instance.CheckMb4ValueInUTF8.Load()
 	vars.PreparedParams = vars.PreparedParams[:0]
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
@@ -1922,12 +2094,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
 	}
 	sc.PrevAffectedRows = 0
-	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt {
+	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt || vars.StmtCtx.InSetSessionStatesStmt {
 		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
-	if globalConfig.EnableCollectExecutionInfo {
+	if globalConfig.Instance.EnableCollectExecutionInfo {
 		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
 		// because ExplainFor need to display the last statement information.
 		reuseObj := vars.StmtCtx.RuntimeStatsColl
@@ -1948,6 +2120,18 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
 	return
+}
+
+// registerSQLAndPlanInExecForTopSQL register the sql and plan information if it doesn't register before execution.
+// This uses to catch the running SQL when Top SQL is enabled in execution.
+func registerSQLAndPlanInExecForTopSQL(sessVars *variable.SessionVars) {
+	stmtCtx := sessVars.StmtCtx
+	normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
+	topsql.RegisterSQL(normalizedSQL, sqlDigest, sessVars.InRestrictedSQL)
+	normalizedPlan, planDigest := stmtCtx.GetPlanDigest()
+	if len(normalizedPlan) > 0 {
+		topsql.RegisterPlan(normalizedPlan, planDigest)
+	}
 }
 
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.
@@ -1982,7 +2166,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 				return err
 			}
 			// Handle the bad null error.
-			if (mysql.HasNotNullFlag(columns[idx].Flag) || mysql.HasPreventNullInsertFlag(columns[idx].Flag)) && castDatum.IsNull() {
+			if (mysql.HasNotNullFlag(columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(columns[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(columns[idx])
 			}
 			virCols.AppendDatum(i, &castDatum)
@@ -1992,17 +2176,13 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	return nil
 }
 
-func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && topsqlstate.TopSQLEnabled() {
-		snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
+	if snapshot == nil {
+		return
 	}
-}
-
-// setRPCInterceptorOfExecCounterForTxn binds an interceptor for client-go to count
-// the number of SQL executions of each TiKV.
-func setRPCInterceptorOfExecCounterForTxn(vars *variable.SessionVars, snapshot kv.Snapshot) {
-	if snapshot != nil && topsqlstate.TopSQLEnabled() && vars.StmtCtx.KvExecCounter != nil {
-		snapshot.SetOption(kv.RPCInterceptor, vars.StmtCtx.KvExecCounter.RPCInterceptor())
+	snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+	if sc.KvExecCounter != nil {
+		snapshot.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
 	}
 }
 
@@ -2010,14 +2190,4 @@ func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
 		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
-}
-
-// NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
-func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
-	sessionVars := ctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && sessionVars.RcReadCheckTS && sessionVars.InTxn() &&
-		sessionVars.IsPessimisticReadConsistency() && !sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
-		return true
-	}
-	return false
 }

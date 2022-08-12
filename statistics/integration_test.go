@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -32,8 +31,7 @@ import (
 )
 
 func TestChangeVerTo2Behavior(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
 	defer func() {
@@ -112,8 +110,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 }
 
 func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
 	defer func() {
@@ -194,8 +191,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 }
 
 func TestFastAnalyzeOnVer2(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
@@ -242,8 +238,7 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 }
 
 func TestIncAnalyzeOnVer2(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
@@ -269,8 +264,7 @@ func TestIncAnalyzeOnVer2(t *testing.T) {
 }
 
 func TestExpBackoffEstimation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table exp_backoff(a int, b int, c int, d int, index idx(a, b, c, d))")
@@ -282,7 +276,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 		output [][]string
 	)
 	integrationSuiteData := statistics.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	inputLen := len(input)
 	// The test cases are:
 	// Query a = 1, b = 1, c = 1, d >= 3 and d <= 5 separately. We got 5, 3, 2, 3.
@@ -305,8 +299,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 }
 
 func TestGlobalStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -401,8 +394,7 @@ func TestGlobalStats(t *testing.T) {
 }
 
 func TestNULLOnFullSampling(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -425,7 +417,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 		require.Equal(t, int64(3), col.NullCount)
 	}
 	integrationSuiteData := statistics.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
 	// Check the topn and buckets contains no null values.
 	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {
@@ -436,8 +428,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 }
 
 func TestAnalyzeSnapshot(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -465,8 +456,7 @@ func TestAnalyzeSnapshot(t *testing.T) {
 }
 
 func TestHistogramsWithSameTxnTS(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -486,8 +476,7 @@ func TestHistogramsWithSameTxnTS(t *testing.T) {
 }
 
 func TestAnalyzeLongString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -499,9 +488,7 @@ func TestAnalyzeLongString(t *testing.T) {
 }
 
 func TestOutdatedStatsCheck(t *testing.T) {
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
@@ -563,8 +550,7 @@ func hasPseudoStats(rows [][]interface{}) bool {
 // TestNotLoadedStatsOnAllNULLCol makes sure that stats on a column that only contains NULLs can be used even when it's
 // not loaded. This is reasonable because it makes no difference whether it's loaded or not.
 func TestNotLoadedStatsOnAllNULLCol(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
 	h.SetLease(1000)
@@ -624,4 +610,22 @@ func TestNotLoadedStatsOnAllNULLCol(t *testing.T) {
 		"  │   └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false",
 		"  └─TableReader(Probe) 4.00 root  data:TableFullScan",
 		"    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"))
+}
+
+func TestCrossValidationSelectivity(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("create table t (a int, b int, c int, primary key (a, b) clustered)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1,2,3), (1,4,5)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 0 and b < 1000 and c > 1000").Check(testkit.Rows(
+		"TableReader 0.00 root  data:Selection",
+		"└─Selection 0.00 cop[tikv]  gt(test.t.c, 1000)",
+		"  └─TableRangeScan 2.00 cop[tikv] table:t range:(1 0,1 1000), keep order:false"))
 }

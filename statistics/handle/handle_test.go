@@ -25,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
@@ -42,8 +43,7 @@ import (
 )
 
 func TestStatsCache(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -90,8 +90,7 @@ func TestStatsCache(t *testing.T) {
 }
 
 func TestStatsCacheMemTracker(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int,c3 int)")
@@ -102,7 +101,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage() > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage == 0)
 	require.True(t, statsTbl.Pseudo)
 
 	testKit.MustExec("analyze table t")
@@ -131,7 +130,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage() > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
 	require.False(t, statsTbl.Pseudo)
 
 	// If the new schema add a column, the table stats can still work.
@@ -203,8 +202,7 @@ func isSameExtendedStats(a, b *statistics.ExtendedStatsColl) bool {
 }
 
 func TestStatsStoreAndLoad(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -232,8 +230,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 }
 
 func TestEmptyTable(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int, key cc1(c1), key cc2(c2))")
@@ -249,8 +246,7 @@ func TestEmptyTable(t *testing.T) {
 }
 
 func TestColumnIDs(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -291,8 +287,7 @@ func TestColumnIDs(t *testing.T) {
 }
 
 func TestAvgColLen(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 varchar(100), c3 float, c4 datetime, c5 varchar(100))")
@@ -348,8 +343,7 @@ func TestDurationToTS(t *testing.T) {
 }
 
 func TestVersion(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -359,7 +353,7 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker())
+	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
 	require.NoError(t, err)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
@@ -424,11 +418,14 @@ func TestVersion(t *testing.T) {
 	require.False(t, statsTbl2.Pseudo)
 	// We can read it without analyze again! Thanks for PrevLastVersion.
 	require.NotNil(t, statsTbl2.Columns[int64(3)])
+	// assert WithGetTableStatsByQuery get the same result
+	statsTbl2 = h.GetTableStats(tableInfo2, handle.WithTableStatsByQuery())
+	require.False(t, statsTbl2.Pseudo)
+	require.NotNil(t, statsTbl2.Columns[int64(3)])
 }
 
 func TestLoadHist(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 varchar(12), c2 char(12))")
@@ -487,8 +484,7 @@ func TestLoadHist(t *testing.T) {
 }
 
 func TestInitStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@session.tidb_analyze_version = 1")
@@ -518,8 +514,7 @@ func TestInitStats(t *testing.T) {
 }
 
 func TestInitStatsVer2(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
@@ -549,8 +544,7 @@ func TestInitStatsVer2(t *testing.T) {
 }
 
 func TestReloadExtStatsLockRelease(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -567,8 +561,7 @@ func TestReloadExtStatsLockRelease(t *testing.T) {
 }
 
 func TestLoadStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -608,6 +601,25 @@ func TestLoadStats(t *testing.T) {
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	require.Greater(t, hg.Len(), 0)
+
+	// assert index LoadNeededHistograms
+	idx := stat.Indices[tableInfo.Indices[0].ID]
+	idx.EvictAllStats()
+	hg = idx.Histogram
+	cms = idx.CMSketch
+	topN = idx.TopN
+	require.Equal(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
+	require.False(t, idx.IsEssentialStatsLoaded())
+	idx.IsInvalid(false)
+	require.NoError(t, h.LoadNeededHistograms())
+	stat = h.GetTableStats(tableInfo)
+	idx = stat.Indices[tableInfo.Indices[0].ID]
+	hg = idx.Histogram
+	cms = idx.CMSketch
+	topN = idx.TopN
+	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
+	require.True(t, idx.IsFullLoad())
+
 	// Following test tests whether the LoadNeededHistograms would panic.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail", `return(true)`))
 	err = h.LoadNeededHistograms()
@@ -624,8 +636,7 @@ func TestLoadStats(t *testing.T) {
 }
 
 func TestCorrelation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(c1 int primary key, c2 int)")
@@ -759,8 +770,7 @@ func TestCorrelation(t *testing.T) {
 }
 
 func TestAnalyzeVirtualCol(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -772,8 +782,7 @@ func TestAnalyzeVirtualCol(t *testing.T) {
 }
 
 func TestShowGlobalStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 0")
@@ -805,8 +814,7 @@ func TestShowGlobalStats(t *testing.T) {
 }
 
 func TestBuildGlobalLevelStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1;")
@@ -905,6 +913,9 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 
 	delta := buckets/2 + 10
 	for _, idxStats := range tblStats.Indices {
+		if len(idxStats.Buckets) == 0 {
+			continue // it's not loaded
+		}
 		numTopN := idxStats.TopN.Num()
 		numBuckets := len(idxStats.Buckets)
 		// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
@@ -926,12 +937,10 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 }
 
 func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
-	t.Skip("unstable test")
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	prepareForGlobalStatsWithOpts(t, dom, tk, "test_gstats_opt", "test_gstats_opt")
 
@@ -967,12 +976,10 @@ func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
 }
 
 func TestAnalyzeGlobalStatsWithOpts2(t *testing.T) {
-	t.Skip("unstable test")
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
 	defer func() {
@@ -1004,8 +1011,7 @@ func TestAnalyzeGlobalStatsWithOpts2(t *testing.T) {
 }
 
 func TestGlobalStatsHealthy(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1064,21 +1070,8 @@ partition by range (a) (
 	checkHealthy(60, 50, 66)
 }
 
-func TestHideGlobalStatsSwitch(t *testing.T) {
-	// NOTICE: remove this test when this global-stats is GA.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		require.NotEqual(t, "tidb_partition_prune_mode", strings.ToLower(r[0].(string)))
-	}
-	require.Len(t, tk.MustQuery("show variables where variable_name like '%tidb_partition_prune_mode%'").Rows(), 0)
-}
-
 func TestGlobalStatsData(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1124,8 +1117,7 @@ partition by range (a) (
 }
 
 func TestGlobalStatsData2(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
@@ -1449,8 +1441,7 @@ func TestGlobalStatsData2(t *testing.T) {
 }
 
 func TestGlobalStatsData3(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
@@ -1628,8 +1619,7 @@ func TestGlobalStatsData3(t *testing.T) {
 }
 
 func TestGlobalStatsVersion(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1696,8 +1686,7 @@ partition by range (a) (
 }
 
 func TestDDLPartition4GlobalStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1760,8 +1749,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 }
 
 func TestMergeGlobalTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1797,8 +1785,7 @@ func TestMergeGlobalTopN(t *testing.T) {
 }
 
 func TestExtendedStatsDefaultSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
@@ -1811,8 +1798,7 @@ func TestExtendedStatsDefaultSwitch(t *testing.T) {
 }
 
 func TestExtendedStatsOps(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -1871,8 +1857,7 @@ func TestExtendedStatsOps(t *testing.T) {
 }
 
 func TestAdminReloadStatistics1(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -1918,8 +1903,7 @@ func TestAdminReloadStatistics1(t *testing.T) {
 }
 
 func TestAdminReloadStatistics2(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -1947,8 +1931,7 @@ func TestAdminReloadStatistics2(t *testing.T) {
 }
 
 func TestCorrelationStatsCompute(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -2037,8 +2020,7 @@ func TestCorrelationStatsCompute(t *testing.T) {
 }
 
 func TestSyncStatsExtendedRemoval(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -2070,8 +2052,7 @@ func TestSyncStatsExtendedRemoval(t *testing.T) {
 }
 
 func TestStaticPartitionPruneMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec("use test")
@@ -2094,8 +2075,7 @@ func TestStaticPartitionPruneMode(t *testing.T) {
 }
 
 func TestMergeIdxHist(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
 	defer tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
@@ -2115,8 +2095,7 @@ func TestMergeIdxHist(t *testing.T) {
 }
 
 func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
@@ -2142,8 +2121,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 }
 
 func TestPartitionPruneModeSessionVariable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
@@ -2200,8 +2178,7 @@ func TestPartitionPruneModeSessionVariable(t *testing.T) {
 }
 
 func TestFMSWithAnalyzePartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
@@ -2214,6 +2191,7 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
+		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
 		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))
@@ -2221,8 +2199,7 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 }
 
 func TestIndexUsageInformation(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	session.SetIndexUsageSyncLease(1)
 	defer session.SetIndexUsageSyncLease(0)
 	tk := testkit.NewTestKit(t, store)
@@ -2262,9 +2239,155 @@ func TestIndexUsageInformation(t *testing.T) {
 	))
 }
 
+// Functional Test:test batch insert
+func TestIndexUsageInformationMultiIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	session.SetIndexUsageSyncLease(1)
+	defer session.SetIndexUsageSyncLease(0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	//len(column) = 11.len(index) = 11
+	tk.MustExec("create table t_idx(a int, b int, c int, d int, e int, f int, g int, h int, i int, j int, k int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+	tk.MustExec("create unique index idx_b on t_idx(b)")
+	tk.MustExec("create unique index idx_c on t_idx(c)")
+	tk.MustExec("create unique index idx_d on t_idx(d)")
+	tk.MustExec("create unique index idx_e on t_idx(e)")
+	tk.MustExec("create unique index idx_f on t_idx(f)")
+	tk.MustExec("create unique index idx_g on t_idx(g)")
+	tk.MustExec("create unique index idx_h on t_idx(h)")
+	tk.MustExec("create unique index idx_i on t_idx(i)")
+	tk.MustExec("create unique index idx_j on t_idx(j)")
+	tk.MustExec("create unique index idx_k on t_idx(k)")
+
+	tk.MustQuery("select a from t_idx where a=1")
+	querySQL := `select idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected
+					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
+					where tables.table_schema = idx.table_schema
+						AND tables.table_name = idx.table_name
+						AND tables.tidb_table_id = stats.table_id
+						AND idx.index_id = stats.index_id
+						AND idx.table_name = "t_idx" ORDER BY idx.key_name`
+	do := dom
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	require.NoError(t, err)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 1 0",
+	))
+	tk.MustExec("insert into t_idx values(1,1,1,1,1,1,1,1,1,1,1)")
+	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select a from t_idx where a=1")
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	require.NoError(t, err)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 2",
+	))
+
+	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select b from t_idx where b=1")
+	tk.MustQuery("select c from t_idx where c=1")
+	tk.MustQuery("select d from t_idx where d=1")
+	tk.MustQuery("select e from t_idx where e=1")
+	tk.MustQuery("select f from t_idx where f=1")
+	tk.MustQuery("select g from t_idx where g=1")
+	tk.MustQuery("select h from t_idx where h=1")
+	tk.MustQuery("select i from t_idx where i=1")
+	tk.MustQuery("select j from t_idx where j=1")
+	tk.MustQuery("select k from t_idx where k=1")
+
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	require.NoError(t, err)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 4 3",
+		"test t_idx idx_b 1 1",
+		"test t_idx idx_c 1 1",
+		"test t_idx idx_d 1 1",
+		"test t_idx idx_e 1 1",
+		"test t_idx idx_f 1 1",
+		"test t_idx idx_g 1 1",
+		"test t_idx idx_h 1 1",
+		"test t_idx idx_i 1 1",
+		"test t_idx idx_j 1 1",
+		"test t_idx idx_k 1 1",
+	))
+
+	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select b from t_idx where b=1")
+	tk.MustQuery("select c from t_idx where c=1")
+	tk.MustQuery("select d from t_idx where d=1")
+	tk.MustQuery("select e from t_idx where e=1")
+	tk.MustQuery("select f from t_idx where f=1")
+	tk.MustQuery("select g from t_idx where g=1")
+	tk.MustQuery("select h from t_idx where h=1")
+	tk.MustQuery("select i from t_idx where i=1")
+	tk.MustQuery("select j from t_idx where j=1")
+	tk.MustQuery("select k from t_idx where k=1")
+
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	require.NoError(t, err)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 5 4",
+		"test t_idx idx_b 2 2",
+		"test t_idx idx_c 2 2",
+		"test t_idx idx_d 2 2",
+		"test t_idx idx_e 2 2",
+		"test t_idx idx_f 2 2",
+		"test t_idx idx_g 2 2",
+		"test t_idx idx_h 2 2",
+		"test t_idx idx_i 2 2",
+		"test t_idx idx_j 2 2",
+		"test t_idx idx_k 2 2",
+	))
+}
+
+//cd statistics/handle
+//go test -run BenchmarkIndexUsageInformationInsert -bench BenchmarkIndexUsageInformationInsert -benchmem -benchtime=20s
+//old    6998           3379135 ns/op          994594 B/op      12659 allocs/op
+//new   18472           1299401 ns/op          473919 B/op       5628 allocs/op
+
+func BenchmarkIndexUsageInformationInsert(b *testing.B) {
+	//init
+	b.StopTimer()
+	store, dom := testkit.CreateMockStoreAndDomain(b)
+	session.SetIndexUsageSyncLease(1)
+	defer session.SetIndexUsageSyncLease(0)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	//len(column) = 11.len(index) = 11
+	tk.MustExec("create table t_idx(a int, b int, c int, d int, e int, f int, g int, h int, i int, j int, k int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+	tk.MustExec("create unique index idx_b on t_idx(b)")
+	tk.MustExec("create unique index idx_c on t_idx(c)")
+	tk.MustExec("create unique index idx_d on t_idx(d)")
+	tk.MustExec("create unique index idx_e on t_idx(e)")
+	tk.MustExec("create unique index idx_f on t_idx(f)")
+	tk.MustExec("create unique index idx_g on t_idx(g)")
+	tk.MustExec("create unique index idx_h on t_idx(h)")
+	tk.MustExec("create unique index idx_i on t_idx(i)")
+	tk.MustExec("create unique index idx_j on t_idx(j)")
+	tk.MustExec("create unique index idx_k on t_idx(k)")
+	b.StartTimer()
+
+	for i := 0; i < b.N; i++ {
+		tk.MustQuery("select a from t_idx where a=1")
+		tk.MustQuery("select b from t_idx where b=1")
+		tk.MustQuery("select c from t_idx where c=1")
+		tk.MustQuery("select d from t_idx where d=1")
+		tk.MustQuery("select e from t_idx where e=1")
+		tk.MustQuery("select f from t_idx where f=1")
+		tk.MustQuery("select g from t_idx where g=1")
+		tk.MustQuery("select h from t_idx where h=1")
+		tk.MustQuery("select i from t_idx where i=1")
+		tk.MustQuery("select j from t_idx where j=1")
+		tk.MustQuery("select k from t_idx where k=1")
+		do := dom
+		err := do.StatsHandle().DumpIndexUsageToKV()
+		require.NoError(b, err)
+	}
+}
+
 func TestGCIndexUsageInformation(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	session.SetIndexUsageSyncLease(1)
 	defer session.SetIndexUsageSyncLease(0)
 	tk := testkit.NewTestKit(t, store)
@@ -2290,8 +2413,7 @@ func TestGCIndexUsageInformation(t *testing.T) {
 }
 
 func TestFeedbackWithGlobalStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@tidb_analyze_version = 1")
@@ -2385,8 +2507,7 @@ func TestFeedbackWithGlobalStats(t *testing.T) {
 }
 
 func TestExtendedStatsPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -2400,8 +2521,7 @@ func TestExtendedStatsPartitionTable(t *testing.T) {
 }
 
 func TestHideIndexUsageSyncLease(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// NOTICE: remove this test when index usage is GA.
 	tk := testkit.NewTestKit(t, store)
 	rs := tk.MustQuery("select @@tidb_config").Rows()
@@ -2410,21 +2530,8 @@ func TestHideIndexUsageSyncLease(t *testing.T) {
 	}
 }
 
-func TestHideExtendedStatsSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	// NOTICE: remove this test when this extended-stats reaches GA state.
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		require.NotEqual(t, "tidb_enable_extended_stats", strings.ToLower(r[0].(string)))
-	}
-	tk.MustQuery("show variables like 'tidb_enable_extended_stats'").Check(testkit.Rows())
-}
-
 func TestRepetitiveAddDropExtendedStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -2463,8 +2570,7 @@ func TestRepetitiveAddDropExtendedStats(t *testing.T) {
 }
 
 func TestDuplicateExtendedStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -2486,8 +2592,7 @@ func TestDuplicateExtendedStats(t *testing.T) {
 }
 
 func TestDuplicateFMSketch(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
@@ -2505,8 +2610,7 @@ func TestDuplicateFMSketch(t *testing.T) {
 }
 
 func TestIndexFMSketch(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
@@ -2567,8 +2671,7 @@ func TestIndexFMSketch(t *testing.T) {
 }
 
 func TestShowExtendedStats4DropColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -2595,8 +2698,7 @@ func TestShowExtendedStats4DropColumn(t *testing.T) {
 }
 
 func TestGlobalStatsNDV(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -2638,8 +2740,7 @@ func TestGlobalStatsNDV(t *testing.T) {
 }
 
 func TestGlobalStatsIndexNDV(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -2731,8 +2832,7 @@ func TestGlobalStatsIndexNDV(t *testing.T) {
 }
 
 func TestExtStatsOnReCreatedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -2769,8 +2869,7 @@ func TestExtStatsOnReCreatedTable(t *testing.T) {
 }
 
 func TestExtStatsOnReCreatedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -2811,8 +2910,7 @@ func TestExtStatsOnReCreatedColumn(t *testing.T) {
 }
 
 func TestExtStatsOnRenamedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -2849,8 +2947,7 @@ func TestExtStatsOnRenamedColumn(t *testing.T) {
 }
 
 func TestExtStatsOnModifiedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
@@ -2887,8 +2984,7 @@ func TestExtStatsOnModifiedColumn(t *testing.T) {
 }
 
 func TestCorrelationWithDefinedCollate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -2919,8 +3015,7 @@ func TestCorrelationWithDefinedCollate(t *testing.T) {
 }
 
 func TestLoadHistogramWithCollate(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -2939,8 +3034,7 @@ func TestLoadHistogramWithCollate(t *testing.T) {
 }
 
 func TestFastAnalyzeColumnHistWithNullValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -2955,8 +3049,7 @@ func TestFastAnalyzeColumnHistWithNullValue(t *testing.T) {
 }
 
 func TestStatsCacheUpdateSkip(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	do := dom
 	h := do.StatsHandle()
@@ -2977,8 +3070,7 @@ func TestStatsCacheUpdateSkip(t *testing.T) {
 }
 
 func TestIssues24349(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
@@ -2996,8 +3088,7 @@ func TestIssues24349(t *testing.T) {
 }
 
 func TestIssues24401(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 
@@ -3012,17 +3103,19 @@ func TestIssues24401(t *testing.T) {
 	testKit.MustExec("create table tp(a int, index(a)) partition by hash(a) partitions 3")
 	testKit.MustExec("insert into tp values (1), (2), (3)")
 	testKit.MustExec("analyze table tp")
-	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	require.Equal(t, 6, len(rows))
 
 	// normal table with dynamic prune mode
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
 	testKit.MustExec("analyze table t")
-	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	require.Equal(t, 6, len(rows))
 
 	// partition table with dynamic prune mode
 	testKit.MustExec("analyze table tp")
-	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
 	lenRows := len(rows)
 	require.Equal(t, 6, lenRows)
 
@@ -3034,8 +3127,7 @@ func TestIssues24401(t *testing.T) {
 }
 
 func TestIssues27147(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 
@@ -3054,8 +3146,7 @@ func TestIssues27147(t *testing.T) {
 }
 
 func TestColumnCountFromStorage(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	do := dom
 	h := do.StatsHandle()
@@ -3079,62 +3170,85 @@ func TestColumnCountFromStorage(t *testing.T) {
 	require.Equal(t, int64(2), statsTbl.Columns[tblInfo.Columns[0].ID].Count)
 }
 
+func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.T) {
+	return func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		if analyzeSnapshot {
+			tk.MustExec("set @@session.tidb_enable_analyze_snapshot = on")
+		} else {
+			tk.MustExec("set @@session.tidb_enable_analyze_snapshot = off")
+		}
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("set @@session.tidb_analyze_version = 2")
+		h := dom.StatsHandle()
+		err := h.HandleDDLEvent(<-h.DDLEventCh())
+		require.NoError(t, err)
+		tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		tid := tblInfo.ID
+
+		tk.MustExec("insert into t values(1),(2),(3)")
+		require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		err = h.Update(dom.InfoSchema())
+		require.NoError(t, err)
+		tk.MustExec("analyze table t")
+		tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+			"3 0",
+		))
+
+		tk.MustExec("begin")
+		txn, err := tk.Session().Txn(false)
+		require.NoError(t, err)
+		startTS := txn.StartTS()
+		tk.MustExec("commit")
+
+		tk.MustExec("insert into t values(4),(5),(6)")
+		require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		err = h.Update(dom.InfoSchema())
+		require.NoError(t, err)
+
+		// Simulate that the analyze would start before and finish after the second insert.
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS)))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseCount", "return(3)"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseModifyCount", "return(0)"))
+		tk.MustExec("analyze table t")
+		if analyzeSnapshot {
+			// Check the count / modify_count changes during the analyze are not lost.
+			tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+				"6 3",
+			))
+			// Check the histogram is correct for the snapshot analyze.
+			tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
+				"3",
+			))
+		} else {
+			// Since analyze use max ts to read data, it finds the row count is 6 and directly set count to 6 rather than incrementally update it.
+			// But it still incrementally updates modify_count.
+			tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+				"6 3",
+			))
+			// Check the histogram is collected from the latest data rather than the snapshot at startTS.
+			tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
+				"6",
+			))
+		}
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"))
+	}
+}
+
 func TestIncrementalModifyCountUpdate(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
-	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	tid := tblInfo.ID
-
-	tk.MustExec("insert into t values(1),(2),(3)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	err = h.Update(dom.InfoSchema())
-	require.NoError(t, err)
-	tk.MustExec("analyze table t")
-	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
-		"3 0",
-	))
-
-	tk.MustExec("begin")
-	txn, err := tk.Session().Txn(false)
-	require.NoError(t, err)
-	startTS := txn.StartTS()
-	tk.MustExec("commit")
-
-	tk.MustExec("insert into t values(4),(5),(6)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	err = h.Update(dom.InfoSchema())
-	require.NoError(t, err)
-
-	// Simulate that the analyze would start before and finish after the second insert.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseCount", "return(3)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseModifyCount", "return(0)"))
-	tk.MustExec("analyze table t")
-	// Check the count / modify_count changes during the analyze are not lost.
-	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
-		"6 3",
-	))
-	// Check the histogram is correct for the snapshot analyze.
-	tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
-		"3",
-	))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"))
+	for _, analyzeSnapshot := range []bool{true, false} {
+		t.Run(fmt.Sprintf("%s-%t", t.Name(), analyzeSnapshot), testIncrementalModifyCountUpdateHelper(analyzeSnapshot))
+	}
 }
 
 func TestRecordHistoricalStatsToStorage(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
@@ -3156,4 +3270,90 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where version = '%d'", version)).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.GreaterOrEqual(t, num, 1)
+}
+
+func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, index := range tblStats.Indices {
+		require.False(t, index.IsEvicted())
+	}
+
+	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
+	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, index := range tblStats.Indices {
+		require.True(t, index.IsEvicted())
+	}
+
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertEvictIndex", `return(true)`))
+	tk.MustExec("analyze incremental table test.t index idx_b")
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertEvictIndex"))
+}
+
+func TestEvictedColumnLoadedStatus(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.StatsHandle().SetLease(0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+
+	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
+	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsCMSEvicted())
+	}
+}
+
+func TestAnalyzeTableLRUPut(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("create table t1(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.Nil(t, err)
+	// assert t1 should be front of lru
+	tk.MustExec("analyze table test.t1")
+	require.Equal(t, tbl1.Meta().ID, domain.GetDomain(tk.Session()).StatsHandle().GetStatsCacheFrontTable())
+	// assert t should be front of lru
+	tk.MustExec("analyze table test.t")
+	require.Equal(t, tbl.Meta().ID, domain.GetDomain(tk.Session()).StatsHandle().GetStatsCacheFrontTable())
 }

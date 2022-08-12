@@ -55,6 +55,7 @@ func createPlannerSuite() (s *plannerSuite) {
 		MockRangePartitionTable(),
 		MockHashPartitionTable(),
 		MockListPartitionTable(),
+		MockStateNoneColumnTable(),
 	}
 	id := int64(0)
 	for _, tblInfo := range tblInfos {
@@ -80,7 +81,7 @@ func createPlannerSuite() (s *plannerSuite) {
 
 func TestPredicatePushDown(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s := createPlannerSuite()
 	ctx := context.Background()
 	for ith, ca := range input {
@@ -111,7 +112,7 @@ func TestImplicitCastNotNullFlag(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
 	require.NoError(t, err)
 	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
-	castNotNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().Flag) & mysql.NotNullFlag
+	castNotNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().GetFlag()) & mysql.NotNullFlag
 	var nullableFlag uint = 0
 	require.Equal(t, nullableFlag, castNotNullFlag)
 }
@@ -128,8 +129,8 @@ func TestEliminateProjectionUnderUnion(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
 	require.NoError(t, err)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
-	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.Flag & mysql.NotNullFlag
-	exprNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().Flag & mysql.NotNullFlag
+	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.GetFlag() & mysql.NotNullFlag
+	exprNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().GetFlag() & mysql.NotNullFlag
 	require.Equal(t, exprNullFlag, schemaNullFlag)
 }
 
@@ -141,7 +142,7 @@ func TestJoinPredicatePushDown(t *testing.T) {
 			Right string
 		}
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -180,7 +181,7 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 			Right string
 		}
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -225,7 +226,7 @@ func TestSimplifyOuterJoin(t *testing.T) {
 			JoinType string
 		}
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -292,7 +293,7 @@ func TestDeriveNotNullConds(t *testing.T) {
 			Right string
 		}
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -332,8 +333,8 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	require.NoError(t, err, comment)
 	ds := p.(*LogicalProjection).children[0].(*LogicalAggregation).children[0].(*DataSource)
 	require.Equal(t, "_tidb_rowid", ds.Columns[2].Name.L)
-	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].Flag)
-	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.schema.Columns[2].RetType.Flag)
+	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].GetFlag())
+	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.schema.Columns[2].RetType.GetFlag())
 }
 
 func buildLogicPlan4GroupBy(s *plannerSuite, t *testing.T, sql string) (Plan, error) {
@@ -466,7 +467,7 @@ func TestTablePartition(t *testing.T) {
 		}
 		output []string
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -491,7 +492,7 @@ func TestTablePartition(t *testing.T) {
 
 func TestSubquery(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -505,7 +506,7 @@ func TestSubquery(t *testing.T) {
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 		require.NoError(t, err)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, lp)
+			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagSemiJoinRewrite, lp)
 			require.NoError(t, err)
 		}
 		testdata.OnRecord(func() {
@@ -517,7 +518,7 @@ func TestSubquery(t *testing.T) {
 
 func TestPlanBuilder(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -544,7 +545,7 @@ func TestPlanBuilder(t *testing.T) {
 
 func TestJoinReOrder(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -568,7 +569,7 @@ func TestJoinReOrder(t *testing.T) {
 func TestEagerAggregation(t *testing.T) {
 	var input []string
 	var output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -597,7 +598,7 @@ func TestColumnPruning(t *testing.T) {
 		input  []string
 		output []map[int][]string
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -622,7 +623,7 @@ func TestSortByItemsPruning(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	testdata.OnRecord(func() {
 		output = make([][]string, len(input))
 	})
@@ -911,6 +912,10 @@ func TestValidate(t *testing.T) {
 			sql: "select a+1 from t having t.a",
 			err: ErrUnknownColumn,
 		},
+		{
+			sql: "update T_StateNoneColumn set c = 1 where a = 1",
+			err: ErrUnknownColumn,
+		},
 	}
 
 	s := createPlannerSuite()
@@ -961,7 +966,7 @@ func checkUniqueKeys(p LogicalPlan, t *testing.T, ans map[int][][]string, sql st
 func TestUniqueKeyInfo(t *testing.T) {
 	var input []string
 	var output []map[int][][]string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	testdata.OnRecord(func() {
 		output = make([]map[int][][]string, len(input))
 	})
@@ -986,7 +991,7 @@ func TestUniqueKeyInfo(t *testing.T) {
 
 func TestAggPrune(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -1151,6 +1156,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
+				{mysql.TriggerPriv, "test", "", "", nil, false, "", false},
 			},
 		},
 		{
@@ -1225,6 +1231,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
+				{mysql.TriggerPriv, "test", "", "", nil, false, "", false},
 			},
 		},
 		{
@@ -1485,7 +1492,7 @@ func TestUnion(t *testing.T) {
 		Best string
 		Err  bool
 	}
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range input {
@@ -1505,7 +1512,7 @@ func TestUnion(t *testing.T) {
 			require.Error(t, err)
 			continue
 		}
-		require.NoError(t, err)
+		require.NoError(t, err, comment)
 		p := plan.(LogicalPlan)
 		p, err = logicalOptimize(ctx, builder.optFlag, p)
 		testdata.OnRecord(func() {
@@ -1518,7 +1525,7 @@ func TestUnion(t *testing.T) {
 
 func TestTopNPushDown(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range input {
@@ -1594,7 +1601,7 @@ func TestNameResolver(t *testing.T) {
 
 func TestOuterJoinEliminator(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.TODO()
@@ -1666,7 +1673,7 @@ func TestWindowFunction(t *testing.T) {
 		s.optimizeVars = nil
 	}()
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s.doTestWindowFunction(t, input, output)
 }
 
@@ -1681,7 +1688,7 @@ func TestWindowParallelFunction(t *testing.T) {
 		s.optimizeVars = nil
 	}()
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s.doTestWindowFunction(t, input, output)
 }
 
@@ -2119,5 +2126,41 @@ func TestWindowLogicalPlanAmbiguous(t *testing.T) {
 		} else {
 			require.Equal(t, ToString(p), planString)
 		}
+	}
+}
+
+func TestRemoveOrderbyInSubquery(t *testing.T) {
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from t order by a",
+			best: "DataScan(t)->Projection->Sort",
+		},
+		{
+			sql:  "select (select 1) from t order by a",
+			best: "DataScan(t)->Projection->Sort->Projection",
+		},
+		{
+			sql:  "select count(*) from (select b from t order by a) n",
+			best: "DataScan(t)->Projection->Projection->Aggr(count(1),firstrow(test.t.b))->Projection",
+		},
+		{
+			sql:  "select count(1) from (select b from t order by a limit 1) n",
+			best: "DataScan(t)->Projection->Sort->Limit->Projection->Aggr(count(1),firstrow(test.t.b))->Projection",
+		},
+	}
+
+	s := createPlannerSuite()
+	s.ctx.GetSessionVars().RemoveOrderbyInSubquery = true
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
+		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+		require.NoError(t, err, comment)
+		require.Equal(t, tt.best, ToString(p), comment)
 	}
 }

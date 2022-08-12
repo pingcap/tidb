@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/terror"
@@ -39,8 +38,7 @@ import (
 )
 
 func TestAggregation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("use test")
@@ -405,9 +403,8 @@ func TestAggregation(t *testing.T) {
 	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)").Sort()
 	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
 
-	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
-	require.EqualError(t, errors.Cause(err), "[expression:1305]FUNCTION test.std_samp does not exist")
+	tk.MustGetErrMsg("select std_samp(a) from t", "[expression:1305]FUNCTION test.std_samp does not exist")
 
 	// For issue #14072: wrong result when using generated column with aggregate statement
 	tk.MustExec("drop table if exists t1;")
@@ -479,8 +476,7 @@ func TestAggregation(t *testing.T) {
 }
 
 func TestAggPrune(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -508,8 +504,7 @@ func TestAggPrune(t *testing.T) {
 func TestGroupConcatAggr(t *testing.T) {
 	var err error
 	// issue #5411
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test;")
@@ -652,8 +647,7 @@ func TestGroupConcatAggr(t *testing.T) {
 }
 
 func TestSelectDistinct(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	fillData(tk, "select_distinct_test")
@@ -662,12 +656,10 @@ func TestSelectDistinct(t *testing.T) {
 	r := tk.MustQuery("select distinct name from select_distinct_test;")
 	r.Check(testkit.Rows("hello"))
 	tk.MustExec("commit")
-
 }
 
 func TestAggPushDown(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -696,11 +688,11 @@ func TestAggPushDown(t *testing.T) {
 }
 
 func TestOnlyFullGroupBy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
 	tk.MustExec("create table x(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
@@ -742,16 +734,22 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), "err %v", err)
 	err = tk.ExecToErr("select count(b), c from t")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), "err %v", err)
+	tk.MustQuery("select count(b), any_value(c) from t")
+	tk.MustQuery("select count(b), any_value(c) + 2 from t")
 	err = tk.ExecToErr("select distinct a, b, count(a) from t")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), "err %v", err)
 	// test compatible with sql_mode = ONLY_FULL_GROUP_BY
 	tk.MustQuery("select a from t group by a,b,c")
 	tk.MustQuery("select b from t group by b")
+	err = tk.ExecToErr("select b*rand() from t group by b")
+	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 	tk.MustQuery("select b as e from t group by b")
 	tk.MustQuery("select b+c from t group by b+c")
 	tk.MustQuery("select b+c, min(a) from t group by b+c, b-c")
 	tk.MustQuery("select b+c, min(a) from t group by b, c")
 	tk.MustQuery("select b+c from t group by b,c")
+	err = tk.ExecToErr("select b+c from (select b, b+rand() as c from t) t group by b")
+	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 	tk.MustQuery("select b between c and d from t group by b,c,d")
 	tk.MustQuery("select case b when 1 then c when 2 then d else d end from t group by b,c,d")
 	tk.MustQuery("select c > (select b from t) from t group by c")
@@ -779,8 +777,7 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	tk.MustQuery("select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d")
 	tk.MustQuery("select t.*, x.* from t, x where t.b = x.a group by t.b, t.d")
 	tk.MustQuery("select t.b, x.* from t, x where t.b = x.a group by t.b")
-	err = tk.ExecToErr("select t.*, x.* from t, x where t.c = x.a group by t.b, t.c")
-	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
+	tk.MustQuery("select t.*, x.* from t, x where t.c = x.a group by t.b, t.c")
 	// test functional dependency derived from keys in join
 	tk.MustQuery("select t.*, x.* from t inner join x on t.a = x.a group by t.a")
 	tk.MustQuery("select t.*, x.* from t inner join x  on (t.b = x.b and t.d = x.d) group by t.b, x.d")
@@ -794,11 +791,10 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	err = tk.ExecToErr("select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 
-	// FixMe: test functional dependency of derived table
-	// tk.MustQuery("select * from (select * from t) as e group by a")
-	// tk.MustQuery("select * from (select * from t) as e group by b,d")
-	// err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
-	// require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
+	tk.MustQuery("select * from (select * from t) as e group by a")
+	tk.MustQuery("select * from (select * from t) as e group by b,d")
+	err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
+	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 
 	// test order by
 	tk.MustQuery("select c from t group by c,d order by d")
@@ -810,8 +806,7 @@ func TestOnlyFullGroupBy(t *testing.T) {
 }
 
 func TestIssue16279(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
@@ -823,8 +818,7 @@ func TestIssue16279(t *testing.T) {
 }
 
 func TestIssue24676(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
@@ -840,8 +834,7 @@ func TestIssue24676(t *testing.T) {
 }
 
 func TestAggPushDownPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -874,8 +867,7 @@ func TestAggPushDownPartitionTable(t *testing.T) {
 }
 
 func TestIssue13652(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
@@ -885,13 +877,12 @@ func TestIssue13652(t *testing.T) {
 	tk.MustQuery("select a from t group by ((a))")
 	tk.MustQuery("select a from t group by +a")
 	tk.MustQuery("select a from t group by ((+a))")
-	_, err := tk.Exec("select a from t group by (-a)")
-	require.EqualError(t, err, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	tk.MustGetErrMsg("select a from t group by (-a)",
+		"[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 }
 
 func TestIssue14947(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
@@ -901,8 +892,7 @@ func TestIssue14947(t *testing.T) {
 }
 
 func TestHaving(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
@@ -928,8 +918,7 @@ func TestHaving(t *testing.T) {
 }
 
 func TestAggEliminator(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -944,8 +933,7 @@ func TestAggEliminator(t *testing.T) {
 }
 
 func TestClusterIndexMaxMinEliminator(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -960,8 +948,7 @@ func TestClusterIndexMaxMinEliminator(t *testing.T) {
 }
 
 func TestMaxMinFloatScalaFunc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -973,8 +960,7 @@ func TestMaxMinFloatScalaFunc(t *testing.T) {
 }
 
 func TestBuildProjBelowAgg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -988,8 +974,7 @@ func TestBuildProjBelowAgg(t *testing.T) {
 }
 
 func TestInjectProjBelowTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -999,7 +984,7 @@ func TestInjectProjBelowTopN(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	aggMergeSuiteData.GetTestCases(t, &input, &output)
+	aggMergeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
@@ -1009,8 +994,7 @@ func TestInjectProjBelowTopN(t *testing.T) {
 }
 
 func TestFirstRowEnum(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -1022,8 +1006,7 @@ func TestFirstRowEnum(t *testing.T) {
 }
 
 func TestAggJSON(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
@@ -1074,8 +1057,7 @@ func TestAggJSON(t *testing.T) {
 }
 
 func TestIssue10099(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1086,8 +1068,7 @@ func TestIssue10099(t *testing.T) {
 }
 
 func TestIssue10098(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
@@ -1097,8 +1078,7 @@ func TestIssue10098(t *testing.T) {
 }
 
 func TestIssue10608(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t, s;`)
@@ -1108,12 +1088,10 @@ func TestIssue10608(t *testing.T) {
 	tk.MustExec("insert into t values(508931), (508932)")
 	tk.MustQuery("select (select  /*+ stream_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
 	tk.MustQuery("select (select  /*+ hash_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
-
 }
 
 func TestIssue12759HashAggCalledByApply(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -1132,7 +1110,7 @@ func TestIssue12759HashAggCalledByApply(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	aggMergeSuiteData.GetTestCases(t, &input, &output)
+	aggMergeSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
@@ -1142,8 +1120,7 @@ func TestIssue12759HashAggCalledByApply(t *testing.T) {
 }
 
 func TestPR15242ShallowCopy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
@@ -1155,12 +1132,10 @@ func TestPR15242ShallowCopy(t *testing.T) {
 	tk.MustExec(`insert into t values ('{"id": 3,"score":233}');`)
 	tk.Session().GetSessionVars().MaxChunkSize = 2
 	tk.MustQuery(`select max(JSON_EXTRACT(a, '$.score')) as max_score,JSON_EXTRACT(a,'$.id') as id from t group by id order by id;`).Check(testkit.Rows("233 1", "233 2", "233 3"))
-
 }
 
 func TestIssue15690(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().MaxChunkSize = 2
@@ -1212,8 +1187,7 @@ func TestIssue15690(t *testing.T) {
 }
 
 func TestIssue15958(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().MaxChunkSize = 2
@@ -1225,8 +1199,7 @@ func TestIssue15958(t *testing.T) {
 }
 
 func TestIssue17216(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1297,8 +1270,7 @@ func reconstructParallelGroupConcatResult(rows [][]interface{}) []string {
 }
 
 func TestParallelStreamAggGroupConcat(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1344,8 +1316,7 @@ func TestParallelStreamAggGroupConcat(t *testing.T) {
 }
 
 func TestIssue20658(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1420,8 +1391,7 @@ func TestIssue20658(t *testing.T) {
 }
 
 func TestIssue23277(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1453,8 +1423,7 @@ func TestIssue23277(t *testing.T) {
 }
 
 func TestAvgDecimal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists td;")
@@ -1476,8 +1445,7 @@ func TestAvgDecimal(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/23314
 func TestIssue23314(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1488,8 +1456,7 @@ func TestIssue23314(t *testing.T) {
 }
 
 func TestAggInDisk(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_hashagg_final_concurrency = 1;")
@@ -1529,8 +1496,7 @@ func TestAggInDisk(t *testing.T) {
 }
 
 func TestRandomPanicAggConsume(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_max_chunk_size=32")
@@ -1583,4 +1549,88 @@ func TestRandomPanicAggConsume(t *testing.T) {
 		}
 		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}
+}
+
+func TestIssue35295(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t100")
+	// This bug only happens on partition prune mode = 'static'
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`CREATE TABLE t100 (
+ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+col1 int(10) NOT NULL DEFAULT '0' COMMENT 'test',
+money bigint(20) NOT NULL COMMENT 'test',
+logtime datetime NOT NULL COMMENT '记录时间',
+PRIMARY KEY (ID,logtime)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=1 COMMENT='test'
+PARTITION BY RANGE COLUMNS(logtime) (
+PARTITION p20220608 VALUES LESS THAN ("20220609"),
+PARTITION p20220609 VALUES LESS THAN ("20220610"),
+PARTITION p20220610 VALUES LESS THAN ("20220611"),
+PARTITION p20220611 VALUES LESS THAN ("20220612"),
+PARTITION p20220612 VALUES LESS THAN ("20220613"),
+PARTITION p20220613 VALUES LESS THAN ("20220614"),
+PARTITION p20220614 VALUES LESS THAN ("20220615"),
+PARTITION p20220615 VALUES LESS THAN ("20220616"),
+PARTITION p20220616 VALUES LESS THAN ("20220617"),
+PARTITION p20220617 VALUES LESS THAN ("20220618"),
+PARTITION p20220618 VALUES LESS THAN ("20220619"),
+PARTITION p20220619 VALUES LESS THAN ("20220620"),
+PARTITION p20220620 VALUES LESS THAN ("20220621"),
+PARTITION p20220621 VALUES LESS THAN ("20220622"),
+PARTITION p20220622 VALUES LESS THAN ("20220623"),
+PARTITION p20220623 VALUES LESS THAN ("20220624"),
+PARTITION p20220624 VALUES LESS THAN ("20220625")
+ );`)
+	tk.MustExec("insert into t100(col1,money,logtime) values (100,10,'2022-06-09 00:00:00');")
+	tk.MustExec("insert into t100(col1,money,logtime) values (100,10,'2022-06-10 00:00:00');")
+	tk.MustQuery("SELECT /*+STREAM_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
+	tk.MustQuery("SELECT /*+HASH_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
+}
+
+// https://github.com/pingcap/tidb/issues/27751
+func TestIssue27751(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table test.t(nname char(20));")
+	tk.MustExec("insert into test.t values ('2'),(null),('11'),('2'),(null),('2'),(null),('11'),('33');")
+	tk.MustExec("set @@group_concat_max_len=0;")
+	tk.MustQuery("select group_concat(nname order by 1 separator '#' ) from t;").Check(testkit.Rows("11#1"))
+	tk.MustQuery("select group_concat(nname order by 1 desc separator '#' ) from t;").Check(testkit.Rows("33#2"))
+}
+
+func TestIssue26885(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`SET sql_mode = 'NO_ENGINE_SUBSTITUTION';`)
+	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
+
+	tk.MustExec("CREATE TABLE t1 (c1 ENUM('a', '', 'b'));")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('a');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "", "a", "", ""))
+	tk.MustQuery("select c1 + 0 from t1").Check(testkit.Rows("3", "2", "1", "2", "0"))
+	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
+
+	tk.MustExec("alter table t1 add index idx(c1); ")
+	tk.MustQuery("select c1 + 0 from t1").Check(testkit.Rows("3", "2", "1", "2", "0"))
+	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
+	tk.MustExec("CREATE TABLE t1 (c1 ENUM('a', 'b', 'c'));")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('a');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('c');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "a", "b", "c", ""))
+	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
 }

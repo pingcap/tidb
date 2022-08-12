@@ -18,12 +18,12 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type concatFunction struct {
@@ -114,7 +114,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 // GetResult implements Aggregation interface.
 func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 	if evalCtx.Buffer != nil {
-		d.SetString(evalCtx.Buffer.String(), cf.RetTp.Collate)
+		d.SetString(evalCtx.Buffer.String(), cf.RetTp.GetCollate())
 	} else {
 		d.SetNull()
 	}

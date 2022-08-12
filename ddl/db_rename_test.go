@@ -15,27 +15,20 @@
 package ddl_test
 
 import (
-	"context"
 	"fmt"
-	"strings"
 	"testing"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRenameIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (pk int primary key, c int default 1, c1 int default 1, unique key k1(c), key k2(c1))")
@@ -58,61 +51,6 @@ func TestRenameIndex(t *testing.T) {
 	tk.MustGetErrCode("alter table t rename key k3 to K2", errno.ErrDupKeyName)
 }
 
-// TestCancelRenameIndex tests cancel ddl job which type is rename index.
-func TestCancelRenameIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database if not exists test_rename_index")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(c1 int, c2 int)")
-	defer tk.MustExec("drop table t;")
-	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t values (?, ?)", i, i)
-	}
-	tk.MustExec("alter table t add index idx_c2(c2)")
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionRenameIndex && job.State == model.JobStateNone {
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-	originalHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(hook)
-	tk.MustGetErrMsg("alter table t rename index idx_c2 to idx_c3", "[ddl:8214]Cancelled DDL job")
-	require.NoError(t, checkErr)
-	dom.DDL().SetHook(originalHook)
-	tt := external.GetTableByName(t, tk, "test", "t")
-	for _, idx := range tt.Indices() {
-		require.False(t, strings.EqualFold(idx.Meta().Name.L, "idx_c3"))
-	}
-	tk.MustExec("alter table t rename index idx_c2 to idx_c3")
-}
-
 // See issue: https://github.com/pingcap/tidb/issues/29752
 // Ref https://dev.mysql.com/doc/refman/8.0/en/rename-table.html
 func TestRenameTableWithLocked(t *testing.T) {
@@ -120,8 +58,9 @@ func TestRenameTableWithLocked(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database renamedb")
 	tk.MustExec("create database renamedb2")
@@ -146,17 +85,17 @@ func TestRenameTableWithLocked(t *testing.T) {
 
 func TestRenameTable2(t *testing.T) {
 	isAlterTable := false
-	testRenameTable(t, "rename table %s to %s", isAlterTable)
+	renameTableTest(t, "rename table %s to %s", isAlterTable)
 }
 
 func TestAlterTableRenameTable(t *testing.T) {
 	isAlterTable := true
-	testRenameTable(t, "alter table %s rename to %s", isAlterTable)
+	renameTableTest(t, "alter table %s rename to %s", isAlterTable)
 }
 
-func testRenameTable(t *testing.T, sql string, isAlterTable bool) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustGetErrCode("rename table tb1 to tb2;", errno.ErrNoSuchTable)
@@ -196,23 +135,11 @@ func testRenameTable(t *testing.T, sql string, isAlterTable bool) {
 
 	// for failure case
 	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	tk.MustGetErrCode(failSQL, errno.ErrErrorOnRename)
 
@@ -234,8 +161,6 @@ func testRenameTable(t *testing.T, sql string, isAlterTable bool) {
 	}
 	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_not_exist")
 	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 
@@ -259,8 +184,8 @@ func testRenameTable(t *testing.T, sql string, isAlterTable bool) {
 }
 
 func TestRenameMultiTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int)")

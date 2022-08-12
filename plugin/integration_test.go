@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/server"
@@ -32,11 +33,10 @@ import (
 
 // Audit tests cannot run in parallel.
 func TestAuditLogNormal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
-	conn := server.CreateMockConn(t, store, sv)
+	conn := server.CreateMockConn(t, sv)
 	defer conn.Close()
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
@@ -360,7 +360,7 @@ func TestAuditLogNormal(t *testing.T) {
 		},
 		{
 			sql:      "ROLLBACK",
-			stmtType: "RollBack",
+			stmtType: "Rollback",
 		},
 		{
 			sql:      "START TRANSACTION",
@@ -485,11 +485,13 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "show stats_histograms",
 			stmtType: "Show",
 			dbs:      "mysql",
+			tables:   "stats_histograms",
 		},
 		{
 			sql:      "show stats_meta",
 			stmtType: "Show",
 			dbs:      "mysql",
+			tables:   "stats_meta",
 		},
 		{
 			sql:      "show status",
@@ -696,7 +698,8 @@ func TestAuditLogNormal(t *testing.T) {
 		testResults = testResults[:0]
 		errMsg := fmt.Sprintf("statement: %s", test.sql)
 		query := append([]byte{mysql.ComQuery}, []byte(test.sql)...)
-		err := conn.Dispatch(context.Background(), query)
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+		err := conn.Dispatch(ctx, query)
 		require.NoError(t, err, errMsg)
 		resultCount := test.resCnt
 		if resultCount == 0 {

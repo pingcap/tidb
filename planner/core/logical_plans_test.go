@@ -30,7 +30,7 @@ import (
 
 func newTypeWithFlen(typeByte byte, flen int) *types.FieldType {
 	tp := types.NewFieldType(typeByte)
-	tp.Flen = flen
+	tp.SetFlen(flen)
 	return tp
 }
 

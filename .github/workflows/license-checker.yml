@@ -8,6 +8,10 @@ on:
     branches:
       - master
 
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   check-license:
     runs-on: ubuntu-latest
@@ -15,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Check License Header
-        uses: apache/skywalking-eyes@main
+        uses: apache/skywalking-eyes@v0.3.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

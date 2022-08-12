@@ -27,8 +27,7 @@ import (
 )
 
 func TestString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -78,8 +77,7 @@ func TestString(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -189,8 +187,7 @@ func TestList(t *testing.T) {
 }
 
 func TestHash(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -316,7 +313,8 @@ func TestHash(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		newTxn := structure.NewStructure(txn, txn, []byte{0x00})
 		err = newTxn.Set(key, []byte("abc"))
 		require.NoError(t, err)

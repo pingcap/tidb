@@ -13,7 +13,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	tidbutils "github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -21,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/config"
+	tidbutils "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spf13/cobra"
 )
@@ -36,6 +36,14 @@ var (
 		"*.*",
 		fmt.Sprintf("!%s.*", utils.TemporaryDBName("*")),
 		"!mysql.*",
+		"mysql.user",
+		"mysql.db",
+		"mysql.tables_priv",
+		"mysql.columns_priv",
+		"mysql.global_priv",
+		"mysql.global_grants",
+		"mysql.default_roles",
+		"mysql.role_edges",
 		"!sys.*",
 		"!INFORMATION_SCHEMA.*",
 		"!PERFORMANCE_SCHEMA.*",
@@ -113,7 +121,7 @@ func Init(cmd *cobra.Command) (err error) {
 			tidbLogCfg.File.Filename = timestampLogFileName()
 		} else {
 			// Don't print slow log in br
-			config.GetGlobalConfig().Log.EnableSlowLog.Store(false)
+			config.GetGlobalConfig().Instance.EnableSlowLog.Store(false)
 		}
 		e = logutil.InitLogger(&tidbLogCfg)
 		if e != nil {

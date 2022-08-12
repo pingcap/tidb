@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "util",
+    srcs = [
+        "dead_table_lock_checker.go",
+        "event.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/ddl/util",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv",
+        "//parser/model",
+        "//parser/terror",
+        "//sessionctx",
+        "//sessionctx/variable",
+        "//util/chunk",
+        "//util/logutil",
+        "//util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    embed = [":util"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

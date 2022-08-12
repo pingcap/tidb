@@ -72,7 +72,6 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 		case ResultUnknown:
 			time.Sleep(schemaOutOfDateRetryInterval)
 		}
-
 	}
 	metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 	return nil, ErrInfoSchemaExpired

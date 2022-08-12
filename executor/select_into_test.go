@@ -45,8 +45,7 @@ func TestSelectIntoFileExists(t *testing.T) {
 	defer func() {
 		require.NoError(t, os.Remove(outfile))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	sql := fmt.Sprintf("select 1 into outfile %q", outfile)
 	tk.MustExec(sql)
@@ -58,8 +57,7 @@ func TestSelectIntoFileExists(t *testing.T) {
 
 func TestSelectIntoOutfileTypes(t *testing.T) {
 	outfile := randomSelectFilePath("TestSelectIntoOutfileTypes")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -104,8 +102,7 @@ func TestSelectIntoOutfileTypes(t *testing.T) {
 
 func TestSelectIntoOutfileFromTable(t *testing.T) {
 	outfile := randomSelectFilePath("TestSelectIntoOutfileFromTable")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -151,8 +148,7 @@ func TestSelectIntoOutfileFromTable(t *testing.T) {
 
 func TestSelectIntoOutfileConstant(t *testing.T) {
 	outfile := randomSelectFilePath("TestSelectIntoOutfileConstant")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// On windows the outfile name looks like "C:\Users\genius\AppData\Local\Temp\select-into-outfile.data",
 	// fmt.Sprintf("%q") is used otherwise the string become
@@ -168,8 +164,7 @@ func TestSelectIntoOutfileConstant(t *testing.T) {
 
 func TestDeliminators(t *testing.T) {
 	outfile := randomSelectFilePath("TestDeliminators")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -255,7 +250,7 @@ func TestDumpReal(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		tp := types.NewFieldType(mysql.TypeDouble)
-		tp.Decimal = testCase.dec
+		tp.SetDecimal(testCase.dec)
 		_, buf := executor.DumpRealOutfile(nil, nil, testCase.val, tp)
 		require.Equal(t, testCase.result, string(buf))
 	}
@@ -263,8 +258,7 @@ func TestDumpReal(t *testing.T) {
 
 func TestEscapeType(t *testing.T) {
 	outfile := randomSelectFilePath("TestEscapeType")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -285,8 +279,7 @@ func TestEscapeType(t *testing.T) {
 
 func TestYearType(t *testing.T) {
 	outfile := randomSelectFilePath("TestYearType")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

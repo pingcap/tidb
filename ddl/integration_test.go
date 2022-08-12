@@ -25,8 +25,7 @@ import (
 )
 
 func TestDefaultValueIsBinaryString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tests := []struct {
 		colTp  string
 		defVal string
@@ -62,30 +61,28 @@ func TestDefaultValueIsBinaryString(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/30740.
 func TestDefaultValueInEnum(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	// The value 0x91 should not cause panic.
 	tk.MustExec("create table t(a enum('a', 0x91) charset gbk);")
-	tk.MustExec("insert into t values (1), (2);")                 // Use 1-base index to locate the value.
-	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "")) // 0x91 is truncate.
+	tk.MustExec("insert into t values (1), (2);")                  // Use 1-base index to locate the value.
+	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "?")) // 0x91 is replaced to '?'.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a enum('a', 0x91)) charset gbk;") // Test for table charset.
 	tk.MustExec("insert into t values (1), (2);")
-	tk.MustQuery("select a from t;").Check(testkit.Rows("a", ""))
+	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "?"))
 	tk.MustExec("drop table t;")
-	tk.MustGetErrMsg("create table t(a set('a', 0x91, '') charset gbk);",
-		"[types:1291]Column 'a' has duplicated value '' in SET")
-	// Test valid utf-8 string value in enum. Note that the binary literal only can be decoded to utf-8.
+	tk.MustGetErrMsg("create table t(a set('a', 0x91, '?') charset gbk);",
+		"[types:1291]Column 'a' has duplicated value '?' in SET")
+	// Test valid utf-8 string value in enum.
 	tk.MustExec("create table t (a enum('a', 0xE4BDA0E5A5BD) charset gbk);")
 	tk.MustExec("insert into t values (1), (2);")
-	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "你好"))
+	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "浣犲ソ"))
 }
 
 func TestDDLStatementsBackFill(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	needReorg := false
@@ -118,16 +115,8 @@ func TestDDLStatementsBackFill(t *testing.T) {
 	}
 }
 
-func TestSchema(t *testing.T) {
-	_, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	ddl.ExportTestSchema(t)
-}
-
 func TestDDLOnCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tests := []struct {
 		sql    string
 		result string

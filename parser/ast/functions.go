@@ -257,6 +257,7 @@ const (
 	TiDBVersion          = "tidb_version"
 	TiDBIsDDLOwner       = "tidb_is_ddl_owner"
 	TiDBDecodePlan       = "tidb_decode_plan"
+	TiDBDecodeBinaryPlan = "tidb_decode_binary_plan"
 	TiDBDecodeSQLDigests = "tidb_decode_sql_digests"
 	FormatBytes          = "format_bytes"
 	FormatNanoTime       = "format_nano_time"
@@ -290,10 +291,8 @@ const (
 	BinToUUID       = "bin_to_uuid"
 	VitessHash      = "vitess_hash"
 	TiDBShard       = "tidb_shard"
-	// get_lock() and release_lock() is parsed but do nothing.
-	// It is used for preventing error in Ruby's activerecord migrations.
-	GetLock     = "get_lock"
-	ReleaseLock = "release_lock"
+	GetLock         = "get_lock"
+	ReleaseLock     = "release_lock"
 
 	// encryption and compression functions
 	AesDecrypt               = "aes_decrypt"

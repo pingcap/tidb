@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -56,7 +57,7 @@ func TestSetSystemVariable(t *testing.T) {
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			mtx.Lock()
-			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
+			err := v.SetSystemVar(tc.key, tc.value)
 			mtx.Unlock()
 			if tc.err {
 				require.Error(t, err)
@@ -290,4 +291,112 @@ func TestIsolationRead(t *testing.T) {
 	require.False(t, ok)
 	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
 	require.True(t, ok)
+}
+
+func TestTableDeltaClone(t *testing.T) {
+	td0 := variable.TableDelta{
+		Delta:    1,
+		Count:    2,
+		ColSize:  map[int64]int64{1: 1, 2: 2},
+		InitTime: time.Now(),
+		TableID:  5,
+	}
+	td1 := td0.Clone()
+	require.Equal(t, td0, td1)
+	td0.ColSize[3] = 3
+	require.NotEqual(t, td0, td1)
+
+	td2 := td0.Clone()
+	require.Equal(t, td0, td2)
+	td0.InitTime = td0.InitTime.Add(time.Second)
+	require.NotEqual(t, td0, td2)
+}
+
+func TestTransactionContextSavepoint(t *testing.T) {
+	tc := &variable.TransactionContext{
+		TxnCtxNeedToRestore: variable.TxnCtxNeedToRestore{
+			TableDeltaMap: map[int64]variable.TableDelta{
+				1: {
+					Delta:    1,
+					Count:    2,
+					ColSize:  map[int64]int64{1: 1},
+					InitTime: time.Now(),
+					TableID:  5,
+				},
+			},
+		},
+	}
+	tc.SetPessimisticLockCache([]byte{'a'}, []byte{'a'})
+
+	tc.AddSavepoint("S1", nil)
+	require.Equal(t, 1, len(tc.Savepoints))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, "s1", tc.Savepoints[0].Name)
+
+	succ := tc.DeleteSavepoint("s2")
+	require.False(t, succ)
+	require.Equal(t, 1, len(tc.Savepoints))
+
+	tc.TableDeltaMap[1].ColSize[2] = 2
+	tc.TableDeltaMap[2] = variable.TableDelta{
+		Delta:    6,
+		Count:    7,
+		ColSize:  map[int64]int64{8: 8},
+		InitTime: time.Now(),
+		TableID:  9,
+	}
+	tc.SetPessimisticLockCache([]byte{'b'}, []byte{'b'})
+
+	tc.AddSavepoint("S2", nil)
+	require.Equal(t, 2, len(tc.Savepoints))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap[1].ColSize))
+	require.Equal(t, "s1", tc.Savepoints[0].Name)
+	require.Equal(t, 2, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, "s2", tc.Savepoints[1].Name)
+
+	tc.TableDeltaMap[3] = variable.TableDelta{
+		Delta:    10,
+		Count:    11,
+		ColSize:  map[int64]int64{12: 12},
+		InitTime: time.Now(),
+		TableID:  13,
+	}
+	tc.SetPessimisticLockCache([]byte{'c'}, []byte{'c'})
+
+	tc.AddSavepoint("s2", nil)
+	require.Equal(t, 2, len(tc.Savepoints))
+	require.Equal(t, 3, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, "s2", tc.Savepoints[1].Name)
+
+	tc.RollbackToSavepoint("s1")
+	require.Equal(t, 1, len(tc.Savepoints))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, "s1", tc.Savepoints[0].Name)
+	val, ok := tc.GetKeyInPessimisticLockCache([]byte{'a'})
+	require.True(t, ok)
+	require.Equal(t, []byte{'a'}, val)
+	val, ok = tc.GetKeyInPessimisticLockCache([]byte{'b'})
+	require.False(t, ok)
+	require.Nil(t, val)
+
+	succ = tc.DeleteSavepoint("s1")
+	require.True(t, succ)
+	require.Equal(t, 0, len(tc.Savepoints))
+}
+
+func TestGeneralPlanCacheStmt(t *testing.T) {
+	sessVars := variable.NewSessionVars()
+	sql1 := "select * from t where a>?"
+	sql2 := "select * from t where a<?"
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+
+	sessVars.AddGeneralPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+
+	sessVars.AddGeneralPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
 }

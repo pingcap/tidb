@@ -18,11 +18,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -51,8 +52,10 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -63,7 +66,7 @@ const (
 
 func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.PartitionInfo, []model.PartitionDefinition, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -121,7 +124,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -152,6 +155,15 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
+		ids := getIDs([]*model.TableInfo{tblInfo})
+		for _, p := range tblInfo.Partition.AddingDefinitions {
+			ids = append(ids, p.ID)
+		}
+		if err := alterTableLabelRule(job.SchemaName, tblInfo, ids); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+
 		// none -> replica only
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
@@ -163,7 +175,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			// be finished. Otherwise the query to this partition will be blocked.
 			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, d)
 			if err != nil {
-				ver, err = convertAddTablePartitionJob2RollbackJob(t, job, err, tblInfo)
+				ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 				return ver, err
 			}
 			if needRetry {
@@ -184,7 +196,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
 
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -197,6 +209,27 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) error {
+	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, schemaName, meta.Name.L)
+	oldRule, err := infosync.GetLabelRules(context.TODO(), []string{tableRuleID})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(oldRule) == 0 {
+		return nil
+	}
+
+	r, ok := oldRule[tableRuleID]
+	if ok {
+		rule := r.Reset(schemaName, meta.Name.L, "", ids...)
+		err = infosync.PutLabelRule(context.TODO(), rule)
+		if err != nil {
+			return errors.Wrapf(err, "failed to notify PD label rule")
+		}
+	}
+	return nil
 }
 
 func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
@@ -389,7 +422,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	var enable bool
 	switch s.Tp {
 	case model.PartitionTypeRange:
-		// When tidb_enable_table_partition is 'on' or 'auto'.
 		if s.Sub == nil {
 			// Partition by range expression is enabled by default.
 			if s.ColumnNames == nil {
@@ -442,12 +474,567 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 	}
 
+	err := generatePartitionDefinitionsFromInterval(ctx, s, tbInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	defs, err := buildPartitionDefinitionsInfo(ctx, s.Definitions, tbInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	tbInfo.Partition.Definitions = defs
+
+	if s.Interval != nil {
+		// Syntactic sugar for INTERVAL partitioning
+		// Generate the resulting CREATE TABLE as the query string
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			sqlMode := ctx.GetSessionVars().SQLMode
+			var buf bytes.Buffer
+			AppendPartitionDefs(tbInfo.Partition, &buf, sqlMode)
+
+			syntacticSugar := s.Interval.OriginalText()
+			syntacticStart := s.Interval.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "(" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
+	return nil
+}
+
+func isPartExprUnsigned(ctx sessionctx.Context, tbInfo *model.TableInfo) bool {
+	expr, err := expression.ParseSimpleExprWithTableInfo(ctx, tbInfo.Partition.Expr, tbInfo)
+	if err != nil {
+		return false
+	}
+	pCols := expression.ExtractColumns(expr)
+	for _, col := range pCols {
+		if mysql.HasUnsignedFlag(col.GetType().GetFlag()) {
+			return true
+		}
+	}
+	return false
+}
+
+// getPartitionIntervalFromTable checks if a partitioned table matches a generated INTERVAL partitioned scheme
+// will return nil if error occurs, i.e. not an INTERVAL partitioned table
+func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableInfo) *ast.PartitionInterval {
+	if tbInfo.Partition == nil ||
+		tbInfo.Partition.Type != model.PartitionTypeRange {
+		return nil
+	}
+	if len(tbInfo.Partition.Columns) > 1 {
+		// Multi-column RANGE COLUMNS is not supported with INTERVAL
+		return nil
+	}
+	if len(tbInfo.Partition.Definitions) < 2 {
+		// Must have at least two partitions to calculate an INTERVAL
+		return nil
+	}
+
+	var (
+		interval  ast.PartitionInterval
+		startIdx  int    = 0
+		endIdx    int    = len(tbInfo.Partition.Definitions) - 1
+		isIntType bool   = true
+		minVal    string = "0"
+	)
+	if len(tbInfo.Partition.Columns) > 0 {
+		partCol := findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
+		if partCol.FieldType.EvalType() == types.ETInt {
+			min := getLowerBoundInt(partCol)
+			minVal = strconv.FormatInt(min, 10)
+		} else if partCol.FieldType.EvalType() == types.ETDatetime {
+			isIntType = false
+			minVal = "0000-01-01"
+		} else {
+			// Only INT and Datetime columns are supported for INTERVAL partitioning
+			return nil
+		}
+	} else {
+		if !isPartExprUnsigned(ctx, tbInfo) {
+			minVal = "-9223372036854775808"
+		}
+	}
+
+	// Check if possible null partition
+	firstPartLessThan := driver.UnwrapFromSingleQuotes(tbInfo.Partition.Definitions[0].LessThan[0])
+	if strings.EqualFold(firstPartLessThan, minVal) {
+		interval.NullPart = true
+		startIdx++
+		firstPartLessThan = driver.UnwrapFromSingleQuotes(tbInfo.Partition.Definitions[startIdx].LessThan[0])
+	}
+	// flag if MAXVALUE partition
+	lastPartLessThan := driver.UnwrapFromSingleQuotes(tbInfo.Partition.Definitions[endIdx].LessThan[0])
+	if strings.EqualFold(lastPartLessThan, partitionMaxValue) {
+		interval.MaxValPart = true
+		endIdx--
+		lastPartLessThan = driver.UnwrapFromSingleQuotes(tbInfo.Partition.Definitions[endIdx].LessThan[0])
+	}
+	// Guess the interval
+	if startIdx >= endIdx {
+		// Must have at least two partitions to calculate an INTERVAL
+		return nil
+	}
+	var firstExpr, lastExpr ast.ExprNode
+	if isIntType {
+		exprStr := fmt.Sprintf("((%s) - (%s)) DIV %d", lastPartLessThan, firstPartLessThan, endIdx-startIdx)
+		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
+		if err != nil {
+			return nil
+		}
+		val, isNull, err := exprs[0].EvalInt(ctx, chunk.Row{})
+		if isNull || err != nil || val < 1 {
+			// If NULL, error or interval < 1 then cannot be an INTERVAL partitioned table
+			return nil
+		}
+		interval.IntervalExpr.Expr = ast.NewValueExpr(val, "", "")
+		interval.IntervalExpr.TimeUnit = ast.TimeUnitInvalid
+		firstExpr, err = astIntValueExprFromStr(firstPartLessThan, minVal == "0")
+		if err != nil {
+			return nil
+		}
+		interval.FirstRangeEnd = &firstExpr
+		lastExpr, err = astIntValueExprFromStr(lastPartLessThan, minVal == "0")
+		if err != nil {
+			return nil
+		}
+		interval.LastRangeEnd = &lastExpr
+	} else { // types.ETDatetime
+		exprStr := fmt.Sprintf("TIMESTAMPDIFF(SECOND, '%s', '%s')", firstPartLessThan, lastPartLessThan)
+		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
+		if err != nil {
+			return nil
+		}
+		val, isNull, err := exprs[0].EvalInt(ctx, chunk.Row{})
+		if isNull || err != nil || val < 1 {
+			// If NULL, error or interval < 1 then cannot be an INTERVAL partitioned table
+			return nil
+		}
+
+		// This will not find all matches > 28 days, since INTERVAL 1 MONTH can generate
+		// 2022-01-31, 2022-02-28, 2022-03-31 etc. so we just assume that if there is a
+		// diff >= 28 days, we will try with Month and not retry with something else...
+		i := val / int64(endIdx-startIdx)
+		if i < (28 * 24 * 60 * 60) {
+			// Since it is not stored or displayed, non need to try Minute..Week!
+			interval.IntervalExpr.Expr = ast.NewValueExpr(i, "", "")
+			interval.IntervalExpr.TimeUnit = ast.TimeUnitSecond
+		} else {
+			// Since it is not stored or displayed, non need to try to match Quarter or Year!
+			if (endIdx - startIdx) <= 3 {
+				// in case February is in the range
+				i = i / (28 * 24 * 60 * 60)
+			} else {
+				// This should be good for intervals up to 5 years
+				i = i / (30 * 24 * 60 * 60)
+			}
+			interval.IntervalExpr.Expr = ast.NewValueExpr(i, "", "")
+			interval.IntervalExpr.TimeUnit = ast.TimeUnitMonth
+		}
+
+		firstExpr = ast.NewValueExpr(firstPartLessThan, "", "")
+		lastExpr = ast.NewValueExpr(lastPartLessThan, "", "")
+		interval.FirstRangeEnd = &firstExpr
+		interval.LastRangeEnd = &lastExpr
+	}
+
+	partitionMethod := ast.PartitionMethod{
+		Tp:       model.PartitionTypeRange,
+		Interval: &interval,
+	}
+	partOption := &ast.PartitionOptions{PartitionMethod: partitionMethod}
+	// Generate the definitions from interval, first and last
+	err := generatePartitionDefinitionsFromInterval(ctx, partOption, tbInfo)
+	if err != nil {
+		return nil
+	}
+
+	return &interval
+}
+
+// comparePartitionAstAndModel compares a generated *ast.PartitionOptions and a *model.PartitionInfo
+func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOptions, pModel *model.PartitionInfo) error {
+	a := pAst.Definitions
+	m := pModel.Definitions
+	if len(pAst.Definitions) != len(pModel.Definitions) {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: number of partitions generated != partition defined (%d != %d)", len(a), len(m))
+	}
+	for i := range pAst.Definitions {
+		// Allow options to differ! (like Placement Rules)
+		// Allow names to differ!
+
+		// Check MAXVALUE
+		maxVD := false
+		if strings.EqualFold(m[i].LessThan[0], partitionMaxValue) {
+			maxVD = true
+		}
+		generatedExpr := a[i].Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs[0]
+		_, maxVG := generatedExpr.(*ast.MaxValueExpr)
+		if maxVG || maxVD {
+			if maxVG && maxVD {
+				continue
+			}
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning: MAXVALUE clause defined for partition %s differs between generated and defined", m[i].Name.O))
+		}
+
+		lessThan := m[i].LessThan[0]
+		if len(lessThan) > 1 && lessThan[:1] == "'" && lessThan[len(lessThan)-1:] == "'" {
+			lessThan = driver.UnwrapFromSingleQuotes(lessThan)
+		}
+		cmpExpr := &ast.BinaryOperationExpr{
+			Op: opcode.EQ,
+			L:  ast.NewValueExpr(lessThan, "", ""),
+			R:  generatedExpr,
+		}
+		cmp, err := expression.EvalAstExpr(ctx, cmpExpr)
+		if err != nil {
+			return err
+		}
+		if cmp.GetInt64() != 1 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning: LESS THAN for partition %s differs between generated and defined", m[i].Name.O))
+		}
+	}
+	return nil
+}
+
+// comparePartitionDefinitions check if generated definitions are the same as the given ones
+// Allow names to differ
+// returns error in case of error or non-accepted difference
+func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDefinition) error {
+	if len(a) != len(b) {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("number of partitions generated != partition defined (%d != %d)", len(a), len(b))
+	}
+	for i := range a {
+		if len(b[i].Sub) > 0 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s does have unsupported subpartitions", b[i].Name.O))
+		}
+		// TODO: We could extend the syntax to allow for table options too, like:
+		// CREATE TABLE t ... INTERVAL ... LAST PARTITION LESS THAN ('2015-01-01') PLACEMENT POLICY = 'cheapStorage'
+		// ALTER TABLE t LAST PARTITION LESS THAN ('2022-01-01') PLACEMENT POLICY 'defaultStorage'
+		// ALTER TABLE t LAST PARTITION LESS THAN ('2023-01-01') PLACEMENT POLICY 'fastStorage'
+		if len(b[i].Options) > 0 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s does have unsupported options", b[i].Name.O))
+		}
+		lessThan, ok := b[i].Clause.(*ast.PartitionDefinitionClauseLessThan)
+		if !ok {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s does not have the right type for LESS THAN", b[i].Name.O))
+		}
+		definedExpr := lessThan.Exprs[0]
+		generatedExpr := a[i].Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs[0]
+		_, maxVD := definedExpr.(*ast.MaxValueExpr)
+		_, maxVG := generatedExpr.(*ast.MaxValueExpr)
+		if maxVG || maxVD {
+			if maxVG && maxVD {
+				continue
+			}
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s differs between generated and defined for MAXVALUE", b[i].Name.O))
+		}
+		cmpExpr := &ast.BinaryOperationExpr{
+			Op: opcode.EQ,
+			L:  definedExpr,
+			R:  generatedExpr,
+		}
+		cmp, err := expression.EvalAstExpr(ctx, cmpExpr)
+		if err != nil {
+			return err
+		}
+		if cmp.GetInt64() != 1 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s differs between generated and defined for expression", b[i].Name.O))
+		}
+	}
+	return nil
+}
+
+func getLowerBoundInt(partCols ...*model.ColumnInfo) int64 {
+	ret := int64(0)
+	for _, col := range partCols {
+		if mysql.HasUnsignedFlag(col.FieldType.GetFlag()) {
+			return 0
+		}
+		ret = mathutil.Min(ret, types.IntergerSignedLowerBound(col.GetType()))
+	}
+	return ret
+}
+
+// generatePartitionDefinitionsFromInterval generates partition Definitions according to INTERVAL options on partOptions
+func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOptions *ast.PartitionOptions, tbInfo *model.TableInfo) error {
+	if partOptions.Interval == nil {
+		return nil
+	}
+	if tbInfo.Partition.Type != model.PartitionTypeRange {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only allowed on RANGE partitioning")
+	}
+	if len(partOptions.ColumnNames) > 1 || len(tbInfo.Partition.Columns) > 1 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, does not allow RANGE COLUMNS with more than one column")
+	}
+	var partCol *model.ColumnInfo
+	if len(tbInfo.Partition.Columns) > 0 {
+		partCol = findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
+		if partCol == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, could not find any RANGE COLUMNS")
+		}
+		// Only support Datetime, date and INT column types for RANGE INTERVAL!
+		switch partCol.FieldType.EvalType() {
+		case types.ETInt, types.ETDatetime:
+		default:
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports Date, Datetime and INT types")
+		}
+	}
+	// Allow given partition definitions, but check it later!
+	definedPartDefs := partOptions.Definitions
+	partOptions.Definitions = make([]*ast.PartitionDefinition, 0, 1)
+	if partOptions.Interval.FirstRangeEnd == nil || partOptions.Interval.LastRangeEnd == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, currently requires FIRST and LAST partitions to be defined")
+	}
+	switch partOptions.Interval.IntervalExpr.TimeUnit {
+	case ast.TimeUnitInvalid, ast.TimeUnitYear, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitWeek, ast.TimeUnitDay, ast.TimeUnitHour, ast.TimeUnitDayMinute, ast.TimeUnitSecond:
+	default:
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECOND as time unit")
+	}
+	first := ast.PartitionDefinitionClauseLessThan{
+		Exprs: []ast.ExprNode{*partOptions.Interval.FirstRangeEnd},
+	}
+	last := ast.PartitionDefinitionClauseLessThan{
+		Exprs: []ast.ExprNode{*partOptions.Interval.LastRangeEnd},
+	}
+	if len(tbInfo.Partition.Columns) > 0 {
+		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, first.Exprs); err != nil {
+			return err
+		}
+		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, last.Exprs); err != nil {
+			return err
+		}
+	} else {
+		if err := checkPartitionValuesIsInt(ctx, "FIRST PARTITION", first.Exprs, tbInfo); err != nil {
+			return err
+		}
+		if err := checkPartitionValuesIsInt(ctx, "LAST PARTITION", last.Exprs, tbInfo); err != nil {
+			return err
+		}
+	}
+	if partOptions.Interval.NullPart {
+		var partExpr ast.ExprNode
+		if len(tbInfo.Partition.Columns) == 1 && partOptions.Interval.IntervalExpr.TimeUnit != ast.TimeUnitInvalid {
+			// Notice compatibility with MySQL, keyword here is 'supported range' but MySQL seems to work from 0000-01-01 too
+			// https://dev.mysql.com/doc/refman/8.0/en/datetime.html says range 1000-01-01 - 9999-12-31
+			// https://docs.pingcap.com/tidb/dev/data-type-date-and-time says The supported range is '0000-01-01' to '9999-12-31'
+			// set LESS THAN to ZeroTime
+			partExpr = ast.NewValueExpr("0000-01-01", "", "")
+		} else {
+			var min int64
+			if partCol != nil {
+				min = getLowerBoundInt(partCol)
+			} else {
+				if !isPartExprUnsigned(ctx, tbInfo) {
+					min = math.MinInt64
+				}
+			}
+			partExpr = ast.NewValueExpr(min, "", "")
+		}
+		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
+			Name: model.NewCIStr("P_NULL"),
+			Clause: &ast.PartitionDefinitionClauseLessThan{
+				Exprs: []ast.ExprNode{partExpr},
+			},
+		})
+	}
+
+	err := GeneratePartDefsFromInterval(ctx, ast.AlterTablePartition, tbInfo, partOptions)
+	if err != nil {
+		return err
+	}
+
+	if partOptions.Interval.MaxValPart {
+		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
+			Name: model.NewCIStr("P_MAXVALUE"),
+			Clause: &ast.PartitionDefinitionClauseLessThan{
+				Exprs: []ast.ExprNode{&ast.MaxValueExpr{}},
+			},
+		})
+	}
+
+	if len(definedPartDefs) > 0 {
+		err := comparePartitionDefinitions(ctx, partOptions.Definitions, definedPartDefs)
+		if err != nil {
+			return err
+		}
+		// Seems valid, so keep the defined so that the user defined names are kept etc.
+		partOptions.Definitions = definedPartDefs
+	} else if len(tbInfo.Partition.Definitions) > 0 {
+		err := comparePartitionAstAndModel(ctx, partOptions, tbInfo.Partition)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func astIntValueExprFromStr(s string, unsigned bool) (ast.ExprNode, error) {
+	if unsigned {
+		u, err := strconv.ParseUint(s, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		return ast.NewValueExpr(u, "", ""), nil
+	}
+	i, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	return ast.NewValueExpr(i, "", ""), nil
+}
+
+// GeneratePartDefsFromInterval generates range partitions from INTERVAL partitioning.
+// Handles
+//   - CREATE TABLE: all partitions are generated
+//   - ALTER TABLE FIRST PARTITION (expr): Drops all partitions before the partition matching the expr (i.e. sets that partition as the new first partition)
+//     i.e. will return the partitions from old FIRST partition to (and including) new FIRST partition
+//   - ALTER TABLE LAST PARTITION (expr): Creates new partitions from (excluding) old LAST partition to (including) new LAST partition
+//
+// partition definitions will be set on partitionOptions
+func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType, tbInfo *model.TableInfo, partitionOptions *ast.PartitionOptions) error {
+	if partitionOptions == nil {
+		return nil
+	}
+	var sb strings.Builder
+	err := partitionOptions.Interval.IntervalExpr.Expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	if err != nil {
+		return err
+	}
+	intervalString := driver.UnwrapFromSingleQuotes(sb.String())
+	if len(intervalString) < 1 || intervalString[:1] < "1" || intervalString[:1] > "9" {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL, should be a positive number")
+	}
+	var currVal types.Datum
+	var startExpr, lastExpr, currExpr ast.ExprNode
+	var timeUnit ast.TimeUnitType
+	var partCol *model.ColumnInfo
+	if len(tbInfo.Partition.Columns) == 1 {
+		partCol = findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
+		if partCol == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL COLUMNS partitioning: could not find partitioning column")
+		}
+	}
+	timeUnit = partitionOptions.Interval.IntervalExpr.TimeUnit
+	switch tp {
+	case ast.AlterTablePartition:
+		// CREATE TABLE
+		startExpr = *partitionOptions.Interval.FirstRangeEnd
+		lastExpr = *partitionOptions.Interval.LastRangeEnd
+	case ast.AlterTableDropFirstPartition:
+		startExpr = *partitionOptions.Interval.FirstRangeEnd
+		lastExpr = partitionOptions.Expr
+	case ast.AlterTableAddLastPartition:
+		startExpr = *partitionOptions.Interval.LastRangeEnd
+		lastExpr = partitionOptions.Expr
+	default:
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Internal error during generating altered INTERVAL partitions, no known alter type")
+	}
+	lastVal, err := expression.EvalAstExpr(ctx, lastExpr)
+	if err != nil {
+		return err
+	}
+	var partDefs []*ast.PartitionDefinition
+	if len(partitionOptions.Definitions) != 0 {
+		partDefs = partitionOptions.Definitions
+	} else {
+		partDefs = make([]*ast.PartitionDefinition, 0, 1)
+	}
+	for i := 0; i < mysql.PartitionCountLimit; i++ {
+		if i == 0 {
+			currExpr = startExpr
+			// TODO: adjust the startExpr and have an offset for interval to handle
+			// Month/Quarters with start partition on day 28/29/30
+			if tp == ast.AlterTableAddLastPartition {
+				// ALTER TABLE LAST PARTITION ...
+				// Current LAST PARTITION/start already exists, skip to next partition
+				continue
+			}
+		} else {
+			currExpr = &ast.BinaryOperationExpr{
+				Op: opcode.Mul,
+				L:  ast.NewValueExpr(i, "", ""),
+				R:  partitionOptions.Interval.IntervalExpr.Expr,
+			}
+			if timeUnit == ast.TimeUnitInvalid {
+				currExpr = &ast.BinaryOperationExpr{
+					Op: opcode.Plus,
+					L:  startExpr,
+					R:  currExpr,
+				}
+			} else {
+				currExpr = &ast.FuncCallExpr{
+					FnName: model.NewCIStr("DATE_ADD"),
+					Args: []ast.ExprNode{
+						startExpr,
+						currExpr,
+						&ast.TimeUnitExpr{Unit: timeUnit},
+					},
+				}
+			}
+		}
+		currVal, err = expression.EvalAstExpr(ctx, currExpr)
+		if err != nil {
+			return err
+		}
+		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx, &lastVal, collate.GetBinaryCollator())
+		if err != nil {
+			return err
+		}
+		if cmp > 0 {
+			lastStr, err := lastVal.ToString()
+			if err != nil {
+				return err
+			}
+			sb.Reset()
+			err = startExpr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+			if err != nil {
+				return err
+			}
+			startStr := sb.String()
+			errStr := fmt.Sprintf("INTERVAL: expr (%s) not matching FIRST + n INTERVALs (%s + n * %s",
+				lastStr, startStr, intervalString)
+			if timeUnit != ast.TimeUnitInvalid {
+				errStr = errStr + " " + timeUnit.String()
+			}
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(errStr + ")")
+		}
+		valStr, err := currVal.ToString()
+		if err != nil {
+			return err
+		}
+		if len(valStr) == 0 || valStr[0:1] == "'" {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Error when generating partition values")
+		}
+		partName := "P_LT_" + valStr
+		if timeUnit != ast.TimeUnitInvalid {
+			currExpr = ast.NewValueExpr(valStr, "", "")
+		} else {
+			if valStr[:1] == "-" {
+				currExpr = ast.NewValueExpr(currVal.GetInt64(), "", "")
+			} else {
+				currExpr = ast.NewValueExpr(currVal.GetUint64(), "", "")
+			}
+		}
+		partDefs = append(partDefs, &ast.PartitionDefinition{
+			Name: model.NewCIStr(partName),
+			Clause: &ast.PartitionDefinitionClauseLessThan{
+				Exprs: []ast.ExprNode{currExpr},
+			},
+		})
+		if cmp == 0 {
+			// Last partition!
+			break
+		}
+	}
+	if len(tbInfo.Partition.Definitions)+len(partDefs) > mysql.PartitionCountLimit {
+		return errors.Trace(dbterror.ErrTooManyPartitions)
+	}
+	partitionOptions.Definitions = partDefs
 	return nil
 }
 
@@ -525,7 +1112,7 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 			}
 		} else {
 			for _, vs := range clause.Values {
-				if err := checkPartitionValuesIsInt(ctx, def, vs, tbInfo); err != nil {
+				if err := checkPartitionValuesIsInt(ctx, def.Name, vs, tbInfo); err != nil {
 					return nil, err
 				}
 			}
@@ -590,12 +1177,16 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 				return nil, err
 			}
 		} else {
-			if err := checkPartitionValuesIsInt(ctx, def, clause.Exprs, tbInfo); err != nil {
+			if err := checkPartitionValuesIsInt(ctx, def.Name, clause.Exprs, tbInfo); err != nil {
 				return nil, err
 			}
 		}
 		comment, _ := def.Comment()
-		err := checkTooLongTable(def.Name)
+		comment, err := validateCommentLength(ctx.GetSessionVars(), def.Name.L, &comment, dbterror.ErrTooLongTablePartitionComment)
+		if err != nil {
+			return nil, err
+		}
+		err = checkTooLongTable(def.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -624,10 +1215,10 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 	return definitions, nil
 }
 
-func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
+func checkPartitionValuesIsInt(ctx sessionctx.Context, defName interface{}, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
-		tp.Flag |= mysql.UnsignedFlag
+		tp.AddFlag(mysql.UnsignedFlag)
 	}
 	for _, exp := range exprs {
 		if _, ok := exp.(*ast.MaxValueExpr); ok {
@@ -640,11 +1231,11 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 		switch val.Kind() {
 		case types.KindUint64, types.KindNull:
 		case types.KindInt64:
-			if mysql.HasUnsignedFlag(tp.Flag) && val.GetInt64() < 0 {
+			if mysql.HasUnsignedFlag(tp.GetFlag()) && val.GetInt64() < 0 {
 				return dbterror.ErrPartitionConstDomain.GenWithStackByArgs()
 			}
 		default:
-			return dbterror.ErrValuesIsNotIntType.GenWithStackByArgs(def.Name)
+			return dbterror.ErrValuesIsNotIntType.GenWithStackByArgs(defName)
 		}
 
 		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
@@ -846,7 +1437,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	if len(pi.Columns) == 0 {
 		tp := types.NewFieldType(mysql.TypeLonglong)
 		if isColUnsigned(tblInfo.Columns, tblInfo.Partition) {
-			tp.Flag |= mysql.UnsignedFlag
+			tp.AddFlag(mysql.UnsignedFlag)
 		}
 		colTps = []*types.FieldType{tp}
 	} else {
@@ -883,7 +1474,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 					defs[i].InValues[j][k] = s
 				}
 				if colTps[k].EvalType() == types.ETString {
-					s = string(hack.String(collate.GetCollator(cols[k].Collate).Key(s)))
+					s = string(hack.String(collate.GetCollator(cols[k].GetCollate()).Key(s)))
 				}
 				s = strings.ReplaceAll(s, ",", `\,`)
 				inValueStrs = append(inValueStrs, s)
@@ -931,8 +1522,8 @@ func getRangeValue(ctx sessionctx.Context, str string, unsigned bool) (interface
 	return 0, false, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
 }
 
-// checkDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
-func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) error {
+// CheckDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
+func CheckDropTablePartition(meta *model.TableInfo, partLowerNames []string) error {
 	pi := meta.Partition
 	if pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList {
 		return dbterror.ErrOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
@@ -1052,7 +1643,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1069,7 +1660,13 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+
+		if err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1079,17 +1676,13 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	}
 
 	var physicalTableIDs []int64
-	if job.State == model.JobStateRunning && job.SchemaState == model.StateNone {
-		// Manually set first state.
-		job.SchemaState = model.StatePublic
-	}
 	// In order to skip maintaining the state check in partitionDefinition, TiDB use droppingDefinition instead of state field.
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	originalState := job.SchemaState
 	switch job.SchemaState {
 	case model.StatePublic:
 		// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
-		err = checkDropTablePartition(tblInfo, partNames)
+		err = CheckDropTablePartition(tblInfo, partNames)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -1100,14 +1693,20 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 		}
+
+		if err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+
 		job.SchemaState = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
 		// This state is not a real 'DeleteOnly' state, because tidb does not maintaining the state check in partitionDefinition.
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
 		// so that no new data will be inserted into old partitions when reorganizing.
 		job.SchemaState = model.StateDeleteReorganization
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteReorganization:
 		oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
 		physicalTableIDs = getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
@@ -1124,14 +1723,15 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 				}
 			}
-			reorgInfo, err := getReorgInfoFromPartitions(d, t, job, tbl, physicalTableIDs, elements)
+			rh := newReorgHandler(t, w.sess, w.concurrentDDL)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, tbl, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
 				// and then run the reorg next time.
 				return ver, errors.Trace(err)
 			}
-			err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
+			err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
 				defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 					func() {
 						dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
@@ -1143,20 +1743,17 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					// if timeout, we should return, check for the owner and re-wait job done.
 					return ver, nil
 				}
-				// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-				w.reorgCtx.cleanNotifyReorgCancel()
 				return ver, errors.Trace(err)
 			}
-			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			w.reorgCtx.cleanNotifyReorgCancel()
 		}
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{physicalTableIDs}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: tblInfo.Partition.Definitions}})
 		// A background job will be created to delete old partition data.
@@ -1175,7 +1772,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1279,7 +1876,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		newIDs[i] = newPartitions[i].ID
 	}
 	job.CtxVars = []interface{}{oldIDs, newIDs}
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1314,7 +1911,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	nt, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	nt, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1347,6 +1944,18 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	index, _, err := getPartitionDef(pt, partName)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	if nt.ExchangePartitionInfo == nil || !nt.ExchangePartitionInfo.ExchangePartitionFlag {
+		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
+			ExchangePartitionFlag:  true,
+			ExchangePartitionID:    ptID,
+			ExchangePartitionDefID: defID,
+		}
+		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
+	}
+
+	if d.lease > 0 {
+		delayForAsyncCommit()
 	}
 
 	if withValidation {
@@ -1416,9 +2025,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	newAutoIDs := meta.AutoIDGroup{
-		RowID:       mathutil.MaxInt64(ptAutoIDs.RowID, ntAutoIDs.RowID),
-		IncrementID: mathutil.MaxInt64(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
-		RandomID:    mathutil.MaxInt64(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+		RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+		RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}
 	err = t.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
@@ -1426,6 +2035,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 	err = t.GetAutoIDAccessors(job.SchemaID, nt.ID).Put(newAutoIDs)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1481,7 +2096,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
-	ver, err = updateSchemaVersion(t, job)
+	nt.ExchangePartitionInfo = nil
+	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1563,7 +2179,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	case model.PartitionTypeList:
 		if len(pi.Columns) == 0 {
 			sql, paramList = buildCheckSQLForListPartition(pi, index, schemaName, tableName)
-		} else if len(pi.Columns) == 1 {
+		} else {
 			sql, paramList = buildCheckSQLForListColumnsPartition(pi, index, schemaName, tableName)
 		}
 	default:
@@ -1577,7 +2193,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ddlJobCtx, nil, sql, paramList...)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1585,6 +2201,29 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	if rowCount != 0 {
 		return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
 	}
+	return nil
+}
+
+func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *model.PolicyRefInfo, ptPlacementPolicyRef *model.PolicyRefInfo) error {
+	if ntPlacementPolicyRef == nil && ptPlacementPolicyRef == nil {
+		return nil
+	}
+	if ntPlacementPolicyRef == nil || ptPlacementPolicyRef == nil {
+		return dbterror.ErrTablesDifferentMetadata
+	}
+
+	ptPlacementPolicyInfo, _ := getPolicyInfo(t, ptPlacementPolicyRef.ID)
+	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPlacementPolicyRef.ID)
+	if ntPlacementPolicyInfo == nil && ptPlacementPolicyInfo == nil {
+		return nil
+	}
+	if ntPlacementPolicyInfo == nil || ptPlacementPolicyInfo == nil {
+		return dbterror.ErrTablesDifferentMetadata
+	}
+	if ntPlacementPolicyInfo.Name.L != ptPlacementPolicyInfo.Name.L {
+		return dbterror.ErrTablesDifferentMetadata
+	}
+
 	return nil
 }
 
@@ -1617,7 +2256,7 @@ func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, sche
 }
 
 func trimQuotation(str string) string {
-	return strings.Trim(str, "\"")
+	return strings.Trim(str, "'")
 }
 
 func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
@@ -1667,7 +2306,7 @@ func getInValues(pi *model.PartitionInfo, index int) []string {
 }
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
-	if piDefs > uint64(PartitionCountLimit) {
+	if piDefs > uint64(mysql.PartitionCountLimit) {
 		return errors.Trace(dbterror.ErrTooManyPartitions)
 	}
 	return nil
@@ -1788,7 +2427,7 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 	} else {
 		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
 		for _, col := range pi.Columns {
-			colInfo := getColumnInfoByName(tblInfo, col.L)
+			colInfo := tblInfo.FindPublicColumnByName(col.L)
 			if colInfo == nil {
 				return false, infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
 			}
@@ -1866,7 +2505,7 @@ type stringSlice interface {
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
-		idxCol := findColumnInIndexCols(partCol, idxCols)
+		_, idxCol := model.FindIndexColumnByName(idxCols, partCol)
 		if idxCol == nil {
 			// Partition column is not found in the index columns.
 			return false
@@ -1904,7 +2543,7 @@ func (cns columnNameSlice) At(i int) string {
 // isColUnsigned returns true if the partitioning key column is unsigned.
 func isColUnsigned(cols []*model.ColumnInfo, pi *model.PartitionInfo) bool {
 	for _, col := range cols {
-		isUnsigned := mysql.HasUnsignedFlag(col.Flag)
+		isUnsigned := mysql.HasUnsignedFlag(col.GetFlag())
 		if isUnsigned && strings.Contains(strings.ToLower(pi.Expr), col.Name.L) {
 			return true
 		}
@@ -2055,7 +2694,7 @@ func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, e
 		if columnInfo == nil {
 			return nil, errors.Trace(dbterror.ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
 		}
-		ts = append(ts, columnInfo.Tp)
+		ts = append(ts, columnInfo.GetType())
 	}
 
 	return ts, nil
@@ -2094,4 +2733,43 @@ func checkNoTimestampArgs(tbInfo *model.TableInfo, exprs ...ast.ExprNode) error 
 		return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
 	}
 	return nil
+}
+
+// AppendPartitionDefs generates a list of partition definitions needed for SHOW CREATE TABLE (in executor/show.go)
+// as well as needed for generating the ADD PARTITION query for INTERVAL partitioning of ALTER TABLE t LAST PARTITION
+// and generating the CREATE TABLE query from CREATE TABLE ... INTERVAL
+func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
+	for i, def := range partitionInfo.Definitions {
+		if i > 0 {
+			fmt.Fprintf(buf, ",\n ")
+		}
+		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
+		// PartitionTypeHash does not have any VALUES definition
+		if partitionInfo.Type == model.PartitionTypeRange {
+			lessThans := strings.Join(def.LessThan, ",")
+			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", lessThans)
+		} else if partitionInfo.Type == model.PartitionTypeList {
+			values := bytes.NewBuffer(nil)
+			for j, inValues := range def.InValues {
+				if j > 0 {
+					values.WriteString(",")
+				}
+				if len(inValues) > 1 {
+					values.WriteString("(")
+					values.WriteString(strings.Join(inValues, ","))
+					values.WriteString(")")
+				} else {
+					values.WriteString(strings.Join(inValues, ","))
+				}
+			}
+			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
+		}
+		if len(def.Comment) > 0 {
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(def.Comment)))
+		}
+		if def.PlacementPolicyRef != nil {
+			// add placement ref info here
+			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
+		}
+	}
 }

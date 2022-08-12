@@ -31,7 +31,7 @@ import (
 type columnPruner struct {
 }
 
-func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (s *columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	err := lp.PruneColumns(lp.Schema().Columns, opt)
 	return lp, err
 }
@@ -115,6 +115,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	}
 	appendColumnPruneTraceStep(la, prunedColumns, opt)
 	appendFunctionPruneTraceStep(la, prunedFunctions, opt)
+	//nolint: prealloc
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
@@ -198,7 +199,7 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 				pruned = false
 				byItems = append(byItems, byItem)
 			}
-		} else if byItem.Expr.GetType().Tp == mysql.TypeNull {
+		} else if byItem.Expr.GetType().GetType() == mysql.TypeNull {
 			// do nothing, should be filtered
 		} else {
 			pruned = false

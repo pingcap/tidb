@@ -15,17 +15,23 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tipb/go-binlog"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 func TestInvalidReadTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -147,8 +153,7 @@ func TestInvalidReadTemporaryTable(t *testing.T) {
 }
 
 func TestInvalidReadCacheTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -220,13 +225,13 @@ func TestInvalidReadCacheTable(t *testing.T) {
 	tk.MustExec("commit")
 
 	for _, query := range queries {
-		tk.MustExec(query.sql)
+		tk.MustQuery(query.sql)
 	}
 
 	// Test normal table when cache table exits.
 	tk.MustExec("insert into cache_tmp5 values(1);")
+	time.Sleep(100 * time.Millisecond)
 	tk.MustExec("set @a=now(6);")
-	time.Sleep(time.Microsecond)
 	tk.MustExec("drop table cache_tmp5")
 	tk.MustExec("create table cache_tmp5 (id int primary key);")
 	tk.MustQuery("select * from cache_tmp5 as of timestamp(@a) where id=1;").Check(testkit.Rows("1"))
@@ -247,6 +252,549 @@ func TestInvalidReadCacheTable(t *testing.T) {
 	for _, query := range queries {
 		// enable historical read cache table
 		tk.MustExec(query.sql)
-
 	}
+}
+
+func TestTxnSavepoint0(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, a int, unique index idx(id))")
+
+	cases := []struct {
+		sql string
+		sps []string
+		err string
+	}{
+		{"set autocommit=1", nil, ""},
+		{"delete from t", nil, ""},
+
+		{"savepoint s1", nil, ""},
+		{"rollback to s1", nil, "[executor:1305]SAVEPOINT s1 does not exist"},
+		{"begin", nil, ""},
+		{"savepoint s1", []string{"s1"}, ""},
+		{"savepoint s2", []string{"s1", "s2"}, ""},
+		{"savepoint s3", []string{"s1", "s2", "s3"}, ""},
+		{"savepoint S1", []string{"s2", "s3", "s1"}, ""},
+		{"rollback to S3", []string{"s2", "s3"}, ""},
+		{"rollback to S1", []string{"s2", "s3"}, "[executor:1305]SAVEPOINT S1 does not exist"},
+		{"rollback to s1", []string{"s2", "s3"}, "[executor:1305]SAVEPOINT s1 does not exist"},
+		{"rollback to S3", []string{"s2", "s3"}, ""},
+		{"rollback to S2", []string{"s2"}, ""},
+		{"rollback to S2", []string{"s2"}, ""},
+		{"rollback", nil, ""},
+
+		{"set autocommit=1", nil, ""},
+		{"savepoint s1", nil, ""},
+		{"set autocommit=0", nil, ""},
+		{"savepoint s1", []string{"s1"}, ""},
+		{"savepoint s2", []string{"s1", "s2"}, ""},
+		{"savepoint S1", []string{"s2", "s1"}, ""},
+		{"set autocommit=1", nil, ""},
+		{"savepoint s1", nil, ""},
+
+		{"set autocommit=0", nil, ""},
+		{"begin", nil, ""},
+		{"savepoint s1", []string{"s1"}, ""},
+		{"set autocommit=1", nil, ""},
+		{"set autocommit=0", nil, ""},
+		{"savepoint s1", []string{"s1"}, ""},
+		{"commit", nil, ""},
+
+		{"begin", nil, ""},
+		{"savepoint s1", []string{"s1"}, ""},
+		{"savepoint s2", []string{"s1", "s2"}, ""},
+		{"savepoint s3", []string{"s1", "s2", "s3"}, ""},
+		{"release savepoint s2", []string{"s1"}, ""},
+		{"rollback to S2", []string{"s1"}, "[executor:1305]SAVEPOINT S2 does not exist"},
+		{"release savepoint s3", []string{"s1"}, "[executor:1305]SAVEPOINT s3 does not exist"},
+		{"savepoint s2", []string{"s1", "s2"}, ""},
+		{"release savepoint s1", nil, ""},
+		{"release savepoint s1", nil, "[executor:1305]SAVEPOINT s1 does not exist"},
+		{"release savepoint S2", nil, "[executor:1305]SAVEPOINT S2 does not exist"},
+		{"commit", nil, ""},
+	}
+
+	txnModes := []string{"optimistic", "pessimistic", ""}
+	for _, txnMode := range txnModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
+		for idx, ca := range cases {
+			comment := fmt.Sprintf("txn_mode: %v,idx: %v, %#v", txnMode, idx, ca)
+			_, err := tk.Exec(ca.sql)
+			if ca.err == "" {
+				require.NoError(t, err, comment)
+			} else {
+				require.Error(t, err, comment)
+				require.Equal(t, ca.err, err.Error(), comment)
+			}
+			txnCtx := tk.Session().GetSessionVars().TxnCtx
+			require.Equal(t, len(ca.sps), len(txnCtx.Savepoints), comment)
+			for i, sp := range ca.sps {
+				require.Equal(t, sp, txnCtx.Savepoints[i].Name, comment)
+			}
+		}
+	}
+}
+
+func TestTxnSavepoint1(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, a int, unique index idx(id))")
+
+	cases := []struct {
+		sql    string
+		result []string
+		err    string
+	}{
+		// execute savepoint not in transaction
+		{sql: "commit"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (3, 3)"},
+		{sql: "rollback to s1", err: "[executor:1305]SAVEPOINT s1 does not exist"},
+		{sql: "delete from t"},
+
+		{sql: "begin"},
+		{sql: "release savepoint x", err: "[executor:1305]SAVEPOINT x does not exist"},
+		{sql: "savepoint s1"},
+		{sql: "savepoint s2"},
+		{sql: "savepoint s3"},
+		{sql: "savepoint s4"},
+		{sql: "release savepoint s1"},
+		{sql: "rollback to s1", err: "[executor:1305]SAVEPOINT s1 does not exist"},
+		{sql: "rollback to s2", err: "[executor:1305]SAVEPOINT s2 does not exist"},
+		{sql: "rollback to s3", err: "[executor:1305]SAVEPOINT s3 does not exist"},
+		{sql: "rollback to savepoint s4", err: "[executor:1305]SAVEPOINT s4 does not exist"},
+		{sql: "rollback"},
+
+		{sql: "begin"},
+		{sql: "insert into t values (1, 1), (2, 2)"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (3, 3)"},
+		{sql: "savepoint s2"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2", "3 3"}},
+		{sql: "rollback to s1"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "insert into t values (3, 4), (4, 4)"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2", "3 4", "4 4"}},
+		{sql: "rollback to s1"},
+		{sql: "insert into t values (3, 5)"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2", "3 5"}},
+		{sql: "rollback to s2", err: "[executor:1305]SAVEPOINT s2 does not exist"},
+		{sql: "rollback to s1"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "commit"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+
+		{sql: "begin"},
+		{sql: "insert into t values (1, 1), (3, 3) on duplicate key update a=a+1"},
+		{sql: "select * from t order by id", result: []string{"1 2", "2 2", "3 3"}},
+		{sql: "savepoint s1"},
+		{sql: "update t set a=a+1 where id in (1, 2)"},
+		{sql: "rollback to s1"},
+		{sql: "insert into t values (4, 4)"},
+		{sql: "commit"},
+		{sql: "select * from t order by id", result: []string{"1 2", "2 2", "3 3", "4 4"}},
+
+		{sql: "delete from t"},
+		{sql: "begin"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (1, 1)"},
+		{sql: "savepoint s2"},
+		{sql: "insert into t values (2, 2)"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (3, 3)"},
+		{sql: "rollback to s1"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "commit"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+
+		// test for savepoint name case
+		{sql: "delete from t"},
+		{sql: "begin"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (1, 1)"},
+		{sql: "release savepoint S1"},
+		{sql: "rollback to s1", err: "[executor:1305]SAVEPOINT s1 does not exist"},
+		{sql: "rollback to S1", err: "[executor:1305]SAVEPOINT S1 does not exist"},
+		{sql: "rollback"},
+
+		{sql: "begin"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (1, 1)"},
+		{sql: "savepoint s2"},
+		{sql: "insert into t values (2, 2)"},
+		{sql: "savepoint S1"},
+		{sql: "insert into t values (3, 3)"},
+		{sql: "rollback to s1"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "commit"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "delete from t"},
+
+		// Test for release savepoint
+		{sql: "begin;"},
+		{sql: "insert into t values (1, 1)"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (2, 2)"},
+		{sql: "savepoint s2"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "release savepoint s1;"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "rollback to s2", err: "[executor:1305]SAVEPOINT s2 does not exist"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "rollback"},
+	}
+	txnModes := []string{"optimistic", "pessimistic", ""}
+	for _, txnMode := range txnModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
+		for idx, ca := range cases {
+			comment := fmt.Sprintf("idx: %v, %#v", idx, ca)
+			if ca.result == nil {
+				if ca.err == "" {
+					tk.MustExec(ca.sql)
+				} else {
+					err := tk.ExecToErr(ca.sql)
+					require.Error(t, err, comment)
+					require.Equal(t, ca.err, err.Error(), comment)
+				}
+			} else {
+				tk.MustQuery(ca.sql).Check(testkit.Rows(ca.result...))
+			}
+		}
+	}
+}
+
+func TestRollbackToSavepoint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, a int, unique index idx(id))")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert into t values (2,2)")
+	tk.MustExec("rollback to s1")
+	tk.MustExec("insert into t values (2,2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustExec("rollback to s1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("delete from t where id = 1")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert into t values (1,2)")
+	tk.MustExec("rollback to s1")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
+func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(id int key, a int)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("insert into t values (1,1)")
+	tk1.MustExec("savepoint s1")
+	tk1.MustExec("insert into t values (2,2)")
+	tk1.MustExec("rollback to s1")
+
+	tk2.MustExec("begin pessimistic")
+	start := time.Now()
+	// test for release lock after rollback to savepoint then commit.
+	tk1.MustExec("commit")
+	tk2.MustExec("insert into t values (2,2)")
+	require.Less(t, time.Since(start).Seconds(), float64(2))
+
+	tk2.MustExec("commit")
+	tk1.MustExec("delete from t")
+	tk1.MustExec("insert into t values (1, 1)")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t where a= 1 for update")
+	tk1.MustExec("savepoint s1")
+	tk1.MustExec("delete from t where a = 1")
+	// After rollback to s1, should not release lock in the row which a = 1
+	tk1.MustExec("rollback to s1")
+
+	tk2.MustExec("begin pessimistic")
+	start = time.Now()
+	var wait time.Duration
+	go func() {
+		time.Sleep(time.Millisecond * 100)
+		wait = time.Since(start)
+		tk1.MustExec("rollback")
+	}()
+	// should wait until tk1 rollback and release the lock.
+	tk2.MustExec("select * from t where a= 1 for update")
+	require.Less(t, wait.Seconds(), time.Since(start).Seconds())
+}
+
+func TestSavepointInPessimisticAndOptimistic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(id int key, a int)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	// Test for rollback savepoint in pessimistic txn.
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("insert into t values (1,1)")
+	tk1.MustExec("savepoint s1")
+	tk1.MustExec("insert into t values (2,2)")
+	tk1.MustExec("rollback to s1")
+
+	tk2.MustExec("begin optimistic")
+	tk2.MustExec("insert into t values (2,2)")
+	tk1.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	tk2.MustQuery("select * from t").Check(testkit.Rows("2 2"))
+	tk2.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+
+	// Test for rollback savepoint in optimistic txn.
+	tk1.MustExec("truncate table t")
+	tk1.MustExec("begin optimistic")
+	tk1.MustExec("insert into t values (1,1)")
+	tk1.MustExec("savepoint s1")
+	tk1.MustExec("insert into t values (2,2)")
+	tk1.MustExec("rollback to s1")
+
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (2,2)")
+	tk1.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	tk2.MustQuery("select * from t").Check(testkit.Rows("2 2"))
+	tk2.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+}
+
+func TestSavepointInBigTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(id int key, a int)")
+	rowCount := 10000
+
+	// Test for rollback batch insert
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("insert into t values (0, 0)")
+	tk1.MustExec("savepoint s1")
+	for i := 1; i < rowCount; i++ {
+		insert := fmt.Sprintf("insert into t values (%v, %v)", i, i)
+		tk1.MustExec(insert)
+	}
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount)))
+	tk1.MustExec("rollback to s1")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+	tk1.MustExec("commit")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+
+	// Test for rollback batch update
+	tk1.MustExec("begin")
+	for i := 1; i < rowCount; i++ {
+		insert := fmt.Sprintf("insert into t values (%v, %v)", i, i)
+		tk1.MustExec(insert)
+	}
+	tk1.MustExec("commit")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("savepoint s1")
+	for i := 1; i < rowCount; i++ {
+		update := fmt.Sprintf("update t set a=a+1 where id = %v", i)
+		tk1.MustExec(update)
+	}
+	tk1.MustQuery("select count(*) from t where id != a").Check(testkit.Rows(strconv.Itoa(rowCount - 1)))
+	tk1.MustExec("rollback to s1")
+	tk1.MustQuery("select count(*) from t where id != a").Check(testkit.Rows("0"))
+	tk1.MustExec("commit")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount)))
+
+	// Test for rollback batch insert on duplicate update
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("savepoint s1")
+	for i := 1; i < rowCount; i++ {
+		insert := fmt.Sprintf("insert into t values (%v, %v) on duplicate key update a=a+1", i, i)
+		tk1.MustExec(insert)
+	}
+	tk1.MustQuery("select count(*) from t where id != a").Check(testkit.Rows(strconv.Itoa(rowCount - 1)))
+	tk1.MustExec("rollback to s1")
+	tk1.MustQuery("select count(*) from t where id != a").Check(testkit.Rows("0"))
+	tk1.MustExec("commit")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount)))
+
+	// Test for rollback batch delete.
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("insert into t values (-1, -1)")
+	tk1.MustExec("savepoint s1")
+	for i := 0; i < rowCount; i++ {
+		update := fmt.Sprintf("delete from t where id = %v", i)
+		tk1.MustExec(update)
+	}
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+	tk1.MustExec("rollback to s1")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount + 1)))
+	tk1.MustExec("rollback")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount)))
+
+	// Test for many savepoint in 1 txn.
+	tk1.MustExec("truncate table t")
+	tk1.MustExec("begin pessimistic")
+	for i := 0; i < rowCount; i++ {
+		insert := fmt.Sprintf("insert into t values (%v, %v)", i, i)
+		tk1.MustExec(insert)
+		tk1.MustExec(fmt.Sprintf("savepoint s%v", i))
+	}
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount)))
+	tk1.MustExec("rollback to s1")
+	tk1.MustExec("commit")
+	tk1.MustQuery("select * from t order by id").Check(testkit.Rows("0 0", "1 1"))
+}
+
+func TestSavepointRandTestIssue0(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (a enum('B','C') NOT NULL,UNIQUE KEY idx_1 (a),KEY idx_2 (a));")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint sp0;")
+	tk.MustExec("insert ignore into t values ( 'B' ),( 'C' );")
+	err := tk.ExecToErr("update t set a = 'C' where a = 'B';")
+	require.Error(t, err)
+	tk.MustExec("select * from t where a = 'B' for update;")
+	tk.MustExec("rollback to sp0;")
+	tk.MustExec("delete from t where a = 'B' ;")
+}
+
+func TestSavepointWithTemporaryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test for local temporary table.
+	txnModes := []string{"optimistic", "pessimistic", ""}
+	for _, txnMode := range txnModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
+		tk.MustExec("drop table if exists tmp1")
+		tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
+		tk.MustExec("insert into tmp1 values(1, 11, 101)")
+		tk.MustExec("begin")
+		tk.MustExec("savepoint sp0;")
+		tk.MustExec("insert into tmp1 values(2, 22, 202)")
+		tk.MustExec("savepoint sp1;")
+		tk.MustExec("insert into tmp1 values(3, 33, 303)")
+		tk.MustExec("rollback to sp1;")
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("1 11 101", "2 22 202"))
+		tk.MustExec("commit")
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("1 11 101", "2 22 202"))
+	}
+
+	// Test for global temporary table.
+	for _, txnMode := range txnModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
+		tk.MustExec("drop table if exists tmp1")
+		tk.MustExec("create global temporary table tmp1 (id int primary key auto_increment, u int unique, v int) on commit delete rows")
+		tk.MustExec("begin")
+		tk.MustExec("savepoint sp0;")
+		tk.MustExec("insert into tmp1 values(2, 22, 202)")
+		tk.MustExec("savepoint sp1;")
+		tk.MustExec("insert into tmp1 values(3, 33, 303)")
+		tk.MustExec("savepoint sp2;")
+		tk.MustExec("insert into tmp1 values(4, 44, 404)")
+		tk.MustExec("rollback to sp2;")
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("2 22 202", "3 33 303"))
+		tk.MustExec("rollback to sp1;")
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("2 22 202"))
+		tk.MustExec("commit")
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows())
+	}
+}
+
+func TestSavepointWithCacheTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t0 (id int primary key, v int)")
+
+	txnModes := []string{"optimistic", "pessimistic", ""}
+	for _, txnMode := range txnModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
+		tk.MustExec("create table if not exists t (id int primary key auto_increment, u int unique, v int)")
+		tk.MustExec("delete from t")
+		tk.MustExec("delete from t0")
+		tk.MustExec("ALTER TABLE t CACHE;")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t0 values(1, 1)")
+		tk.MustExec("savepoint sp0;")
+		tk.MustExec("insert into t values(1, 11, 101)")
+		txnCtx := tk.Session().GetSessionVars().TxnCtx
+		require.Equal(t, 1, len(txnCtx.CachedTables))
+		tk.MustExec("savepoint sp1;")
+		tk.MustExec("insert into t values(2, 22, 202)")
+		tk.MustExec("savepoint sp2;")
+		tk.MustExec("insert into t values(3, 33, 303)")
+		tk.MustExec("rollback to sp2;")
+		require.Equal(t, 1, len(txnCtx.CachedTables))
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 11 101", "2 22 202"))
+		tk.MustExec("rollback to sp1;")
+		require.Equal(t, 1, len(txnCtx.CachedTables))
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 11 101"))
+		tk.MustExec("rollback to sp0;")
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows())
+		tk.MustQuery("select * from t0 order by id").Check(testkit.Rows("1 1"))
+		require.Equal(t, 0, len(txnCtx.CachedTables))
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows())
+		tk.MustQuery("select * from t0 order by id").Check(testkit.Rows("1 1"))
+	}
+}
+
+func TestSavepointWithBinlog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	// mock for binlog enabled.
+	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&mockPumpClient{})
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, a int, unique index idx(id))")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1,1)")
+	err := tk.ExecToErr("savepoint s1")
+	require.Error(t, err)
+	require.Equal(t, executor.ErrSavepointNotSupportedWithBinlog.Error(), err.Error())
+	err = tk.ExecToErr("rollback to s1")
+	require.Error(t, err)
+	require.Equal(t, "[executor:1305]SAVEPOINT s1 does not exist", err.Error())
+	err = tk.ExecToErr("release savepoint s1")
+	require.Error(t, err)
+	require.Equal(t, "[executor:1305]SAVEPOINT s1 does not exist", err.Error())
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+}
+
+type mockPumpClient struct{}
+
+func (m mockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
+	return &binlog.WriteBinlogResp{}, nil
+}
+
+func (m mockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
+	return nil, nil
 }

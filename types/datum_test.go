@@ -15,6 +15,7 @@
 package types
 
 import (
+	gjson "encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -22,11 +23,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,12 +98,12 @@ func TestToBool(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToBool(t, t1, 1)
 
-	td, err := ParseDuration(nil, "11:11:11.999999", 6)
+	td, _, err := ParseDuration(nil, "11:11:11.999999", 6)
 	require.NoError(t, err)
 	testDatumToBool(t, td, 1)
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
-	ft.Decimal = 5
+	ft.SetDecimal(5)
 	v, err := Convert(0.1415926, ft)
 	require.NoError(t, err)
 	testDatumToBool(t, v, 1)
@@ -138,12 +141,12 @@ func TestToInt64(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToInt64(t, t1, int64(20111110111112))
 
-	td, err := ParseDuration(nil, "11:11:11.999999", 6)
+	td, _, err := ParseDuration(nil, "11:11:11.999999", 6)
 	require.NoError(t, err)
 	testDatumToInt64(t, td, int64(111112))
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
-	ft.Decimal = 5
+	ft.SetDecimal(5)
 	v, err := Convert(3.1415926, ft)
 	require.NoError(t, err)
 	testDatumToInt64(t, v, int64(3))
@@ -155,7 +158,7 @@ func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bo
 	sc.IgnoreTruncate = true
 
 	ft := NewFieldType(mysql.TypeLong)
-	ft.Flag |= mysql.UnsignedFlag
+	ft.AddFlag(mysql.UnsignedFlag)
 	converted, err := d.ConvertTo(sc, ft)
 
 	if hasError {
@@ -370,7 +373,7 @@ func TestCloneDatum(t *testing.T) {
 
 func newTypeWithFlag(tp byte, flag uint) *FieldType {
 	t := NewFieldType(tp)
-	t.Flag |= flag
+	t.AddFlag(flag)
 	return t
 }
 
@@ -382,11 +385,11 @@ func newMyDecimal(val string, t *testing.T) *MyDecimal {
 }
 
 func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
-	return &FieldType{
-		Tp:      tp,
-		Flen:    flen,
-		Decimal: decimal,
-	}
+	ft := &FieldType{}
+	ft.SetType(tp)
+	ft.SetFlen(flen)
+	ft.SetDecimal(decimal)
+	return ft
 }
 
 func TestEstimatedMemUsage(t *testing.T) {
@@ -469,7 +472,7 @@ func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 			newRetTypeWithFlenDecimal(mysql.TypeDouble, mysql.MaxRealWidth, UnspecifiedLength),
 			Floor,
 		},
-		// int64 reserve to Decimal
+		// int64 reserve to decimal
 		{
 			NewIntDatum(1),
 			NewDecimalDatum(newMyDecimal("2", t)),
@@ -537,11 +540,64 @@ func TestStringToMysqlBit(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	tp := NewFieldType(mysql.TypeBit)
-	tp.Flen = 1
+	tp.SetFlen(1)
 	for _, tt := range tests {
 		bin, err := tt.a.convertToMysqlBit(nil, tp)
 		require.NoError(t, err)
 		require.Equal(t, tt.out, bin.b)
+	}
+}
+
+func TestMarshalDatum(t *testing.T) {
+	e, err := ParseSetValue([]string{"a", "b", "c", "d", "e"}, uint64(1))
+	require.NoError(t, err)
+	tests := []Datum{
+		NewIntDatum(1),
+		NewUintDatum(72),
+		NewFloat32Datum(1.23),
+		NewFloat64Datum(1.23),
+		NewDatum(math.Inf(-1)),
+		NewDecimalDatum(NewDecFromStringForTest("1.2345")),
+		NewStringDatum("abcde"),
+		NewCollationStringDatum("abcde", charset.CollationBin),
+		NewDurationDatum(Duration{Duration: time.Duration(1)}),
+		NewTimeDatum(NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)),
+		NewBytesDatum([]byte("abcde")),
+		NewBinaryLiteralDatum([]byte{0x81}),
+		NewMysqlBitDatum(NewBinaryLiteralFromUint(0x98765432, 4)),
+		NewMysqlEnumDatum(Enum{Name: "a", Value: 1}),
+		NewCollateMysqlEnumDatum(Enum{Name: "a", Value: 1}, charset.CollationASCII),
+		NewMysqlSetDatum(e, charset.CollationGBKBin),
+		NewJSONDatum(json.CreateBinary(int64(1))),
+		MinNotNullDatum(),
+		MaxValueDatum(),
+	}
+	// Marshal the datum and then unmarshal it to see if they are equal.
+	for i, tt := range tests {
+		msg := fmt.Sprintf("failed at %dth test", i)
+		bytes, err := gjson.Marshal(&tt)
+		require.NoError(t, err, msg)
+		var datum Datum
+		err = gjson.Unmarshal(bytes, &datum)
+		require.NoError(t, err, msg)
+		require.Equal(t, tt.k, datum.k, msg)
+		require.Equal(t, tt.decimal, datum.decimal, msg)
+		require.Equal(t, tt.length, datum.length, msg)
+		require.Equal(t, tt.i, datum.i, msg)
+		require.Equal(t, tt.collation, datum.collation, msg)
+		require.Equal(t, tt.b, datum.b, msg)
+		if tt.x == nil {
+			require.Nil(t, datum.x, msg)
+		}
+		require.Equal(t, reflect.TypeOf(tt.x), reflect.TypeOf(datum.x), msg)
+		switch tt.x.(type) {
+		case Time:
+			require.Equal(t, 0, tt.x.(Time).Compare(datum.x.(Time)))
+		case *MyDecimal:
+			require.Equal(t, 0, tt.x.(*MyDecimal).Compare(datum.x.(*MyDecimal)))
+		default:
+			require.EqualValues(t, tt.x, datum.x, msg)
+		}
 	}
 }
 
@@ -564,5 +620,58 @@ func BenchmarkCompareDatumByReflect(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		reflect.DeepEqual(vals, vals1)
+	}
+}
+
+func TestProduceDecWithSpecifiedTp(t *testing.T) {
+	tests := []struct {
+		dec         string
+		flen        int
+		frac        int
+		newDec      string
+		isOverflow  bool
+		isTruncated bool
+	}{
+		{"0.0000", 4, 3, "0.000", false, false},
+		{"0.0001", 4, 3, "0.000", false, true},
+		{"123", 8, 5, "123.00000", false, false},
+		{"-123", 8, 5, "-123.00000", false, false},
+		{"123.899", 5, 2, "123.90", false, true},
+		{"-123.899", 5, 2, "-123.90", false, true},
+		{"123.899", 6, 2, "123.90", false, true},
+		{"-123.899", 6, 2, "-123.90", false, true},
+		{"123.99", 4, 1, "124.0", false, true},
+		{"123.99", 3, 0, "124", false, true},
+		{"-123.99", 3, 0, "-124", false, true},
+		{"123.99", 3, 1, "99.9", true, false},
+		{"-123.99", 3, 1, "-99.9", true, false},
+		{"99.9999", 5, 3, "99.999", true, false},
+		{"-99.9999", 5, 3, "-99.999", true, false},
+		{"99.9999", 6, 3, "100.000", false, true},
+		{"-99.9999", 6, 3, "-100.000", false, true},
+	}
+	sc := new(stmtctx.StatementContext)
+	for _, tt := range tests {
+		tp := NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(tt.flen).SetDecimal(tt.frac).BuildP()
+		dec := NewDecFromStringForTest(tt.dec)
+		newDec, err := ProduceDecWithSpecifiedTp(dec, tp, sc)
+		if tt.isOverflow {
+			if !ErrOverflow.Equal(err) {
+				assert.FailNow(t, "Error is not overflow", "err: %v before: %v after: %v", err, tt.dec, dec)
+			}
+		} else {
+			require.NoError(t, err, tt)
+		}
+		require.Equal(t, tt.newDec, newDec.String())
+		warn := sc.TruncateWarnings(0)
+		if tt.isTruncated {
+			if len(warn) != 1 || !ErrTruncatedWrongVal.Equal(warn[0].Err) {
+				assert.FailNow(t, "Warn is not truncated", "warn: %v before: %v after: %v", warn, tt.dec, dec)
+			}
+		} else {
+			if warn != nil {
+				assert.FailNow(t, "Warn is not nil", "warn: %v before: %v after: %v", warn, tt.dec, dec)
+			}
+		}
 	}
 }

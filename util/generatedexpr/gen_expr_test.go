@@ -18,9 +18,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/stretchr/testify/require"
-
 	_ "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseExpression(t *testing.T) {

@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -63,7 +63,7 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
-	backend := tidb.NewTiDBBackend(db, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig()))
+	backend := tidb.NewTiDBBackend(context.Background(), db, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
 	return &mysqlSuite{dbHandle: db, mockDB: mock, backend: backend, tbl: tbl}
 }
 
@@ -99,7 +99,7 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 	// skip column a,c due to ignore-columns
 	perms[0] = -1
 	perms[2] = -1
-	encoder, err := s.backend.NewEncoder(s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890})
+	encoder, err := s.backend.NewEncoder(context.Background(), s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890})
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewUintDatum(18446744073709551615),
@@ -140,7 +140,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	ctx := context.Background()
 	logger := log.L()
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.IgnoreOnDup, errormanager.New(nil, config.NewConfig()))
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, config.IgnoreOnDup, errormanager.New(nil, config.NewConfig(), logger))
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
@@ -149,7 +149,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
+	encoder, err := ignoreBackend.NewEncoder(ctx, s.tbl, &kv.SessionOptions{})
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
@@ -165,7 +165,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	require.NoError(t, err)
 
 	// test encode rows with _tidb_rowid
-	encoder, err = ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
+	encoder, err = ignoreBackend.NewEncoder(ctx, s.tbl, &kv.SessionOptions{})
 	require.NoError(t, err)
 	rowWithID, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
@@ -186,7 +186,7 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 	ctx := context.Background()
 	logger := log.L()
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), logger))
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
@@ -195,7 +195,7 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
+	encoder, err := ignoreBackend.NewEncoder(ctx, s.tbl, &kv.SessionOptions{})
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
@@ -214,22 +214,25 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 }
 
 // TODO: temporarily disable this test before we fix strict mode
+//
 //nolint:unused,deadcode
 func testStrictMode(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	ft := *types.NewFieldType(mysql.TypeVarchar)
-	ft.Charset = charset.CharsetUTF8MB4
+	ft.SetCharset(charset.CharsetUTF8MB4)
 	col0 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
 	ft = *types.NewFieldType(mysql.TypeString)
-	ft.Charset = charset.CharsetASCII
+	ft.SetCharset(charset.CharsetASCII)
 	col1 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
 	tblInfo := &model.TableInfo{ID: 1, Columns: []*model.ColumnInfo{col0, col1}, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
-	encoder, err := bk.NewEncoder(tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
+	ctx := context.Background()
+
+	bk := tidb.NewTiDBBackend(ctx, s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
+	encoder, err := bk.NewEncoder(ctx, tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
 	require.NoError(t, err)
 
 	logger := log.L()
@@ -245,7 +248,7 @@ func testStrictMode(t *testing.T) {
 	require.Regexp(t, `incorrect utf8 value .* for column s0$`, err.Error())
 
 	// oepn a new encode because column count changed.
-	encoder, err = bk.NewEncoder(tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
+	encoder, err = bk.NewEncoder(ctx, tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
 	require.NoError(t, err)
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum(""),
@@ -267,9 +270,11 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 			AddRow("t", "id", "int(10)", "", "auto_increment"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.AutoIncrementFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
 			Name:       model.NewCIStr("t"),
@@ -277,12 +282,10 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.AutoIncrementFlag,
-					},
+					Name:      model.NewCIStr("id"),
+					Offset:    0,
+					State:     model.StatePublic,
+					FieldType: ft,
 				},
 			},
 		},
@@ -304,9 +307,11 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 			AddRow("test", "t", "id", int64(1)))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.AutoIncrementFlag | mysql.UnsignedFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
 			Name:       model.NewCIStr("t"),
@@ -314,12 +319,10 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.AutoIncrementFlag | mysql.UnsignedFlag,
-					},
+					Name:      model.NewCIStr("id"),
+					Offset:    0,
+					State:     model.StatePublic,
+					FieldType: ft,
 				},
 			},
 		},
@@ -341,9 +344,11 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 			AddRow("test", "t", "id", int64(1), "AUTO_INCREMENT"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.AutoIncrementFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
 			Name:       model.NewCIStr("t"),
@@ -351,12 +356,10 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.AutoIncrementFlag,
-					},
+					Name:      model.NewCIStr("id"),
+					Offset:    0,
+					State:     model.StatePublic,
+					FieldType: ft,
 				},
 			},
 		},
@@ -378,9 +381,11 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 			AddRow("test", "t", "id", int64(1), "AUTO_RANDOM"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.PriKeyFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
 			Name:           model.NewCIStr("t"),
@@ -389,12 +394,10 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 			AutoRandomBits: 1,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.PriKeyFlag,
-					},
+					Name:                model.NewCIStr("id"),
+					Offset:              0,
+					State:               model.StatePublic,
+					FieldType:           ft,
 					GeneratedExprString: "1 + 2",
 				},
 			},
@@ -413,8 +416,8 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 		WillReturnError(nonRetryableError)
 
 	// disable error record, should not expect retry statements one by one.
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
-		errormanager.New(s.dbHandle, &config.Config{}),
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup,
+		errormanager.New(s.dbHandle, &config.Config{}, log.L()),
 	)
 	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
 	ctx := context.Background()
@@ -424,7 +427,7 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)
-	require.False(t, utils.IsRetryableError(err), "err: %v", err)
+	require.False(t, common.IsRetryableError(err), "err: %v", err)
 }
 
 func TestWriteRowsErrorDowngradingAll(t *testing.T) {
@@ -473,7 +476,7 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 		WillReturnResult(driver.ResultNoRows)
 
 	// disable error record, should not expect retry statements one by one.
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup,
 		errormanager.New(s.dbHandle, &config.Config{
 			App: config.Lightning{
 				TaskInfoSchemaName: "tidb_lightning_errors",
@@ -481,7 +484,7 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 					Type: *atomic.NewInt64(10),
 				},
 			},
-		}),
+		}, log.L()),
 	)
 	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
 	ctx := context.Background()
@@ -528,7 +531,7 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
 		WillReturnError(nonRetryableError)
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup,
 		errormanager.New(s.dbHandle, &config.Config{
 			App: config.Lightning{
 				TaskInfoSchemaName: "tidb_lightning_errors",
@@ -536,7 +539,7 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 					Type: *atomic.NewInt64(3),
 				},
 			},
-		}),
+		}, log.L()),
 	)
 	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
 	ctx := context.Background()
@@ -558,7 +561,7 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 	logger := log.L()
 
-	encoder, err := b.NewEncoder(tbl, &kv.SessionOptions{})
+	encoder, err := b.NewEncoder(context.Background(), tbl, &kv.SessionOptions{})
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
@@ -594,6 +597,14 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	rawRow := make([]types.Datum, 0)
+	for i := 0; i < 15; i++ {
+		rawRow = append(rawRow, types.NewIntDatum(0))
+	}
+	row, err = encoder.Encode(logger, rawRow, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "12.csv", 0)
+	require.NotNil(t, err)
+	require.Contains(t, err.Error(), "column count mismatch, at most")
 	return dataRows
 }
 
@@ -601,7 +612,7 @@ func TestEncodeRowForRecord(t *testing.T) {
 	s := createMysqlSuite(t)
 
 	// for a correct row, the will encode a correct result
-	row := tidb.EncodeRowForRecord(s.tbl, mysql.ModeStrictTransTables, []types.Datum{
+	row := tidb.EncodeRowForRecord(context.Background(), s.tbl, mysql.ModeStrictTransTables, []types.Datum{
 		types.NewIntDatum(5),
 		types.NewStringDatum("test test"),
 		types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0xabcdef, 6)),
@@ -610,7 +621,7 @@ func TestEncodeRowForRecord(t *testing.T) {
 
 	// the following row will result in column count mismatch error, there for encode
 	// result will fallback to a "," separated string list.
-	row = tidb.EncodeRowForRecord(s.tbl, mysql.ModeStrictTransTables, []types.Datum{
+	row = tidb.EncodeRowForRecord(context.Background(), s.tbl, mysql.ModeStrictTransTables, []types.Datum{
 		types.NewIntDatum(5),
 		types.NewStringDatum("test test"),
 		types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0xabcdef, 6)),

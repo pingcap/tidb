@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -139,9 +140,10 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 // It's often observed that the pattern of the caller like this:
 //
 // cols := ExtractColumns(...)
-// for _, col := range cols {
-//     if xxx(col) {...}
-// }
+//
+//	for _, col := range cols {
+//	    if xxx(col) {...}
+//	}
 //
 // Provide an additional filter argument, this can be done in one step.
 // To avoid allocation for cols that not need.
@@ -428,7 +430,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
-						changed = checkCollationStrictness(coll, newFuncExpr.GetType().Collate)
+						changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
 					}
 				}
 			}
@@ -547,8 +549,8 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 
 func locateStringWithCollation(str, substr, coll string) int64 {
 	collator := collate.GetCollator(coll)
-	strKey := collator.Key(str)
-	subStrKey := collator.Key(substr)
+	strKey := collator.KeyWithoutTrimRightSpace(str)
+	subStrKey := collator.KeyWithoutTrimRightSpace(substr)
 
 	index := bytes.Index(strKey, subStrKey)
 	if index == -1 || index == 0 {
@@ -559,9 +561,9 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 	count := int64(0)
 	for {
 		r, size := utf8.DecodeRuneInString(str)
-		count += 1
-		index -= len(collator.Key(string(r)))
-		if index == 0 {
+		count++
+		index -= len(collator.KeyWithoutTrimRightSpace(string(r)))
+		if index <= 0 {
 			return count + 1
 		}
 		str = str[size:]
@@ -687,6 +689,21 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 	return expr, not
 }
 
+// GetExprInsideIsTruth get the expression inside the `istrue_with_null` and `istrue`.
+// This is useful when handling expressions from "not" or "!", because we might wrap `istrue_with_null` or `istrue`
+// when handling them. See pushNotAcrossExpr() and wrapWithIsTrue() for details.
+func GetExprInsideIsTruth(expr Expression) Expression {
+	if f, ok := expr.(*ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.IsTruthWithNull, ast.IsTruthWithoutNull:
+			return GetExprInsideIsTruth(f.GetArgs()[0])
+		default:
+			return expr
+		}
+	}
+	return expr
+}
+
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
@@ -702,8 +719,9 @@ func ContainOuterNot(expr Expression) bool {
 // Input `not` means whether there is `not` outside `expr`
 //
 // eg.
-//    not(0+(t.a == 1 and t.b == 2)) returns true
-//    not(t.a) and not(t.b) returns false
+//
+//	not(0+(t.a == 1 and t.b == 2)) returns true
+//	not(t.a) and not(t.b) returns false
 func containOuterNot(expr Expression, not bool) bool {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
@@ -904,7 +922,7 @@ func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err e
 // DatumToConstant generates a Constant expression from a Datum.
 func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 	t := types.NewFieldType(tp)
-	t.Flag |= flag
+	t.AddFlag(flag)
 	return &Constant{Value: d, RetType: t}
 }
 
@@ -924,6 +942,26 @@ func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, ne
 	return value, nil
 }
 
+// ParamMarkerInPrepareChecker checks whether the given ast tree has paramMarker and is in prepare statement.
+type ParamMarkerInPrepareChecker struct {
+	InPrepareStmt bool
+}
+
+// Enter implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch v := in.(type) {
+	case *driver.ParamMarkerExpr:
+		pc.InPrepareStmt = !v.InExecute
+		return v, true
+	}
+	return in, false
+}
+
+// Leave implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
 // DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
 // We should not *PARSE* a string as JSON under some scenarios. ParseToJSONFlag
 // is 0 for JSON column yet(as well as JSON correlated column), so we can skip
@@ -937,7 +975,7 @@ func DisableParseJSONFlag4Expr(expr Expression) {
 	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
 		return
 	}
-	expr.GetType().Flag &= ^mysql.ParseToJSONFlag
+	expr.GetType().SetFlag(expr.GetType().GetFlag() & ^mysql.ParseToJSONFlag)
 }
 
 // ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
@@ -1346,6 +1384,7 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
 func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
 		return r.runMockQuery(r.mockLocalData, inValues)

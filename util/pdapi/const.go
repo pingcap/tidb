@@ -25,4 +25,6 @@ const (
 	Stores       = "/pd/api/v1/stores"
 	Status       = "/pd/api/v1/status"
 	Config       = "/pd/api/v1/config"
+	ScanRegions  = "/pd/api/v1/regions/key"
+	RegionKey    = "/pd/api/v1/region/key"
 )

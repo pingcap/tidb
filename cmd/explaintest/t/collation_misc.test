@@ -12,20 +12,43 @@ create table t(a varchar(20) charset latin1);
 insert into t values ("t_value");
 alter table t modify column a varchar(20) charset latin1;
 select * from t;
+
 --error 8200
 alter table t modify column a varchar(20) charset utf8;
---error 8200
+
+drop table t;
+create table t(a varchar(20) charset latin1);
+insert into t values ("t_value");
 alter table t modify column a varchar(20) charset utf8mb4;
+admin check table t;
+select * from t;
+
+drop table t;
+create table t(a varchar(20) charset latin1);
+insert into t values ("t_value");
+alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci;
+admin check table t;
+select * from t;
+
+drop table t;
+create table t(a varchar(20) charset latin1);
+insert into t values ("t_value");
 --error 8200
 alter table t modify column a varchar(20) charset utf8 collate utf8_bin;
---error 8200
-alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci;
 --error 1273
 alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin;
 --error 1302, 1273
 alter table t collate LATIN1_GENERAL_CI charset utf8 collate utf8_bin;
 --error 1253, 1273
 alter table t collate LATIN1_GENERAL_CI collate UTF8MB4_UNICODE_ci collate utf8_bin;
+
+# ChangingCharsetToUtf8 with reorg
+drop table t;
+create table t(a varchar(20) charset latin1);
+insert into t values ("t_value");
+alter table t modify column a varchar(19) charset utf8mb4;
+admin check table t;
+select * from t;
 
 # TestCharsetDatabase
 create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;

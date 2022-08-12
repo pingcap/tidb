@@ -106,7 +106,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	for i := 0; i < 3; i++ {
 		colInfos[i] = &tipb.ColumnInfo{
 			ColumnId:  colIds[i],
-			Tp:        int32(colTypes[i].Tp),
+			Tp:        int32(colTypes[i].GetType()),
 			Collation: -mysql.DefaultCollationID,
 		}
 		colTypeMap[colIds[i]] = colTypes[i]
@@ -410,7 +410,7 @@ func TestMppExecutor(t *testing.T) {
 
 	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
-	_, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest)
+	_, _, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
 	require.Equal(t, rowCount[0], int64(1))
 	require.NoError(t, err)
 }
@@ -553,7 +553,6 @@ func createTestDB(dbPath, LogPath string) (*badger.DB, error) {
 }
 
 func BenchmarkExecutors(b *testing.B) {
-
 	prepare := func(rows, limit int) (dagReq *tipb.DAGRequest, dagCtx *dagContext, clean func() error) {
 		data, err := prepareTestTableData(rows, tableID)
 		if err != nil {
@@ -614,7 +613,7 @@ func BenchmarkExecutors(b *testing.B) {
 			// })
 			b.Run(fmt.Sprintf("(row=%d, limit=%d)", row, lim), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
-					_, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq)
+					_, _, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq, 0)
 					if err != nil {
 						b.Fatal(err)
 					}

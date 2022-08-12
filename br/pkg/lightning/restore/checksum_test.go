@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/ddl"
+	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -181,11 +183,10 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		_, err = DoChecksum(subCtx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
-			require.Equal(t, "tikv timeout", err.Error())
+			require.Equal(t, mockChecksumKVClientErr, errors.Cause(err))
 			continue
-		} else {
-			require.NoError(t, err)
 		}
+		require.NoError(t, err)
 
 		// after checksum, safepint should be small than start ts
 		ts := pdClient.currentSafePoint()
@@ -247,7 +248,7 @@ func (c *testPDClient) currentSafePoint() uint64 {
 }
 
 func (c *testPDClient) GetTS(ctx context.Context) (int64, int64, error) {
-	physicalTS := time.Now().UnixNano() / 1e6
+	physicalTS := time.Now().UnixMilli()
 	logicalTS := oracle.ExtractLogical(c.logicalTSCounter.Inc())
 	return physicalTS, logicalTS, nil
 }
@@ -362,11 +363,11 @@ func (r *mockResponse) Close() error {
 }
 
 type mockErrorResponse struct {
-	err string
+	err error
 }
 
 func (r *mockErrorResponse) Next(ctx context.Context) (resultSubset kv.ResultSubset, err error) {
-	return nil, errors.New(r.err)
+	return nil, r.err
 }
 
 func (r *mockErrorResponse) Close() error {
@@ -393,6 +394,8 @@ func (r *mockResultSubset) RespTime() time.Duration {
 	return time.Millisecond
 }
 
+var mockChecksumKVClientErr = &mysql.MySQLError{Number: tmysql.ErrPDServerTimeout}
+
 type mockChecksumKVClient struct {
 	kv.Client
 	checksum  tipb.ChecksumResponse
@@ -410,7 +413,7 @@ func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars i
 	}
 	if c.curErrCount < c.maxErrCount {
 		c.curErrCount++
-		return &mockErrorResponse{err: "tikv timeout"}
+		return &mockErrorResponse{err: mockChecksumKVClientErr}
 	}
 	data, _ := c.checksum.Marshal()
 	time.Sleep(c.respDur)

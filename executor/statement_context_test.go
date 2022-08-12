@@ -20,8 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -32,8 +31,7 @@ const (
 )
 
 func TestStatementContext(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table sc (a int)")
@@ -55,10 +53,8 @@ func TestStatementContext(t *testing.T) {
 	// Handle coprocessor flags, '1x' is an invalid int.
 	// UPDATE and DELETE do select request first which is handled by coprocessor.
 	// In strict mode we expect error.
-	_, err := tk.Exec("update sc set a = 4 where a > '1x'")
-	require.Error(t, err)
-	_, err = tk.Exec("delete from sc where a < '1x'")
-	require.Error(t, err)
+	tk.MustExecToErr("update sc set a = 4 where a > '1x'")
+	tk.MustExecToErr("delete from sc where a < '1x'")
 	tk.MustQuery("select * from sc where a > '1x'").Check(testkit.Rows("3"))
 
 	// Non-strict mode never returns error.
@@ -74,13 +70,10 @@ func TestStatementContext(t *testing.T) {
 	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
 	tk.MustQuery("select * from sc2").Check(testkit.Rows("@@"))
 	tk.MustExec(strictModeSQL)
-	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
-	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), "err %v", err)
+	tk.MustGetErrCode("insert sc2 values (unhex('4040ffff'))", errno.ErrTruncatedWrongValueForField)
 
 	tk.MustExec("set @@tidb_skip_utf8_check = '1'")
-	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
-	require.NoError(t, err)
+	tk.MustExec("insert sc2 values (unhex('4040ffff'))")
 	tk.MustQuery("select length(a) from sc2").Check(testkit.Rows("2", "4"))
 
 	tk.MustExec("set @@tidb_skip_utf8_check = '0'")
@@ -96,13 +89,10 @@ func TestStatementContext(t *testing.T) {
 	tk.MustQuery("select * from sc3").Check(testkit.Rows("@@"))
 
 	tk.MustExec(strictModeSQL)
-	_, err = tk.Exec("insert sc3 values (unhex('4040ffff'))")
-	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), "err %v", err)
+	tk.MustGetErrCode("insert sc3 values (unhex('4040ffff'))", errno.ErrTruncatedWrongValueForField)
 
 	tk.MustExec("set @@tidb_skip_ascii_check = '1'")
-	_, err = tk.Exec("insert sc3 values (unhex('4040ffff'))")
-	require.NoError(t, err)
+	tk.MustExec("insert sc3 values (unhex('4040ffff'))")
 	tk.MustQuery("select length(a) from sc3").Check(testkit.Rows("2", "4"))
 
 	// no placeholder in ASCII, so just insert '@@'...
@@ -122,19 +112,14 @@ func TestStatementContext(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("", "@@"))
 	tk.MustQuery("select length(a) from t1").Check(testkit.Rows("0", "2"))
 	tk.MustExec(strictModeSQL)
-	_, err = tk.Exec("insert t1 values (unhex('f09f8c80'))")
-	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), "err %v", err)
-	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
-	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), "err %v", err)
+	tk.MustGetErrCode("insert t1 values (unhex('f09f8c80'))", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert t1 values (unhex('F0A48BAE'))", errno.ErrTruncatedWrongValueForField)
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.CheckMb4ValueInUTF8.Store(false)
+		conf.Instance.CheckMb4ValueInUTF8.Store(false)
 	})
 	tk.MustExec("insert t1 values (unhex('f09f8c80'))")
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.CheckMb4ValueInUTF8.Store(true)
+		conf.Instance.CheckMb4ValueInUTF8.Store(true)
 	})
-	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
-	require.Error(t, err)
+	tk.MustExecToErr("insert t1 values (unhex('F0A48BAE'))")
 }

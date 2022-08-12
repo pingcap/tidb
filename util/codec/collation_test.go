@@ -49,7 +49,7 @@ func TestHashGroupKeyCollation(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeString)
 	n, chk1, chk2 := prepareCollationData()
 
-	tp.Collate = "utf8_general_ci"
+	tp.SetCollate("utf8_general_ci")
 	buf1 := make([][]byte, n)
 	buf2 := make([][]byte, n)
 	buf1, err := HashGroupKey(sc, n, chk1.Column(0), buf1, tp)
@@ -65,7 +65,7 @@ func TestHashGroupKeyCollation(t *testing.T) {
 		}
 	}
 
-	tp.Collate = "utf8_unicode_ci"
+	tp.SetCollate("utf8_unicode_ci")
 	buf1 = make([][]byte, n)
 	buf2 = make([][]byte, n)
 	buf1, err = HashGroupKey(sc, n, chk1.Column(0), buf1, tp)
@@ -89,7 +89,7 @@ func TestHashChunkRowCollation(t *testing.T) {
 	cols := []int{0}
 	buf := make([]byte, 1)
 
-	tp.Collate = "binary"
+	tp.SetCollate("binary")
 	for i := 0; i < n; i++ {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
@@ -100,7 +100,7 @@ func TestHashChunkRowCollation(t *testing.T) {
 		h2.Reset()
 	}
 
-	tp.Collate = "utf8_general_ci"
+	tp.SetCollate("utf8_general_ci")
 	for i := 0; i < n; i++ {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
@@ -111,7 +111,7 @@ func TestHashChunkRowCollation(t *testing.T) {
 		h2.Reset()
 	}
 
-	tp.Collate = "utf8_unicode_ci"
+	tp.SetCollate("utf8_unicode_ci")
 	for i := 0; i < n; i++ {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
@@ -132,7 +132,7 @@ func TestHashChunkColumnsCollation(t *testing.T) {
 	h1s := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 	h2s := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
-	tp.Collate = "binary"
+	tp.SetCollate("binary")
 	require.NoError(t, HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull))
 	require.NoError(t, HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull))
 
@@ -142,14 +142,14 @@ func TestHashChunkColumnsCollation(t *testing.T) {
 		h2s[i].Reset()
 	}
 
-	tp.Collate = "utf8_general_ci"
+	tp.SetCollate("utf8_general_ci")
 	require.NoError(t, HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull))
 	require.NoError(t, HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull))
 	for i := 0; i < n; i++ {
 		require.Equal(t, h2s[i].Sum64(), h1s[i].Sum64())
 	}
 
-	tp.Collate = "utf8_unicode_ci"
+	tp.SetCollate("utf8_unicode_ci")
 	require.NoError(t, HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull))
 	require.NoError(t, HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull))
 	for i := 0; i < n; i++ {

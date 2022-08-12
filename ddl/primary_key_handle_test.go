@@ -40,7 +40,7 @@ import (
 func getTableMaxHandle(t *testing.T, d ddl.DDL, tbl table.Table, store kv.Storage) (kv.Handle, bool) {
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	maxHandle, emptyTable, err := d.GetTableMaxHandle(ver.Ver, tbl.(table.PhysicalTable))
+	maxHandle, emptyTable, err := d.GetTableMaxHandle(ddl.NewJobContext(), ver.Ver, tbl.(table.PhysicalTable))
 	require.NoError(t, err)
 	return maxHandle, emptyTable
 }
@@ -58,8 +58,7 @@ func checkTableMaxHandle(t *testing.T, d ddl.DDL, tbl table.Table, store kv.Stor
 }
 
 func TestPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
@@ -124,11 +123,10 @@ func TestPrimaryKey(t *testing.T) {
 
 func TestMultiRegionGetTableEndHandle(t *testing.T) {
 	var cluster testutils.Cluster
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
@@ -161,8 +159,7 @@ func TestMultiRegionGetTableEndHandle(t *testing.T) {
 }
 
 func TestGetTableEndHandle(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	// TestGetTableEndHandle test ddl.GetTableMaxHandle method, which will return the max row id of the table.
 	tk := testkit.NewTestKit(t, store)
@@ -254,11 +251,10 @@ func TestGetTableEndHandle(t *testing.T) {
 
 func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
 	var cluster testutils.Cluster
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -293,8 +289,7 @@ func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
 }
 
 func TestGetTableEndCommonHandle(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -331,8 +326,7 @@ func TestGetTableEndCommonHandle(t *testing.T) {
 }
 
 func TestAutoRandomChangeFromAutoInc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@tidb_allow_remove_auto_inc = 1;")
@@ -389,8 +383,7 @@ func TestAutoRandomChangeFromAutoInc(t *testing.T) {
 }
 
 func TestAutoRandomExchangePartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
@@ -425,8 +418,7 @@ func TestAutoRandomExchangePartition(t *testing.T) {
 }
 
 func TestAutoRandomIncBitsIncrementAndOffset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
@@ -484,8 +476,7 @@ func TestAutoRandomIncBitsIncrementAndOffset(t *testing.T) {
 }
 
 func TestInvisibleIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -563,8 +554,7 @@ func TestInvisibleIndex(t *testing.T) {
 }
 
 func TestCreateClusteredIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
