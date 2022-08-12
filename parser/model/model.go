@@ -1064,8 +1064,9 @@ func (v *ViewCheckOption) String() string {
 	}
 }
 
-//revive:disable:exported
 // ViewInfo provides meta data describing a DB view.
+//
+//revive:disable:exported
 type ViewInfo struct {
 	Algorithm   ViewAlgorithm      `json:"view_algorithm"`
 	Definer     *auth.UserIdentity `json:"view_definer"`
@@ -1295,7 +1296,7 @@ func (i *IndexColumn) Clone() *IndexColumn {
 }
 
 // PrimaryKeyType is the type of primary key.
-// Available values are 'clustered', 'nonclustered', and ''(default).
+// Available values are "clustered", "nonclustered", and ""(default).
 type PrimaryKeyType int8
 
 func (p PrimaryKeyType) String() string {

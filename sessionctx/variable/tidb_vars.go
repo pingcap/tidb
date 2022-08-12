@@ -774,10 +774,6 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
-	// TiDBDDLEnableFastReorg indicates whether use lighting to help acceleate adding index stmt.
-	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
-	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
-	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
 	// TiDBAuthSigningCert indicates the path of the signing certificate to do token-based authentication.
@@ -791,6 +787,10 @@ const (
 	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
 	// when a single SQL statement exceeds the memory quota specified by the memory quota.
 	TiDBEnableTmpStorageOnOOM = "tidb_enable_tmp_storage_on_oom"
+	// TiDBDDLEnableFastReorg indicates whether to use lighting backfill process for adding index.
+	TiDBDDLEnableFastReorg = "tidb_ddl_fast_reorg"
+	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
+	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 )
 
 // TiDB intentional limits
@@ -1054,9 +1054,9 @@ var (
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
-	// EnableFastDDL indicates whether to use lightning to enhance DDL reorg performance.
-	EnableFastDDL = atomic.NewBool(false)
-	// Temporary Variable for set dist quota for lightning add index, int type, GB as unit
+	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
+	EnableFastReorg = atomic.NewBool(DefTiDBDDLEnableFastReorg)
+	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
 )
 

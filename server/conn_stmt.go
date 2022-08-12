@@ -199,9 +199,13 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
+	return cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+}
+
+func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}, args []expression.Expression, useCursor bool) (err error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
-	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
 		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
 		if txnErr != nil {
@@ -210,7 +214,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 		if retryable && action == sessiontxn.StmtActionRetryReady {
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
-			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
 			return err
 		}
@@ -224,7 +228,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		defer func() {
 			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
-		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
 		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
 	}
@@ -724,7 +728,7 @@ func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
 	}
 	preparedObj, invalid := cc.preparedStmtID2CachePreparedStmt(stmtID)
 	if invalid {
-		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+		return "invalidate PlanCacheStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
 	}
 	if preparedObj == nil {
 		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
@@ -732,7 +736,7 @@ func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
 	return preparedObj.PreparedAst.Stmt.Text()
 }
 
-func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *plannercore.CachedPrepareStmt, invalid bool) {
+func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *plannercore.PlanCacheStmt, invalid bool) {
 	sv := cc.ctx.GetSessionVars()
 	if sv == nil {
 		return nil, false
@@ -742,7 +746,7 @@ func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *planne
 		// not found
 		return nil, false
 	}
-	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
 	if !ok {
 		// invalid cache. should never happen.
 		return nil, true

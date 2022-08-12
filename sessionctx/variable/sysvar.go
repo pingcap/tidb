@@ -50,7 +50,9 @@ import (
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
-// 		[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
+//
+//	[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
+//
 // If you are adding a new system variable, please put it in the corresponding area.
 var defaultSysVars = []*SysVar{
 	/* The system variables below have NONE scope  */
@@ -1751,9 +1753,9 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBDDLEnableFastReorg, Value: BoolToOnOff(DefTiDBDDLEnableFastReorg), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
-		return BoolToOnOff(EnableFastDDL.Load()), nil
+		return BoolToOnOff(EnableFastReorg.Load()), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		EnableFastDDL.Store(TiDBOptOn(val))
+		EnableFastReorg.Store(TiDBOptOn(val))
 		return nil
 	}},
 	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.

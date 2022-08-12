@@ -1152,7 +1152,7 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatInt(pb, 10), val)
 
-	// MaxValue is 1 PB, set to 2 Pb is not allowed
+	// MaxValue is 1 PB, set to 2 Pb is not allowed, it will set back to 1 PB max allowed value.
 	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(2*pb, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
