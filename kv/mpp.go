@@ -33,6 +33,8 @@ type MPPTask struct {
 	ID      int64       // mppTaskID
 	StartTs uint64
 	TableID int64 // physical table id
+
+	PartitionTableIDs []int64
 }
 
 // ToPB generates the pb structure.
@@ -47,7 +49,7 @@ func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	return meta
 }
 
-//MppTaskStates denotes the state of mpp tasks
+// MppTaskStates denotes the state of mpp tasks
 type MppTaskStates uint8
 
 const (
@@ -89,4 +91,6 @@ type MPPClient interface {
 type MPPBuildTasksRequest struct {
 	KeyRanges []KeyRange
 	StartTS   uint64
+
+	PartitionIDAndRanges []PartitionIDAndRanges
 }

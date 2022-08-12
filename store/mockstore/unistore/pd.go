@@ -15,6 +15,7 @@
 package unistore
 
 import (
+	"context"
 	"errors"
 	"math"
 	"sync"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	pd "github.com/tikv/pd/client"
-	"golang.org/x/net/context"
 )
 
 var _ pd.Client = new(pdClient)
@@ -149,6 +149,10 @@ func (c *pdClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts 
 }
 
 func (c *pdClient) SplitRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitRegionsResponse, error) {
+	return nil, nil
+}
+
+func (c *pdClient) SplitAndScatterRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitAndScatterRegionsResponse, error) {
 	return nil, nil
 }
 

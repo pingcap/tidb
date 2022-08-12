@@ -17,7 +17,6 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 	"time"
@@ -31,26 +30,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/kvcache"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPointGetPlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-	sess, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(sess)
-
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
@@ -85,7 +72,7 @@ func TestPointGetPlanCache(t *testing.T) {
 	tk.MustExec(`prepare stmt2 from "select * from t where b = ? and c = ?"`)
 	tk.MustExec("set @param=1")
 	tk.MustQuery("execute stmt1 using @param").Check(testkit.Rows("1 1 1"))
-	err = counter.Write(pb)
+	err := counter.Write(pb)
 	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
 	require.Equal(t, float64(0), hit)
@@ -165,8 +152,7 @@ func TestPointGetPlanCache(t *testing.T) {
 }
 
 func TestPointGetForUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table fu (id int primary key, val int)")
@@ -184,9 +170,38 @@ func TestPointGetForUpdate(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
+func TestGetExtraColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+	  a int(11) DEFAULT NULL,
+	  b int(11) DEFAULT NULL,
+	  UNIQUE KEY idx (a))`)
+	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid from t where a = 1`).Check(testkit.Rows("Point_Get 1.00 root table:t, index:idx(a) "))
+	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid, date_format(a, "") from t where a = 1`).Check(testkit.Rows(
+		`Projection 1.00 root  test.t.a, test.t.b, test.t._tidb_rowid, date_format(cast(test.t.a, datetime BINARY), )->Column#4`,
+		`└─Point_Get 1.00 root table:t, index:idx(a) `))
+	tk.MustExec(`begin`) // in transaction
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid from t where a = 1`).Check(testkit.Rows(`Point_Get 1.00 root table:t, index:idx(a) `))
+	tk.MustExec(`commit`)
+	tk.MustQuery(`explain format='brief' select count(_tidb_rowid) from t where a=1`).Check(testkit.Rows(
+		`StreamAgg 1.00 root  funcs:count(test.t._tidb_rowid)->Column#4`,
+		`└─Point_Get 1.00 root table:t, index:idx(a) `))
+	tk.MustQuery(`explain format='brief' select *, date_format(b, "") from t where a =1 for update`).Check(testkit.Rows(
+		`Projection 1.00 root  test.t.a, test.t.b, date_format(cast(test.t.b, datetime BINARY), )->Column#4`,
+		`└─SelectLock 1.00 root  for update 0`,
+		`  └─Point_Get 1.00 root table:t, index:idx(a) `))
+
+	// if the PK is handled
+	tk.MustExec(`create table t1 (pk int, a int, b int, primary key(pk), unique key(a))`)
+	err := tk.ExecToErr(`explain format='brief' select t1.*, _tidb_rowid from t1 where a = 1`)
+	require.EqualError(t, err, `[planner:1054]Unknown column '_tidb_rowid' in 'field list'`)
+}
+
 func TestPointGetForUpdateWithSubquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE users (id bigint(20) unsigned NOT NULL primary key, name longtext DEFAULT NULL, company_id bigint(20) DEFAULT NULL)")
@@ -210,8 +225,7 @@ func checkUseForUpdate(tk *testkit.TestKit, t *testing.T, expectLock bool) {
 }
 
 func TestWhereIn2BatchPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -299,8 +313,7 @@ func TestWhereIn2BatchPointGet(t *testing.T) {
 
 // Test that the plan id will be reset before optimization every time.
 func TestPointGetId(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -324,8 +337,7 @@ func TestPointGetId(t *testing.T) {
 }
 
 func TestCBOPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -340,7 +352,7 @@ func TestCBOPointGet(t *testing.T) {
 		Res  []string
 	}
 	pointGetPlanData := core.GetPointGetPlanData()
-	pointGetPlanData.GetTestCases(t, &input, &output)
+	pointGetPlanData.LoadTestCases(t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
@@ -356,19 +368,9 @@ func TestCBOPointGet(t *testing.T) {
 }
 
 func TestPartitionBatchPointGetPlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-	sess, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(sess)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -575,20 +577,9 @@ func TestPartitionBatchPointGetPlanCache(t *testing.T) {
 }
 
 func TestBatchPointGetPlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	sess, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(sess)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -611,38 +602,27 @@ func TestBatchPointGetPlanCache(t *testing.T) {
 }
 
 func TestBatchPointGetPartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	sess, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(sess)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 	tk.MustQuery("explain format = 'brief' select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Batch_Point_Get 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
+		"Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3 handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4"))
 
 	tk.MustQuery("explain format = 'brief' update t set b = b + 1 where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Update N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
+		"Update N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3 handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustExec("update t set b = b + 1 where a in (1, 2, 3, 4)")
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows("1 2", "2 3", "3 4", "4 5"))
 
 	tk.MustQuery("explain format = 'brief' delete from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Delete N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
+		"Delete N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3 handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustExec("delete from t where a in (1, 2, 3, 4)")
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows())
@@ -650,30 +630,90 @@ func TestBatchPointGetPartition(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int, c int, primary key (a, b)) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b = 1").Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) "))
+
 	tk.MustQuery("explain format = 'brief' select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows(
-		"Batch_Point_Get 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+		"Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").
 		Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3", "4 4 4"))
 
 	tk.MustQuery("explain format = 'brief' update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4))").Check(testkit.Rows(
-		"Update N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+		"Update N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustExec("update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4))")
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Sort().
 		Check(testkit.Rows("1 1 2", "2 2 3", "3 3 4", "4 4 5"))
 
 	tk.MustQuery("explain format = 'brief' delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4))").Check(testkit.Rows(
-		"Delete N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+		"Delete N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustExec("delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4))")
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows())
 }
 
+func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, UNIQUE KEY (b)) PARTITION BY HASH(b) PARTITIONS 4")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustQuery("explain select * from t where b in (1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get_1 2.00 root table:t, partition:p1,p2, index:b(b) keep order:false, desc:false"))
+	tk.MustQuery("explain select * from t where b in (1, 2, 1)").Check(testkit.Rows(
+		"Batch_Point_Get_1 3.00 root table:t, partition:p1,p2, index:b(b) keep order:false, desc:false"))
+
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (id int primary key, name_id int) PARTITION BY LIST(id) (" +
+		"partition p0 values IN (1, 2), " +
+		"partition p1 values IN (3, 4), " +
+		"partition p3 values IN (5))")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustQuery("explain format='brief' select * from t where id in (1, 3)").Check(testkit.Rows(
+		"Batch_Point_Get 2.00 root table:t, partition:p0,p1 handle:[1 3], keep order:false, desc:false"))
+
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0 (id int primary key, name_id int) PARTITION BY LIST COLUMNS(id) (" +
+		"partition p0 values IN (1, 2), " +
+		"partition p1 values IN (3, 4), " +
+		"partition p3 values IN (5))")
+	tk.MustExec("insert into t0 values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustQuery("explain format='brief' select * from t0 where id in (1, 3)").Check(testkit.Rows(
+		"TableReader 2.00 root partition:p0,p1 data:TableRangeScan]\n" +
+			"[└─TableRangeScan 2.00 cop[tikv] table:t0 range:[1,1], [3,3], keep order:false, stats:pseudo"))
+
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (id int, name_id int, unique key(id, name_id)) PARTITION BY LIST COLUMNS(id, name_id) (" +
+		"partition p0 values IN ((1, 1),(2, 2)), " +
+		"partition p1 values IN ((3, 3),(4, 4)), " +
+		"partition p3 values IN ((5, 5)))")
+	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustQuery("explain format='brief' select * from t1 where (id, name_id) in ((1, 1), (3, 3))").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan]\n" +
+			"[└─IndexRangeScan 2.00 cop[tikv] table:t1, index:id(id, name_id) range:[1 1,1 1], [3 3,3 3], keep order:false, stats:pseudo"))
+
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("CREATE TABLE t2 (id int, name varchar(10), unique key(id, name)) PARTITION BY LIST COLUMNS(id, name) (" +
+		"partition p0 values IN ((1,'a'),(2,'b')), " +
+		"partition p1 values IN ((3,'c'),(4,'d')), " +
+		"partition p3 values IN ((5,'e')))")
+	tk.MustExec("insert into t2 values(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')")
+	tk.MustQuery("explain format='brief' select * from t2 where (id, name) in ((1, 'a'), (3, 'c'))").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan]\n" +
+			"[└─IndexRangeScan 2.00 cop[tikv] table:t2, index:id(id, name) range:[1 \"a\",1 \"a\"], [3 \"c\",3 \"c\"], keep order:false, stats:pseudo"))
+}
+
 func TestIssue19141(t *testing.T) {
 	// For issue 19141, fix partition selection on batch point get.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t19141 (c_int int, primary key (c_int)) partition by hash ( c_int ) partitions 4")
@@ -692,8 +732,7 @@ func TestIssue19141(t *testing.T) {
 }
 
 func TestSelectInMultiColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t2")
@@ -719,8 +758,7 @@ func TestUpdateWithTableReadLockWillFail(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tbllock(id int, c int);")
@@ -732,8 +770,7 @@ func TestUpdateWithTableReadLockWillFail(t *testing.T) {
 }
 
 func TestIssue20692(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -773,8 +810,7 @@ func TestIssue20692(t *testing.T) {
 }
 
 func TestPointGetWithInvisibleIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -788,8 +824,7 @@ func TestPointGetWithInvisibleIndex(t *testing.T) {
 }
 
 func TestBatchPointGetWithInvisibleIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -803,8 +838,7 @@ func TestBatchPointGetWithInvisibleIndex(t *testing.T) {
 }
 
 func TestCBOShouldNotUsePointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -828,7 +862,7 @@ func TestCBOShouldNotUsePointGet(t *testing.T) {
 	}
 
 	pointGetPlanData := core.GetPointGetPlanData()
-	pointGetPlanData.GetTestCases(t, &input, &output)
+	pointGetPlanData.LoadTestCases(t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
@@ -844,8 +878,7 @@ func TestCBOShouldNotUsePointGet(t *testing.T) {
 }
 
 func TestPointGetWithIndexHints(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -892,8 +925,7 @@ func TestPointGetWithIndexHints(t *testing.T) {
 }
 
 func TestIssue18042(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -906,8 +938,7 @@ func TestIssue18042(t *testing.T) {
 }
 
 func TestIssue26638(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -938,8 +969,7 @@ func TestIssue26638(t *testing.T) {
 }
 
 func TestIssue23511(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")

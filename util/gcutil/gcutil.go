@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -70,9 +71,10 @@ func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 }
 
 // GetGCSafePoint loads GC safe point time from mysql.tidb.
-func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(context.Background(), nil, selectVariableValueSQL, "tikv_gc_safe_point")
+func GetGCSafePoint(sctx sessionctx.Context) (uint64, error) {
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, selectVariableValueSQL, "tikv_gc_safe_point")
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

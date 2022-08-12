@@ -81,7 +81,7 @@ var (
 			Name:      "transaction_statement_num",
 			Help:      "Bucketed histogram of statements count in each transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32768
-		}, []string{LbTxnMode, LblType})
+		}, []string{LblTxnMode, LblType})
 
 	TransactionDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -90,7 +90,7 @@ var (
 			Name:      "transaction_duration_seconds",
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-		}, []string{LbTxnMode, LblType})
+		}, []string{LblTxnMode, LblType})
 
 	StatementDeadlockDetectDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -127,6 +127,30 @@ var (
 			Name:      "validate_read_ts_from_pd_count",
 			Help:      "Counter of validating read ts by getting a timestamp from PD",
 		})
+
+	NonTransactionalDeleteCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "non_transactional_delete_count",
+			Help:      "Counter of non-transactional delete",
+		})
+	TxnStatusEnteringCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "txn_state_entering_count",
+			Help:      "How many times transactions enter this state",
+		}, []string{LblType},
+	)
+	TxnDurationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "txn_state_seconds",
+			Help:      "Bucketed histogram of different states of a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblType, LblHasLock})
 )
 
 // Label constants.
@@ -145,7 +169,7 @@ const (
 	LblCoprType    = "copr_type"
 	LblGeneral     = "general"
 	LblInternal    = "internal"
-	LbTxnMode      = "txn_mode"
+	LblTxnMode     = "txn_mode"
 	LblPessimistic = "pessimistic"
 	LblOptimistic  = "optimistic"
 	LblStore       = "store"
@@ -157,4 +181,12 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
+	LblIdle        = "idle"
+	LblRunning     = "executing_sql"
+	LblLockWaiting = "waiting_for_lock"
+	LblCommitting  = "committing"
+	LblRollingBack = "rolling_back"
+	LblHasLock     = "has_lock"
+	LblPhase       = "phase"
+	LblModule      = "module"
 )

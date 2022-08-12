@@ -21,11 +21,11 @@ package expression
 import (
 	"context"
 	"encoding/json"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -96,7 +97,7 @@ func (c *databaseFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 64
+	bf.tp.SetFlen(64)
 	sig := &builtinDatabaseSig{bf}
 	return sig, nil
 }
@@ -130,7 +131,7 @@ func (c *foundRowsFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.AddFlag(mysql.UnsignedFlag)
 	sig := &builtinFoundRowsSig{bf}
 	return sig, nil
 }
@@ -168,7 +169,7 @@ func (c *currentUserFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 64
+	bf.tp.SetFlen(64)
 	sig := &builtinCurrentUserSig{bf}
 	return sig, nil
 }
@@ -205,7 +206,7 @@ func (c *currentRoleFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 64
+	bf.tp.SetFlen(64)
 	sig := &builtinCurrentRoleSig{bf}
 	return sig, nil
 }
@@ -234,7 +235,7 @@ func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (res string, isNull bo
 	for _, r := range data.ActiveRoles {
 		sortedRes = append(sortedRes, r.String())
 	}
-	sort.Strings(sortedRes)
+	slices.Sort(sortedRes)
 	for i, r := range sortedRes {
 		res += r
 		if i != len(data.ActiveRoles)-1 {
@@ -256,7 +257,7 @@ func (c *userFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 64
+	bf.tp.SetFlen(64)
 	sig := &builtinUserSig{bf}
 	return sig, nil
 }
@@ -293,7 +294,7 @@ func (c *connectionIDFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.AddFlag(mysql.UnsignedFlag)
 	sig := &builtinConnectionIDSig{bf}
 	return sig, nil
 }
@@ -333,7 +334,7 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.AddFlag(mysql.UnsignedFlag)
 
 	if len(args) == 1 {
 		sig = &builtinLastInsertIDWithIDSig{bf}
@@ -396,7 +397,7 @@ func (c *versionFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 64
+	bf.tp.SetFlen(64)
 	sig := &builtinVersionSig{bf}
 	return sig, nil
 }
@@ -429,7 +430,7 @@ func (c *tidbVersionFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = len(printer.GetTiDBInfo())
+	bf.tp.SetFlen(len(printer.GetTiDBInfo()))
 	sig := &builtinTiDBVersionSig{bf}
 	return sig, nil
 }
@@ -478,8 +479,7 @@ func (b *builtinTiDBIsDDLOwnerSig) Clone() builtinFunc {
 
 // evalInt evals a builtinTiDBIsDDLOwnerSig.
 func (b *builtinTiDBIsDDLOwnerSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
-	ddlOwnerChecker := b.ctx.DDLOwnerChecker()
-	if ddlOwnerChecker.IsOwner() {
+	if b.ctx.IsDDLOwner() {
 		res = 1
 	}
 
@@ -627,8 +627,10 @@ func (c *charsetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 64
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(64)
 	sig := &builtinCharsetSig{bf}
 	return sig, nil
 }
@@ -644,7 +646,7 @@ func (b *builtinCharsetSig) Clone() builtinFunc {
 }
 
 func (b *builtinCharsetSig) evalString(_ chunk.Row) (string, bool, error) {
-	return b.args[0].GetType().Charset, false, nil
+	return b.args[0].GetType().GetCharset(), false, nil
 }
 
 type coercibilityFunctionClass struct {
@@ -694,8 +696,10 @@ func (c *collationFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 64
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(64)
 	sig := &builtinCollationSig{bf}
 	return sig, nil
 }
@@ -711,7 +715,7 @@ func (b *builtinCollationSig) Clone() builtinFunc {
 }
 
 func (b *builtinCollationSig) evalString(_ chunk.Row) (string, bool, error) {
-	return b.args[0].GetType().Collate, false, nil
+	return b.args[0].GetType().GetCollate(), false, nil
 }
 
 type rowCountFunctionClass struct {
@@ -935,8 +939,12 @@ func (c *tidbDecodePlanFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBDecodePlanSig{bf}
-	return sig, nil
+	if c.funcName == ast.TiDBDecodePlan {
+		return &builtinTiDBDecodePlanSig{bf}, nil
+	} else if c.funcName == ast.TiDBDecodeBinaryPlan {
+		return &builtinTiDBDecodeBinaryPlanSig{bf}, nil
+	}
+	return nil, errors.New("unknown decode plan function")
 }
 
 type builtinTiDBDecodePlanSig struct {
@@ -961,6 +969,29 @@ func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, erro
 	return planTree, false, nil
 }
 
+type builtinTiDBDecodeBinaryPlanSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBDecodeBinaryPlanSig) Clone() builtinFunc {
+	newSig := &builtinTiDBDecodeBinaryPlanSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBDecodeBinaryPlanSig) evalString(row chunk.Row) (string, bool, error) {
+	planString, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	planTree, err := plancodec.DecodeBinaryPlan(planString)
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return "", false, nil
+	}
+	return planTree, false, nil
+}
+
 type nextValFunctionClass struct {
 	baseFunctionClass
 }
@@ -974,7 +1005,7 @@ func (c *nextValFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	sig := &builtinNextValSig{bf}
-	bf.tp.Flen = 10
+	bf.tp.SetFlen(10)
 	return sig, nil
 }
 
@@ -1030,7 +1061,7 @@ func (c *lastValFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	sig := &builtinLastValSig{bf}
-	bf.tp.Flen = 10
+	bf.tp.SetFlen(10)
 	return sig, nil
 }
 
@@ -1080,7 +1111,7 @@ func (c *setValFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	sig := &builtinSetValSig{bf}
-	bf.tp.Flen = args[1].GetType().Flen
+	bf.tp.SetFlen(args[1].GetType().GetFlen())
 	return sig, nil
 }
 
@@ -1141,7 +1172,9 @@ func (c *formatBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
 	sig := &builtinFormatBytesSig{bf}
 	return sig, nil
 }
@@ -1178,7 +1211,9 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
 	sig := &builtinFormatNanoTimeSig{bf}
 	return sig, nil
 }

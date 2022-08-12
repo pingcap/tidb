@@ -32,13 +32,13 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -85,12 +85,11 @@ func (m mockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogRe
 }
 
 func TestBasic(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Greater(t, tb.Meta().ID, int64(0))
@@ -186,8 +185,7 @@ func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) 
 
 func TestTypes(t *testing.T) {
 	ctx := context.Background()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	require.NoError(t, err)
@@ -239,8 +237,7 @@ func TestTypes(t *testing.T) {
 
 func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 	ctx := context.Background()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(ctx, "drop table if exists test.t")
 	require.NoError(t, err)
@@ -266,7 +263,7 @@ func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 	require.Greater(t, autoid, int64(0))
 
 	sctx := tk.Session()
-	require.Nil(t, sctx.NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, sctx))
 	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(sctx, types.MakeDatums(2, nil))
@@ -320,8 +317,7 @@ func TestRowKeyCodec(t *testing.T) {
 }
 
 func TestUnsignedPK(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
 	require.NoError(t, err)
@@ -329,7 +325,7 @@ func TestUnsignedPK(t *testing.T) {
 	require.NoError(t, err)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(1, "abc"))
 	require.NoError(t, err)
 	pt := tb.(table.PhysicalTable)
@@ -344,8 +340,7 @@ func TestUnsignedPK(t *testing.T) {
 }
 
 func TestIterRecords(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
 	require.NoError(t, err)
@@ -353,7 +348,7 @@ func TestIterRecords(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	require.NoError(t, err)
 	totalCount := 0
@@ -370,12 +365,11 @@ func TestIterRecords(t *testing.T) {
 }
 
 func TestTableFromMeta(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE meta (a int primary key auto_increment, b varchar(255) unique)")
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	_, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
@@ -423,8 +417,7 @@ func TestTableFromMeta(t *testing.T) {
 }
 
 func TestShardRowIDBitsStep(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists shard_t;")
@@ -442,8 +435,7 @@ func TestShardRowIDBitsStep(t *testing.T) {
 }
 
 func TestHiddenColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS test_hidden;")
 	tk.MustExec("CREATE DATABASE test_hidden;")
@@ -499,11 +491,11 @@ func TestHiddenColumn(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test show (extended) columns
-	tk.MustQuery("show columns from t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show columns from t").Check(testkit.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
 		"c|int(11)|YES||<nil>|",
 		"e|int(11)|YES||<nil>|"))
-	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show extended columns from t").Check(testkit.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
 		"b|int(11)|YES||<nil>|VIRTUAL GENERATED",
 		"c|int(11)|YES||<nil>|",
@@ -599,7 +591,7 @@ func TestHiddenColumn(t *testing.T) {
 			"  `e` int(11) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show extended columns from t").Check(testkit.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
 		"b|int(11)|YES||<nil>|VIRTUAL GENERATED",
 		"c|int(11)|YES||<nil>|",
@@ -609,8 +601,7 @@ func TestHiddenColumn(t *testing.T) {
 }
 
 func TestAddRecordWithCtx(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
 	require.NoError(t, err)
@@ -623,7 +614,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	_, err = tk.Session().Txn(true)
 	require.NoError(t, err)
 	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()))
@@ -655,7 +646,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 }
 
 func TestConstraintCheckForUniqueIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@autocommit = 1")
@@ -695,10 +686,9 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	ch := make(chan int, 2)
 	go func() {
 		tk2.MustExec("use test")
-		_, err = tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
+		_, err := tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
 		require.Error(t, err)
 		ch <- 2
-		clean()
 	}()
 	// Sleep 100ms for tk2 to execute, if it's not blocked, 2 should have been sent to the channel.
 	time.Sleep(100 * time.Millisecond)
@@ -707,11 +697,13 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	require.NoError(t, err)
 	// The data in channel is 1 means tk2 is blocked, that's the expected behavior.
 	require.Equal(t, 1, <-ch)
+
+	// Unrelated to the test logic, just wait for the goroutine to exit to avoid leak in test
+	require.Equal(t, 2, <-ch)
 }
 
 func TestViewColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test")
@@ -729,20 +721,19 @@ func TestViewColumns(t *testing.T) {
 		{"select data_type from INFORMATION_SCHEMA.columns where table_name = 'va'", []string{types.TypeToStr(mysql.TypeLonglong, "")}},
 	}
 	for _, testCase := range testCases {
-		tk.MustQuery(testCase.query).Check(testutil.RowsWithSep("|", testCase.expected...))
+		tk.MustQuery(testCase.query).Check(testkit.RowsWithSep("|", testCase.expected...))
 	}
 	tk.MustExec("drop table if exists t")
 	for _, testCase := range testCases {
 		require.Len(t, tk.MustQuery(testCase.query).Rows(), 0)
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
 			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 	}
 }
 
 func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -766,8 +757,7 @@ func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
 }
 
 func TestTxnAssertion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	se.SetConnectionID(1)

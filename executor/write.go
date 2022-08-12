@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
@@ -47,8 +48,8 @@ var (
 // `modified` means which columns are really modified. It's used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 // The return values:
-//     1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
-//     2. err (error) : error in the update.
+//  1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
+//  2. err (error) : error in the update.
 func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool, t table.Table,
 	onDup bool, memTracker *memory.Tracker) (bool, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -72,19 +73,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// because all of them are sorted by their `Offset`, which
 	// causes all writable columns are after public columns.
 
-	// 1. Cast modified values.
-	for i, col := range t.Cols() {
-		if modified[i] {
-			// Cast changed fields with respective columns.
-			v, err := table.CastValue(sctx, newData[i], col.ToInfo(), false, false)
-			if err != nil {
-				return false, err
-			}
-			newData[i] = v
-		}
-	}
-
-	// 2. Handle the bad null error.
+	// Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
 		if err = col.HandleBadNull(&newData[i], sc); err != nil {
@@ -92,7 +81,25 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		}
 	}
 
-	// 3. Compare datum, then handle some flags.
+	// Handle exchange partition
+	tbl := t.Meta()
+	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		if !tableFound {
+			return false, errors.Errorf("exchange partition process table by id failed")
+		}
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return false, errors.Errorf("exchange partition process assert table partition failed")
+		}
+		err := p.CheckForExchangePartition(sctx, pt.Meta().Partition, newData, tbl.ExchangePartitionInfo.ExchangePartitionDefID)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	// Compare datum, then handle some flags.
 	for i, col := range t.Cols() {
 		// We should use binary collation to compare datum, otherwise the result will be incorrect.
 		cmp, err := newData[i].Compare(sc, &oldData[i], collate.GetBinaryCollator())
@@ -103,7 +110,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			changed = true
 			modified[i] = true
 			// Rebase auto increment id if the field is changed.
-			if mysql.HasAutoIncrementFlag(col.Flag) {
+			if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 				recordID, err := getAutoRecordID(newData[i], &col.FieldType, false)
 				if err != nil {
 					return false, err
@@ -123,7 +130,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				handleChanged = true
 			}
 		} else {
-			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
+			if mysql.HasOnUpdateNowFlag(col.GetFlag()) && modified[i] {
 				// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
 				onUpdateSpecified[i] = true
 			}
@@ -156,10 +163,10 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		return false, nil
 	}
 
-	// 4. Fill values into on-update-now fields, only if they are really changed.
+	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
-		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
-			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal); err == nil {
+		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !modified[i] && !onUpdateSpecified[i] {
+			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal()); err == nil {
 				newData[i] = v
 				modified[i] = true
 			} else {
@@ -168,7 +175,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		}
 	}
 
-	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
+	// If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
 		// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
 		// we use the staging buffer so that we don't need to precheck the existence of handle or unique keys by sending
@@ -206,7 +213,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			}
 			return false, err
 		}
-
 	}
 	if onDup {
 		sc.AddAffectedRows(2)

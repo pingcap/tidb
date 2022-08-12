@@ -43,20 +43,15 @@ func createColumnByTypeAndLen(tp byte, cl uint32) *ColumnInfo {
 }
 func TestConvertColumnInfo(t *testing.T) {
 	// Test "mysql.TypeBit", for: https://github.com/pingcap/tidb/issues/5405.
+	ftb := types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeBit).SetFlag(mysql.UnsignedFlag).SetFlen(1).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8)
 	resultField := ast.ResultField{
 		Column: &model.ColumnInfo{
-			Name:   model.NewCIStr("a"),
-			ID:     0,
-			Offset: 0,
-			FieldType: types.FieldType{
-				Tp:      mysql.TypeBit,
-				Flag:    mysql.UnsignedFlag,
-				Flen:    1,
-				Decimal: 0,
-				Charset: charset.CharsetUTF8,
-				Collate: charset.CollationUTF8,
-			},
-			Comment: "column a is the first column in table dual",
+			Name:      model.NewCIStr("a"),
+			ID:        0,
+			Offset:    0,
+			FieldType: ftb.Build(),
+			Comment:   "column a is the first column in table dual",
 		},
 		ColumnAsName: model.NewCIStr("a"),
 		TableAsName:  model.NewCIStr("dual"),
@@ -66,20 +61,15 @@ func TestConvertColumnInfo(t *testing.T) {
 	require.Equal(t, createColumnByTypeAndLen(mysql.TypeBit, 1), colInfo)
 
 	// Test "mysql.TypeTiny", for: https://github.com/pingcap/tidb/issues/5405.
+	ftpb := types.NewFieldTypeBuilder()
+	ftpb.SetType(mysql.TypeTiny).SetFlag(mysql.UnsignedFlag).SetFlen(1).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8)
 	resultField = ast.ResultField{
 		Column: &model.ColumnInfo{
-			Name:   model.NewCIStr("a"),
-			ID:     0,
-			Offset: 0,
-			FieldType: types.FieldType{
-				Tp:      mysql.TypeTiny,
-				Flag:    mysql.UnsignedFlag,
-				Flen:    1,
-				Decimal: 0,
-				Charset: charset.CharsetUTF8,
-				Collate: charset.CollationUTF8,
-			},
-			Comment: "column a is the first column in table dual",
+			Name:      model.NewCIStr("a"),
+			ID:        0,
+			Offset:    0,
+			FieldType: ftpb.Build(),
+			Comment:   "column a is the first column in table dual",
 		},
 		ColumnAsName: model.NewCIStr("a"),
 		TableAsName:  model.NewCIStr("dual"),
@@ -88,20 +78,15 @@ func TestConvertColumnInfo(t *testing.T) {
 	colInfo = convertColumnInfo(&resultField)
 	require.Equal(t, createColumnByTypeAndLen(mysql.TypeTiny, 1), colInfo)
 
+	ftpb1 := types.NewFieldTypeBuilder()
+	ftpb1.SetType(mysql.TypeYear).SetFlag(mysql.ZerofillFlag).SetFlen(4).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
 	resultField = ast.ResultField{
 		Column: &model.ColumnInfo{
-			Name:   model.NewCIStr("a"),
-			ID:     0,
-			Offset: 0,
-			FieldType: types.FieldType{
-				Tp:      mysql.TypeYear,
-				Flag:    mysql.ZerofillFlag,
-				Flen:    4,
-				Decimal: 0,
-				Charset: charset.CharsetBin,
-				Collate: charset.CollationBin,
-			},
-			Comment: "column a is the first column in table dual",
+			Name:      model.NewCIStr("a"),
+			ID:        0,
+			Offset:    0,
+			FieldType: ftpb1.Build(),
+			Comment:   "column a is the first column in table dual",
 		},
 		ColumnAsName: model.NewCIStr("a"),
 		TableAsName:  model.NewCIStr("dual"),

@@ -24,21 +24,24 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -163,7 +166,7 @@ func (e *InsertValues) initInsertColumns() error {
 		}
 		if col.Name.L == model.ExtraHandleName.L {
 			if !e.ctx.GetSessionVars().AllowWriteRowID {
-				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported")
 			}
 			e.hasExtraHandle = true
 		}
@@ -184,7 +187,7 @@ func (e *InsertValues) initEvalBuffer() {
 	}
 	e.evalBufferTypes = make([]*types.FieldType, numCols)
 	for i, col := range e.Table.Cols() {
-		e.evalBufferTypes[i] = &col.FieldType
+		e.evalBufferTypes[i] = &(col.FieldType)
 	}
 	if e.hasExtraHandle {
 		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
@@ -230,7 +233,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 
 	e.lazyFillAutoID = true
 	evalRowFunc := e.fastEvalRow
@@ -285,18 +288,13 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	return nil
 }
 
-func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	// Convert the error with full messages.
+func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err error) error {
 	var (
 		colTp   byte
 		colName string
 	)
 	if col != nil {
-		colTp = col.Tp
+		colTp = col.GetType()
 		colName = col.Name.String()
 	}
 
@@ -321,6 +319,20 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else if types.ErrWarnDataOutOfRange.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	}
+	return err
+}
+
+func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// Convert the error with full messages.
+	var c *model.ColumnInfo
+	if col != nil {
+		c = col.ColumnInfo
+	}
+	err = completeInsertErr(c, val, rowIdx, err)
 
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
 		return err
@@ -348,6 +360,8 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 	}
 
 	e.evalBuffer.SetDatums(row...)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
 		val, err := expr.Eval(e.evalBuffer.ToRow())
 		if err != nil {
@@ -356,6 +370,13 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
+		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				newWarnings[k].Err = completeInsertErr(e.insertColumns[i].ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
 		}
 
 		offset := e.insertColumns[i].Offset
@@ -376,6 +397,8 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 	}
 	row := make([]types.Datum, rowLen)
 	hasValue := make([]bool, rowLen)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
 		con := expr.(*expression.Constant)
 		val, err := con.Eval(emptyRow)
@@ -386,6 +409,13 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				newWarnings[k].Err = completeInsertErr(e.insertColumns[i].ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
+		}
 		offset := e.insertColumns[i].Offset
 		row[offset], hasValue[offset] = val1, true
 	}
@@ -394,17 +424,17 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 
 // setValueForRefColumn set some default values for the row to eval the row value with other columns,
 // it follows these rules:
-//     1. for nullable and no default value column, use NULL.
-//     2. for nullable and have default value column, use it's default value.
-//     3. for not null column, use zero value even in strict mode.
-//     4. for auto_increment column, use zero value.
-//     5. for generated column, use NULL.
+//  1. for nullable and no default value column, use NULL.
+//  2. for nullable and have default value column, use it's default value.
+//  3. for not null column, use zero value even in strict mode.
+//  4. for auto_increment column, use zero value.
+//  5. for generated column, use NULL.
 func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) error {
 	for i, c := range e.Table.Cols() {
 		d, err := e.getColDefaultValue(i, c)
 		if err == nil {
 			row[i] = d
-			if !mysql.HasAutoIncrementFlag(c.Flag) {
+			if !mysql.HasAutoIncrementFlag(c.GetFlag()) {
 				// It is an interesting behavior in MySQL.
 				// If the value of auto ID is not explicit, MySQL use 0 value for auto ID when it is
 				// evaluated by another column, but it should be used once only.
@@ -433,7 +463,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 	memUsageOfRows := int64(0)
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
@@ -505,7 +535,7 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
@@ -558,7 +588,17 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 // fillColValue fills the column value if it is not set in the insert statement.
 func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
 	error) {
-	if mysql.HasAutoIncrementFlag(column.Flag) {
+	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
+		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
+			vars := e.ctx.GetSessionVars()
+			sc := vars.StmtCtx
+			if !vars.StrictSQLMode {
+				sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
+			} else {
+				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
+			}
+		}
+
 		if e.lazyFillAutoID {
 			// Handle hasValue info in autoIncrement column previously for lazy handle.
 			if !hasValue {
@@ -623,11 +663,28 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			if row[i], err = e.fillColValue(ctx, row[i], i, c, hasValue[i]); err != nil {
 				return nil, err
 			}
-			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.Flag)) {
+			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
 				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
 					return nil, err
 				}
 			}
+		}
+	}
+	tbl := e.Table.Meta()
+	// Handle exchange partition
+	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+		is := e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		if !tableFound {
+			return nil, errors.Errorf("exchange partition process table by id failed")
+		}
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return nil, errors.Errorf("exchange partition process assert table partition failed")
+		}
+		err := p.CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionInfo.ExchangePartitionDefID)
+		if err != nil {
+			return nil, err
 		}
 	}
 	for i, gCol := range gCols {
@@ -673,7 +730,7 @@ func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table
 
 func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int, found bool) {
 	for i, c := range t.Cols() {
-		if mysql.HasAutoIncrementFlag(c.Flag) {
+		if mysql.HasAutoIncrementFlag(c.GetFlag()) {
 			return c, i, true
 		}
 	}
@@ -681,7 +738,7 @@ func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int,
 }
 
 func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col *table.Column) error {
-	d.SetAutoID(id, col.Flag)
+	d.SetAutoID(id, col.GetFlag())
 	var err error
 	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
 	if err == nil && d.GetInt64() < id {
@@ -844,7 +901,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 
 func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
 	var recordID int64
-	switch target.Tp {
+	switch target.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		f := d.GetFloat64()
 		if isInsert {
@@ -855,7 +912,7 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		recordID = d.GetInt64()
 	default:
-		return 0, errors.Errorf("unexpected field type [%v]", target.Tp)
+		return 0, errors.Errorf("unexpected field type [%v]", target.GetType())
 	}
 
 	return recordID, nil
@@ -888,7 +945,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
 		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
-			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
+			return types.Datum{}, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
 		}
 		err = e.rebaseAutoRandomID(ctx, recordID, &c.FieldType)
 		if err != nil {
@@ -977,7 +1034,7 @@ func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, h
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
 		if !e.ctx.GetSessionVars().AllowWriteRowID {
-			return types.Datum{}, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+			return types.Datum{}, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported")
 		}
 		err = e.rebaseImplicitRowID(ctx, recordID)
 		if err != nil {
@@ -1063,6 +1120,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if err != nil {
 		return err
 	}
+	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, txn)
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)

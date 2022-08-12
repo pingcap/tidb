@@ -16,7 +16,6 @@ package variable
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"golang.org/x/exp/slices"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
@@ -161,74 +161,10 @@ func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValu
 	return normalizedValue, nil
 }
 
-// GetSessionOrGlobalSystemVar gets a system variable.
-// If it is a session only variable, use the default value defined in code.
-// Returns error if there is no such variable.
-func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	if sv.HasNoneScope() {
-		return sv.Value, nil
-	}
-	if sv.HasSessionScope() {
-		// Populate the value to s.systems if it is not there already.
-		// in future should be already loaded on session init
-		if sv.GetSession != nil {
-			// shortcut to the getter, we won't use the value
-			return sv.GetSessionFromHook(s)
-		}
-		if _, ok := s.systems[sv.Name]; !ok {
-			if sv.HasGlobalScope() {
-				if val, err := s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name); err == nil {
-					s.systems[sv.Name] = val
-				}
-			} else {
-				s.systems[sv.Name] = sv.Value // no global scope, use default
-			}
-		}
-		return sv.GetSessionFromHook(s)
-	}
-	return sv.GetGlobalFromHook(s)
-}
-
-// GetGlobalSystemVar gets a global system variable.
-func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	return sv.GetGlobalFromHook(s)
-}
-
-// SetSessionSystemVar sets system variable and updates SessionVars states.
-func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	sVal, err := sysVar.Validate(vars, value, ScopeSession)
-	if err != nil {
-		return err
-	}
-	return vars.SetSystemVar(name, sVal)
-}
-
-// SetStmtVar sets system variable and updates SessionVars states.
-func SetStmtVar(vars *SessionVars, name string, value string) error {
-	name = strings.ToLower(name)
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	sVal, err := sysVar.Validate(vars, value, ScopeSession)
-	if err != nil {
-		return err
-	}
-	return vars.SetStmtVar(name, sVal)
-}
-
+// Deprecated: Read the value from the mysql.tidb table.
+// This supports the use case that a TiDB server *older* than 5.0 is a member of the cluster.
+// i.e. system variables such as tidb_gc_concurrency, tidb_gc_enable, tidb_gc_life_time
+// do not exist.
 func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
 	val, err := vars.GlobalVarsAccessor.GetTiDBTableValue(name)
 	if err != nil { // handle empty result or other errors
@@ -237,6 +173,10 @@ func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, erro
 	return trueFalseToOnOff(val), nil
 }
 
+// Deprecated: Set the value from the mysql.tidb table.
+// This supports the use case that a TiDB server *older* than 5.0 is a member of the cluster.
+// i.e. system variables such as tidb_gc_concurrency, tidb_gc_enable, tidb_gc_life_time
+// do not exist.
 func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
 	value = OnOffToTrueFalse(value)
 	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
@@ -399,7 +339,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
 	// The time zone's value should in [-12:59,+14:00].
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
-		d, err := types.ParseDuration(nil, s[1:], 0)
+		d, _, err := types.ParseDuration(nil, s[1:], 0)
 		if err == nil {
 			if s[0] == '-' {
 				if d.Duration > 12*time.Hour+59*time.Minute {
@@ -482,9 +422,6 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	if err != nil {
 		return err
 	}
-	if sValue > 0 {
-		return fmt.Errorf("%s's value should be less than 0", TiDBReadStaleness)
-	}
 	s.ReadStaleness = time.Duration(sValue) * time.Second
 	return nil
 }
@@ -494,7 +431,7 @@ func collectAllowFuncName4ExpressionIndex() string {
 	for funcName := range GAFunction4ExpressionIndex {
 		str = append(str, funcName)
 	}
-	sort.Strings(str)
+	slices.Sort(str)
 	return strings.Join(str, ", ")
 }
 

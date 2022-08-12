@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/server"
@@ -32,11 +33,10 @@ import (
 
 // Audit tests cannot run in parallel.
 func TestAuditLogNormal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
-	conn := server.CreateMockConn(t, store, sv)
+	conn := server.CreateMockConn(t, sv)
 	defer conn.Close()
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
@@ -50,6 +50,7 @@ func TestAuditLogNormal(t *testing.T) {
 		tables   string
 		cmd      string
 		event    plugin.GeneralEvent
+		resCnt   int
 	}
 
 	tests := []normalTest{
@@ -359,7 +360,7 @@ func TestAuditLogNormal(t *testing.T) {
 		},
 		{
 			sql:      "ROLLBACK",
-			stmtType: "RollBack",
+			stmtType: "Rollback",
 		},
 		{
 			sql:      "START TRANSACTION",
@@ -484,11 +485,13 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "show stats_histograms",
 			stmtType: "Show",
 			dbs:      "mysql",
+			tables:   "stats_histograms",
 		},
 		{
 			sql:      "show stats_meta",
 			stmtType: "Show",
 			dbs:      "mysql",
+			tables:   "stats_meta",
 		},
 		{
 			sql:      "show status",
@@ -507,6 +510,7 @@ func TestAuditLogNormal(t *testing.T) {
 		{
 			sql:      "SHOW TABLE STATUS LIKE 't1'",
 			stmtType: "Show",
+			resCnt:   3, // Start + SHOW TABLE + Internal SELECT .. FROM IS.TABLES in current session
 		},
 		{
 			sql:      "SHOW TABLES",
@@ -694,14 +698,21 @@ func TestAuditLogNormal(t *testing.T) {
 		testResults = testResults[:0]
 		errMsg := fmt.Sprintf("statement: %s", test.sql)
 		query := append([]byte{mysql.ComQuery}, []byte(test.sql)...)
-		err := conn.Dispatch(context.Background(), query)
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+		err := conn.Dispatch(ctx, query)
 		require.NoError(t, err, errMsg)
-		require.Equal(t, 2, len(testResults), errMsg)
+		resultCount := test.resCnt
+		if resultCount == 0 {
+			resultCount = 2
+		}
+		require.Equal(t, resultCount, len(testResults), errMsg)
+
 		result := testResults[0]
-		// TODO: currently, result.text is wrong.
 		require.Equal(t, "Query", result.cmd, errMsg)
 		require.Equal(t, plugin.Starting, result.event, errMsg)
-		result = testResults[1]
+
+		result = testResults[resultCount-1]
+		require.Equal(t, "Query", result.cmd, errMsg)
 		if test.text == "" {
 			require.Equal(t, test.sql, result.text, errMsg)
 		} else {
@@ -713,6 +724,11 @@ func TestAuditLogNormal(t *testing.T) {
 		require.Equal(t, test.tables, result.tables, errMsg)
 		require.Equal(t, "Query", result.cmd, errMsg)
 		require.Equal(t, plugin.Completed, result.event, errMsg)
+		for i := 1; i < resultCount-1; i++ {
+			result = testResults[i]
+			require.Equal(t, "Query", result.cmd, errMsg)
+			require.Equal(t, plugin.Completed, result.event, errMsg)
+		}
 	}
 }
 

@@ -303,10 +303,10 @@ timezone.*
     }
     ```
 
-    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example:*
+    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `t1(p1)` for example:*
 
     ```shell
-    $curl http://127.0.0.1:10080/mvcc/index/test(p1)/t1/idx/1\?a\=A
+    $curl http://127.0.0.1:10080/mvcc/index/test/t1(p1)/idx/1\?a\=A
     ```
 
    If the handle is clustered, also specify the primary key column values in the query string
@@ -456,11 +456,14 @@ timezone.*
     curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
     ```
 
+   **Note**: If you request a TiDB that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
+
 1. Get all TiDB DDL job history information.
 
     ```shell
     curl http://{TiDBIP}:10080/ddl/history
     ```
+	**Note**: When the DDL history is very very long, it may consume a lot memory and even cause OOM. Consider adding `start_job_id` and `limit`.
 
 1. Get count {number} TiDB DDL job history information.
 
@@ -468,7 +471,11 @@ timezone.*
     curl http://{TiDBIP}:10080/ddl/history?limit={number}
     ```
 
-    **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.` 
+1. Get count {number} TiDB DDL job history information, start with job {id}
+
+	```shell
+	curl http://{TIDBIP}:10080/ddl/history?start_job_id={id}&limit={number}
+	```
 
 1. Download TiDB debug info
 
@@ -556,4 +563,31 @@ timezone.*
     curl -v http://{TiDBIP}:10080/debug/ballast-object-sz
     # reset the size of the ballast object (2GB in this example)
     curl -v -X POST -d "2147483648" http://{TiDBIP}:10080/debug/ballast-object-sz
+    ```
+
+    
+1. Set deadlock history table capacity
+
+    ```shell
+    curl -X POST -d "deadlock_history_capacity={number}" http://{TiDBIP}:10080/settings
+    ```
+
+1. Set whether deadlock history (`DEADLOCKS`) collect retryable deadlocks
+
+    ```shell
+    curl -X POST -d "deadlock_history_collect_retryable={bool_val}" http://{TiDBIP}:10080/settings
+    ```
+
+1. Set transaction_id to digest mapping minimum duration threshold, only transactions which last longer than this threshold will be collected into `TRX_SUMMARY`.
+
+    ```shell
+    curl -X POST -d "transaction_id_digest_min_duration={number}" http://{TiDBIP}:10080/settings
+    ```
+    
+    Unit of duration here is ms.
+
+1. Set transaction summary table (`TRX_SUMMARY`) capacity
+
+    ```shell
+    curl -X POST -d "transaction_summary_capacity={number}" http://{TiDBIP}:10080/settings
     ```

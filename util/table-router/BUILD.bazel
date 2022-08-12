@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "table-router",
+    srcs = ["router.go"],
+    importpath = "github.com/pingcap/tidb/util/table-router",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/table-rule-selector",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "table-router_test",
+    timeout = "short",
+    srcs = ["router_test.go"],
+    embed = [":table-router"],
+    flaky = True,
+    deps = [
+        "//util/table-rule-selector",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -61,6 +61,8 @@ import (
 	hintBNL                 "BNL"
 	hintNoBNL               "NO_BNL"
 	hintHashJoin            "HASH_JOIN"
+	hintHashBuild           "HASH_BUILD"
+	hintHashProbe           "HASH_PROBE"
 	hintNoHashJoin          "NO_HASH_JOIN"
 	hintMerge               "MERGE"
 	hintNoMerge             "NO_MERGE"
@@ -94,7 +96,6 @@ import (
 	hintReadFromStorage       "READ_FROM_STORAGE"
 	hintSMJoin                "MERGE_JOIN"
 	hintBCJoin                "BROADCAST_JOIN"
-	hintBCJoinPreferLocal     "BROADCAST_JOIN_LOCAL"
 	hintStreamAgg             "STREAM_AGG"
 	hintSwapJoinInputs        "SWAP_JOIN_INPUTS"
 	hintUseIndexMerge         "USE_INDEX_MERGE"
@@ -106,6 +107,9 @@ import (
 	hintNthPlan               "NTH_PLAN"
 	hintLimitToCop            "LIMIT_TO_COP"
 	hintForceIndex            "FORCE_INDEX"
+	hintStraightJoin          "STRAIGHT_JOIN"
+	hintLeading               "LEADING"
+	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -528,19 +532,21 @@ UnsupportedTableLevelOptimizerHintName:
 |	"NO_BNL"
 /* HASH_JOIN is supported by TiDB */
 |	"NO_HASH_JOIN"
-|	"MERGE"
 |	"NO_MERGE"
 
 SupportedTableLevelOptimizerHintName:
 	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
-|	"BROADCAST_JOIN_LOCAL"
 |	"INL_JOIN"
+|	"MERGE"
 |	"INL_HASH_JOIN"
 |	"SWAP_JOIN_INPUTS"
 |	"NO_SWAP_JOIN_INPUTS"
 |	"INL_MERGE_JOIN"
 |	"HASH_JOIN"
+|	"HASH_BUILD"
+|	"HASH_PROBE"
+|	"LEADING"
 
 UnsupportedIndexLevelOptimizerHintName:
 	"INDEX_MERGE"
@@ -581,6 +587,8 @@ NullaryHintName:
 |	"NO_INDEX_MERGE"
 |	"READ_CONSISTENT_REPLICA"
 |	"IGNORE_PLAN_CACHE"
+|	"STRAIGHT_JOIN"
+|	"SEMI_JOIN_REWRITE"
 
 HintQueryType:
 	"OLAP"
@@ -602,6 +610,8 @@ Identifier:
 |	"BNL"
 |	"NO_BNL"
 |	"HASH_JOIN"
+|	"HASH_BUILD"
+|	"HASH_PROBE"
 |	"NO_HASH_JOIN"
 |	"MERGE"
 |	"NO_MERGE"
@@ -635,7 +645,6 @@ Identifier:
 |	"READ_FROM_STORAGE"
 |	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
-|	"BROADCAST_JOIN_LOCAL"
 |	"STREAM_AGG"
 |	"SWAP_JOIN_INPUTS"
 |	"USE_INDEX_MERGE"
@@ -646,6 +655,9 @@ Identifier:
 |	"USE_CASCADES"
 |	"NTH_PLAN"
 |	"FORCE_INDEX"
+|	"STRAIGHT_JOIN"
+|	"LEADING"
+|	"SEMI_JOIN_REWRITE"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

@@ -818,11 +818,11 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	if e.retTp == nil {
 		return errors.New("e.retTp of max or min should not be nil")
 	}
-	frac := e.retTp.Decimal
+	frac := e.retTp.GetDecimal()
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
-	err := p.val.Round(&p.val, frac, types.ModeHalfEven)
+	err := p.val.Round(&p.val, frac, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}
@@ -1002,7 +1002,7 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			p.isNull = false
 			continue
 		}
-		cmp := types.CompareString(input, p.val, tp.Collate)
+		cmp := types.CompareString(input, p.val, tp.GetCollate())
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
 			oldMem := len(p.val)
 			newMem := len(input)
@@ -1023,7 +1023,7 @@ func (e *maxMin4String) MergePartialResult(sctx sessionctx.Context, src, dst Par
 		return 0, nil
 	}
 	tp := e.args[0].GetType()
-	cmp := types.CompareString(p1.val, p2.val, tp.Collate)
+	cmp := types.CompareString(p1.val, p2.val, tp.GetCollate())
 	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 		p2.val, p2.isNull = p1.val, false
 	}
@@ -1039,7 +1039,7 @@ func (e *maxMin4StringSliding) AllocPartialResult() (pr PartialResult, memDelta 
 	p, memDelta := e.maxMin4String.AllocPartialResult()
 	tp := e.args[0].GetType()
 	(*partialResult4MaxMinString)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
-		return types.CompareString(i.(string), j.(string), tp.Collate)
+		return types.CompareString(i.(string), j.(string), tp.GetCollate())
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }

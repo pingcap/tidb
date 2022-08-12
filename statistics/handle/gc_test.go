@@ -24,8 +24,7 @@ import (
 )
 
 func TestGCStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
@@ -58,8 +57,7 @@ func TestGCStats(t *testing.T) {
 }
 
 func TestGCPartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
@@ -97,8 +95,7 @@ func TestGCPartition(t *testing.T) {
 }
 
 func TestGCExtendedStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set session tidb_enable_extended_stats = on")
 	testKit.MustExec("use test")
@@ -142,8 +139,7 @@ func TestGCExtendedStats(t *testing.T) {
 }
 
 func TestGCColumnStatsUsage(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
@@ -160,4 +156,18 @@ func TestGCColumnStatsUsage(t *testing.T) {
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("2"))
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("0"))
+}
+
+func TestDeleteAnalyzeJobs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int)")
+	testKit.MustExec("insert into t values (1,2),(3,4)")
+	testKit.MustExec("analyze table t")
+	rows := testKit.MustQuery("show analyze status").Rows()
+	require.Equal(t, 1, len(rows))
+	require.NoError(t, dom.StatsHandle().DeleteAnalyzeJobs(time.Now().Add(time.Second)))
+	rows = testKit.MustQuery("show analyze status").Rows()
+	require.Equal(t, 0, len(rows))
 }

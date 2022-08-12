@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -28,8 +29,7 @@ import (
 )
 
 func TestSingleTableRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -50,8 +50,7 @@ func TestSingleTableRead(t *testing.T) {
 }
 
 func TestJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -67,8 +66,7 @@ func TestJoin(t *testing.T) {
 }
 
 func TestIndexMergeReaderAndGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -81,8 +79,7 @@ func TestIndexMergeReaderAndGeneratedColumn(t *testing.T) {
 
 // issue 25045
 func TestIndexMergeReaderIssue25045(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -98,8 +95,7 @@ func TestIndexMergeReaderIssue25045(t *testing.T) {
 }
 
 func TestIssue16910(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("use test;")
@@ -118,8 +114,7 @@ func TestIssue16910(t *testing.T) {
 }
 
 func TestIndexMergeCausePanic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_index_merge = 1;")
@@ -128,8 +123,7 @@ func TestIndexMergeCausePanic(t *testing.T) {
 }
 
 func TestPartitionTableRandomIndexMerge(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_index_merge=1")
@@ -189,10 +183,10 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 }
 
 func TestIndexMergeWithPreparedStmt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));")
 	insertStr := "insert into t1 values(0, 0, 0)"
@@ -204,7 +198,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	tk.MustExec("prepare stmt1 from 'select /*+ use_index_merge(t1) */ count(1) from t1 where c1 < ? or c2 < ?';")
 	tk.MustExec("set @a = 10;")
 	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
-	tk.Session().SetSessionManager(&mockSessionManager1{
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
 	})
 	explainStr := "explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)
@@ -223,8 +217,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 }
 
 func TestIndexMergeInTransaction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -370,8 +363,7 @@ func TestIndexMergeInTransaction(t *testing.T) {
 }
 
 func TestIndexMergeReaderInTransIssue30685(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -443,8 +435,7 @@ func TestIndexMergeReaderInTransIssue30685(t *testing.T) {
 }
 
 func TestIndexMergeReaderMemTracker(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2), key(c3));")
@@ -480,8 +471,7 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 }
 
 func TestIndexMergeSplitTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("DROP TABLE IF EXISTS tab2;")
@@ -499,4 +489,82 @@ func TestIndexMergeSplitTable(t *testing.T) {
 	tk.MustExec("INSERT INTO tab2 VALUES(7,253,453.21,'gjccm',107,104.5,'lvunv');")
 	tk.MustExec("SPLIT TABLE tab2 BY (5);")
 	tk.MustQuery("SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 68 ) and col0 > 10 order by 1;").Check(testkit.Rows("0", "1", "2", "3", "4", "5", "6", "7"))
+}
+
+func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
+	// Same purpose with TestPessimisticLockOnPartition, but test IndexMergeReader.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime), key(c1), key(c2))
+			partition by range (to_days(c_datetime)) (
+				partition p0 values less than (to_days('2020-02-01')),
+				partition p1 values less than (to_days('2020-04-01')),
+				partition p2 values less than (to_days('2020-06-01')),
+				partition p3 values less than maxvalue)`)
+	tk.MustExec("create table t2 (c_datetime datetime, unique key(c_datetime))")
+	tk.MustExec("insert into t1 values ('2020-06-26 03:24:00', 1, 1), ('2020-02-21 07:15:33', 2, 2), ('2020-04-27 13:50:58', 3, 3)")
+	tk.MustExec("insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18')")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_partition_prune_mode = 'static'")
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery(`explain format='brief' select /*+ use_index_merge(t1) */ c1 from t1 join t2
+			on t1.c_datetime >= t2.c_datetime
+			where t1.c1 < 10 or t1.c2 < 10 for update`).Check(testkit.Rows(
+		"Projection 16635.64 root  test.t1.c1",
+		"└─SelectLock 16635.64 root  for update 0",
+		"  └─Projection 16635.64 root  test.t1.c1, test.t1._tidb_rowid, test.t1._tidb_tid, test.t2._tidb_rowid",
+		"    └─HashJoin 16635.64 root  CARTESIAN inner join, other cond:ge(test.t1.c_datetime, test.t2.c_datetime)",
+		"      ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
+		"      │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:c_datetime(c_datetime) keep order:false",
+		"      └─PartitionUnion(Probe) 5545.21 root  ",
+		"        ├─IndexMerge 5542.21 root  ",
+		"        │ ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, partition:p0, index:c1(c1) range:[-inf,10), keep order:false, stats:pseudo",
+		"        │ ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, partition:p0, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+		"        │ └─TableRowIDScan(Probe) 5542.21 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+		"        ├─IndexMerge 1.00 root  ",
+		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p1, index:c1(c1) range:[-inf,10), keep order:false",
+		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p1, index:c2(c2) range:[-inf,10), keep order:false",
+		"        │ └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p1 keep order:false",
+		"        ├─IndexMerge 1.00 root  ",
+		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p2, index:c1(c1) range:[-inf,10), keep order:false",
+		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p2, index:c2(c2) range:[-inf,10), keep order:false",
+		"        │ └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p2 keep order:false",
+		"        └─IndexMerge 1.00 root  ",
+		"          ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p3, index:c1(c1) range:[-inf,10), keep order:false",
+		"          ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p3, index:c2(c2) range:[-inf,10), keep order:false",
+		"          └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p3 keep order:false",
+	))
+	tk.MustQuery(`select /*+ use_index_merge(t1) */ c1 from t1 join t2
+			on t1.c_datetime >= t2.c_datetime
+			where t1.c1 < 10 or t1.c2 < 10 for update`).Sort().Check(testkit.Rows("1", "1", "1", "2", "2", "3", "3"))
+	tk1.MustExec("begin pessimistic")
+
+	ch := make(chan int32, 5)
+	go func() {
+		tk1.MustExec("update t1 set c_datetime = '2020-06-26 03:24:00' where c1 = 1")
+		ch <- 0
+		tk1.MustExec("rollback")
+		ch <- 0
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	require.Equal(t, <-ch, int32(1))
+	require.Equal(t, <-ch, int32(0))
+	<-ch // wait for goroutine to quit.
+
+	// TODO: add support for index merge reader in dynamic tidb_partition_prune_mode
 }

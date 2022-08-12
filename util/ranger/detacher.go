@@ -32,7 +32,7 @@ import (
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is CNF form.
 func detachColumnCNFConditions(sctx sessionctx.Context, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
-	var accessConditions, filterConditions []expression.Expression // nolint: prealloc
+	var accessConditions, filterConditions []expression.Expression //nolint: prealloc
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			dnfItems := expression.FlattenDNFConditions(sf)
@@ -82,14 +82,14 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 			}
 			rebuildCNF := expression.ComposeCNFCondition(sctx, columnCNFItems...)
 			accessConditions = append(accessConditions, rebuildCNF)
-		} else if checker.check(cond) {
+		} else if !checker.check(cond) {
+			return nil, true
+		} else {
 			accessConditions = append(accessConditions, cond)
 			if checker.shouldReserve {
 				hasResidualConditions = true
 				checker.shouldReserve = checker.length != types.UnspecifiedLength
 			}
-		} else {
-			return nil, true
 		}
 	}
 	return accessConditions, hasResidualConditions
@@ -122,7 +122,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 		return offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
@@ -144,7 +144,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 			}
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
@@ -167,7 +167,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 		if !ok {
 			return -1
 		}
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 			return -1
 		}
 		for _, arg := range f.GetArgs()[1:] {
@@ -505,7 +505,9 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 // accesses: The condition will be used to build range.
 // filters: filters is the part that some access conditions need to be evaluate again since it's only the prefix part of char column.
 // newConditions: We'll simplify the given conditions if there're multiple in conditions or eq conditions on the same column.
-//   e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
+//
+//	e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
+//
 // columnValues: the constant column values for all index columns. columnValues[i] is nil if cols[i] is not constant.
 // bool: indicate whether there's nil range when merging eq and in conditions.
 func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
@@ -530,7 +532,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		}
 		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
 		// Lazily compute the points for the previously visited Eq/In
-		collator := collate.GetCollator(cols[offset].GetType().Collate)
+		collator := collate.GetCollator(cols[offset].GetType().GetCollate())
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
 			points[offset] = rb.build(accesses[offset], collator)
@@ -662,12 +664,14 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 					}
 				}
 			}
-		} else if firstColumnChecker.check(item) {
+		} else if !firstColumnChecker.check(item) {
+			return FullRange(), nil, nil, true, nil
+		} else {
 			if firstColumnChecker.shouldReserve {
 				hasResidual = true
 				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
 			}
-			points := rb.build(item, collate.GetCollator(newTpSlice[0].Collate))
+			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()))
 			ranges, err := points2Ranges(d.sctx, points, newTpSlice[0])
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)
@@ -686,8 +690,6 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 					columnValues[0] = nil
 				}
 			}
-		} else {
-			return FullRange(), nil, nil, true, nil
 		}
 	}
 
@@ -882,19 +884,23 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 // AddGcColumnCond add the `tidb_shard(x) = xxx` to the condition
 // @param[in] cols          the columns of shard index, such as [tidb_shard(a), a, ...]
 // @param[in] accessCond    the conditions relative to the index and arranged by the index column order.
-//                          e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
-//                          `WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
-//                          only relative to uk's columns.
+//
+//	e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
+//	`WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
+//	only relative to uk's columns.
+//
 // @param[in] columnValues  the values of index columns in param accessCond. if accessCond is {a = 2, b = 1},
-//                          columnValues is {2, 1}. if accessCond the "IN" function like `a IN (1, 2)`, columnValues
-//                          is empty.
+//
+//	columnValues is {2, 1}. if accessCond the "IN" function like `a IN (1, 2)`, columnValues
+//	is empty.
+//
 // @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
-//            error                     if error gernerated, return error
+//
+//	error                     if error gernerated, return error
 func AddGcColumnCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
-
 	if cond := accessesCond[1]; cond != nil {
 		if f, ok := cond.(*expression.ScalarFunction); ok {
 			switch f.FuncName.L {
@@ -912,11 +918,11 @@ func AddGcColumnCond(sctx sessionctx.Context,
 // AddGcColumn4InCond add the `tidb_shard(x) = xxx` for `IN` condition
 // For param explanation, please refer to the function `AddGcColumnCond`.
 // @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
-//            error                     if error gernerated, return error
+//
+//	error                     if error gernerated, return error
 func AddGcColumn4InCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression) ([]expression.Expression, error) {
-
 	var errRes error
 	var newAccessCond []expression.Expression
 	record := make([]types.Datum, 1)
@@ -979,13 +985,13 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 // AddGcColumn4EqCond add the `tidb_shard(x) = xxx` prefix for equal condition
 // For param explanation, please refer to the function `AddGcColumnCond`.
 // @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
-//            []*valueInfo              the values of every columns in the returned new conditions
-//            error                     if error gernerated, return error
+//
+//	[]*valueInfo              the values of every columns in the returned new conditions
+//	error                     if error gernerated, return error
 func AddGcColumn4EqCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
-
 	expr := cols[0].VirtualExpr.Clone()
 	record := make([]types.Datum, len(columnValues)-1)
 
@@ -1026,7 +1032,6 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 // @retval - the new condition after adding tidb_shard() prefix
 func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
 	cols []*expression.Column) ([]expression.Expression, error) {
-
 	accesses := make([]expression.Expression, len(cols))
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
@@ -1085,18 +1090,21 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 // NeedAddGcColumn4ShardIndex check whether to add `tidb_shard(x) = xxx`
 // @param[in] cols          the columns of shard index, such as [tidb_shard(a), a, ...]
 // @param[in] accessCond    the conditions relative to the index and arranged by the index column order.
-//                          e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
-//                          `WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
-//                          only relative to uk's columns.
+//
+//	e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
+//	`WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
+//	only relative to uk's columns.
+//
 // @param[in] columnValues  the values of index columns in param accessCond. if accessCond is {a = 2, b = 1},
-//                          columnValues is {2, 1}. if accessCond the "IN" function like `a IN (1, 2)`, columnValues
-//                          is empty.
+//
+//	columnValues is {2, 1}. if accessCond the "IN" function like `a IN (1, 2)`, columnValues
+//	is empty.
+//
 // @retval -  return true if it needs to addr tidb_shard() prefix, ohterwise return false
 func NeedAddGcColumn4ShardIndex(
 	cols []*expression.Column,
 	accessCond []expression.Expression,
 	columnValues []*valueInfo) bool {
-
 	// the columns of shard index shoude be more than 2, like (tidb_shard(a),a,...)
 	// check cols and columnValues in the sub call function
 	if len(accessCond) < 2 || len(cols) < 2 {
@@ -1174,8 +1182,10 @@ func NeedAddColumn4EqCond(cols []*expression.Column,
 // (2) the first param of "IN" function should be a column not a expression like `a + b`
 // (3) the rest params of "IN" function all should be constant
 // (4) the first param of "IN" function should be the column in the expression of first index field.
-//     e.g. uk(tidb_shard(a), a). If the conditions is `WHERE b in (1, 2, 3)`, the first param of "IN" function
-//     is `b` that's not the column in `tidb_shard(a)`.
+//
+//	e.g. uk(tidb_shard(a), a). If the conditions is `WHERE b in (1, 2, 3)`, the first param of "IN" function
+//	is `b` that's not the column in `tidb_shard(a)`.
+//
 // @param  sf	"IN" function, e.g. `a IN (1, 2, 3)`
 func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Expression, sf *expression.ScalarFunction) bool {
 	if len(cols) == 0 || len(accessCond) == 0 || sf == nil {

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -50,8 +51,7 @@ func createMockTiKVStoreOptions(tiflashNum int) []mockstore.MockTiKVStoreOption 
 }
 
 func TestStoreErr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t, createMockTiKVStoreOptions(1)...)
-	defer clean()
+	store := testkit.CreateMockStore(t, createMockTiKVStoreOptions(1)...)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
@@ -62,7 +62,7 @@ func TestStoreErr(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tb := external.GetTableByName(t, tk, "test", "t")
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
@@ -86,8 +86,7 @@ func TestStoreErr(t *testing.T) {
 }
 
 func TestStoreSwitchPeer(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t, createMockTiKVStoreOptions(2)...)
-	defer clean()
+	store := testkit.CreateMockStore(t, createMockTiKVStoreOptions(2)...)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
@@ -98,7 +97,7 @@ func TestStoreSwitchPeer(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tb := external.GetTableByName(t, tk, "test", "t")
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)

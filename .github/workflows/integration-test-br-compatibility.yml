@@ -1,0 +1,60 @@
+name: BR / Compatibility Test
+
+on:
+  push:
+  # merged git action
+    branches:
+      - master
+      - 'release-[0-9].[0-9]*'
+    paths:
+      - 'br/**'
+      - '!**.html'
+      - '!**.md'
+      - '!CNAME'
+      - '!LICENSE'
+      - '!br/docs/**'
+      - '!br/tests/**'
+      - '!br/docker/**'
+  # disable pull request only keep the merge action since it is very costly to run those tests
+  # pull_request:
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+
+    - uses: actions/checkout@v2
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.18
+
+    - name: Generate compatibility test backup data
+      timeout-minutes: 15
+      run: sh br/compatibility/prepare_backup.sh
+
+    - name: Start server
+      run: |
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml rm -s -v
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml build
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml up --remove-orphans -d
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml exec -T control go mod tidy 
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml exec -T control make build_br
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml exec -T control br/tests/run_compatible.sh run
+
+    - name: Collect component log
+      if: ${{ failure() }}
+      run: |
+        tar czvf ${{ github.workspace }}/logs.tar.gz /tmp/br/docker/backup_logs/*
+
+    - uses: actions/upload-artifact@v2
+      if: ${{ failure() }}
+      with:
+        name: logs
+        path: ${{ github.workspace }}/logs.tar.gz

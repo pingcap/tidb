@@ -27,14 +27,14 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/util/cpuprofile/testutil"
-	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	// To speed up testing
 	DefProfileDuration = time.Millisecond * 200
 	goleak.VerifyTestMain(m)

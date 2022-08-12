@@ -18,21 +18,22 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPartitionBasic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(mockPumpClient{})
@@ -70,8 +71,7 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 	ctx := context.Background()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	_, err := tk.Session().Execute(ctx, "use test")
@@ -85,7 +85,7 @@ PARTITION BY RANGE ( id ) (
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
 	require.Equal(t, model.NewCIStr("p0"), p0.Name)
-	require.Nil(t, tk.Session().NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(1))
 	require.NoError(t, err)
 
@@ -128,7 +128,7 @@ PARTITION BY RANGE ( id ) (
 )`
 	_, err = tk.Session().Execute(context.Background(), createTable2)
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(22))
@@ -140,7 +140,7 @@ PARTITION BY RANGE ( id ) (
 	)`
 	_, err = tk.Session().Execute(context.Background(), createTable3)
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(11))
@@ -156,7 +156,7 @@ PARTITION BY RANGE ( id ) (
 	);`
 	_, err = tk.Session().Execute(context.Background(), createTable4)
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(1, 11))
@@ -164,8 +164,7 @@ PARTITION BY RANGE ( id ) (
 }
 
 func TestHashPartitionAddRecord(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "use test")
 	require.NoError(t, err)
@@ -179,7 +178,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(8))
 	require.NoError(t, err)
 
@@ -216,7 +215,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 	tbInfo = tb.Meta()
 	for i := 0; i < 11; i++ {
-		require.Nil(t, tk.Session().NewTxn(context.Background()))
+		require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 		rid, err = tb.AddRecord(tk.Session(), types.MakeDatums(-i))
 		require.NoError(t, err)
 		txn, err = tk.Session().Txn(true)
@@ -240,8 +239,7 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 )`
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "Drop table if exists test.t1;")
 	require.NoError(t, err)
@@ -260,8 +258,7 @@ PARTITION BY RANGE ( id ) (
 }
 
 func TestGeneratePartitionExpr(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "use test")
 	require.NoError(t, err)
@@ -293,8 +290,7 @@ func TestGeneratePartitionExpr(t *testing.T) {
 }
 
 func TestLocateRangeColumnPartitionErr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_month_data_monitor (
@@ -311,8 +307,7 @@ func TestLocateRangeColumnPartitionErr(t *testing.T) {
 }
 
 func TestLocateRangePartitionErr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_range_locate (
@@ -329,8 +324,7 @@ func TestLocateRangePartitionErr(t *testing.T) {
 }
 
 func TestLocatePartitionWithExtraHandle(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_extra (
@@ -348,8 +342,7 @@ func TestLocatePartitionWithExtraHandle(t *testing.T) {
 }
 
 func TestMultiTableUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_a (
@@ -371,8 +364,7 @@ func TestMultiTableUpdate(t *testing.T) {
 }
 
 func TestLocatePartitionSingleColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_hash_locate (
@@ -400,9 +392,48 @@ func TestLocatePartitionSingleColumn(t *testing.T) {
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
 }
 
+func TestLocatePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec(`CREATE TABLE t (
+    	id bigint(20) DEFAULT NULL,
+    	type varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL
+    	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    	PARTITION BY LIST COLUMNS(type)
+    	(PARTITION push_event VALUES IN ("PushEvent"),
+    	PARTITION watch_event VALUES IN ("WatchEvent")
+    );`)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tks := []*testkit.TestKit{tk1, tk2, tk3}
+
+	wg := util.WaitGroupWrapper{}
+	exec := func(tk0 *testkit.TestKit) {
+		tk0.MustExec("use test")
+		tk0.MustQuery("desc select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows("TableReader_7 10.00 root partition:watch_event data:Selection_6]\n[└─Selection_6 10.00 cop[tikv]  eq(test.t.type, \"WatchEvent\")]\n[  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	}
+
+	run := func(num int) {
+		tk := tks[num]
+		wg.Run(func() {
+			exec(tk)
+		})
+	}
+	for i := 0; i < len(tks); i++ {
+		run(i)
+	}
+	wg.Wait()
+}
+
 func TestTimeZoneChange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createTable := `CREATE TABLE timezone_test (
@@ -460,23 +491,21 @@ func TestTimeZoneChange(t *testing.T) {
 }
 
 func TestCreatePartitionTableNotSupport(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	_, err := tk.Exec(`create table t7 (a int) partition by range (mod((select * from t), 5)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (1 + (select * from t)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (a + row(1, 2, 3)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 }
 
 func TestRangePartitionUnderNoUnsigned(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t2;")
@@ -500,8 +529,7 @@ func TestRangePartitionUnderNoUnsigned(t *testing.T) {
 }
 
 func TestIntUint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t_uint (id bigint unsigned) partition by range (id) (
@@ -536,8 +564,7 @@ partition p4 values less than (9223372036854775806))`)
 }
 
 func TestHashPartitionAndConditionConflict(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3;")
@@ -561,8 +588,7 @@ func TestHashPartitionAndConditionConflict(t *testing.T) {
 }
 
 func TestHashPartitionInsertValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t4")
@@ -579,8 +605,7 @@ func TestHashPartitionInsertValue(t *testing.T) {
 }
 
 func TestIssue21574(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t_21574")
@@ -592,8 +617,7 @@ func TestIssue21574(t *testing.T) {
 }
 
 func TestIssue24746(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t_24746")
@@ -610,8 +634,7 @@ func TestIssue24746(t *testing.T) {
 }
 
 func TestIssue31629(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_list_partition = 1")
 	tk.MustExec("create database Issue31629")
@@ -643,7 +666,6 @@ func TestIssue31629(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-
 		createTable := "create table t1 " + tt.create
 		res, err := tk.Exec(createTable)
 		if res != nil {
@@ -673,8 +695,7 @@ func TestIssue31629(t *testing.T) {
 }
 
 func TestIssue31721(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_list_partition=on;")
@@ -685,4 +706,17 @@ func TestIssue31721(t *testing.T) {
 		"PARTITION `P2` VALUES IN ('3'));")
 	tk.MustExec("insert into t_31721 values ('1')")
 	tk.MustExec("select * from t_31721 partition(p0, p1) where col1 != 2;")
+}
+
+func TestPruneModeWarningInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats",
+		"Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
+	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
 }

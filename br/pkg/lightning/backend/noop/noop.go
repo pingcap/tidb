@@ -67,7 +67,7 @@ func (b noopBackend) ShouldPostProcess() bool {
 }
 
 // NewEncoder creates an encoder of a TiDB table.
-func (b noopBackend) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+func (b noopBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
 	return noopEncoder{}, nil
 }
 
@@ -79,7 +79,7 @@ func (b noopBackend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig,
 	return nil
 }
 
-func (b noopBackend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize int64) error {
+func (b noopBackend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	return nil
 }
 
@@ -97,14 +97,14 @@ func (b noopBackend) CheckRequirements(context.Context, *backend.CheckCtx) error
 // name. The returned table info does not need to be precise if the encoder,
 // is not requiring them, but must at least fill in the following fields for
 // TablesFromMeta to succeed:
-//  - Name
-//  - State (must be model.StatePublic)
-//  - ID
-//  - Columns
-//     * Name
-//     * State (must be model.StatePublic)
-//     * Offset (must be 0, 1, 2, ...)
-//  - PKIsHandle (true = do not generate _tidb_rowid)
+//   - Name
+//   - State (must be model.StatePublic)
+//   - ID
+//   - Columns
+//   - Name
+//   - State (must be model.StatePublic)
+//   - Offset (must be 0, 1, 2, ...)
+//   - PKIsHandle (true = do not generate _tidb_rowid)
 func (b noopBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return nil, nil
 }
@@ -153,6 +153,10 @@ func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.T
 
 func (b noopBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
 	return nil
+}
+
+func (b noopBackend) TotalMemoryConsume() int64 {
+	return 0
 }
 
 type noopEncoder struct{}

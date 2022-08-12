@@ -23,10 +23,6 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -39,14 +35,19 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	tmock "github.com/pingcap/tidb/util/mock"
+	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
 type restoreSchemaSuite struct {
 	suite.Suite
-	ctx        context.Context
-	rc         *Controller
-	controller *gomock.Controller
-	tableInfos []*model.TableInfo
+	ctx              context.Context
+	rc               *Controller
+	controller       *gomock.Controller
+	tableInfos       []*model.TableInfo
+	infoGetter       *PreRestoreInfoGetterImpl
+	targetInfoGetter *TargetInfoGetterImpl
 }
 
 func TestRestoreSchemaSuite(t *testing.T) {
@@ -104,14 +105,29 @@ func (s *restoreSchemaSuite) SetupSuite() {
 	config.Mydumper.CharacterSet = "utf8mb4"
 	config.App.RegionConcurrency = 8
 	mydumpLoader, err := mydump.NewMyDumpLoaderWithStore(ctx, config, store)
-	require.NoError(s.T(), err)
+	s.Require().NoError(err)
+
+	dbMetas := mydumpLoader.GetDatabases()
+	targetInfoGetter := &TargetInfoGetterImpl{
+		cfg: config,
+	}
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:              config,
+		srcStorage:       store,
+		targetInfoGetter: targetInfoGetter,
+		dbMetas:          dbMetas,
+	}
+	preInfoGetter.Init()
 	s.rc = &Controller{
 		checkTemplate: NewSimpleTemplate(),
 		cfg:           config,
 		store:         store,
-		dbMetas:       mydumpLoader.GetDatabases(),
+		dbMetas:       dbMetas,
 		checkpointsDB: &checkpoints.NullCheckpointsDB{},
+		preInfoGetter: preInfoGetter,
 	}
+	s.infoGetter = preInfoGetter
+	s.targetInfoGetter = targetInfoGetter
 }
 
 //nolint:interfacer // change test case signature might cause Check failed to find this test case?
@@ -123,7 +139,9 @@ func (s *restoreSchemaSuite) SetupTest() {
 		AnyTimes().
 		Return(s.tableInfos, nil)
 	mockBackend.EXPECT().Close()
-	s.rc.backend = backend.MakeBackend(mockBackend)
+	theBackend := backend.MakeBackend(mockBackend)
+	s.rc.backend = theBackend
+	s.targetInfoGetter.backend = theBackend
 
 	mockDB, sqlMock, err := sqlmock.New()
 	require.NoError(s.T(), err)
@@ -141,6 +159,7 @@ func (s *restoreSchemaSuite) SetupTest() {
 		GetParser().
 		AnyTimes().
 		Return(parser)
+	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
 	s.rc.tidbGlue = mockTiDBGlue
 }
 
@@ -153,6 +172,7 @@ func (s *restoreSchemaSuite) TearDownTest() {
 		AnyTimes().
 		Return(exec)
 	s.rc.tidbGlue = mockTiDBGlue
+	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
 
 	s.rc.Close()
 	s.controller.Finish()
@@ -214,6 +234,7 @@ func (s *restoreSchemaSuite) TestRestoreSchemaFailed() {
 		AnyTimes().
 		Return(parser)
 	s.rc.tidbGlue = mockTiDBGlue
+	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
 	err = s.rc.restoreSchema(s.ctx)
 	require.Error(s.T(), err)
 	require.True(s.T(), errors.ErrorEqual(err, injectErr))
@@ -269,6 +290,7 @@ func (s *restoreSchemaSuite) TestRestoreSchemaContextCancel() {
 		AnyTimes().
 		Return(parser)
 	s.rc.tidbGlue = mockTiDBGlue
+	s.targetInfoGetter.targetDBGlue = mockTiDBGlue
 	err = s.rc.restoreSchema(childCtx)
 	cancel()
 	require.Error(s.T(), err)

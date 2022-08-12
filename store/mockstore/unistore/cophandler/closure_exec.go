@@ -162,7 +162,8 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 
 // buildClosureExecutor build a closureExecutor for the DAGRequest.
 // Currently the composition of executors are:
-// 	tableScan|indexScan [selection] [topN | limit | agg]
+//
+//	tableScan|indexScan [selection] [topN | limit | agg]
 func buildClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureExecutor, error) {
 	scanExec, err := getScanExec(dagReq)
 	if err != nil {
@@ -199,7 +200,8 @@ func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, p
 func isScanNode(executor *tipb.Executor) bool {
 	switch executor.Tp {
 	case tipb.ExecType_TypeTableScan,
-		tipb.ExecType_TypeIndexScan:
+		tipb.ExecType_TypeIndexScan,
+		tipb.ExecType_TypePartitionTableScan:
 		return true
 	default:
 		return false
@@ -263,6 +265,13 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 			e.idxScanCtx.prevVals = make([][]byte, e.idxScanCtx.columnLen)
 		}
 		e.scanType = IndexScan
+	case tipb.ExecType_TypePartitionTableScan:
+		dagCtx.setColumnInfo(scanExec.PartitionTableScan.Columns)
+		dagCtx.primaryCols = scanExec.PartitionTableScan.PrimaryColumnIds
+		tblScan := scanExec.PartitionTableScan
+		e.unique = true
+		e.scanCtx.desc = tblScan.Desc
+		e.scanType = TableScan
 	default:
 		panic(fmt.Sprintf("unknown first executor type %s", scanExec.Tp))
 	}
@@ -294,9 +303,18 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 
 	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
-	if lastColumn.GetColumnId() == model.ExtraPidColID {
-		lastColumn = e.columnInfos[len(e.columnInfos)-2]
+
+	// Here it is required that ExtraPhysTblID is last
+	if lastColumn.GetColumnId() == model.ExtraPhysTblID {
 		e.idxScanCtx.columnLen--
+		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
+	}
+
+	// Here it is required that ExtraPidColID
+	// is after all other columns except ExtraPhysTblID
+	if lastColumn.GetColumnId() == model.ExtraPidColID {
+		e.idxScanCtx.columnLen--
+		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
 	}
 
 	if len(e.idxScanCtx.primaryColumnIds) == 0 {
@@ -838,6 +856,12 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Add ExtraPhysTblID if requested
+	// Assumes it is always last!
+	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+		tblID := tablecodec.DecodeTableID(key)
+		e.scanCtx.chk.AppendInt64(len(e.columnInfos)-1, tblID)
+	}
 	incRow = true
 	return nil
 }
@@ -909,6 +933,12 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 				return errors.Trace(err)
 			}
 		}
+	}
+	// Add ExtraPhysTblID if requested
+	// Assumes it is always last!
+	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+		tblID := tablecodec.DecodeTableID(key)
+		chk.AppendInt64(len(e.columnInfos)-1, tblID)
 	}
 	gotRow = true
 	return nil

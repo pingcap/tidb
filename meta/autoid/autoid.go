@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -234,7 +234,8 @@ func (alloc *allocator) End() int64 {
 func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 	var autoID int64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
 		autoID, err1 = alloc.getIDAccessor(txn).Get()
 		if err1 != nil {
@@ -271,6 +272,7 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 	}
 	var newBase, newEnd uint64
 	startTime := time.Now()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
@@ -282,8 +284,8 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 		}
 		uCurrentEnd := uint64(currentEnd)
 		if allocIDs {
-			newBase = mathutil.MaxUint64(uCurrentEnd, requiredBase)
-			newEnd = mathutil.MinUint64(math.MaxUint64-uint64(alloc.step), newBase) + uint64(alloc.step)
+			newBase = mathutil.Max(uCurrentEnd, requiredBase)
+			newEnd = mathutil.Min(math.MaxUint64-uint64(alloc.step), newBase) + uint64(alloc.step)
 		} else {
 			if uCurrentEnd >= requiredBase {
 				newBase = uCurrentEnd
@@ -330,6 +332,7 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 	}
 	var newBase, newEnd int64
 	startTime := time.Now()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
@@ -340,8 +343,8 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 			return err1
 		}
 		if allocIDs {
-			newBase = mathutil.MaxInt64(currentEnd, requiredBase)
-			newEnd = mathutil.MinInt64(math.MaxInt64-alloc.step, newBase) + alloc.step
+			newBase = mathutil.Max(currentEnd, requiredBase)
+			newEnd = mathutil.Min(math.MaxInt64-alloc.step, newBase) + alloc.step
 		} else {
 			if currentEnd >= requiredBase {
 				newBase = currentEnd
@@ -370,7 +373,8 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 func (alloc *allocator) rebase4Sequence(requiredBase int64) (int64, bool, error) {
 	startTime := time.Now()
 	alreadySatisfied := false
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		currentEnd, err := acc.SequenceValue().Get()
 		if err != nil {
@@ -427,7 +431,8 @@ func (alloc *allocator) ForceRebase(requiredBase int64) error {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		idAcc := alloc.getIDAccessor(txn)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -559,7 +564,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // but actually we don't care about it, all we need is to calculate the new autoID corresponding to the
 // increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
 // so the first autoID should be 9, then add increment to it to get 13.
-func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
 	if alloc.tbID == 0 {
 		return 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
@@ -579,7 +584,7 @@ func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset i
 	return alloc.alloc4Signed(ctx, n, increment, offset)
 }
 
-func (alloc *allocator) AllocSeqCache() (int64, int64, int64, error) {
+func (alloc *allocator) AllocSeqCache() (min int64, max int64, round int64, err error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	return alloc.alloc4Sequence()
@@ -610,65 +615,67 @@ func CalcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 }
 
 // CalcSequenceBatchSize calculate the next sequence batch size.
-func CalcSequenceBatchSize(base, size, increment, offset, MIN, MAX int64) (int64, error) {
+func CalcSequenceBatchSize(base, size, increment, offset, min, max int64) (int64, error) {
 	// The sequence is positive growth.
 	if increment > 0 {
 		if increment == 1 {
 			// Sequence is already allocated to the end.
-			if base >= MAX {
+			if base >= max {
 				return 0, ErrAutoincReadFailed
 			}
 			// The rest of sequence < cache size, return the rest.
-			if MAX-base < size {
-				return MAX - base, nil
+			if max-base < size {
+				return max - base, nil
 			}
 			// The rest of sequence is adequate.
 			return size, nil
 		}
-		nr, ok := SeekToFirstSequenceValue(base, increment, offset, MIN, MAX)
+		nr, ok := SeekToFirstSequenceValue(base, increment, offset, min, max)
 		if !ok {
 			return 0, ErrAutoincReadFailed
 		}
 		// The rest of sequence < cache size, return the rest.
-		if MAX-nr < (size-1)*increment {
-			return MAX - base, nil
+		if max-nr < (size-1)*increment {
+			return max - base, nil
 		}
 		return (nr - base) + (size-1)*increment, nil
 	}
 	// The sequence is negative growth.
 	if increment == -1 {
-		if base <= MIN {
+		if base <= min {
 			return 0, ErrAutoincReadFailed
 		}
-		if base-MIN < size {
-			return base - MIN, nil
+		if base-min < size {
+			return base - min, nil
 		}
 		return size, nil
 	}
-	nr, ok := SeekToFirstSequenceValue(base, increment, offset, MIN, MAX)
+	nr, ok := SeekToFirstSequenceValue(base, increment, offset, min, max)
 	if !ok {
 		return 0, ErrAutoincReadFailed
 	}
 	// The rest of sequence < cache size, return the rest.
-	if nr-MIN < (size-1)*(-increment) {
-		return base - MIN, nil
+	if nr-min < (size-1)*(-increment) {
+		return base - min, nil
 	}
 	return (base - nr) + (size-1)*(-increment), nil
 }
 
-// SeekToFirstSequenceValue seeks to the next valid value (must be in range of [MIN, MAX]),
+// SeekToFirstSequenceValue seeks to the next valid value (must be in range of [MIN, max]),
 // the bool indicates whether the first value is got.
 // The seeking formula is describe as below:
-//  nr  := (base + increment - offset) / increment
+//
+//	nr  := (base + increment - offset) / increment
+//
 // first := nr*increment + offset
 // Because formula computation will overflow Int64, so we transfer it to uint64 for distance computation.
-func SeekToFirstSequenceValue(base, increment, offset, MIN, MAX int64) (int64, bool) {
+func SeekToFirstSequenceValue(base, increment, offset, min, max int64) (int64, bool) {
 	if increment > 0 {
 		// Sequence is already allocated to the end.
-		if base >= MAX {
+		if base >= max {
 			return 0, false
 		}
-		uMax := EncodeIntToCmpUint(MAX)
+		uMax := EncodeIntToCmpUint(max)
 		uBase := EncodeIntToCmpUint(base)
 		uOffset := EncodeIntToCmpUint(offset)
 		uIncrement := uint64(increment)
@@ -687,10 +694,10 @@ func SeekToFirstSequenceValue(base, increment, offset, MIN, MAX int64) (int64, b
 		return first, true
 	}
 	// Sequence is already allocated to the end.
-	if base <= MIN {
+	if base <= min {
 		return 0, false
 	}
-	uMin := EncodeIntToCmpUint(MIN)
+	uMin := EncodeIntToCmpUint(min)
 	uBase := EncodeIntToCmpUint(base)
 	uOffset := EncodeIntToCmpUint(offset)
 	uIncrement := uint64(-increment)
@@ -723,7 +730,7 @@ func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
 	return nr
 }
 
-func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		if err := alloc.rebase4Signed(ctx, offset-1, true); err != nil {
@@ -758,6 +765,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			}()
 		}
 
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 				span1 := span.Tracer().StartSpan("alloc.alloc4Signed", opentracing.ChildOf(span.Context()))
@@ -780,7 +788,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, nextStep)
+			tmpStep := mathutil.Min(math.MaxInt64-newBase, nextStep)
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
@@ -807,12 +815,12 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", alloc.tbID),
 		zap.Int64("database ID", alloc.dbID))
-	min := alloc.base
+	min = alloc.base
 	alloc.base += n1
 	return min, alloc.base, nil
 }
 
-func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset-1) > uint64(alloc.base) {
 		if err := alloc.rebase4Unsigned(ctx, uint64(offset-1), true); err != nil {
@@ -847,6 +855,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 			}()
 		}
 
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 				span1 := span.Tracer().StartSpan("alloc.alloc4Unsigned", opentracing.ChildOf(span.Context()))
@@ -869,7 +878,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(nextStep)))
+			tmpStep := int64(mathutil.Min(math.MaxUint64-uint64(newBase), uint64(nextStep)))
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
@@ -896,7 +905,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", alloc.tbID),
 		zap.Int64("database ID", alloc.dbID))
-	min := alloc.base
+	min = alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
 	return min, alloc.base, nil
@@ -931,7 +940,8 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 
 	var newBase, newEnd int64
 	startTime := time.Now()
-	err = kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		var (
 			err1    error
@@ -1056,9 +1066,11 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 
 // ShardIDLayout is used to calculate the bits length of different segments in auto id.
 // Generally, an auto id is consist of 3 segments: sign bit, shard bits and incremental bits.
-// Take ``a BIGINT AUTO_INCREMENT PRIMARY KEY`` as an example, assume that the `shard_row_id_bits` = 5,
+// Take "a BIGINT AUTO_INCREMENT PRIMARY KEY" as an example, assume that the `shard_row_id_bits` = 5,
 // the layout is like
-//  | [sign_bit] (1 bit) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
+//
+//	| [sign_bit] (1 bit) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
+//
 // Please always use NewShardIDLayout() to instantiate.
 type ShardIDLayout struct {
 	FieldType *types.FieldType
@@ -1073,9 +1085,9 @@ type ShardIDLayout struct {
 func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayout {
 	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
 	incrementalBits := typeBitsLength - shardBits
-	hasSignBit := !mysql.HasUnsignedFlag(fieldType.Flag)
+	hasSignBit := !mysql.HasUnsignedFlag(fieldType.GetFlag())
 	if hasSignBit {
-		incrementalBits -= 1
+		incrementalBits--
 	}
 	return &ShardIDLayout{
 		FieldType:       fieldType,

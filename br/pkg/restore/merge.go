@@ -5,23 +5,17 @@ package restore
 import (
 	"strings"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 )
 
 const (
-	// DefaultMergeRegionSizeBytes is the default region split size, 96MB.
-	// See https://github.com/tikv/tikv/blob/v4.0.8/components/raftstore/src/coprocessor/config.rs#L35-L38
-	DefaultMergeRegionSizeBytes uint64 = 96 * units.MiB
-
-	// DefaultMergeRegionKeyCount is the default region key count, 960000.
-	DefaultMergeRegionKeyCount uint64 = 960000
-
 	writeCFName   = "write"
 	defaultCFName = "default"
 )
@@ -37,6 +31,47 @@ type MergeRangesStat struct {
 	MergedRegions        int
 	MergedRegionKeysAvg  int
 	MergedRegionBytesAvg int
+}
+
+// NeedsMerge checks whether two ranges needs to be merged.
+func NeedsMerge(left, right *rtree.Range, splitSizeBytes, splitKeyCount uint64) bool {
+	leftBytes, leftKeys := left.BytesAndKeys()
+	rightBytes, rightKeys := right.BytesAndKeys()
+	if rightBytes == 0 {
+		return true
+	}
+	if leftBytes+rightBytes > splitSizeBytes {
+		return false
+	}
+	if leftKeys+rightKeys > splitKeyCount {
+		return false
+	}
+	tableID1, indexID1, isRecord1, err1 := tablecodec.DecodeKeyHead(kv.Key(left.StartKey))
+	tableID2, indexID2, isRecord2, err2 := tablecodec.DecodeKeyHead(kv.Key(right.StartKey))
+
+	// Failed to decode the file key head... can this happen?
+	if err1 != nil || err2 != nil {
+		log.Warn("Failed to parse the key head for merging files, skipping",
+			logutil.Key("left-start-key", left.StartKey),
+			logutil.Key("right-start-key", right.StartKey),
+			logutil.AShortError("left-err", err1),
+			logutil.AShortError("right-err", err2),
+		)
+		return false
+	}
+	// Merge if they are both record keys
+	if isRecord1 && isRecord2 {
+		// Do not merge ranges in different tables.
+		return tableID1 == tableID2
+	}
+	// If they are all index keys...
+	if !isRecord1 && !isRecord2 {
+		// Do not merge ranges in different indexes even if they are in the same
+		// table, as rewrite rule only supports rewriting one pattern.
+		// Merge left and right if they are in the same index.
+		return tableID1 == tableID2 && indexID1 == indexID2
+	}
+	return false
 }
 
 // MergeFileRanges returns ranges of the files are merged based on
@@ -94,38 +129,9 @@ func MergeFileRanges(
 		}
 	}
 
-	needMerge := func(left, right *rtree.Range) bool {
-		leftBytes, leftKeys := left.BytesAndKeys()
-		rightBytes, rightKeys := right.BytesAndKeys()
-		if rightBytes == 0 {
-			return true
-		}
-		if leftBytes+rightBytes > splitSizeBytes {
-			return false
-		}
-		if leftKeys+rightKeys > splitKeyCount {
-			return false
-		}
-		// Do not merge ranges in different tables.
-		if tablecodec.DecodeTableID(kv.Key(left.StartKey)) != tablecodec.DecodeTableID(kv.Key(right.StartKey)) {
-			return false
-		}
-		// Do not merge ranges in different indexes even if they are in the same
-		// table, as rewrite rule only supports rewriting one pattern.
-		// tableID, indexID, indexValues, err
-		_, indexID1, _, err1 := tablecodec.DecodeIndexKey(kv.Key(left.StartKey))
-		_, indexID2, _, err2 := tablecodec.DecodeIndexKey(kv.Key(right.StartKey))
-		// If both of them are index keys, ...
-		if err1 == nil && err2 == nil {
-			// Merge left and right if they are in the same index.
-			return indexID1 == indexID2
-		}
-		// Otherwise, merge if they are both record keys
-		return err1 != nil && err2 != nil
-	}
 	sortedRanges := rangeTree.GetSortedRanges()
 	for i := 1; i < len(sortedRanges); {
-		if !needMerge(&sortedRanges[i-1], &sortedRanges[i]) {
+		if !NeedsMerge(&sortedRanges[i-1], &sortedRanges[i], splitSizeBytes, splitKeyCount) {
 			i++
 			continue
 		}

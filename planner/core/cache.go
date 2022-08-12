@@ -16,7 +16,7 @@ package core
 
 import (
 	"math"
-	"sync/atomic"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -35,50 +35,33 @@ import (
 )
 
 var (
-	// preparedPlanCacheEnabledValue stores the global config "prepared-plan-cache-enabled".
-	// The value is false unless "prepared-plan-cache-enabled" is true in configuration.
-	preparedPlanCacheEnabledValue int32 = 0
-	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
-	PreparedPlanCacheCapacity uint = 1000
-	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
-	PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
 
-const (
-	preparedPlanCacheEnabled = 1
-	preparedPlanCacheUnable  = 0
-)
-
-// SetPreparedPlanCache sets isEnabled to true, then prepared plan cache is enabled.
-func SetPreparedPlanCache(isEnabled bool) {
-	if isEnabled {
-		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheEnabled)
-	} else {
-		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheUnable)
-	}
-}
-
-// PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
-func PreparedPlanCacheEnabled() bool {
-	isEnabled := atomic.LoadInt32(&preparedPlanCacheEnabledValue)
-	return isEnabled == preparedPlanCacheEnabled
-}
-
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
-// Put the parameters that may affect the plan in planCacheValue, such as bindSQL.
+// Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
 // At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
 type planCacheKey struct {
-	database             string
-	connID               uint64
-	pstmtID              uint32
-	schemaVersion        int64
-	sqlMode              mysql.SQLMode
-	timezoneOffset       int
-	isolationReadEngines map[kv.StoreType]struct{}
-	selectLimit          uint64
+	database      string
+	connID        uint64
+	stmtText      string
+	schemaVersion int64
+
+	// Only be set in rc or for update read and leave it default otherwise.
+	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
+	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
+	// the plan in rc or for update read.
+	lastUpdatedSchemaVersion int64
+	sqlMode                  mysql.SQLMode
+	timezoneOffset           int
+	isolationReadEngines     map[kv.StoreType]struct{}
+	selectLimit              uint64
+	bindSQL                  string
+	inRestrictedSQL          bool
+	restrictedReadOnly       bool
+	TiDBSuperReadOnly        bool
 
 	hash []byte
 }
@@ -95,8 +78,9 @@ func (key *planCacheKey) Hash() []byte {
 		}
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
-		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
+		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
+		key.hash = codec.EncodeInt(key.hash, key.lastUpdatedSchemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
 		if _, ok := key.isolationReadEngines[kv.TiDB]; ok {
@@ -109,18 +93,22 @@ func (key *planCacheKey) Hash() []byte {
 			key.hash = append(key.hash, kv.TiFlash.Name()...)
 		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
+		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 	}
 	return key.hash
 }
 
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
 // so we can reuse Key instead of new every time.
-func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
+func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
 	psStmtKey, isPsStmtKey := key.(*planCacheKey)
 	if !isPsStmtKey {
 		return
 	}
-	psStmtKey.pstmtID = pstmtID
+	psStmtKey.stmtText = stmtText
 	psStmtKey.schemaVersion = schemaVersion
 	psStmtKey.isolationReadEngines = make(map[kv.StoreType]struct{})
 	for k, v := range isolationReadEngines {
@@ -130,46 +118,70 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int6
 }
 
 // NewPlanCacheKey creates a new planCacheKey object.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
+// Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
+// differentiate the cache key. In other cases, it will be 0.
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
+	lastUpdatedSchemaVersion int64, bindSQL string) (kvcache.Key, error) {
+	if stmtText == "" {
+		return nil, errors.New("no statement text")
+	}
+	if schemaVersion == 0 {
+		return nil, errors.New("Schema version uninitialized")
+	}
+	if stmtDB == "" {
+		stmtDB = sessionVars.CurrentDB
+	}
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
 	key := &planCacheKey{
-		database:             sessionVars.CurrentDB,
-		connID:               sessionVars.ConnectionID,
-		pstmtID:              pstmtID,
-		schemaVersion:        schemaVersion,
-		sqlMode:              sessionVars.SQLMode,
-		timezoneOffset:       timezoneOffset,
-		isolationReadEngines: make(map[kv.StoreType]struct{}),
-		selectLimit:          sessionVars.SelectLimit,
+		database:                 stmtDB,
+		connID:                   sessionVars.ConnectionID,
+		stmtText:                 stmtText,
+		schemaVersion:            schemaVersion,
+		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
+		sqlMode:                  sessionVars.SQLMode,
+		timezoneOffset:           timezoneOffset,
+		isolationReadEngines:     make(map[kv.StoreType]struct{}),
+		selectLimit:              sessionVars.SelectLimit,
+		bindSQL:                  bindSQL,
+		inRestrictedSQL:          sessionVars.InRestrictedSQL,
+		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
+		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
 	}
-	return key
+	return key, nil
 }
 
 // FieldSlice is the slice of the types.FieldType
 type FieldSlice []types.FieldType
 
-// Equal compares FieldSlice with []*types.FieldType
-// Currently this is only used in plan cache to invalidate cache when types of variables are different.
-func (s FieldSlice) Equal(tps []*types.FieldType) bool {
+// CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
+// Currently this is only used in plan cache to check whether the types of parameters are compatible.
+// If the types of parameters are compatible, we can use the cached plan.
+func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 	if len(s) != len(tps) {
 		return false
 	}
 	for i := range tps {
 		// We only use part of logic of `func (ft *FieldType) Equal(other *FieldType)` here because (1) only numeric and
 		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
-		tpEqual := (s[i].Tp == tps[i].Tp) ||
-			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
-			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar) ||
+		tpEqual := (s[i].GetType() == tps[i].GetType()) ||
+			(s[i].GetType() == mysql.TypeVarchar && tps[i].GetType() == mysql.TypeVarString) ||
+			(s[i].GetType() == mysql.TypeVarString && tps[i].GetType() == mysql.TypeVarchar) ||
 			// TypeNull should be considered the same as other types.
-			(s[i].Tp == mysql.TypeNull || tps[i].Tp == mysql.TypeNull)
-		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate ||
-			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].Flag) != mysql.HasUnsignedFlag(tps[i].Flag)) {
+			(s[i].GetType() == mysql.TypeNull || tps[i].GetType() == mysql.TypeNull)
+		if !tpEqual || s[i].GetCharset() != tps[i].GetCharset() || s[i].GetCollate() != tps[i].GetCollate() ||
+			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].GetFlag()) != mysql.HasUnsignedFlag(tps[i].GetFlag())) {
+			return false
+		}
+		// When the type is decimal, we should compare the Flen and Decimal.
+		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
+		// We assume here that there is no correctness problem when the precision of the parameters is less than the precision of the parameters in the cache.
+		if tpEqual && s[i].GetType() == mysql.TypeNewDecimal && !(s[i].GetFlen() >= tps[i].GetFlen() && s[i].GetDecimal() >= tps[i].GetDecimal()) {
 			return false
 		}
 	}
@@ -181,32 +193,36 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	UserVarTypes      FieldSlice
-	BindSQL           string
+	TxtVarTypes       FieldSlice
+}
+
+func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
+	return v.TxtVarTypes.CheckTypesCompatibility4PC(txtVarTps)
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType, bindSQL string) *PlanCacheValue {
+func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
+	txtVarTps []*types.FieldType) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userVarTypes := make([]types.FieldType, len(userVarTps))
-	for i, tp := range userVarTps {
+	userVarTypes := make([]types.FieldType, len(txtVarTps))
+	for i, tp := range txtVarTps {
 		userVarTypes[i] = *tp
 	}
 	return &PlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
-		UserVarTypes:      userVarTypes,
-		BindSQL:           bindSQL,
+		TxtVarTypes:       userVarTypes,
 	}
 }
 
-// CachedPrepareStmt store prepared ast from PrepareExec and other related fields
-type CachedPrepareStmt struct {
+// PlanCacheStmt store prepared ast from PrepareExec and other related fields
+type PlanCacheStmt struct {
 	PreparedAst         *ast.Prepared
+	StmtDB              string // which DB the statement will be processed over
 	VisitInfos          []visitInfo
 	ColumnInfos         interface{}
 	Executor            interface{}
@@ -218,23 +234,27 @@ type CachedPrepareStmt struct {
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
 	NormalizedSQL4PC    string
 	SQLDigest4PC        string
+
+	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
+	//  for the query `select * from t where a>1 and b<?`, then
+	//  NormalizedSQL: select * from `t` where `a` > ? and `b` < ? --> constants are normalized to '?',
+	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
+	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
+	StmtText string
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
-func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
-	var ok bool
-	execID := stmt.ExecID
-	if stmt.Name != "" {
-		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
-			return nil, ErrStmtNotFound
-		}
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCacheStmt, error) {
+	if stmt.PrepStmt != nil {
+		return stmt.PrepStmt.(*PlanCacheStmt), nil
 	}
-	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-		preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+	if stmt.Name != "" {
+		prepStmt, err := vars.GetPreparedStmtByName(stmt.Name)
+		if err != nil {
+			return nil, err
 		}
-		return preparedObj, nil
+		stmt.PrepStmt = prepStmt
+		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, ErrStmtNotFound
 }

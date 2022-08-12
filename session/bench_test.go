@@ -27,10 +27,11 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -44,7 +45,7 @@ var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.Log.EnableSlowLog.Store(false)
+		cfg.Instance.EnableSlowLog.Store(false)
 	})
 
 	store, err := mockstore.NewMockStore()
@@ -322,10 +323,11 @@ func BenchmarkPreparedPointGet(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	params := expression.Args2Expressions4Test(64)
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(64)})
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -445,6 +447,7 @@ func BenchmarkInsertWithIndex(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
+	mustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key, col int, index idx (col))")
 	b.ResetTimer()
@@ -1692,7 +1695,7 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-
+	mustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
 	mustExecute(se, `set @@tmp_table_size = 1000000000`)
 	mustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
@@ -1806,13 +1809,18 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	prepStmt, err := se.GetSessionVars().GetPreparedStmtByID(stmtID)
+	if err != nil {
+		b.Fatal(err)
+	}
 
-	args := []types.Datum{types.NewDatum(3401544)}
+	args := expression.Args2Expressions4Test(3401544)
 	is := se.GetInfoSchema()
 
 	b.ResetTimer()
+	stmtExec := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtID, is.(infoschema.InfoSchema), 0, args)
+		_, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, is.(infoschema.InfoSchema))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1823,7 +1831,8 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 // TestBenchDaily collects the daily benchmark test result and generates a json output file.
 // The format of the json output is described by the BenchOutput.
 // Used by this command in the Makefile
-// 	make bench-daily TO=xxx.json
+//
+//	make bench-daily TO=xxx.json
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkPreparedPointGet,

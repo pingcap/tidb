@@ -23,15 +23,21 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/testkit/testsetup"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	RunInGoTest = true // flag for NewServer to known it is running in test environment
+	// Enable TopSQL for all test, and check the resource tag for each RPC request.
+	// This is used to detect which codes are not tracked by TopSQL.
+	topsqlstate.EnableTopSQL()
+	unistore.CheckResourceTagForTopSQLInGoTest = true
 
 	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
 	// Set schema lease to avoid it from making CI slow.
@@ -51,6 +57,7 @@ func TestMain(m *testing.M) {
 	}
 
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("time.Sleep"),
 		goleak.IgnoreTopFunction("database/sql.(*Tx).awaitDone"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),

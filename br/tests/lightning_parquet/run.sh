@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2019 PingCAP, Inc.
 #
@@ -21,7 +21,7 @@ check_row_count() {
     check_contains "count(*): $2"
 }
 
-for BACKEND in local importer tidb; do
+for BACKEND in local tidb; do
     if [ "$BACKEND" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi
@@ -46,6 +46,8 @@ for BACKEND in local importer tidb; do
 
     run_sql 'select w_name from test.warehouse;'
     check_contains "w_name: eLNEDIW"
+    run_sql 'select w_bool from test.warehouse;'
+    check_contains "w_bool: 1"
 
     run_sql 'select c_since, c_discount from test.customer where c_id = 20;'
     check_contains "c_since: 2020-09-10 20:17:16"
