@@ -155,6 +155,7 @@ func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName st
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer cpdb.Close()
 
 	return errors.Trace(cpdb.IgnoreErrorCheckpoint(ctx, tableName))
@@ -165,6 +166,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer cpdb.Close()
 
 	target, err := restore.NewTiDBManager(ctx, cfg.TiDB, tls)
@@ -222,6 +224,7 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer cpdb.Close()
 
 	if err := os.MkdirAll(dumpFolder, 0o750); err != nil {
@@ -262,7 +265,7 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 }
 
 func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error) {
-	//nolint:prealloc // This is a placeholder.
+	//nolint: prealloc
 	var tables []string
 	defer func() {
 		if err2 == nil {
@@ -288,6 +291,7 @@ func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer cpdb.Close()
 
 	tableWithEngine, err := cpdb.GetLocalStoringTables(ctx)

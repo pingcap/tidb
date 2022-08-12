@@ -25,12 +25,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,13 +52,14 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
-	return &TestKit{
+	tk := &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
 		t:       t,
 		store:   store,
-		session: newSession(t, store),
 	}
+	tk.RefreshSession()
+	return tk
 }
 
 // NewTestKitWithSession returns a new *TestKit.
@@ -75,11 +76,15 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = newSession(tk.t, tk.store)
+	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
+	tk.MustExec("select 3")
 }
 
 // SetSession set the session of testkit
 func (tk *TestKit) SetSession(session session.Session) {
 	tk.session = session
+	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
+	tk.MustExec("select 3")
 }
 
 // Session return the session associated with the testkit
@@ -143,7 +148,6 @@ func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...
 				partitions = append(partitions[:index], partitions[index+1:]...)
 			}
 		}
-
 	}
 	if !ok {
 		tk.require.Len(partitions, 0)
@@ -184,6 +188,28 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 		}
 	}
 	return false
+}
+
+// HasKeywordInOperatorInfo checks if the result execution plan contains specific keyword in the operator info.
+func (tk *TestKit) HasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][4], keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// NotHasKeywordInOperatorInfo checks if the result execution plan doesn't contain specific keyword in the operator info.
+func (tk *TestKit) NotHasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][4], keyword) {
+			return false
+		}
+	}
+	return true
 }
 
 // HasPlan4ExplainFor checks if the result execution plan contains specific plan.
@@ -235,10 +261,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	params := make([]types.Datum, len(args))
-	for i := 0; i < len(params); i++ {
-		params[i] = types.NewDatum(args[i])
-	}
+	params := expression.Args2Expressions4Test(args...)
 	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return rs, errors.Trace(err)

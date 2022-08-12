@@ -463,7 +463,7 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle kv
 	return decoder.decodeToBytesInternal(outputOffset, handle, value, cacheBytes)
 }
 
-func (decoder *BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
+func (*BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
 	buf := make([]byte, 0, 1+binary.MaxVarintLen64+len(val))
 	switch tp {
 	case BytesFlag:

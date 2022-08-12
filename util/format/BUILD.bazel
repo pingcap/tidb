@@ -9,11 +9,13 @@ go_library(
 
 go_test(
     name = "format_test",
+    timeout = "short",
     srcs = [
         "format_test.go",
         "main_test.go",
     ],
     embed = [":format"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//assert",

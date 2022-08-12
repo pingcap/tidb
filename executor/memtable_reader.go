@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -178,7 +178,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		return nil, err
 	}
 	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
-
+	//nolint: prealloc
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(serversInfo))
@@ -252,7 +252,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					}
 					items = append(items, item{key: key, val: str})
 				}
-				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
+				slices.SortFunc(items, func(i, j item) bool { return i.key < j.key })
 				var rows [][]types.Datum
 				for _, item := range items {
 					rows = append(rows, types.MakeDatums(
@@ -271,7 +271,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 	close(ch)
 
 	// Keep the original order to make the result more stable
-	var results []result // nolint: prealloc
+	var results []result //nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -279,7 +279,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		}
 		results = append(results, result)
 	}
-	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
+	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}
@@ -349,7 +349,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	wg.Wait()
 	close(ch)
 	// Keep the original order to make the result more stable
-	var results []result // nolint: prealloc
+	var results []result //nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -357,7 +357,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		}
 		results = append(results, result)
 	}
-	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
+	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}
@@ -420,9 +420,9 @@ func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
 	for _, server := range servers {
 		parts := strings.Split(server, ",")
 		serversInfo = append(serversInfo, infoschema.ServerInfo{
-			ServerType: parts[0],
-			Address:    parts[1],
 			StatusAddr: parts[2],
+			Address:    parts[1],
+			ServerType: parts[0],
 		})
 	}
 	return serversInfo
@@ -565,7 +565,7 @@ func (e *clusterLogRetriever) startRetrieving(
 	// The retrieve progress may be abort
 	ctx, e.cancel = context.WithCancel(ctx)
 
-	var results []chan logStreamResult // nolint: prealloc
+	var results []chan logStreamResult //nolint: prealloc
 	for _, srv := range serversInfo {
 		typ := srv.ServerType
 		address := srv.Address
@@ -660,7 +660,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 	for e.heap.Len() > 0 && len(finalRows) < clusterLogBatchSize {
 		minTimeItem := heap.Pop(e.heap).(logStreamResult)
 		headMessage := minTimeItem.messages[0]
-		loggingTime := time.Unix(headMessage.Time/1000, (headMessage.Time%1000)*int64(time.Millisecond))
+		loggingTime := time.UnixMilli(headMessage.Time)
 		finalRows = append(finalRows, types.MakeDatums(
 			loggingTime.Format("2006/01/02 15:04:05.000"),
 			minTimeItem.typ,
@@ -817,7 +817,6 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 	pdServers []infoschema.ServerInfo,
 	req *HistoryHotRegionsRequest,
 ) ([]chan hotRegionsResult, error) {
-
 	var results []chan hotRegionsResult
 	for _, srv := range pdServers {
 		for typ := range e.extractor.HotRegionTypes {
@@ -942,13 +941,12 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	// Ignore row without corresponding schema.
 	if tableInfos, ok := regionsTableInfos[int64(hisHotRegion.RegionID)]; ok {
 		for _, tableInfo := range tableInfos {
-			updateTimestamp := time.Unix(hisHotRegion.UpdateTime/1000, (hisHotRegion.UpdateTime%1000)*int64(time.Millisecond))
+			updateTimestamp := time.UnixMilli(hisHotRegion.UpdateTime)
 			if updateTimestamp.Location() != tz {
 				updateTimestamp.In(tz)
 			}
 			updateTime := types.NewTime(types.FromGoTime(updateTimestamp), mysql.TypeTimestamp, types.MinFsp)
-			row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
-
+			row := make([]types.Datum, len(infoschema.GetTableTiDBHotRegionsHistoryCols()))
 			row[0].SetMysqlTime(updateTime)
 			row[1].SetString(strings.ToUpper(tableInfo.DB.Name.O), mysql.DefaultCollationName)
 			row[2].SetString(strings.ToUpper(tableInfo.Table.Name.O), mysql.DefaultCollationName)
@@ -1070,6 +1068,7 @@ func (e *tikvRegionPeersRetriever) isUnexpectedStoreID(storeID int64, storeMap m
 
 func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(
 	regionsInfo []helper.RegionInfo, storeMap map[int64]struct{}) ([][]types.Datum, error) {
+	//nolint: prealloc
 	var rows [][]types.Datum
 	for _, region := range regionsInfo {
 		records := make([][]types.Datum, 0, len(region.Peers))
@@ -1087,7 +1086,7 @@ func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(
 				continue
 			}
 
-			row := make([]types.Datum, len(infoschema.TableTiKVRegionPeersCols))
+			row := make([]types.Datum, len(infoschema.GetTableTiKVRegionPeersCols()))
 			row[0].SetInt64(region.ID)
 			row[1].SetInt64(peer.ID)
 			row[2].SetInt64(peer.StoreID)

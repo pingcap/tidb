@@ -8,11 +8,10 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/dbutil"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/util/dbutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -75,7 +74,7 @@ type noopBackoffer struct {
 	attempt int
 }
 
-func (b *noopBackoffer) NextBackoff(err error) time.Duration {
+func (b *noopBackoffer) NextBackoff(_ error) time.Duration {
 	b.attempt--
 	return time.Duration(0)
 }

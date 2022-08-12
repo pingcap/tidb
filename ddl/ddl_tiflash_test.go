@@ -383,6 +383,56 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	require.False(t, ok)
 }
 
+// set TiFlash mode shall be eventually available.
+func TestSetTiFlashModeAvailable(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	tk.MustExec("alter table ddltiflash set tiflash mode fast")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	tiflashmode := tb.Meta().TiFlashMode
+	require.NotNil(t, tiflashmode)
+	require.Equal(t, tiflashmode, model.TiFlashModeFast)
+
+	tk.MustExec("alter table ddltiflash set tiflash mode normal")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	tiflashmode = tb.Meta().TiFlashMode
+	require.NotNil(t, tiflashmode)
+	require.Equal(t, tiflashmode, model.TiFlashModeNormal)
+
+	// check the warning when set tiflash mode on the table whose tiflash replica is nil
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash mode fast")
+	tk.MustQuery("show warnings").Check(
+		testkit.Rows("Note 0 TiFlash mode will take effect after at least one TiFlash replica is set for the table"))
+}
+
+// check for the condition that unsupport set tiflash mode
+func TestSetTiFlashModeUnsupported(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create temporary table ddltiflash(z int)")
+	// unsupport for temporary table
+	tk.MustGetErrMsg("alter table ddltiflash set tiflash mode fast", "[ddl:8200]TiDB doesn't support ALTER TABLE for local temporary table")
+	// unsupport for system table
+	tk.MustGetErrMsg("alter table information_schema.tiflash_replica set tiflash mode fast", "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table")
+}
+
 // Truncate partition shall not block.
 func TestTiFlashTruncatePartition(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
@@ -729,14 +779,13 @@ func TestTiFlashBackoff(t *testing.T) {
 }
 
 func TestAlterDatabaseErrorGrammar(t *testing.T) {
-	store, tear := testkit.CreateMockStore(t)
-	defer tear()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change")
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
 }
 
 func TestAlterDatabaseBasic(t *testing.T) {
@@ -785,8 +834,7 @@ func checkBatchPandingNum(t *testing.T, tkx *testkit.TestKit, level string, valu
 }
 
 func TestTiFlashBatchAddVariables(t *testing.T) {
-	store, tear := testkit.CreateMockStore(t)
-	defer tear()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set SESSION tidb_batch_pending_tiflash_count=5")
@@ -858,7 +906,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 			tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_ddl_limit"), model.NewCIStr(fmt.Sprintf("t%v", i)))
 			require.NoError(t, err)
 			if tb.Meta().TiFlashReplica != nil {
-				cnt += 1
+				cnt++
 			}
 		}
 		require.Equal(t, expected, cnt)
