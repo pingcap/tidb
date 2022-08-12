@@ -925,141 +925,143 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 	return col, fn, monotonous, nil
 }
 
-func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expression,
-	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
-	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok {
-		if len(columnsPruner.partCols) > 1 {
-			lens := make([]int, 0, len(columnsPruner.partCols))
-			for i := range columnsPruner.partCols {
-				lens = append(lens, columnsPruner.partCols[i].RetType.GetFlen())
-			}
+func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.Expression,
+	columnsPruner *rangeColumnsPruner, result partitionRangeOR) partitionRangeOR {
+	lens := make([]int, 0, len(columnsPruner.partCols))
+	for i := range columnsPruner.partCols {
+		lens = append(lens, columnsPruner.partCols[i].RetType.GetFlen())
+	}
 
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, exprs, columnsPruner.partCols, lens)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, exprs, columnsPruner.partCols, lens)
 
-			if err != nil || len(res.Ranges) == 0 {
-				return fullRange(len(columnsPruner.lessThan))
-			}
+	if err != nil || len(res.Ranges) == 0 {
+		return fullRange(len(columnsPruner.lessThan))
+	}
 
-			rangeOr := make([]partitionRange, 0, len(res.Ranges))
+	rangeOr := make([]partitionRange, 0, len(res.Ranges))
 
-			// Create a sort.Search where the compare loops over ColumnValues
-			// Loop over the different ranges and extend/include all the partitions found
-			for idx := range res.Ranges {
-				minComparer := func(i int) bool {
-					for j := range res.Ranges[idx].LowVal {
-						expr := columnsPruner.lessThan[i][j]
+	// Create a sort.Search where the compare loops over ColumnValues
+	// Loop over the different ranges and extend/include all the partitions found
+	for idx := range res.Ranges {
+		minComparer := func(i int) bool {
+			for j := range res.Ranges[idx].LowVal {
+				expr := columnsPruner.lessThan[i][j]
 
-						if expr == nil {
-							// MAXVALUE
-							return true
-						}
-						if con, ok := (*expr).(*expression.Constant); ok {
-							// Add Null as point here?
-							comparer := collate.GetCollator(con.RetType.GetCollate())
-							cmp, err := con.Value.Compare(sctx.GetSessionVars().StmtCtx, &res.Ranges[idx].LowVal[j], comparer)
-							if err != nil {
-								panic("Error in internal compare!?!")
-							}
-							if cmp > 0 {
-								return true
-							}
-							if cmp < 0 {
-								return false
-							}
-						} else {
-							panic("Not a constant!?!")
-						}
+				if expr == nil {
+					// MAXVALUE
+					return true
+				}
+				if con, ok := (*expr).(*expression.Constant); ok {
+					// Add Null as point here?
+					comparer := collate.GetCollator(con.RetType.GetCollate())
+					cmp, err := con.Value.Compare(sctx.GetSessionVars().StmtCtx, &res.Ranges[idx].LowVal[j], comparer)
+					if err != nil {
+						panic("Error in internal compare!?!")
 					}
-					if len(res.Ranges[idx].LowVal) < len(columnsPruner.lessThan[i]) {
-						// Not all columns given
-						if res.Ranges[idx].LowExclude {
-							// prefix cols > const, do not include this partition
-							return false
-						}
-
-						colIdx := len(res.Ranges[idx].LowVal)
-						col := columnsPruner.partCols[colIdx]
-						conExpr := columnsPruner.lessThan[i][colIdx]
-						if conExpr == nil {
-							// MAXVALUE
-							return true
-						}
-
-						// Possible to optimize by getting minvalue of the column type of
-						// and if lessThan is equal to that
-						// we can return false, since the partition definition is
-						// LESS THAN (..., colN, minvalofColM, ... ) which cannot match colN == LowVal
-						if !mysql.HasNotNullFlag(col.RetType.GetFlag()) {
-							// TODO: Check if NULL can be part of the partitioning expression?
-							// NULL is allowed and will be considered as lower than any other value
-							// so this partition needs to be included!
-							return true
-						}
-						if con, ok := (*conExpr).(*expression.Constant); ok && col != nil {
-							switch col.RetType.EvalType() {
-							case types.ETInt:
-								if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
-									if con.Value.GetUint64() == 0 {
-										return false
-									}
-								} else {
-									if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetType().GetType()) {
-										return false
-									}
-								}
-							case types.ETDatetime:
-								// TODO: Check issue with ZERO DATE and INTERVAL partitioning's NULL PARTITION
-								if con.Value.GetMysqlTime().IsZero() {
-									return false
-								}
-							case types.ETString:
-								if len(con.Value.GetString()) == 0 {
-									return false
-								}
-							}
-						}
+					if cmp > 0 {
 						return true
 					}
+					if cmp < 0 {
+						return false
+					}
+				} else {
+					panic("Not a constant!?!")
+				}
+			}
+			if len(res.Ranges[idx].LowVal) < len(columnsPruner.lessThan[i]) {
+				// Not all columns given
+				if res.Ranges[idx].LowExclude {
+					// prefix cols > const, do not include this partition
 					return false
 				}
-				maxComparer := func(i int) bool {
-					for j := range res.Ranges[idx].HighVal {
-						expr := columnsPruner.lessThan[i][j]
-						if expr == nil {
-							// MAXVALUE
-							return true
-						}
-						if con, ok := (*expr).(*expression.Constant); ok {
-							// Add Null as point here?
-							comparer := collate.GetCollator(con.RetType.GetCollate())
-							cmp, err := con.Value.Compare(sctx.GetSessionVars().StmtCtx, &res.Ranges[idx].HighVal[j], comparer)
-							if err != nil {
-								panic("Error in internal compare!?!")
-							}
-							if cmp > 0 {
-								return true
-							}
-							if cmp < 0 {
+
+				colIdx := len(res.Ranges[idx].LowVal)
+				col := columnsPruner.partCols[colIdx]
+				conExpr := columnsPruner.lessThan[i][colIdx]
+				if conExpr == nil {
+					// MAXVALUE
+					return true
+				}
+
+				// Possible to optimize by getting minvalue of the column type
+				// and if lessThan is equal to that
+				// we can return false, since the partition definition is
+				// LESS THAN (..., colN, minvalofColM, ... ) which cannot match colN == LowVal
+				if !mysql.HasNotNullFlag(col.RetType.GetFlag()) {
+					// NULL cannot be part of the partitioning expression: VALUES LESS THAN (NULL...)
+					// NULL is allowed in the column and will be considered as lower than any other value
+					// so this partition needs to be included!
+					return true
+				}
+				if con, ok := (*conExpr).(*expression.Constant); ok && col != nil {
+					switch col.RetType.EvalType() {
+					case types.ETInt:
+						if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
+							if con.Value.GetUint64() == 0 {
 								return false
 							}
 						} else {
-							panic("Not a constant!?!")
+							if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetType().GetType()) {
+								return false
+							}
+						}
+					case types.ETDatetime:
+						if con.Value.GetMysqlTime().IsZero() {
+							return false
+						}
+					case types.ETString:
+						if len(con.Value.GetString()) == 0 {
+							return false
 						}
 					}
-					// if point is included, then false, due to LESS THAN
-					return res.Ranges[idx].HighExclude
 				}
-				// Can optimize if the range start is types.KindNull/types.MinNotNull
-				// or range end is types.KindMaxValue
-				start := sort.Search(len(columnsPruner.lessThan), minComparer)
-				end := sort.Search(len(columnsPruner.lessThan), maxComparer)
-				if end < len(columnsPruner.lessThan) {
-					end++
-				}
-				rangeOr = append(rangeOr, partitionRange{start, end})
+				return true
 			}
-			return result.intersection(rangeOr).simplify()
+			return false
 		}
+		maxComparer := func(i int) bool {
+			for j := range res.Ranges[idx].HighVal {
+				expr := columnsPruner.lessThan[i][j]
+				if expr == nil {
+					// MAXVALUE
+					return true
+				}
+				if con, ok := (*expr).(*expression.Constant); ok {
+					// Add Null as point here?
+					comparer := collate.GetCollator(con.RetType.GetCollate())
+					cmp, err := con.Value.Compare(sctx.GetSessionVars().StmtCtx, &res.Ranges[idx].HighVal[j], comparer)
+					if err != nil {
+						panic("Error in internal compare!?!")
+					}
+					if cmp > 0 {
+						return true
+					}
+					if cmp < 0 {
+						return false
+					}
+				} else {
+					panic("Not a constant!?!")
+				}
+			}
+			// if point is included, then false, due to LESS THAN
+			return res.Ranges[idx].HighExclude
+		}
+		// Can optimize if the range start is types.KindNull/types.MinNotNull
+		// or range end is types.KindMaxValue
+		start := sort.Search(len(columnsPruner.lessThan), minComparer)
+		end := sort.Search(len(columnsPruner.lessThan), maxComparer)
+		if end < len(columnsPruner.lessThan) {
+			end++
+		}
+		rangeOr = append(rangeOr, partitionRange{start, end})
+	}
+	return result.intersection(rangeOr).simplify()
+}
+
+func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expression,
+	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
+	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok && len(columnsPruner.partCols) > 1 {
+		return multiColumnRangeColumnsPruner(sctx, exprs, columnsPruner, result)
 	}
 	for i := 0; i < len(exprs); i++ {
 		result = partitionRangeForExpr(sctx, exprs[i], pruner, result)
@@ -1729,14 +1731,17 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
 	var err error
 	var isNull bool
+	if len(p.partCols) > 1 {
+		// Only one constant in the input, this will never be called with
+		// multi-column RANGE COLUMNS :)
+		return 0, len(p.lessThan)
+	}
 	charSet, collation := p.partCols[0].RetType.GetCharset(), p.partCols[0].RetType.GetCollate()
 	compare := func(ith int, op string, v *expression.Constant) bool {
 		for i := range p.partCols {
 			if p.lessThan[ith][i] == nil { // MAXVALUE
 				return true
 			}
-			// TODO: benchmark this against an implementation of generated btree keys?
-			// as is used in ForListColumnsPruning (table/tables/partition.go)
 			var expr expression.Expression
 			expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), *p.lessThan[ith][i], v)
 			expr.SetCharsetAndCollation(charSet, collation)
