@@ -310,7 +310,7 @@ func (importer *FileImporter) getKeyRangeForFiles(
 		if importer.isRawKvMode {
 			start, end = f.GetStartKey(), f.GetEndKey()
 		} else {
-			start, end, err = RewriteFileKeys(f, rewriteRules)
+			start, end, err = RewriteFileKeys(f, rewriteRules, true)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -390,7 +390,7 @@ func (importer *FileImporter) ImportKVFiles(
 ) error {
 	startTime := time.Now()
 	log.Debug("import kv files", zap.String("file", file.Path))
-	startKey, endKey, err := RewriteFileKeys(file, rule)
+	startKey, endKey, err := RewriteFileKeys(file, rule, false)
 	if err != nil {
 		return errors.Trace(err)
 	}

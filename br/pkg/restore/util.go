@@ -508,28 +508,35 @@ func findMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb
 // RewriteFileKeys tries to choose and apply the rewrite rules to the file.
 // This method would try to detach whether the file key is encoded.
 // Note: Maybe add something like `GetEncodedStartKey` Or `GetRawStartkey` for `AppliedFile` for making it more determinable?
-func RewriteFileKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
+func RewriteFileKeys(file AppliedFile, rewriteRules *RewriteRules, raw bool) (startKey, endKey []byte, err error) {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	var rule *import_sstpb.RewriteRule
 	if startID == endID {
-		startKey, rule = rewriteRawKey(file.GetStartKey(), rewriteRules)
-		if rewriteRules != nil && rule == nil {
-			// fall back to encoded key
-			log.Debug("cannot find rewrite rule with raw key format",
-				logutil.Key("startKey", file.GetStartKey()),
-				zap.Reflect("rewrite data", rewriteRules.Data))
+		if raw {
+			startKey, rule = rewriteRawKey(file.GetStartKey(), rewriteRules)
+			if rewriteRules != nil && rule == nil {
+				err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
+				return
+			}
+		} else {
 			startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
-			if rule == nil {
-				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key")
+			if rewriteRules != nil && rule == nil {
+				err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
 				return
 			}
 		}
-		endKey, rule = rewriteRawKey(file.GetEndKey(), rewriteRules)
-		if rewriteRules != nil && rule == nil {
+
+		if raw {
+			endKey, rule = rewriteRawKey(file.GetEndKey(), rewriteRules)
+			if rewriteRules != nil && rule == nil {
+				err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for end key, endKey: %s", redact.Key(file.GetEndKey()))
+				return
+			}
+		} else {
 			endKey, rule = rewriteEncodedKey(file.GetEndKey(), rewriteRules)
 			if rewriteRules != nil && rule == nil {
-				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for end key")
+				err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for end key, endKey: %s", redact.Key(file.GetEndKey()))
 				return
 			}
 		}
