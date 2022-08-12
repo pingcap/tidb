@@ -889,6 +889,8 @@ const (
 	ErrIllegalPrivilegeLevel                                 = 3619
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
+	ErrForeignKeyCannotDropParent                            = 3730
+	ErrForeignKeyCannotUseVirtualColumn                      = 3733
 	ErrDataTruncatedFunctionalIndex                          = 3751
 	ErrDataOutOfRangeFunctionalIndex                         = 3752
 	ErrFunctionalIndexOnJSONOrGeometryFunction               = 3753

@@ -794,6 +794,8 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
+	// Whether enable foreign key feature.
+	EnableForeignKey bool `toml:"enable-foreign-key" json:"enable-foreign-key"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -1291,6 +1293,10 @@ func hasRootPrivilege() bool {
 // TableLockEnabled uses to check whether enabled the table lock feature.
 func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
+}
+
+func ForeignKeyEnabled() bool {
+	return GetGlobalConfig().Experimental.EnableForeignKey
 }
 
 // TableLockDelayClean uses to get the time of delay clean table lock.

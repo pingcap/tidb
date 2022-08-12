@@ -360,13 +360,13 @@ func (n *ReferenceDef) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SIMPLE")
 		}
 	}
-	if n.OnDelete.ReferOpt != ReferOptionNoOption {
+	if n.OnDelete.ReferOpt != model.ReferOptionNoOption {
 		ctx.WritePlain(" ")
 		if err := n.OnDelete.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing OnDelete")
 		}
 	}
-	if n.OnUpdate.ReferOpt != ReferOptionNoOption {
+	if n.OnUpdate.ReferOpt != model.ReferOptionNoOption {
 		ctx.WritePlain(" ")
 		if err := n.OnUpdate.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing OnUpdate")
@@ -409,45 +409,15 @@ func (n *ReferenceDef) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ReferOptionType is the type for refer options.
-type ReferOptionType int
-
-// Refer option types.
-const (
-	ReferOptionNoOption ReferOptionType = iota
-	ReferOptionRestrict
-	ReferOptionCascade
-	ReferOptionSetNull
-	ReferOptionNoAction
-	ReferOptionSetDefault
-)
-
-// String implements fmt.Stringer interface.
-func (r ReferOptionType) String() string {
-	switch r {
-	case ReferOptionRestrict:
-		return "RESTRICT"
-	case ReferOptionCascade:
-		return "CASCADE"
-	case ReferOptionSetNull:
-		return "SET NULL"
-	case ReferOptionNoAction:
-		return "NO ACTION"
-	case ReferOptionSetDefault:
-		return "SET DEFAULT"
-	}
-	return ""
-}
-
 // OnDeleteOpt is used for optional on delete clause.
 type OnDeleteOpt struct {
 	node
-	ReferOpt ReferOptionType
+	ReferOpt model.ReferOptionType
 }
 
 // Restore implements Node interface.
 func (n *OnDeleteOpt) Restore(ctx *format.RestoreCtx) error {
-	if n.ReferOpt != ReferOptionNoOption {
+	if n.ReferOpt != model.ReferOptionNoOption {
 		ctx.WriteKeyWord("ON DELETE ")
 		ctx.WriteKeyWord(n.ReferOpt.String())
 	}
@@ -467,12 +437,12 @@ func (n *OnDeleteOpt) Accept(v Visitor) (Node, bool) {
 // OnUpdateOpt is used for optional on update clause.
 type OnUpdateOpt struct {
 	node
-	ReferOpt ReferOptionType
+	ReferOpt model.ReferOptionType
 }
 
 // Restore implements Node interface.
 func (n *OnUpdateOpt) Restore(ctx *format.RestoreCtx) error {
-	if n.ReferOpt != ReferOptionNoOption {
+	if n.ReferOpt != model.ReferOptionNoOption {
 		ctx.WriteKeyWord("ON UPDATE ")
 		ctx.WriteKeyWord(n.ReferOpt.String())
 	}

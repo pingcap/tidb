@@ -1226,6 +1226,8 @@ type SessionVars struct {
 
 	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
 	EnablePreparedPlanCache bool
+
+	ForeignKeyChecks bool
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1511,6 +1513,7 @@ func NewSessionVars() *SessionVars {
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
+		ForeignKeyChecks:            DefTiDBForeignKeyChecks,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

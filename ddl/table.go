@@ -53,6 +53,9 @@ const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo := job.Args[0].(*model.TableInfo)
+	//fkCheck := job.Args[1].(bool)
+	// todo: fix me
+	fkCheck := true
 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
@@ -61,6 +64,17 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, err
 			job.State = model.JobStateCancelled
 		}
 		return tbInfo, errors.Trace(err)
+	}
+
+	err = checkTableForeignKeyValidInOwner(d, job, tbInfo, fkCheck)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return tbInfo, errors.Trace(err)
+	}
+	// allocate foreign key ID.
+	for _, fkInfo := range tbInfo.ForeignKeys {
+		fkInfo.ID = allocateFKIndexID(tbInfo)
+		fkInfo.State = model.StatePublic
 	}
 
 	switch tbInfo.State {
@@ -134,7 +148,8 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 
 	// just decode, createTable will use it as Args[0]
 	tbInfo := &model.TableInfo{}
-	if err := job.DecodeArgs(tbInfo); err != nil {
+	fkCheck := false
+	if err := job.DecodeArgs(tbInfo, &fkCheck); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -160,7 +175,8 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
 
 	args := []*model.TableInfo{}
-	err := job.DecodeArgs(&args)
+	fkCheck := false
+	err := job.DecodeArgs(&args, &fkCheck)
 	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
@@ -172,10 +188,11 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	//
 	// &*job clones a stub job from the ActionCreateTables job
 	stubJob := &*job
-	stubJob.Args = make([]interface{}, 1)
+	stubJob.Args = make([]interface{}, 2)
 	for i := range args {
 		stubJob.TableID = args[i].ID
 		stubJob.Args[0] = args[i]
+		stubJob.Args[1] = fkCheck
 		tbInfo, err := createTable(d, t, stubJob)
 		if err != nil {
 			job.State = model.JobStateCancelled

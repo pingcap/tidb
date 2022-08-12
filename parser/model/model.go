@@ -14,6 +14,7 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -327,6 +328,43 @@ func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 	return nil
 }
 
+// FindFKInfoByName finds FKInfo in fks by name.
+func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
+	for _, fk := range fks {
+		if fk.Name.L == name {
+			return fk
+		}
+	}
+	return nil
+}
+
+// FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
+func FindIndexByColumns(tbInfo *TableInfo, cols ...CIStr) *IndexInfo {
+	for _, index := range tbInfo.Indices {
+		if IsIdxPrefixCovered(tbInfo, index, cols...) {
+			return index
+		}
+	}
+	return nil
+}
+
+func IsIdxPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...CIStr) bool {
+	if len(index.Columns) < len(cols) {
+		return false
+	}
+	for i := range cols {
+		if cols[i].L != index.Columns[i].Name.L ||
+			index.Columns[i].Offset >= len(tbInfo.Columns) {
+			return false
+		}
+		colInfo := tbInfo.Columns[index.Columns[i].Offset]
+		if index.Columns[i].Length != types.UnspecifiedLength && index.Columns[i].Length < colInfo.GetFlen() {
+			return false
+		}
+	}
+	return true
+}
+
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
 // for use of execution phase.
 const ExtraHandleID = -1
@@ -391,11 +429,12 @@ type TableInfo struct {
 	Charset string `json:"charset"`
 	Collate string `json:"collate"`
 	// Columns are listed in the order in which they appear in the schema.
-	Columns     []*ColumnInfo     `json:"cols"`
-	Indices     []*IndexInfo      `json:"index_info"`
-	Constraints []*ConstraintInfo `json:"constraint_info"`
-	ForeignKeys []*FKInfo         `json:"fk_info"`
-	State       SchemaState       `json:"state"`
+	Columns             []*ColumnInfo     `json:"cols"`
+	Indices             []*IndexInfo      `json:"index_info"`
+	Constraints         []*ConstraintInfo `json:"constraint_info"`
+	ForeignKeys         []*FKInfo         `json:"fk_info"`
+	ReferredForeignKeys []*ReferredFKInfo `json:"referred_fk_info"`
+	State               SchemaState       `json:"state"`
 	// PKIsHandle is true when primary key is a single integer column.
 	PKIsHandle bool `json:"pk_is_handle"`
 	// IsCommonHandle is true when clustered index feature is
@@ -412,6 +451,7 @@ type TableInfo struct {
 	AutoRandID      int64  `json:"auto_rand_id"`
 	MaxColumnID     int64  `json:"max_col_id"`
 	MaxIndexID      int64  `json:"max_idx_id"`
+	MaxFKIndexID    int64  `json:"max_fk_idx_id"`
 	MaxConstraintID int64  `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
 	// These changing schema operations don't include 'truncate table' and 'rename table'.
@@ -1424,14 +1464,90 @@ func (t *TableInfo) FindColumnNameByID(id int64) string {
 
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
-	ID       int64       `json:"id"`
-	Name     CIStr       `json:"fk_name"`
-	RefTable CIStr       `json:"ref_table"`
-	RefCols  []CIStr     `json:"ref_cols"`
-	Cols     []CIStr     `json:"cols"`
-	OnDelete int         `json:"on_delete"`
-	OnUpdate int         `json:"on_update"`
-	State    SchemaState `json:"state"`
+	ID        int64       `json:"id"`
+	Name      CIStr       `json:"fk_name"`
+	RefSchema CIStr       `json:"ref_schema"`
+	RefTable  CIStr       `json:"ref_table"`
+	RefCols   []CIStr     `json:"ref_cols"`
+	Cols      []CIStr     `json:"cols"`
+	OnDelete  int         `json:"on_delete"`
+	OnUpdate  int         `json:"on_update"`
+	State     SchemaState `json:"state"`
+	Version   int         `json:"version"`
+}
+
+// ReferredFKInfo provides the cited foreign key in the child table.
+type ReferredFKInfo struct {
+	Cols          []CIStr `json:"cols"`
+	ChildSchemaID CIStr   `json:"child_schema"`
+	ChildTableID  CIStr   `json:"child_table"`
+	ChildFKName   CIStr   `json:"child_fk_name"`
+}
+
+// ReferOptionType is the type for refer options.
+type ReferOptionType int
+
+// Refer option types.
+const (
+	ReferOptionNoOption ReferOptionType = iota
+	ReferOptionRestrict
+	ReferOptionCascade
+	ReferOptionSetNull
+	ReferOptionNoAction
+	ReferOptionSetDefault
+)
+
+// String implements fmt.Stringer interface.
+func (r ReferOptionType) String() string {
+	switch r {
+	case ReferOptionRestrict:
+		return "RESTRICT"
+	case ReferOptionCascade:
+		return "CASCADE"
+	case ReferOptionSetNull:
+		return "SET NULL"
+	case ReferOptionNoAction:
+		return "NO ACTION"
+	case ReferOptionSetDefault:
+		return "SET DEFAULT"
+	}
+	return ""
+}
+
+func (fk *FKInfo) String(db, tb, refDB, refTb string) string {
+	buf := bytes.Buffer{}
+	buf.WriteString("`" + db + "`.`")
+	buf.WriteString(tb + "`, CONSTRAINT `")
+	buf.WriteString(fk.Name.O + "` FOREIGN KEY (")
+	for i, col := range fk.Cols {
+		if i > 0 {
+			buf.WriteByte(byte(','))
+		}
+		buf.WriteString("`" + col.O + "`")
+	}
+	buf.WriteString(") REFERENCES `")
+	if refDB != db {
+		buf.WriteString(refDB)
+		buf.WriteString("`.`")
+	}
+	buf.WriteString(refTb)
+	buf.WriteString("` (")
+	for i, col := range fk.RefCols {
+		if i > 0 {
+			buf.WriteByte(byte(','))
+		}
+		buf.WriteString("`" + col.O + "`")
+	}
+	buf.WriteString(")")
+	if onDelete := ReferOptionType(fk.OnDelete); onDelete != ReferOptionNoOption {
+		buf.WriteString(" ON DELETE ")
+		buf.WriteString(onDelete.String())
+	}
+	if onUpdate := ReferOptionType(fk.OnUpdate); onUpdate != ReferOptionNoOption {
+		buf.WriteString(" ON UPDATE ")
+		buf.WriteString(onUpdate.String())
+	}
+	return buf.String()
 }
 
 // Clone clones FKInfo.
