@@ -457,7 +457,7 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Lease = *ddlLease
 	}
 	if actualFlags[nmTokenLimit] {
-		cfg.TokenLimit = uint(*tokenLimit)
+		cfg.Instance.ConnectionConcurrencyLimit = uint32(*tokenLimit)
 	}
 	if actualFlags[nmPluginLoad] {
 		cfg.Instance.PluginLoad = *pluginLoad
@@ -567,6 +567,8 @@ func setGlobalVars() {
 					cfg.Instance.MaxConnections = cfg.MaxServerConnections
 				case "run-ddl":
 					cfg.Instance.TiDBEnableDDL.Store(cfg.RunDDL)
+				case "token-limit":
+					cfg.Instance.ConnectionConcurrencyLimit = cfg.TokenLimit
 				}
 			case "log":
 				switch oldName {

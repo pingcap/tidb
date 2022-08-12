@@ -472,6 +472,9 @@ const (
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
 	TiDBForcePriority = "tidb_force_priority"
 
+	// TiDBConnectionConcurrencyLimit indicates the number of sessions that can execute requests concurrently.
+	TiDBConnectionConcurrencyLimit = "tidb_connection_concurrency_limit"
+
 	// TiDBConstraintCheckInPlace indicates to check the constraint when the SQL executing.
 	// It could hurt the performance of bulking insert when it is ON.
 	TiDBConstraintCheckInPlace = "tidb_constraint_check_in_place"
@@ -1063,6 +1066,8 @@ var (
 	EnableDDL func() error = nil
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
 	DisableDDL func() error = nil
+	// SetConnectionConcurrencyLimit is the func registered by server to set the limit of connection number.
+	SetConnectionConcurrencyLimit func(c uint32) = nil
 )
 
 // switchDDL turns on/off DDL in an instance.

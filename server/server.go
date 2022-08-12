@@ -160,6 +160,11 @@ func (s *Server) releaseToken(token *Token) {
 	metrics.TokenGauge.Dec()
 }
 
+// SetConnectionConcurrencyLimit updates the size of concurrentLimiter.
+func (s *Server) SetConnectionConcurrencyLimit(count uint32) {
+	s.concurrentLimiter.Resize(uint(count))
+}
+
 // SetDomain use to set the server domain.
 func (s *Server) SetDomain(dom *domain.Domain) {
 	s.dom = dom
@@ -192,7 +197,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
-		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
+		concurrentLimiter: NewTokenLimiter(uint(cfg.Instance.ConnectionConcurrencyLimit)),
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.NewGlobalConnID(0, true),
 		internalSessions:  make(map[interface{}]struct{}, 100),
@@ -301,6 +306,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	variable.RegisterStatistics(s)
+	variable.SetConnectionConcurrencyLimit = s.SetConnectionConcurrencyLimit
 
 	return s, nil
 }
@@ -350,7 +356,7 @@ func setTxnScope() {
 
 // Export config-related metrics
 func (s *Server) reportConfig() {
-	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
+	metrics.ConfigStatus.WithLabelValues("tidb_connection_concurrency_limit").Set(float64(s.cfg.Instance.ConnectionConcurrencyLimit))
 	metrics.ConfigStatus.WithLabelValues("max_connections").Set(float64(s.cfg.Instance.MaxConnections))
 }
 

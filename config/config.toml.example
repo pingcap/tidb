@@ -25,9 +25,6 @@ lease = "45s"
 # turn off this option if there will be a large number of tables created.
 split-table = true
 
-# The limit of concurrent executed sessions.
-token-limit = 1000
-
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
 # It defaults to a generated directory in `<TMPDIR>/<os/user.Current().Uid>_tidb/` if it is unset.
 # It only takes effect when `tidb_enable_tmp_storage_on_oom` is `true`.
@@ -459,3 +456,6 @@ max_connections = 0
 
 # Run ddl worker on this tidb-server.
 tidb_enable_ddl = true
+
+# The limit of concurrent executed connections.
+tidb_connection_concurrency_limit = 1000

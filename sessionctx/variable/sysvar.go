@@ -451,6 +451,17 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), nil
 		},
 	},
+	{Scope: ScopeInstance, Name: TiDBConnectionConcurrencyLimit, Value: strconv.Itoa(int(config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit)), Type: TypeInt, MinValue: 1, MaxValue: config.MaxConnectionConcurrencyLimit, SetGlobal: func(s *SessionVars, val string) error {
+		oldVal := atomic.LoadUint32(&config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit)
+		ival := uint32(TidbOptInt64(val, int64(config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit)))
+		if oldVal != ival {
+			SetConnectionConcurrencyLimit(ival)
+		}
+		atomic.StoreUint32(&config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit, ival)
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatInt(int64(atomic.LoadUint32(&config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit)), 10), nil
+	}},
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
