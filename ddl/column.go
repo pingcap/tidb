@@ -815,7 +815,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 		// Use old column name to generate less confusing error messages.
 		changingColCpy := changingCol.Clone()
 		changingColCpy.Name = oldCol.Name
-		return w.updateColumnAndIndexes(tbl, changingIdxs, reorgInfo)
+		return w.updateCurrentElement(tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
@@ -1007,8 +1007,8 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, reorgInfo *reorgI
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
 var TestReorgGoroutineRunning = make(chan interface{})
 
-// updateColumnAndIndexes handles the modify column reorganization state for a table.
-func (w *worker) updateColumnAndIndexes(t table.Table, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
+// updateCurrentElement update the current element for reorgInfo.
+func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error {
 	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
 		if val.(bool) {
 			a := new(interface{})
@@ -1044,8 +1044,8 @@ func (w *worker) updateColumnAndIndexes(t table.Table, idxes []*model.IndexInfo,
 	startElementOffsetToResetHandle := -1
 	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
-		for i, idx := range idxes {
-			if reorgInfo.currElement.ID == idx.ID {
+		for i, element := range reorgInfo.elements[1:] {
+			if reorgInfo.currElement.ID == element.ID {
 				startElementOffset = i
 				startElementOffsetToResetHandle = i
 				break
@@ -1053,7 +1053,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, idxes []*model.IndexInfo,
 		}
 	}
 
-	for i := startElementOffset; i < len(idxes); i++ {
+	for i := startElementOffset; i < len(reorgInfo.elements[1:]); i++ {
 		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
 		if i == startElementOffsetToResetHandle+1 {
