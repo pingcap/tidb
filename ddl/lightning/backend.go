@@ -33,11 +33,11 @@ import (
 
 // BackendContext store a backend info for add index reorg task.
 type BackendContext struct {
-	Key         string // Currently, backend key used ddl job id string
-	Backend     *backend.Backend
-	Ctx         context.Context
+	key         string // Currently, backend key used ddl job id string
+	backend     *backend.Backend
+	ctx         context.Context
 	cfg         *config.Config
-	EngineCache map[string]*engineInfo
+	engineCache map[string]*engineInfo
 	sysVars     map[string]string
 	enabled     bool
 	needRestore bool
@@ -45,11 +45,11 @@ type BackendContext struct {
 
 func newBackendContext(ctx context.Context, key string, be *backend.Backend, cfg *config.Config, vars map[string]string) *BackendContext {
 	return &BackendContext{
-		Key:         key,
-		Backend:     be,
-		Ctx:         ctx,
+		key:         key,
+		backend:     be,
+		ctx:         ctx,
 		cfg:         cfg,
-		EngineCache: make(map[string]*engineInfo, 10),
+		engineCache: make(map[string]*engineInfo, 10),
 		sysVars:     vars,
 	}
 }

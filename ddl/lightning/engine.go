@@ -43,7 +43,7 @@ type engineInfo struct {
 	uuid         uuid.UUID
 	cfg          *backend.EngineConfig
 	tableName    string
-	WriterCount  int
+	writerCount  int
 	writerCache  map[string]*backend.LocalEngineWriter
 }
 
@@ -59,7 +59,7 @@ func NewEngineInfo(
 		openedEngine: en,
 		uuid:         uuid,
 		tableName:    tblName,
-		WriterCount:  wCnt,
+		writerCount:  wCnt,
 		writerCache:  make(map[string]*backend.LocalEngineWriter, wCnt),
 	}
 	return &ei
@@ -82,7 +82,7 @@ func CreateEngine(
 	bc := GlobalEnv.LitMemRoot.backendCache[backendKey]
 	// Open one engine under an existing backend.
 	cfg := generateLocalEngineConfig(job.ID, job.SchemaName, job.TableName)
-	en, err := bc.Backend.OpenEngine(ctx, cfg, job.TableName, int32(indexID))
+	en, err := bc.backend.OpenEngine(ctx, cfg, job.TableName, int32(indexID))
 	if err != nil {
 		errMsg := LitErrCreateEngineFail + err.Error()
 		logutil.BgLogger().Error(errMsg)
@@ -91,7 +91,7 @@ func CreateEngine(
 	id := en.GetEngineUUID()
 	ei := NewEngineInfo(indexID, engineKey, cfg, bc, en, job.TableName, id, wCnt)
 	GlobalEnv.LitMemRoot.EngineMgr.StoreEngineInfo(engineKey, ei)
-	bc.EngineCache[engineKey] = ei
+	bc.engineCache[engineKey] = ei
 	return nil
 }
 
@@ -107,11 +107,11 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 		GlobalEnv.LitMemRoot.EngineMgr.ReleaseEngine(engineInfoKey)
 	}()
 
-	keyMsg = "backend key:" + ei.backCtx.Key + "Engine key:" + ei.key
+	keyMsg = "backend key:" + ei.backCtx.key + "Engine key:" + ei.key
 	// Close engine and finish local tasks of lightning.
-	logutil.BgLogger().Info(LitInfoCloseEngine, zap.String("backend key", ei.backCtx.Key), zap.String("Engine key", ei.key))
+	logutil.BgLogger().Info(LitInfoCloseEngine, zap.String("backend key", ei.backCtx.key), zap.String("Engine key", ei.key))
 	indexEngine := ei.openedEngine
-	closeEngine, err1 := indexEngine.Close(ei.backCtx.Ctx, ei.cfg)
+	closeEngine, err1 := indexEngine.Close(ei.backCtx.ctx, ei.cfg)
 	if err1 != nil {
 		errMsg = LitErrCloseEngineErr + keyMsg
 		logutil.BgLogger().Error(errMsg)
@@ -122,7 +122,7 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 	GlobalEnv.checkAndResetQuota()
 
 	// Ingest data to TiKV
-	logutil.BgLogger().Info(LitInfoStartImport, zap.String("backend key", ei.backCtx.Key),
+	logutil.BgLogger().Info(LitInfoStartImport, zap.String("backend key", ei.backCtx.key),
 		zap.String("Engine key", ei.key),
 		zap.String("Split Region Size", strconv.FormatInt(int64(config.SplitRegionSize), 10)))
 	err = closeEngine.Import(ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
@@ -142,7 +142,7 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 
 	// Check Remote duplicate value for index
 	if unique {
-		hasDupe, err := ei.backCtx.Backend.CollectRemoteDuplicateIndex(ctx, tbl, ei.tableName, &kv.SessionOptions{
+		hasDupe, err := ei.backCtx.backend.CollectRemoteDuplicateIndex(ctx, tbl, ei.tableName, &kv.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: ei.backCtx.sysVars,
 		}, ei.id)
@@ -161,7 +161,7 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 
 // FlushEngine flush the lightning engine memory data into local disk.
 func FlushEngine(engineKey string, ei *engineInfo) error {
-	err := ei.openedEngine.Flush(ei.backCtx.Ctx)
+	err := ei.openedEngine.Flush(ei.backCtx.ctx)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.String("Engine key:", engineKey))
 		return err
@@ -188,7 +188,7 @@ func UnsafeImportEngineData(jobID int64, indexID int64) error {
 			return err
 		}
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.String("Engine key:", engineKey), zap.String("Current total available disk:", strconv.FormatUint(totalStorageAvail, 10)))
-		err = ei.backCtx.Backend.UnsafeImportAndReset(ei.backCtx.Ctx, ei.uuid, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys))
+		err = ei.backCtx.backend.UnsafeImportAndReset(ei.backCtx.ctx, ei.uuid, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys))
 		if err != nil {
 			logutil.BgLogger().Error(LitErrIngestDataErr, zap.String("Engine key:", engineKey),
 				zap.String("import partial file failed, current disk storage remains", strconv.FormatUint(totalStorageAvail, 10)))
@@ -220,7 +220,7 @@ func (wCtx *WorkerContext) InitWorkerContext(engineKey string, workerID int) (er
 	wCtx.lWrite, exist = ei.writerCache[wCtxKey]
 	// If not exist then build one
 	if !exist {
-		wCtx.lWrite, err = ei.openedEngine.LocalWriter(ei.backCtx.Ctx, &backend.LocalWriterConfig{})
+		wCtx.lWrite, err = ei.openedEngine.LocalWriter(ei.backCtx.ctx, &backend.LocalWriterConfig{})
 		if err != nil {
 			return err
 		}
@@ -237,7 +237,7 @@ func (wCtx *WorkerContext) WriteRow(key, idxVal []byte) error {
 	kvs[0].Key = key
 	kvs[0].Val = idxVal
 	row := kv.MakeRowsFromKvPairs(kvs)
-	return wCtx.lWrite.WriteRows(wCtx.eInfo.backCtx.Ctx, nil, row)
+	return wCtx.lWrite.WriteRows(wCtx.eInfo.backCtx.ctx, nil, row)
 }
 
 // CanRestoreReorgTask only when backend and Engine still be cached, then the task could be restored,

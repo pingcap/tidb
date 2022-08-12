@@ -49,14 +49,14 @@ func TestMemoryControl(t *testing.T) {
 	require.Equal(t, true, exist)
 	var uuid uuid.UUID
 	eninfo := NewEngineInfo(1, engineKey, nil, bc, nil, "", uuid, 8)
-	bc.EngineCache[engineKey] = eninfo
+	bc.engineCache[engineKey] = eninfo
 	// add 8 workers more
 	wCnt = GlobalEnv.LitMemRoot.workerDegree(8, engineKey, bcKey)
 	require.Equal(t, 8, wCnt)
-	en, exist1 := bc.EngineCache[engineKey]
-	en.WriterCount += wCnt
+	en, exist1 := bc.engineCache[engineKey]
+	en.writerCount += wCnt
 	require.Equal(t, true, exist1)
-	require.Equal(t, 16, en.WriterCount)
+	require.Equal(t, 16, en.writerCount)
 	// Add 8 workers more
 	wCnt = GlobalEnv.LitMemRoot.workerDegree(8, engineKey, bcKey)
 	require.Equal(t, 0, wCnt)

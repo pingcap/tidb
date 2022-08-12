@@ -172,10 +172,10 @@ func (m *MemoryRoot) DeleteBackendContext(bcKey string) {
 
 	// Close and delete backend by key
 	_ = m.DeleteBackendEngines(bcKey)
-	bc.Backend.Close()
+	bc.backend.Close()
 
 	// Reclaim memory.
-	m.currUsage -= m.structSize[bc.Key]
+	m.currUsage -= m.structSize[bc.key]
 	delete(m.structSize, bcKey)
 	m.currUsage -= StructSizeBackendCtx
 	if m.currUsage < 0 {
@@ -193,12 +193,12 @@ func (m *MemoryRoot) ClearEngines(jobID int64, indexIDs ...int64) {
 		ei, exist := m.EngineMgr.enginePool[eiKey]
 		if exist {
 			indexEngine := ei.openedEngine
-			closedEngine, err := indexEngine.Close(ei.backCtx.Ctx, ei.cfg)
+			closedEngine, err := indexEngine.Close(ei.backCtx.ctx, ei.cfg)
 			if err != nil {
 				logutil.BgLogger().Error(LitErrCloseEngineErr, zap.String("Engine key", eiKey))
 			}
 			// Here the local intermediate file will be removed.
-			err = closedEngine.Cleanup(ei.backCtx.Ctx)
+			err = closedEngine.Cleanup(ei.backCtx.ctx)
 			if err != nil {
 				logutil.BgLogger().Error(LitErrCleanEngineErr, zap.String("Engine key", eiKey))
 			}
@@ -223,7 +223,7 @@ func (m *MemoryRoot) RegisterEngineInfo(job *model.Job, bcKey string, engineKey 
 	// Calculate lightning concurrency degree and set memory usage.
 	// and pre-allocate memory usage for worker
 	newWorkerCount := m.workerDegree(workerCount, engineKey, bcKey)
-	en, exist1 := bc.EngineCache[engineKey]
+	en, exist1 := bc.engineCache[engineKey]
 	if !exist1 {
 		// When return workerCount is 0, means there is no memory available for lightning worker.
 		if workerCount == int(allocFailed) {
@@ -244,7 +244,7 @@ func (m *MemoryRoot) RegisterEngineInfo(job *model.Job, bcKey string, engineKey 
 			return 0, err
 		}
 		// Create one slice for one backend on one stmt, current we share one engine
-		err = CreateEngine(bc.Ctx, job, bcKey, engineKey, indexID, workerCount)
+		err = CreateEngine(bc.ctx, job, bcKey, engineKey, indexID, workerCount)
 		if err != nil {
 			return 0, errors.New(LitErrCreateEngineFail)
 		}
@@ -254,7 +254,7 @@ func (m *MemoryRoot) RegisterEngineInfo(job *model.Job, bcKey string, engineKey 
 		m.engineUsage += StructSizeEngineInfo
 	} else {
 		// If engine exist, then add newWorkerCount.
-		en.WriterCount += newWorkerCount
+		en.writerCount += newWorkerCount
 	}
 	logutil.BgLogger().Info(LitInfoOpenEngine, zap.String("backend key", bcKey),
 		zap.String("Engine key", engineKey),
@@ -323,9 +323,9 @@ func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 	}
 	count = 0
 	// Delete EngineInfo registered in m.engineManager.engineCache
-	for _, ei := range bc.EngineCache {
+	for _, ei := range bc.engineCache {
 		eiKey := ei.key
-		wCnt := ei.WriterCount
+		wCnt := ei.writerCount
 		m.currUsage -= m.structSize[eiKey]
 		delete(m.structSize, eiKey)
 		delete(m.EngineMgr.enginePool, eiKey)
@@ -337,7 +337,7 @@ func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 			zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))
 	}
 
-	bc.EngineCache = make(map[string]*engineInfo, 10)
+	bc.engineCache = make(map[string]*engineInfo, 10)
 	m.currUsage -= StructSizeEngineInfo * int64(count)
 	m.engineUsage -= StructSizeEngineInfo * int64(count)
 	logutil.BgLogger().Info(LitInfoCloseBackend, zap.String("backend key", bcKey),
@@ -361,16 +361,16 @@ func (m *MemoryRoot) getBackendContext(bcKey string, needLog bool) (*BackendCont
 func (m *MemoryRoot) updateTotalMemoryConsumption() {
 	var diffSize int64 = 0
 	for _, bc := range m.backendCache {
-		curSize := bc.Backend.TotalMemoryConsume()
-		bcSize, exist := m.structSize[bc.Key]
+		curSize := bc.backend.TotalMemoryConsume()
+		bcSize, exist := m.structSize[bc.key]
 		if !exist {
 			diffSize += curSize
-			m.structSize[bc.Key] = curSize
+			m.structSize[bc.key] = curSize
 		} else {
 			diffSize += curSize - bcSize
-			m.structSize[bc.Key] += curSize - bcSize
+			m.structSize[bc.key] += curSize - bcSize
 		}
-		m.structSize[bc.Key] = curSize
+		m.structSize[bc.key] = curSize
 	}
 	m.currUsage += diffSize
 }
@@ -389,11 +389,11 @@ func (m *MemoryRoot) workerDegree(workerCnt int, engineKey string, bcKey string)
 	if !exist {
 		enSize = int64(bc.cfg.TikvImporter.EngineMemCacheSize)
 	} else {
-		en, exist1 := bc.EngineCache[engineKey]
+		en, exist1 := bc.engineCache[engineKey]
 		if !exist1 {
 			return 0
 		}
-		currWorkerNum = en.WriterCount
+		currWorkerNum = en.writerCount
 	}
 	if currWorkerNum+workerCnt > bc.cfg.TikvImporter.RangeConcurrency {
 		workerCnt = bc.cfg.TikvImporter.RangeConcurrency - currWorkerNum
@@ -427,7 +427,7 @@ func (m *MemoryRoot) workerDegree(workerCnt int, engineKey string, bcKey string)
 func (m *MemoryRoot) DiskStat() (uint64, uint64) {
 	var totalDiskUsed int64
 	for _, bc := range m.backendCache {
-		_, _, bcDiskUsed, _ := bc.Backend.CheckDiskQuota(GlobalEnv.diskQuota)
+		_, _, bcDiskUsed, _ := bc.backend.CheckDiskQuota(GlobalEnv.diskQuota)
 		totalDiskUsed += bcDiskUsed
 	}
 	sz, err := common.GetStorageSize(GlobalEnv.SortPath)
