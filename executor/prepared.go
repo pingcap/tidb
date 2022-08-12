@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"math"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -329,19 +328,6 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema) (*ExecStmt, error) {
-	startTime := time.Now()
-	defer func() {
-		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
-	}()
-
-	preparedObj, err := plannercore.GetPreparedStmt(execStmt, sctx.GetSessionVars())
-	if err != nil {
-		return nil, err
-	}
-	pointPlanShortPathOK, err := plannercore.IsPointPlanShortPathOK(sctx, is, preparedObj)
-	if err != nil {
-		return nil, err
-	}
 
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
@@ -362,24 +348,24 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		OutputNames: names,
 		Ti:          &TelemetryInfo{},
 	}
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-	stmtCtx.OriginalSQL = stmt.Text
-	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+	//stmtCtx := sctx.GetSessionVars().StmtCtx
+	//stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+	//stmtCtx.OriginalSQL = stmt.Text
+	//stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 
-	// handle point plan short path specially
-	if pointPlanShortPathOK {
-		if ep, ok := execPlan.(*plannercore.Execute); ok {
-			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
-				stmtCtx.SetPlan(execPlan)
-				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
-				stmt.Plan = pointPlan
-				stmt.PsStmt = preparedObj
-			} else {
-				// invalid the previous cached point plan
-				preparedObj.PreparedAst.CachedPlan = nil
-			}
-		}
-	}
+	//// handle point plan short path specially
+	//if pointPlanShortPathOK {
+	//	if ep, ok := execPlan.(*plannercore.Execute); ok {
+	//		if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
+	//			stmtCtx.SetPlan(execPlan)
+	//			stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
+	//			stmt.Plan = pointPlan
+	//			stmt.PsStmt = preparedObj
+	//		} else {
+	//			// invalid the previous cached point plan
+	//			preparedObj.PreparedAst.CachedPlan = nil
+	//		}
+	//	}
+	//}
 	return stmt, nil
 }
