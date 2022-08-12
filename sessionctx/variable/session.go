@@ -1220,7 +1220,11 @@ type SessionVars struct {
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
 	DefaultStrMatchSelectivity float64
-
+	
+	//UseCTEInline indicated the trigger variable "tidb_opt_inline_cte", which makes the CTE query inline by default.
+	//When it is false, the CTE queries will be materialized (default).
+	//When it is true, the CTE queries will be expanded inline to outer query.
+	UseCTEInline bool
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
 
@@ -1511,6 +1515,7 @@ func NewSessionVars() *SessionVars {
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
+		UseCTEInline:                DefTiDBOptInlineCTE,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
