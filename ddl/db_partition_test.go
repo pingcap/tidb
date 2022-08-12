@@ -401,8 +401,7 @@ func TestCreateTableWithRangeColumnPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
-	/*
-			tk.MustExec(`
+	tk.MustExec(`
 		create table log_message_1 (
 		    add_time datetime not null default '2000-01-01 00:00:00',
 		    log_level int unsigned not null default '0',
@@ -419,8 +418,8 @@ func TestCreateTableWithRangeColumnPartition(t *testing.T) {
 		    partition p201409 values less than ('2014-10-01'),
 		    partition p201410 values less than ('2014-11-01')
 		)`)
-			tk.MustExec("drop table if exists log_message_1;")
-			tk.MustExec(`
+	tk.MustExec("drop table if exists log_message_1;")
+	tk.MustExec(`
 			create table log_message_1 (
 				id int not null,
 				fname varchar(30),
@@ -432,8 +431,7 @@ func TestCreateTableWithRangeColumnPartition(t *testing.T) {
 			)
 			partition by hash( year(hired) ) partitions 4;`)
 
-			tk.MustExec("drop table if exists t")
-	*/
+	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create table t (a varchar(255), b varchar(255)) partition by range columns (a,b)" +
 		`(partition pNull values less than ("",""), partition p0 values less than ("A",""),` +
