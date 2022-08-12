@@ -302,6 +302,10 @@ func TestRewriteFileKeys(t *testing.T) {
 				NewKeyPrefix: tablecodec.GenTablePrefix(2),
 				OldKeyPrefix: tablecodec.GenTablePrefix(1),
 			},
+			{
+				NewKeyPrefix: tablecodec.GenTablePrefix(511),
+				OldKeyPrefix: tablecodec.GenTablePrefix(767),
+			},
 		},
 	}
 	rawKeyFile := backuppb.File{
@@ -309,7 +313,7 @@ func TestRewriteFileKeys(t *testing.T) {
 		StartKey: tablecodec.GenTableRecordPrefix(1),
 		EndKey:   tablecodec.GenTableRecordPrefix(1).PrefixNext(),
 	}
-	start, end, err := restore.RewriteFileKeys(&rawKeyFile, &rewriteRules)
+	start, end, err := restore.GetRewriteRawKeys(&rawKeyFile, &rewriteRules)
 	require.NoError(t, err)
 	_, end, err = codec.DecodeBytes(end, nil)
 	require.NoError(t, err)
@@ -323,8 +327,25 @@ func TestRewriteFileKeys(t *testing.T) {
 		StartKey: codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1)),
 		EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1).PrefixNext()),
 	}
-	start, end, err = restore.RewriteFileKeys(&encodeKeyFile, &rewriteRules)
+	start, end, err = restore.GetRewriteEncodedKeys(&encodeKeyFile, &rewriteRules)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2)), start)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2).PrefixNext()), end)
+
+	// test for table id 767
+	encodeKeyFile767 := backuppb.DataFileInfo{
+		Path:     "bakcup.log",
+		StartKey: codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(767)),
+		EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(767).PrefixNext()),
+	}
+	// use raw rewrite should no error but not equal
+	start, end, err = restore.GetRewriteRawKeys(&encodeKeyFile767, &rewriteRules)
+	require.NoError(t, err)
+	require.NotEqual(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
+	require.NotEqual(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)
+	// use encode rewrite should no error and equal
+	start, end, err = restore.GetRewriteEncodedKeys(&encodeKeyFile767, &rewriteRules)
+	require.NoError(t, err)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)
 }
