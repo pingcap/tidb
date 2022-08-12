@@ -2077,6 +2077,7 @@ const (
 	TokuDBRowFormatLzma
 	TokuDBRowFormatSnappy
 	TokuDBRowFormatUncompressed
+	TokuDBRowFormatZstd
 )
 
 // OnDuplicateKeyHandlingType is the option that handle unique key values in 'CREATE TABLE ... SELECT' or `LOAD DATA`.
@@ -2238,6 +2239,8 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("TOKUDB_LZMA")
 		case TokuDBRowFormatSnappy:
 			ctx.WriteKeyWord("TOKUDB_SNAPPY")
+		case TokuDBRowFormatZstd:
+			ctx.WriteKeyWord("TOKUDB_ZSTD")
 		case TokuDBRowFormatUncompressed:
 			ctx.WriteKeyWord("TOKUDB_UNCOMPRESSED")
 		default:
