@@ -815,7 +815,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 		// Use old column name to generate less confusing error messages.
 		changingColCpy := changingCol.Clone()
 		changingColCpy.Name = oldCol.Name
-		return w.updateColumnAndIndexes(tbl, oldCol, changingColCpy, changingIdxs, reorgInfo)
+		return w.updateColumnAndIndexes(tbl, changingIdxs, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
@@ -999,16 +999,16 @@ func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInf
 	return elements
 }
 
-func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to update table row", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writePhysicalTableRecord(t, typeUpdateColumnWorker, nil, oldColInfo, colInfo, reorgInfo)
+	return w.writePhysicalTableRecord(t, typeUpdateColumnWorker, reorgInfo)
 }
 
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
 var TestReorgGoroutineRunning = make(chan interface{})
 
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
-func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) updateColumnAndIndexes(t table.Table, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
 	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
 		if val.(bool) {
 			a := new(interface{})
@@ -1024,7 +1024,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
+		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1076,7 +1076,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = w.addTableIndex(t, idxes[i], reorgInfo)
+		err = w.addTableIndex(t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1101,7 +1101,18 @@ type updateColumnWorker struct {
 	jobContext *JobContext
 }
 
-func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
+func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
+	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
+		return nil
+	}
+	var oldCol, newCol *model.ColumnInfo
+	for _, col := range t.WritableCols() {
+		if col.ID == reorgInfo.currElement.ID {
+			newCol = col.ColumnInfo
+			oldCol = table.FindCol(t.Cols(), getChangingColumnOriginName(newCol)).ColumnInfo
+			break
+		}
+	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
 		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
@@ -1778,4 +1789,13 @@ func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {
 		return idxName
 	}
 	return idxName[:pos]
+}
+
+func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
+	columnName := strings.TrimPrefix(changingColumn.Name.O, changingColumnPrefix)
+	var pos int
+	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
+		return columnName
+	}
+	return columnName[:pos]
 }
