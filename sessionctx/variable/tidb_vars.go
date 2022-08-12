@@ -1043,7 +1043,6 @@ var (
 	OOMAction                             = atomic.NewString(DefTiDBMemOOMAction)
 	MaxAutoAnalyzeTime                    = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
-	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
 	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)

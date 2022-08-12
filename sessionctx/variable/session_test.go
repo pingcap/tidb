@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -382,4 +383,20 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	succ = tc.DeleteSavepoint("s1")
 	require.True(t, succ)
 	require.Equal(t, 0, len(tc.Savepoints))
+}
+
+func TestGeneralPlanCacheStmt(t *testing.T) {
+	sessVars := variable.NewSessionVars()
+	sql1 := "select * from t where a>?"
+	sql2 := "select * from t where a<?"
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+
+	sessVars.AddGeneralPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+
+	sessVars.AddGeneralPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
 }

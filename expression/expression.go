@@ -225,8 +225,9 @@ func ExprNotNull(expr Expression) bool {
 
 // HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
 // We should ignore overflow errors when evaluating selection conditions:
-//		INSERT INTO t VALUES ("999999999999999999");
-//		SELECT * FROM t WHERE v;
+//
+//	INSERT INTO t VALUES ("999999999999999999");
+//	SELECT * FROM t WHERE v;
 func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
 	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
 		return -1, nil
@@ -1043,7 +1044,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return true
 		}
 	case
-		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift,
+		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift, ast.LeftShift,
 		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Strcmp,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
@@ -1057,7 +1058,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 		ast.JSONLength, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
-		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
+		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond,
 		ast.TimeToSec:
@@ -1157,6 +1158,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return true
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
+		return true
+	case ast.Hex:
 		return true
 	case ast.GetFormat:
 		return true
