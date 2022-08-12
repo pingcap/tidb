@@ -365,7 +365,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	return ranges, nil
 }
 
-func (w *worker) waitTaskResults(workers []*backfillWorker, taskCnt int,
+func (_ *worker) waitTaskResults(workers []*backfillWorker, taskCnt int,
 	totalAddedCount *int64, startKey kv.Key) (kv.Key, int64, error) {
 	var (
 		addedCount int64
@@ -604,6 +604,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	}
 
 	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
@@ -681,6 +682,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		}
 
 		failpoint.Inject("checkBackfillWorkerNum", func(val failpoint.Value) {
+			//nolint:forcetypeassert
 			if val.(bool) {
 				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
 				if num != 0 {

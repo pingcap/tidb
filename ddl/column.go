@@ -111,6 +111,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 
 	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			failpoint.Return(ver, errors.New("occur an error before decode args"))
 		}
@@ -205,7 +206,7 @@ func setIndicesState(indexInfos []*model.IndexInfo, state model.SchemaState) {
 	}
 }
 
-func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) (err error) {
+func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 	// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
 	// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
 	// And we need consider the column without not-null flag.
@@ -250,7 +251,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		colInfo.State = model.StateWriteOnly
 		setIndicesState(idxInfos, model.StateWriteOnly)
 		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
-		err = checkDropColumnForStatePublic(tblInfo, colInfo)
+		err = checkDropColumnForStatePublic(colInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -521,6 +522,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 
 	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			if modifyInfo.newCol.State != model.StatePublic {
 				failpoint.Return(ver, errors.New("the column state is wrong"))
@@ -690,6 +692,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				defer w.sessPool.put(sctx)
 
 				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+				//nolint:forcetypeassert
 				_, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
@@ -1010,6 +1013,7 @@ var TestReorgGoroutineRunning = make(chan interface{})
 // updateCurrentElement update the current element for reorgInfo.
 func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error {
 	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			a := new(interface{})
 			TestReorgGoroutineRunning <- a
@@ -1024,6 +1028,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
+		//nolint:forcetypeassert
 		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -1035,6 +1040,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint:forcetypeassert
 	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job), reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
 	if err != nil {
 		return errors.Trace(err)
@@ -1137,7 +1143,7 @@ type rowRecord struct {
 }
 
 // getNextKey gets next handle of entry that we are going to process.
-func (w *updateColumnWorker) getNextKey(taskRange reorgBackfillTask,
+func (_ *updateColumnWorker) getNextKey(taskRange reorgBackfillTask,
 	taskDone bool, lastAccessedHandle kv.Key) (nextHandle kv.Key) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
@@ -1226,10 +1232,12 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	}
 	if w.sessCtx.GetSessionVars().StmtCtx.GetWarnings() != nil && len(w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()) != 0 {
 		warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+		//nolint:forcetypeassert
 		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
 	}
 
 	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
 				failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
@@ -1519,6 +1527,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 		}
 	}
 	buf.WriteString(" limit 1")
+	//nolint:forcetypeassert
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
@@ -1667,6 +1676,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 
 	skipCheck := false
 	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			skipCheck = true
 		}

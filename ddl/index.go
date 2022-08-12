@@ -769,6 +769,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		removeIndexInfo(tblInfo, indexInfo)
 
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+			//nolint:forcetypeassert
 			if val.(bool) {
 				panic("panic test in cancelling add index")
 			}
@@ -1276,6 +1277,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test")
 		}
@@ -1363,6 +1365,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			}
 		}
 	} else {
+		//nolint:forcetypeassert
 		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), reorgInfo)
 	}
 	return errors.Trace(err)
@@ -1389,8 +1392,10 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	}
 
 	failpoint.Inject("mockUpdateCachedSafePoint", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			ts := oracle.GoTimeToTS(time.Now())
+			//nolint:forcetypeassert
 			s := reorg.d.store.(tikv.Storage)
 			s.UpdateSPCache(ts, time.Now())
 			time.Sleep(time.Second * 3)
@@ -1493,6 +1498,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 
 func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test")
 		}
