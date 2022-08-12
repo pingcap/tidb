@@ -125,7 +125,9 @@ func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool,
 func rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) (bool, expression.Expression) {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
-		if aggFunc.Mode == aggregation.FinalMode {
+		if aggFunc.Mode == aggregation.FinalMode &&
+			len(aggFunc.Args) == 1 &&
+			mysql.HasNotNullFlag(aggFunc.Args[0].GetType().Flag) {
 			return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 		}
 		return true, rewriteCount(ctx, aggFunc.Args, aggFunc.RetTp)
