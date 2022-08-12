@@ -554,7 +554,6 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		ret.Expr = exprs
 		ret.ForRangePruning = tmp
 	} else {
-		// TODO: Fix for len > 1
 		tmp, err := dataForRangeColumnsPruning(ctx, pi, schema, names, p)
 		if err != nil {
 			return nil, errors.Trace(err)

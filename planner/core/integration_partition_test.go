@@ -1253,7 +1253,7 @@ func TestRangeColumnsMultiColumn(t *testing.T) {
 		"  └─TableFullScan 12.00 cop[tikv] table:t keep order:false"))
 }
 
-func TestRangeColumnsTemp(t *testing.T) {
+func TestRangeMultiColumnsPruning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1311,6 +1311,7 @@ func TestRangeColumnsExpr(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`create database rce`)
 	tk.MustExec(`use rce`)
+	tk.MustExec(`create table tref (a int unsigned, b int, c int)`)
 	tk.MustExec(`create table t (a int unsigned, b int, c int) partition by range columns (a,b) ` +
 		`(partition p0 values less than (3, MAXVALUE), ` +
 		` partition p1 values less than (4, -2147483648), ` +
@@ -1326,23 +1327,119 @@ func TestRangeColumnsExpr(t *testing.T) {
 		` partition p11 values less than (14, -2147483648), ` +
 		` partition p12 values less than (17, 17), ` +
 		` partition p13 values less than (MAXVALUE, -2147483648))`)
-	tk.MustExec(`insert into t values (null, null, null), (0,0,0), (null, -2147483648, null), (3, 1<<31 - 1, 9),` +
-		`(4,null,4),(4,-2147483648,-2147483648)`)
+	allRows := []string{
+		"0 0 0",
+		"11 2147483647 2147483647",
+		"14 10 4",
+		"14 <nil> 2",
+		"14 <nil> <nil>",
+		"17 16 16",
+		"17 17 17",
+		"3 2147483647 9",
+		"4 -2147483648 -2147483648",
+		"4 1 1",
+		"4 10 3",
+		"4 13 1",
+		"4 14 2",
+		"4 2147483647 2147483647",
+		"4 4 4",
+		"4 5 6",
+		"4 <nil> 4",
+		"5 0 0",
+		"7 0 0",
+		"<nil> -2147483648 <nil>",
+		"<nil> <nil> <nil>",
+	}
+	insertStr := []string{}
+	for _, row := range allRows {
+		s := strings.ReplaceAll(row, " ", ",")
+		s = strings.ReplaceAll(s, "<nil>", "NULL")
+		insertStr = append(insertStr, "("+s+")")
+	}
+	tk.MustExec(`insert into t values ` + strings.Join(insertStr, ","))
+	tk.MustExec(`insert into tref select * from t`)
 	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select * from tref`).Sort().Check(testkit.Rows(allRows...))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(allRows...))
+	tk.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows(
+		"0 0 0",
+		"3 2147483647 9",
+		"<nil> -2147483648 <nil>",
+		"<nil> <nil> <nil>"))
+	tk.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows(
+		"4 <nil> 4"))
+	tk.MustQuery(`select * from t partition (p2)`).Sort().Check(testkit.Rows(
+		"4 -2147483648 -2147483648"))
+	tk.MustQuery(`select * from t partition (p3)`).Sort().Check(testkit.Rows(
+		"4 1 1"))
+	tk.MustQuery(`select * from t partition (p4)`).Sort().Check(testkit.Rows(
+		"4 4 4",
+		"4 5 6"))
+	tk.MustQuery(`select * from t partition (p5)`).Sort().Check(testkit.Rows(
+		"4 10 3"))
+	tk.MustQuery(`select * from t partition (p6)`).Sort().Check(testkit.Rows(
+		"4 13 1"))
+	tk.MustQuery(`select * from t partition (p7)`).Sort().Check(testkit.Rows(
+		"4 14 2"))
+	tk.MustQuery(`select * from t partition (p8)`).Sort().Check(testkit.Rows(
+		"4 2147483647 2147483647"))
+	tk.MustQuery(`select * from t partition (p9)`).Sort().Check(testkit.Rows(
+		"5 0 0"))
+	tk.MustQuery(`select * from t partition (p10)`).Sort().Check(testkit.Rows(
+		"11 2147483647 2147483647",
+		"7 0 0"))
+	tk.MustQuery(`select * from t partition (p11)`).Sort().Check(testkit.Rows(
+		"14 <nil> 2",
+		"14 <nil> <nil>"))
+	tk.MustQuery(`select * from t partition (p12)`).Sort().Check(testkit.Rows(
+		"14 10 4",
+		"17 16 16"))
+	tk.MustQuery(`select * from t partition (p13)`).Sort().Check(testkit.Rows(
+		"17 17 17"))
 	tk.MustQuery(`explain format = 'brief' select * from t where c = 3`).Check(testkit.Rows(
-		`TableReader 0.00 root partition:all data:Selection`,
-		`└─Selection 0.00 cop[tikv]  eq(rce.t.c, 3)`,
-		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+		"TableReader 1.00 root partition:all data:Selection",
+		"└─Selection 1.00 cop[tikv]  eq(rce.t.c, 3)",
+		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t where b > 3 and c = 3`).Check(testkit.Rows(
-		`TableReader 0.00 root partition:all data:Selection`,
-		`└─Selection 0.00 cop[tikv]  eq(rce.t.c, 3), gt(rce.t.b, 3)`,
-		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+		"TableReader 0.52 root partition:all data:Selection",
+		"└─Selection 0.52 cop[tikv]  eq(rce.t.c, 3), gt(rce.t.b, 3)",
+		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t where a = 5 and c = 3`).Check(testkit.Rows(
-		`TableReader 0.00 root partition:p9 data:Selection`,
-		`└─Selection 0.00 cop[tikv]  eq(rce.t.a, 5), eq(rce.t.c, 3)`,
-		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+		"TableReader 0.05 root partition:p9 data:Selection",
+		"└─Selection 0.05 cop[tikv]  eq(rce.t.a, 5), eq(rce.t.c, 3)",
+		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t where a = 4 and c = 3`).Check(testkit.Rows(
-		`TableReader 0.00 root partition:p1,p2,p3,p4,p5,p6,p7,p8,p9 data:Selection`,
-		`└─Selection 0.00 cop[tikv]  eq(rce.t.a, 4), eq(rce.t.c, 3)`,
-		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+		"TableReader 0.43 root partition:p1,p2,p3,p4,p5,p6,p7,p8,p9 data:Selection",
+		"└─Selection 0.43 cop[tikv]  eq(rce.t.a, 4), eq(rce.t.c, 3)",
+		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a in (4,14) and c = 3`).Check(testkit.Rows(
+		"TableReader 0.57 root partition:p1,p2,p3,p4,p5,p6,p7,p8,p9,p11,p12 data:Selection",
+		"└─Selection 0.57 cop[tikv]  eq(rce.t.c, 3), in(rce.t.a, 4, 14)",
+		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a in (4,14) and b in (null,10)`).Check(testkit.Rows(
+		"TableReader 1.14 root partition:p5,p12 data:Selection",
+		"└─Selection 1.14 cop[tikv]  in(rce.t.a, 4, 14), in(rce.t.b, NULL, 10)",
+		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from tref where a in (4,14) and b in (null,10)`).Check(testkit.Rows(
+		"4 10 3",
+		"14 10 4"))
+	tk.MustQuery(`select * from t where a in (4,14) and b in (null,10)`).Check(testkit.Rows(
+		"4 10 3",
+		"14 10 4"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a in (4,14) and (b in (11,10) OR b is null)`).Check(testkit.Rows(
+		"TableReader 3.43 root partition:p1,p5,p6,p11,p12 data:Selection",
+		"└─Selection 3.43 cop[tikv]  in(rce.t.a, 4, 14), or(in(rce.t.b, 11, 10), isnull(rce.t.b))",
+		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from tref where a in (4,14) and (b in (11,10) OR b is null)`).Check(testkit.Rows(
+		"4 <nil> 4",
+		"4 10 3",
+		"14 <nil> 2",
+		"14 <nil> <nil>",
+		"14 10 4"))
+	tk.MustQuery(`select * from t where a in (4,14) and (b in (11,10) OR b is null)`).Check(testkit.Rows(
+		"4 <nil> 4",
+		"4 10 3",
+		"14 <nil> 2",
+		"14 <nil> <nil>",
+		"14 10 4"))
 }

@@ -1152,7 +1152,6 @@ func partitionRangeColumnForInExpr(sctx sessionctx.Context, args []expression.Ex
 	pruner *rangeColumnsPruner) partitionRangeOR {
 	col, ok := args[0].(*expression.Column)
 	if !ok || col.ID != pruner.partCols[0].ID {
-		// TODO: Support more elaborate pruning for multi-columns RANGE COLUMNS!
 		return pruner.fullRange()
 	}
 
@@ -1684,6 +1683,7 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 	case ast.IsNull:
 		// isnull(col)
 		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && len(p.partCols) == 1 && arg0.ID == p.partCols[0].ID {
+			// Single column RANGE COLUMNS, NULL sorts before all other values: match first partition
 			return 0, 1, true
 		}
 		return 0, len(p.lessThan), false
