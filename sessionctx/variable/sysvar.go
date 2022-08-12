@@ -854,6 +854,15 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTmpStorageOnOOM.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBGeneralPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBGeneralPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000, SetGlobal: func(s *SessionVars, val string) error {
+		uVal, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			GeneralPlanCacheSize.Store(uVal)
+		}
+		return err
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatUint(GeneralPlanCacheSize.Load(), 10), nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1), Type: TypeUnsigned, MinValue: 1, MaxValue: 2, SetGlobal: func(s *SessionVars, val string) error {

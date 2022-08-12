@@ -787,6 +787,8 @@ const (
 	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
 	// when a single SQL statement exceeds the memory quota specified by the memory quota.
 	TiDBEnableTmpStorageOnOOM = "tidb_enable_tmp_storage_on_oom"
+	// TiDBGeneralPlanCacheSize controls the size of general plan cache. 0 indicate close.
+	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
 )
 
 // TiDB intentional limits
@@ -1000,6 +1002,7 @@ const (
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
+	DefTiDBGeneralPlanCacheSize                    = 0
 )
 
 // Process global variables.
@@ -1048,6 +1051,8 @@ var (
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
+	GeneralPlanCacheSize              = atomic.NewUint64(DefTiDBGeneralPlanCacheSize) // variables for general plan cache
+
 )
 
 var (
