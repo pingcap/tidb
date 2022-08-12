@@ -81,8 +81,6 @@ var (
 	ErrTooLongKey = ClassDDL.NewStd(mysql.ErrTooLongKey)
 	// ErrKeyColumnDoesNotExits is used when the key column doesn't exist.
 	ErrKeyColumnDoesNotExits = ClassDDL.NewStd(mysql.ErrKeyColumnDoesNotExits)
-	// ErrInvalidDDLJobVersion is used when the DDL job version is invalid.
-	ErrInvalidDDLJobVersion = ClassDDL.NewStd(mysql.ErrInvalidDDLJobVersion)
 	// ErrInvalidUseOfNull is used when the column is not null.
 	ErrInvalidUseOfNull = ClassDDL.NewStd(mysql.ErrInvalidUseOfNull)
 	// ErrTooManyFields is used when too many columns are used in a select statement.
