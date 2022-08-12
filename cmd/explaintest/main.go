@@ -425,6 +425,7 @@ func (t *tester) create(tableName string, qText string) error {
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
 	js, err := io.ReadAll(resp.Body)
 	if err != nil {
