@@ -929,14 +929,11 @@ func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expres
 	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
 	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok {
 		if len(columnsPruner.partCols) > 1 {
-			// Is there any helper function just for this?
 			lens := make([]int, 0, len(columnsPruner.partCols))
 			for i := range columnsPruner.partCols {
 				lens = append(lens, columnsPruner.partCols[i].RetType.GetFlen())
 			}
 
-			// This will not handle NULLs correctly?
-			// Or should we make sure that the session var RegardNULLAsPoint is set?
 			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, exprs, columnsPruner.partCols, lens)
 
 			if err != nil || len(res.Ranges) == 0 {
