@@ -1143,7 +1143,7 @@ type rowRecord struct {
 }
 
 // getNextKey gets next handle of entry that we are going to process.
-func (_ *updateColumnWorker) getNextKey(taskRange reorgBackfillTask,
+func (*updateColumnWorker) getNextKey(taskRange reorgBackfillTask,
 	taskDone bool, lastAccessedHandle kv.Key) (nextHandle kv.Key) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
