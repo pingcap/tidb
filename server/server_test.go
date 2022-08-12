@@ -1833,6 +1833,52 @@ func (cli *testServerClient) runTestIssue3682(t *testing.T) {
 	require.Equal(t, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)", err.Error())
 }
 
+func (cli *testServerClient) runTestAccountLock(t *testing.T) {
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`CREATE USER 'test1','test2' ACCOUNT LOCK;`)
+		dbt.MustExec(`GRANT ALL on test.* to 'test1', 'test2'`)
+		dbt.MustExec(`GRANT ALL on mysql.* to 'test1', 'test2'`)
+	})
+	defer cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`DROP USER 'test1', 'test2';`)
+	})
+
+	// 1. can not connect with a locked user
+	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "test1"
+		config.DBName = "test"
+	}))
+	require.NoError(t, err)
+	err = db.Ping()
+	require.Error(t, err)
+	require.Equal(t, "Error 3118: Access denied for user 'test1'@'127.0.0.1'. Account is locked.", err.Error())
+	require.NoError(t, db.Close())
+
+	// 2. can connect after unlocked
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`ALTER USER 'test1' ACCOUNT UNLOCK;`)
+	})
+	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "test1"
+		config.DBName = "test"
+	}))
+	require.NoError(t, err)
+	require.NoError(t, db.Ping())
+	require.NoError(t, db.Close())
+
+	// 3. if multiple 'ACCOUNT (UN)LOCK' declared, the last declaration takes effect
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user LIKE 'test%' ORDER BY user;`)
+		cli.checkRows(t, rows, "test1 N", "test2 Y")
+		dbt.MustExec(`ALTER USER test1, test2 ACCOUNT LOCK ACCOUNT UNLOCK;`)
+		rows = dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user LIKE 'test%' ORDER BY user;`)
+		cli.checkRows(t, rows, "test1 N", "test2 N")
+		dbt.MustExec(`ALTER USER test1, test2 ACCOUNT UNLOCK ACCOUNT LOCK;`)
+		rows = dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user LIKE 'test%' ORDER BY user;`)
+		cli.checkRows(t, rows, "test1 Y", "test2 Y")
+	})
+}
+
 func (cli *testServerClient) runTestDBNameEscape(t *testing.T) {
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("CREATE DATABASE `aa-a`;")
