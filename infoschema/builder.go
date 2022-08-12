@@ -217,8 +217,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
-	case model.ActionExchangeTablePartition:
-		return b.applyExchangeTablePartition(m, diff)
 	default:
 		return b.applyDefaultAction(m, diff)
 	}
@@ -291,37 +289,6 @@ func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
-func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	for _, opt := range diff.AffectedOpts {
-		affectedDiff := &model.SchemaDiff{
-			Version:     diff.Version,
-			Type:        diff.Type,
-			SchemaID:    opt.SchemaID,
-			TableID:     opt.TableID,
-			OldSchemaID: opt.OldSchemaID,
-			OldTableID:  opt.OldTableID,
-		}
-		affectedIDs, err := b.ApplyDiff(m, affectedDiff)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		tblIDs = append(tblIDs, affectedIDs...)
-
-		// handle partition table and table AutoID
-		err = updateAutoIDForExchangePartition(b.store, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.TableID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
-	return tblIDs, nil
-}
-
 func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -377,6 +344,14 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 			return nil, errors.Trace(err)
 		}
 		tblIDs = append(tblIDs, affectedIDs...)
+
+		if diff.Type == model.ActionExchangeTablePartition {
+			// handle partition table and table AutoID
+			err = updateAutoIDForExchangePartition(b.store, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.TableID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 	}
 
 	return tblIDs, nil
