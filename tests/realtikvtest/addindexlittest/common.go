@@ -25,7 +25,6 @@ import (
 )
 
 const (
-	tableNum      = 3
 	nonPartTabNum = 1
 )
 
@@ -121,19 +120,19 @@ func createIndexOneCol(ctx *suiteContext, tableID int, colID int) error {
 	} else if ctx.IsUnique {
 		addIndexStr = " add unique index idx"
 	}
-	len := 4
+	length := 4
 	if ctx.IsUnique && colID == 19 {
-		len = 16
+		length = 16
 	}
 	if !(ctx.IsPK || ctx.IsUnique) || tableID == 0 || (ctx.IsPK && tableID > 0) {
 		if colID >= 18 && colID < 29 {
-			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c" + strconv.Itoa(colID) + "(" + strconv.Itoa(len) + "))"
+			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c" + strconv.Itoa(colID) + "(" + strconv.Itoa(length) + "))"
 		} else {
 			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c" + strconv.Itoa(colID) + ")"
 		}
 	} else if (ctx.IsUnique) && tableID > 0 {
 		if colID >= 18 && colID < 29 {
-			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + "(" + strconv.Itoa(len) + "))"
+			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + "(" + strconv.Itoa(length) + "))"
 		} else {
 			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + ")"
 		}
@@ -204,7 +203,9 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 		for _, i := range colIDs[tableID] {
 			if ctx.HasWorkload {
 				// Start workload
-				go ctx.Wl.StartWorkload(ctx, tableID, i)
+				go func() {
+					_ = ctx.Wl.StartWorkload(ctx, tableID, i)
+				}()
 			}
 			err := f(ctx, tableID, tableName, i)
 			if err != nil {
@@ -218,7 +219,7 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 			}
 			if ctx.HasWorkload {
 				// Stop workload
-				ctx.Wl.StopWorkload(ctx)
+				_ = ctx.Wl.StopWorkload(ctx)
 			}
 			if err == nil {
 				checkResult(ctx, tableName, i)
@@ -235,7 +236,9 @@ func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*sui
 			for _, j := range jIDs[tableID] {
 				if ctx.HasWorkload {
 					// Start workload
-					go ctx.Wl.StartWorkload(ctx, tableID, i, j)
+					go func() {
+						_ = ctx.Wl.StartWorkload(ctx, tableID, i, j)
+					}()
 				}
 				err := f(ctx, tableID, tableName, indexID, i, j)
 				if err != nil {
@@ -244,7 +247,7 @@ func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*sui
 				require.NoError(ctx.t, err)
 				if ctx.HasWorkload {
 					// Stop workload
-					ctx.Wl.StopWorkload(ctx)
+					_ = ctx.Wl.StopWorkload(ctx)
 				}
 				if err == nil && i != j {
 					checkResult(ctx, tableName, indexID)
@@ -260,7 +263,9 @@ func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, 
 		tableName := "addindexlit.t" + strconv.Itoa(tableID)
 		if ctx.HasWorkload {
 			// Start workload
-			go ctx.Wl.StartWorkload(ctx, tableID, colID)
+			go func() {
+				_ = ctx.Wl.StartWorkload(ctx, tableID, colID)
+			}()
 		}
 		err := f(ctx, tableID, tableName, colID)
 		if err != nil {
@@ -269,7 +274,9 @@ func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, 
 		require.NoError(ctx.t, err)
 		if ctx.HasWorkload {
 			// Stop workload
-			go ctx.Wl.StopWorkload(ctx)
+			go func() {
+				_ = ctx.Wl.StopWorkload(ctx)
+			}()
 		}
 		if err == nil {
 			if ctx.IsPK {

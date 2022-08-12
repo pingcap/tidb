@@ -119,7 +119,6 @@ func TestAdjustDiskQuota(t *testing.T) {
 		} else {
 			require.Equal(t, oldDiskQuota, GlobalEnv.diskQuota)
 		}
-
 	}
 }
 

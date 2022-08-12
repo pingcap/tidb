@@ -470,6 +470,7 @@ func TestAddIndexLightning(t *testing.T) {
 	lit.GlobalEnv.SetMinQuota()
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
 	require.Equal(t, int64(0), usage.AddIndexLightning.AddIndexLightningUsed)
 
 	allow := ddl.IsEnableFastReorg()
