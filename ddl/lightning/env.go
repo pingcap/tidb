@@ -111,7 +111,7 @@ func InitGlobalLightningBackendEnv() {
 	GlobalEnv.LitMemRoot.init(int64(maxMemLimit))
 	// If Generated sortPath failed, lightning will initial failed.
 	// also if the disk quota is not a proper value
-	GlobalEnv.SortPath, err = genLightningDataDir(cfg.FastReorgLocalPath, cfg.Port)
+	GlobalEnv.SortPath, err = genLightningDataDir(cfg.TempDir, cfg.Port)
 	if err != nil {
 		logutil.BgLogger().Warn(LitWarnEnvInitFail,
 			zap.String("Sort Path Error:", err.Error()),
@@ -119,8 +119,8 @@ func InitGlobalLightningBackendEnv() {
 		return
 	}
 
-	// If use default path /tmp/tidb, then set min disk quota to 10 GB.
-	if cfg.FastReorgLocalPath == "/tmp/tidb" {
+	// If the default path is /tmp/tidb, then set min disk quota to 10 GB.
+	if cfg.TempDir == "/tmp/tidb" {
 		GlobalEnv.SetMinQuota()
 	}
 

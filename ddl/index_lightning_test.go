@@ -52,7 +52,7 @@ func TestEnableLightning(t *testing.T) {
 	// Check default value, Current is off
 	allow := ddl.IsEnableFastReorg()
 	require.Equal(t, false, allow)
-	// Set illedge value
+	// Set an illegal value.
 	err := tk.ExecToErr("set @@global.tidb_ddl_enable_fast_reorg = abc")
 	require.Error(t, err)
 	allow = ddl.IsEnableFastReorg()
