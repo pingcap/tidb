@@ -83,6 +83,7 @@ func getPackageInfo(dir string) string {
 	return pkg
 }
 
+// MoveFile moves a file from src to dst.
 func MoveFile(sourcePath, destPath string) error {
 	filepath.Clean(sourcePath)
 	filepath.Clean(destPath)
