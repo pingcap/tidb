@@ -30,12 +30,12 @@ var _ Storage = &StorageRC{}
 //
 // Common usage as follows:
 //
-//  storage.Lock()
-//  if !storage.Done() {
-//      fill all data into storage
-//  }
-//  storage.UnLock()
-//  read data from storage
+//	storage.Lock()
+//	if !storage.Done() {
+//	    fill all data into storage
+//	}
+//	storage.UnLock()
+//	read data from storage
 type Storage interface {
 	// If is first called, will open underlying storage. Otherwise will add ref count by one.
 	OpenAndRef() error
@@ -117,7 +117,7 @@ func (s *StorageRC) OpenAndRef() (err error) {
 		s.refCnt = 1
 		s.iter = 0
 	} else {
-		s.refCnt += 1
+		s.refCnt++
 	}
 	return nil
 }
@@ -127,7 +127,7 @@ func (s *StorageRC) DerefAndClose() (err error) {
 	if !s.valid() {
 		return errors.New("Storage not opend yet")
 	}
-	s.refCnt -= 1
+	s.refCnt--
 	if s.refCnt < 0 {
 		return errors.New("Storage ref count is less than zero")
 	} else if s.refCnt == 0 {

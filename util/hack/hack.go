@@ -33,7 +33,7 @@ func String(b []byte) (s MutableString) {
 	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
 	pstring.Data = pbytes.Data
 	pstring.Len = pbytes.Len
-	return
+	return s
 }
 
 // Slice converts string to slice without copy.
@@ -44,7 +44,7 @@ func Slice(s string) (b []byte) {
 	pbytes.Data = pstring.Data
 	pbytes.Len = pstring.Len
 	pbytes.Cap = pstring.Len
-	return
+	return b
 }
 
 // LoadFactor is the maximum average load of a bucket that triggers growth is 6.5 in Golang Map.
@@ -76,3 +76,8 @@ const (
 	// DefBucketMemoryUsageForSetInt64 = bucketSize*(1+unsafe.Sizeof(int64) + unsafe.Sizeof(struct{}))+2*ptrSize
 	DefBucketMemoryUsageForSetInt64 = (8*(1+8+0) + 16) / 2 * 3
 )
+
+// EstimateBucketMemoryUsage returns the estimated memory usage of a bucket in a map.
+func EstimateBucketMemoryUsage[K comparable, V any]() uint64 {
+	return (8*(1+uint64(unsafe.Sizeof(*new(K))+unsafe.Sizeof(*new(V)))) + 16) / 2 * 3
+}

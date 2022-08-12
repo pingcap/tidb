@@ -912,6 +912,7 @@ const (
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
+	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
@@ -979,6 +980,7 @@ const (
 	ErrWarnOptimizerHintParseError         = 8064
 	ErrWarnOptimizerHintInvalidInteger     = 8065
 	ErrUnsupportedSecondArgumentType       = 8066
+	ErrColumnNotMatched                    = 8067
 	ErrInvalidPluginID                     = 8101
 	ErrInvalidPluginManifest               = 8102
 	ErrInvalidPluginName                   = 8103
@@ -1022,6 +1024,9 @@ const (
 	ErrAssertionFailed                     = 8141
 	ErrInstanceScope                       = 8142
 	ErrNonTransactionalJobFailure          = 8143
+	ErrSettingNoopVariable                 = 8144
+	ErrGettingNoopVariable                 = 8145
+	ErrCannotMigrateSession                = 8146
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1068,6 +1073,9 @@ const (
 	ErrOptOnCacheTable                    = 8242
 	ErrHTTPServiceError                   = 8243
 	ErrPartitionColumnStatsMissing        = 8244
+	ErrColumnInChange                     = 8245
+	ErrDDLSetting                         = 8246
+
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

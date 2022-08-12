@@ -12,7 +12,7 @@ go_library(
     deps = [
         "//errno",
         "//infoschema",
-        "//infoschema/perfschema",
+        "//kv",
         "//parser/ast",
         "//parser/auth",
         "//parser/mysql",
@@ -30,17 +30,21 @@ go_library(
         "//util/sqlexec",
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "privileges_test",
+    timeout = "short",
     srcs = [
         "cache_test.go",
         "main_test.go",
         "privileges_test.go",
     ],
+    flaky = True,
+    shard_count = 50,
     deps = [
         ":privileges",
         "//config",

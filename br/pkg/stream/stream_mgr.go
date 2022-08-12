@@ -15,8 +15,14 @@
 package stream
 
 import (
+	"context"
+	"strings"
+
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -24,7 +30,24 @@ import (
 	"github.com/pingcap/tidb/util"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
+
+const (
+	streamBackupMetaPrefix = "v1/backupmeta"
+
+	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
+
+	metaDataWorkerPoolSize = 128
+)
+
+func GetStreamBackupMetaPrefix() string {
+	return streamBackupMetaPrefix
+}
+
+func GetStreamBackupGlobalCheckpointPrefix() string {
+	return streamBackupGlobalCheckpointPrefix
+}
 
 // appendTableObserveRanges builds key ranges corresponding to `tblIDS`.
 func appendTableObserveRanges(tblIDs []int64) []kv.KeyRange {
@@ -119,9 +142,8 @@ func BuildObserveDataRanges(
 ) ([]kv.KeyRange, error) {
 	if len(filterStr) == 1 && filterStr[0] == string("*.*") {
 		return buildObserverAllRange(), nil
-	} else {
-		return buildObserveTableRanges(storage, tableFilter, backupTS)
 	}
+	return buildObserveTableRanges(storage, tableFilter, backupTS)
 }
 
 // BuildObserveMetaRange specifies build key ranges to observe meta KV(contains all of metas)
@@ -132,4 +154,46 @@ func BuildObserveMetaRange() *kv.KeyRange {
 	ek := sk.PrefixNext()
 
 	return &kv.KeyRange{StartKey: sk, EndKey: ek}
+}
+
+// FastUnmarshalMetaData used a 128 worker pool to speed up
+// read metadata content from external_storage.
+func FastUnmarshalMetaData(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	fn func(path string, m *backuppb.Metadata) error,
+) error {
+	log.Info("use workers to speed up reading metadata files", zap.Int("workers", metaDataWorkerPoolSize))
+	pool := utils.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
+	eg, ectx := errgroup.WithContext(ctx)
+	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
+	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
+		readPath := path
+		pool.ApplyOnErrorGroup(eg, func() error {
+			log.Info("fast read meta file from storage", zap.String("path", readPath))
+			b, err := s.ReadFile(ectx, readPath)
+			if err != nil {
+				log.Error("failed to read file", zap.String("file", readPath))
+				return errors.Annotatef(err, "during reading meta file %s from storage", readPath)
+			}
+			m := &backuppb.Metadata{}
+			err = m.Unmarshal(b)
+			if err != nil {
+				if !strings.HasSuffix(readPath, ".meta") {
+					return nil
+				}
+				return err
+			}
+			return fn(readPath, m)
+		})
+		return nil
+	})
+	if err != nil {
+		readErr := eg.Wait()
+		if readErr != nil {
+			return errors.Annotatef(readErr, "scanning metadata meets error %s", err)
+		}
+		return errors.Annotate(err, "scanning metadata meets error")
+	}
+	return eg.Wait()
 }

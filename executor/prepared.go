@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"math"
-	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -32,7 +31,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -42,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -49,22 +48,6 @@ var (
 	_ Executor = &ExecuteExec{}
 	_ Executor = &PrepareExec{}
 )
-
-type paramMarkerSorter struct {
-	markers []ast.ParamMarkerExpr
-}
-
-func (p *paramMarkerSorter) Len() int {
-	return len(p.markers)
-}
-
-func (p *paramMarkerSorter) Less(i, j int) bool {
-	return p.markers[i].(*driver.ParamMarkerExpr).Offset < p.markers[j].(*driver.ParamMarkerExpr).Offset
-}
-
-func (p *paramMarkerSorter) Swap(i, j int) {
-	p.markers[i], p.markers[j] = p.markers[j], p.markers[i]
-}
 
 type paramMarkerExtractor struct {
 	markers []ast.ParamMarkerExpr
@@ -91,6 +74,8 @@ type PrepareExec struct {
 	ID         uint32
 	ParamCount int
 	Fields     []*ast.ResultField
+
+	IsGeneralStmt bool
 
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
 	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
@@ -184,16 +169,17 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The parameter markers are appended in visiting order, which may not
 	// be the same as the position order in the query string. We need to
 	// sort it by position.
-	sorter := &paramMarkerSorter{markers: extractor.markers}
-	sort.Sort(sorter)
-	e.ParamCount = len(sorter.markers)
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) bool {
+		return i.(*driver.ParamMarkerExpr).Offset < j.(*driver.ParamMarkerExpr).Offset
+	})
+	e.ParamCount = len(extractor.markers)
 	for i := 0; i < e.ParamCount; i++ {
-		sorter.markers[i].SetOrder(i)
+		extractor.markers[i].SetOrder(i)
 	}
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
 		StmtType:      GetStmtLabel(stmt),
-		Params:        sorter.markers,
+		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
@@ -206,7 +192,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		normalizedSQL4PC, digest4PC string
 		selectStmtNode              ast.StmtNode
 	)
-	if !plannercore.PreparedPlanCacheEnabled() {
+	if !e.ctx.GetSessionVars().EnablePreparedPlanCache {
 		prepared.UseCache = false
 	} else {
 		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
@@ -238,14 +224,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !isNoResultPlan(p) {
 		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
 	}
-	if e.ID == 0 {
+	if e.ID == 0 && !e.IsGeneralStmt {
 		e.ID = vars.GetNextPreparedStmtID()
 	}
-	if e.name != "" {
+	if e.name != "" && !e.IsGeneralStmt {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
-	preparedObj := &plannercore.CachedPrepareStmt{
+	preparedObj := &plannercore.PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              e.ctx.GetSessionVars().CurrentDB,
 		StmtText:            stmt.Text(),
@@ -257,6 +243,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		NormalizedSQL4PC:    normalizedSQL4PC,
 		SQLDigest4PC:        digest4PC,
 	}
+	if err = plannercore.CheckPreparedPriv(e.ctx, preparedObj, ret.InfoSchema); err != nil {
+		return err
+	}
+	if e.IsGeneralStmt {
+		vars.AddGeneralPlanCacheStmt(e.sqlText, preparedObj)
+		return nil
+	}
+
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
 
@@ -272,7 +266,6 @@ type ExecuteExec struct {
 	stmtExec      Executor
 	stmt          ast.StmtNode
 	plan          plannercore.Plan
-	id            uint32
 	lowerPriority bool
 	outputNames   []*types.FieldName
 }
@@ -285,22 +278,6 @@ func (e *ExecuteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build(b *executorBuilder) error {
-	if snapshotTS := e.ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		if err := e.ctx.InitTxnWithStartTS(snapshotTS); err != nil {
-			return err
-		}
-	} else {
-		ok, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
-		if err != nil {
-			return err
-		}
-		if ok {
-			err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
-			if err != nil {
-				return err
-			}
-		}
-	}
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))
@@ -328,14 +305,16 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
 	preparedPointer := vars.PreparedStmts[id]
-	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
 	if !ok {
-		return errors.Errorf("invalid CachedPrepareStmt type")
+		return errors.Errorf("invalid PlanCacheStmt type")
 	}
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
-	if plannercore.PreparedPlanCacheEnabled() {
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion, 0)
+	if e.ctx.GetSessionVars().EnablePreparedPlanCache {
+		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.ctx, preparedObj)
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
+			0, bindSQL)
 		if err != nil {
 			return err
 		}
@@ -349,52 +328,58 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
+	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema) (*ExecStmt, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
-	execStmt := &ast.ExecuteStmt{ExecID: ID}
-	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
-		return nil, false, false, err
+
+	preparedObj, err := plannercore.GetPreparedStmt(execStmt, sctx.GetSessionVars())
+	if err != nil {
+		return nil, err
 	}
-	isStaleness := snapshotTS != 0
-	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
-	execStmt.BinaryArgs = args
+	pointPlanShortPathOK, err := plannercore.IsPointPlanShortPathOK(sctx, is, preparedObj)
+	if err != nil {
+		return nil, err
+	}
+
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
-		return nil, false, false, err
+		return nil, err
 	}
 
 	failpoint.Inject("assertTxnManagerInCompile", func() {
 		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
-		staleread.AssertStmtStaleness(sctx, snapshotTS != 0)
-		if snapshotTS != 0 {
-			sessiontxn.AssertTxnManagerReadTS(sctx, snapshotTS)
-		}
 	})
 
 	stmt := &ExecStmt{
-		GoCtx:            ctx,
-		InfoSchema:       is,
-		Plan:             execPlan,
-		StmtNode:         execStmt,
-		Ctx:              sctx,
-		OutputNames:      names,
-		Ti:               &TelemetryInfo{},
-		ReplicaReadScope: replicaReadScope,
+		GoCtx:       ctx,
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    execStmt,
+		Ctx:         sctx,
+		OutputNames: names,
+		Ti:          &TelemetryInfo{},
 	}
-	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if !ok {
-			return nil, false, false, errors.Errorf("invalid CachedPrepareStmt type")
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+
+	// handle point plan short path specially
+	if pointPlanShortPathOK {
+		if ep, ok := execPlan.(*plannercore.Execute); ok {
+			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
+				stmtCtx.SetPlan(execPlan)
+				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
+				stmt.Plan = pointPlan
+				stmt.PsStmt = preparedObj
+			} else {
+				// invalid the previous cached point plan
+				preparedObj.PreparedAst.CachedPlan = nil
+			}
 		}
-		stmtCtx := sctx.GetSessionVars().StmtCtx
-		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-		stmtCtx.OriginalSQL = stmt.Text
-		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
-	tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
-	return stmt, tiFlashPushDown, tiFlashExchangePushDown, nil
+	return stmt, nil
 }

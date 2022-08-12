@@ -1246,18 +1246,19 @@ func (t *TableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, c
 	return nil
 }
 
-func writeSequenceUpdateValueBinlog(ctx sessionctx.Context, db, sequence string, end int64) error {
+func writeSequenceUpdateValueBinlog(sctx sessionctx.Context, db, sequence string, end int64) error {
 	// 1: when sequenceCommon update the local cache passively.
 	// 2: When sequenceCommon setval to the allocator actively.
 	// Both of this two case means the upper bound the sequence has changed in meta, which need to write the binlog
 	// to the downstream.
 	// Sequence sends `select setval(seq, num)` sql string to downstream via `setDDLBinlog`, which is mocked as a DDL binlog.
-	binlogCli := ctx.GetSessionVars().BinlogClient
-	sqlMode := ctx.GetSessionVars().SQLMode
+	binlogCli := sctx.GetSessionVars().BinlogClient
+	sqlMode := sctx.GetSessionVars().SQLMode
 	sequenceFullName := stringutil.Escape(db, sqlMode) + "." + stringutil.Escape(sequence, sqlMode)
 	sql := "select setval(" + sequenceFullName + ", " + strconv.FormatInt(end, 10) + ")"
 
-	err := kv.RunInNewTxn(context.Background(), ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, sctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		mockJobID, err := m.GenGlobalID()
 		if err != nil {
@@ -1456,9 +1457,6 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.GetFlag()) {
 		return colVal, errors.New("Miss column")
 	}
-	if col.State != model.StatePublic {
-		return colVal, nil
-	}
 	if defaultVals[col.Offset].IsNull() {
 		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 		if err != nil {
@@ -1479,7 +1477,7 @@ func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (k
 		if stmtCtx := sctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 			// First try to alloc if the statement has reserved auto ID.
 			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
-				stmtCtx.BaseRowID += 1
+				stmtCtx.BaseRowID++
 				return kv.IntHandle(stmtCtx.BaseRowID), nil
 			}
 		}

@@ -13,11 +13,13 @@ go_library(
 
 go_test(
     name = "kvcache_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "simple_lru_test.go",
     ],
     embed = [":kvcache"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "//util/memory",

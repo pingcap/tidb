@@ -43,10 +43,16 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(ErrKVEpochNotMatch))
 	require.True(t, IsRetryableError(ErrKVServerIsBusy))
 	require.True(t, IsRetryableError(ErrKVRegionNotFound))
+	require.True(t, IsRetryableError(ErrKVReadIndexNotReady))
+	require.True(t, IsRetryableError(ErrKVIngestFailed))
+	require.True(t, IsRetryableError(ErrKVRaftProposalDropped))
 	require.True(t, IsRetryableError(ErrKVNotLeader.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVEpochNotMatch.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVServerIsBusy.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVRegionNotFound.GenWithStack("test")))
+	require.True(t, IsRetryableError(ErrKVReadIndexNotReady.GenWithStack("test")))
+	require.True(t, IsRetryableError(ErrKVIngestFailed.GenWithStack("test")))
+	require.True(t, IsRetryableError(ErrKVRaftProposalDropped.GenWithStack("test")))
 
 	// net: connection refused
 	_, err := net.Dial("tcp", "localhost:65533")
@@ -94,4 +100,7 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, context.Canceled)))
 	require.True(t, IsRetryableError(multierr.Combine(&net.DNSError{IsTimeout: true}, &net.DNSError{IsTimeout: true})))
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})))
+
+	require.True(t, IsRetryableError(errors.Errorf("region %d is not fully replicated", 1234)))
+	require.True(t, IsRetryableError(errors.New("other error: Coprocessor task terminated due to exceeding the deadline")))
 }

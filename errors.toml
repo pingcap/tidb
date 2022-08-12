@@ -171,9 +171,19 @@ error = '''
 task not found
 '''
 
+["BR:Restore:ErrDatabasesAlreadyExisted"]
+error = '''
+databases already existed in restored cluster
+'''
+
 ["BR:Restore:ErrRestoreChecksumMismatch"]
 error = '''
 restore checksum mismatch
+'''
+
+["BR:Restore:ErrRestoreIncompatibleSys"]
+error = '''
+incompatible system table
 '''
 
 ["BR:Restore:ErrRestoreInvalidBackup"]
@@ -199,6 +209,11 @@ restore mode mismatch
 ["BR:Restore:ErrRestoreNoPeer"]
 error = '''
 region does not have peer
+'''
+
+["BR:Restore:ErrRestoreNotFreshCluster"]
+error = '''
+cluster is not fresh
 '''
 
 ["BR:Restore:ErrRestoreRangeMismatch"]
@@ -366,9 +381,24 @@ error = '''
 create kv client error
 '''
 
+["Lightning:KV:ErrKVIngestFailed"]
+error = '''
+ingest tikv failed
+'''
+
+["Lightning:KV:ErrKVRaftProposalDropped"]
+error = '''
+raft proposal dropped
+'''
+
 ["Lightning:KV:NotLeader"]
 error = '''
 not leader
+'''
+
+["Lightning:KV:ReadIndexNotReady"]
+error = '''
+read index not ready
 '''
 
 ["Lightning:KV:RegionNotFound"]
@@ -559,6 +589,11 @@ Invalid allocator type
 ["autoid:8059"]
 error = '''
 Failed to read auto-random value from storage engine
+'''
+
+["ddl:0"]
+error = '''
+TiFlash mode will take effect after at least one TiFlash replica is set for the table
 '''
 
 ["ddl:1025"]
@@ -1231,6 +1266,16 @@ error = '''
 '%s' is unsupported on cache tables.
 '''
 
+["ddl:8245"]
+error = '''
+column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
+'''
+
+["ddl:8246"]
+error = '''
+Error happened when enable/disable DDL: %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1376,6 +1421,11 @@ error = '''
 TiDB admin check table failed.
 '''
 
+["executor:8067"]
+error = '''
+Load data: unmatched columns
+'''
+
 ["executor:8114"]
 error = '''
 Unknown plan
@@ -1444,6 +1494,11 @@ data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%
 ["executor:8142"]
 error = '''
 modifying %s will require SET GLOBAL in a future version of TiDB
+'''
+
+["executor:8144"]
+error = '''
+setting %s has no effect in TiDB
 '''
 
 ["executor:8212"]
@@ -2066,6 +2121,11 @@ error = '''
 Column '%s' in ANALYZE column option does not exist in table '%s'
 '''
 
+["planner:8145"]
+error = '''
+variable %s has no effect in TiDB
+'''
+
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.
@@ -2206,6 +2266,11 @@ error = '''
 User %s already exists.
 '''
 
+["schema:3750"]
+error = '''
+Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.
+'''
+
 ["schema:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'
@@ -2239,6 +2304,11 @@ error = '''
 ["session:8143"]
 error = '''
 non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v
+'''
+
+["session:8146"]
+error = '''
+cannot migrate the current session: %s
 '''
 
 ["structure:8217"]

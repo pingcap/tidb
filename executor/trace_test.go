@@ -22,8 +22,7 @@ import (
 )
 
 func TestTraceExec(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `create table trace (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -33,7 +32,7 @@ func TestTraceExec(t *testing.T) {
 	require.GreaterOrEqual(t, len(rows), 1)
 
 	// +---------------------------+-----------------+------------+
-	// | operation                 | startTS         | duration   |
+	// | operation                 | snapshotTS      | duration   |
 	// +---------------------------+-----------------+------------+
 	// | session.getTxnFuture      | 22:08:38.247834 | 78.909µs   |
 	// |   ├─session.Execute       | 22:08:38.247829 | 1.478487ms |
@@ -72,8 +71,7 @@ func rowsOrdered(rows [][]interface{}) bool {
 }
 
 func TestTracePlanStmt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tp123(id int);")

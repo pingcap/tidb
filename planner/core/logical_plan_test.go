@@ -55,6 +55,7 @@ func createPlannerSuite() (s *plannerSuite) {
 		MockRangePartitionTable(),
 		MockHashPartitionTable(),
 		MockListPartitionTable(),
+		MockStateNoneColumnTable(),
 	}
 	id := int64(0)
 	for _, tblInfo := range tblInfos {
@@ -80,7 +81,7 @@ func createPlannerSuite() (s *plannerSuite) {
 
 func TestPredicatePushDown(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s := createPlannerSuite()
 	ctx := context.Background()
 	for ith, ca := range input {
@@ -141,7 +142,7 @@ func TestJoinPredicatePushDown(t *testing.T) {
 			Right string
 		}
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -180,7 +181,7 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 			Right string
 		}
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -225,7 +226,7 @@ func TestSimplifyOuterJoin(t *testing.T) {
 			JoinType string
 		}
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -292,7 +293,7 @@ func TestDeriveNotNullConds(t *testing.T) {
 			Right string
 		}
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -466,7 +467,7 @@ func TestTablePartition(t *testing.T) {
 		}
 		output []string
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -491,7 +492,7 @@ func TestTablePartition(t *testing.T) {
 
 func TestSubquery(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -505,7 +506,7 @@ func TestSubquery(t *testing.T) {
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 		require.NoError(t, err)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, lp)
+			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagSemiJoinRewrite, lp)
 			require.NoError(t, err)
 		}
 		testdata.OnRecord(func() {
@@ -517,7 +518,7 @@ func TestSubquery(t *testing.T) {
 
 func TestPlanBuilder(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -544,7 +545,7 @@ func TestPlanBuilder(t *testing.T) {
 
 func TestJoinReOrder(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -568,7 +569,7 @@ func TestJoinReOrder(t *testing.T) {
 func TestEagerAggregation(t *testing.T) {
 	var input []string
 	var output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -597,7 +598,7 @@ func TestColumnPruning(t *testing.T) {
 		input  []string
 		output []map[int][]string
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -622,7 +623,7 @@ func TestSortByItemsPruning(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	testdata.OnRecord(func() {
 		output = make([][]string, len(input))
 	})
@@ -911,6 +912,10 @@ func TestValidate(t *testing.T) {
 			sql: "select a+1 from t having t.a",
 			err: ErrUnknownColumn,
 		},
+		{
+			sql: "update T_StateNoneColumn set c = 1 where a = 1",
+			err: ErrUnknownColumn,
+		},
 	}
 
 	s := createPlannerSuite()
@@ -961,7 +966,7 @@ func checkUniqueKeys(p LogicalPlan, t *testing.T, ans map[int][][]string, sql st
 func TestUniqueKeyInfo(t *testing.T) {
 	var input []string
 	var output []map[int][][]string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	testdata.OnRecord(func() {
 		output = make([]map[int][][]string, len(input))
 	})
@@ -986,7 +991,7 @@ func TestUniqueKeyInfo(t *testing.T) {
 
 func TestAggPrune(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -1487,7 +1492,7 @@ func TestUnion(t *testing.T) {
 		Best string
 		Err  bool
 	}
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range input {
@@ -1520,7 +1525,7 @@ func TestUnion(t *testing.T) {
 
 func TestTopNPushDown(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range input {
@@ -1596,7 +1601,7 @@ func TestNameResolver(t *testing.T) {
 
 func TestOuterJoinEliminator(t *testing.T) {
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
 	ctx := context.TODO()
@@ -1668,7 +1673,7 @@ func TestWindowFunction(t *testing.T) {
 		s.optimizeVars = nil
 	}()
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s.doTestWindowFunction(t, input, output)
 }
 
@@ -1683,7 +1688,7 @@ func TestWindowParallelFunction(t *testing.T) {
 		s.optimizeVars = nil
 	}()
 	var input, output []string
-	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s.doTestWindowFunction(t, input, output)
 }
 
