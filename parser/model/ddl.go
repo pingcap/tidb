@@ -337,7 +337,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		Version:         parentJob.Version,
 		ReorgMeta:       parentJob.ReorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible},
 		Priority:        parentJob.Priority,
