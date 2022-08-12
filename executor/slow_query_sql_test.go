@@ -235,9 +235,6 @@ func TestIssue37066(t *testing.T) {
 	tk.MustExec("create table t2(a int, b int, primary key (a) nonclustered);")
 	tk.MustExec("create table t3(a varchar(10), b varchar(10), c int, primary key (a) clustered, index ib(b), index ic(c));")
 	tk.MustExec("create table t4(a varchar(10), b int, primary key (a) nonclustered);")
-	// 1. assert binary plan is generated if the variable is turned on
-	tk.MustExec("set global tidb_generate_binary_plan = 1")
-	tk.MustQuery("select sleep(1)")
 
 	cases := []string{
 		"select * from t1 where a = 10",
