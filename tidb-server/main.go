@@ -179,7 +179,6 @@ func main() {
 	registerMetrics()
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
-		println(config.GetGlobalConfig().TempStoragePath)
 		err := disk.InitializeTempDir()
 		terror.MustNil(err)
 		checkTempStorageQuota()
