@@ -17,7 +17,6 @@ package expensivequery
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -30,6 +29,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -345,39 +345,47 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 	return fileName, nil
 }
 
+type item struct {
+	Name  string
+	Debug int
+}
 func (record *memoryUsageAlarm) recordProfile() ([]string, error) {
-	items := []struct {
-		name  string
-		debug int
-	}{
-		{name: "heap"},
-		{name: "goroutine", debug: 2},
+	items := []item{
+		{Name: "heap"},
+		{Name: "goroutine", Debug: 2},
 	}
 	profileFilenames := make([]string, 0, len(items))
 	for i, item := range items {
-		fileName := filepath.Join(record.tmpDir, item.name+record.lastCheckTime.Format(time.RFC3339))
+		fileName, err := record.write(i, item)
+		if err != nil {
+			return profileFilenames, err
+		}
 		profileFilenames = append(profileFilenames, fileName)
-		record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
-		f, err := os.Create(fileName)
-		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
-			return profileFilenames, err
-		}
-
-		p := rpprof.Lookup(item.name)
-		err = p.WriteTo(f, item.debug)
-		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
-			return profileFilenames, err
-		}
-
-		//nolint: revive
-		defer func() {
-			err := f.Close()
-			if err != nil {
-				logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.name), zap.Error(err))
-			}
-		}()
 	}
-	return profileFilenames, nil
+}
+
+func (record *memoryUsageAlarm) write(i int, item item) string, error {
+	fileName := filepath.Join(record.tmpDir, item.name+record.lastCheckTime.Format(time.RFC3339))
+	record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
+	f, err := os.Create(fileName)
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
+		return profileFilenames, err
+	}
+
+	p := rpprof.Lookup(item.name)
+	err = p.WriteTo(f, item.debug)
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
+		return profileFilenames, err
+	}
+
+	//nolint: revive
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.name), zap.Error(err))
+		}
+	}()
+	return fileName, nil
 }

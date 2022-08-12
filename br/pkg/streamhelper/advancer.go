@@ -29,23 +29,25 @@ import (
 // CheckpointAdvancer is the central node for advancing the checkpoint of log backup.
 // It's a part of "checkpoint v3".
 // Generally, it scan the regions in the task range, collect checkpoints from tikvs.
-//                                         ┌──────┐
-//                                   ┌────►│ TiKV │
-//                                   │     └──────┘
-//                                   │
-//                                   │
-// ┌──────────┐GetLastFlushTSOfRegion│     ┌──────┐
-// │ Advancer ├──────────────────────┼────►│ TiKV │
-// └────┬─────┘                      │     └──────┘
-//      │                            │
-//      │                            │
-//      │                            │     ┌──────┐
-//      │                            └────►│ TiKV │
-//      │                                  └──────┘
-//      │
-//      │ UploadCheckpointV3   ┌──────────────────┐
-//      └─────────────────────►│  PD              │
-//                             └──────────────────┘
+/*
+                                         ┌──────┐
+                                   ┌────►│ TiKV │
+                                   │     └──────┘
+                                   │
+                                   │
+ ┌──────────┐GetLastFlushTSOfRegion│     ┌──────┐
+ │ Advancer ├──────────────────────┼────►│ TiKV │
+ └────┬─────┘                      │     └──────┘
+      │                            │
+      │                            │
+      │                            │     ┌──────┐
+      │                            └────►│ TiKV │
+      │                                  └──────┘
+      │
+      │ UploadCheckpointV3   ┌──────────────────┐
+      └─────────────────────►│  PD              │
+                             └──────────────────┘
+*/
 type CheckpointAdvancer struct {
 	env Env
 
@@ -264,13 +266,11 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uin
 		nextRun []kv.KeyRange
 	)
 	defer c.recordTimeCost("record all")
-	cx, cancel := context.WithTimeout(ctx, c.cfg.MaxBackoffTime)
-	defer cancel()
 	for {
 		coll := NewClusterCollector(ctx, c.env)
 		coll.setOnSuccessHook(c.cache.InsertRange)
 		for _, u := range thisRun {
-			err := c.GetCheckpointInRange(cx, u.StartKey, u.EndKey, coll)
+			err := c.GetCheckpointInRange(ctx, u.StartKey, u.EndKey, coll)
 			if err != nil {
 				return 0, err
 			}
@@ -335,7 +335,7 @@ func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskE
 				return nil
 			}
 			log.Info("meet task event", zap.Stringer("event", &e))
-			if err := c.onTaskEvent(e); err != nil {
+			if err := c.onTaskEvent(ctx, e); err != nil {
 				if errors.Cause(e.Err) != context.Canceled {
 					log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
 					return err
@@ -393,7 +393,7 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 					return
 				}
 				log.Info("meet task event", zap.Stringer("event", &e))
-				if err := c.onTaskEvent(e); err != nil {
+				if err := c.onTaskEvent(ctx, e); err != nil {
 					if errors.Cause(e.Err) != context.Canceled {
 						log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
 						time.AfterFunc(c.cfg.BackoffTime, func() { c.StartTaskListener(ctx) })
@@ -405,7 +405,7 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 	}()
 }
 
-func (c *CheckpointAdvancer) onTaskEvent(e TaskEvent) error {
+func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
 	switch e.Type {
@@ -414,6 +414,10 @@ func (c *CheckpointAdvancer) onTaskEvent(e TaskEvent) error {
 	case EventDel:
 		c.task = nil
 		c.state = &fullScan{}
+		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
+			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
+		}
+		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
 		c.cache.Clear()
 	case EventErr:
 		return e.Err
@@ -476,9 +480,8 @@ func (c *CheckpointAdvancer) onConsistencyCheckTick(s *updateSmallTree) error {
 		log.Error("consistency check failed! log backup may lose data! rolling back to full scan for saving.", logutil.ShortError(err))
 		c.state = &fullScan{}
 		return err
-	} else {
-		log.Debug("consistency check passed.")
 	}
+	log.Debug("consistency check passed.")
 	s.consistencyCheckTick = config.DefaultConsistencyCheckTick
 	return nil
 }

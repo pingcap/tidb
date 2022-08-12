@@ -78,8 +78,7 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -267,8 +266,7 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int, c int, d int)`)
@@ -455,8 +453,7 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -943,8 +940,7 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 }
 
 func TestTrueCardCost(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -970,8 +966,7 @@ func TestTrueCardCost(t *testing.T) {
 }
 
 func TestIssue36243(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -1003,4 +998,39 @@ func TestIssue36243(t *testing.T) {
 	tk.MustExec(`set @@tidb_cost_model_version=2`)
 	selCost, readerCost = getCost()
 	require.True(t, selCost > readerCost)
+}
+
+func TestScanOnSmallTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
+	tk.MustExec("analyze table t")
+	tk.MustExec(`set @@tidb_cost_model_version=2`)
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rs := tk.MustQuery("explain select * from t").Rows()
+	useTiKVScan := false
+	for _, r := range rs {
+		op := r[0].(string)
+		task := r[2].(string)
+		if strings.Contains(op, "Scan") && strings.Contains(task, "tikv") {
+			useTiKVScan = true
+		}
+	}
+	require.True(t, useTiKVScan)
 }

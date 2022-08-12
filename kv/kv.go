@@ -362,17 +362,27 @@ type Request struct {
 	ReadReplicaScope string
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
+	// ClosestReplicaReadAdjuster used to adjust a copr request.
+	ClosestReplicaReadAdjuster CoprRequestAdjuster
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
 	// ResourceGroupTagger indicates the kv request task group tagger.
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
-	Paging bool
-	// MinPagingSize is used when Paging is true.
-	MinPagingSize uint64
+	Paging struct {
+		Enable bool
+		// MinPagingSize is used when Paging is true.
+		MinPagingSize uint64
+		// MaxPagingSize is used when Paging is true.
+		MaxPagingSize uint64
+	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
 }
+
+// CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
+// return true if the request is changed.
+type CoprRequestAdjuster func(*Request, int) bool
 
 // PartitionIDAndRanges used by PartitionTableScan in tiflash.
 type PartitionIDAndRanges struct {

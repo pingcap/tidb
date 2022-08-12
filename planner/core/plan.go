@@ -329,7 +329,7 @@ type PhysicalPlan interface {
 	Plan
 
 	// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-	GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error)
+	GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error)
 
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -379,6 +379,35 @@ type PhysicalPlan interface {
 	// appendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
 	// be tracked during findBestTask or enumeratePhysicalPlans4Task
 	appendChildCandidate(op *physicalOptimizeOp)
+}
+
+// NewDefaultPlanCostOption returns PlanCostOption
+func NewDefaultPlanCostOption() *PlanCostOption {
+	return &PlanCostOption{}
+}
+
+// PlanCostOption indicates option during GetPlanCost
+type PlanCostOption struct {
+	CostFlag uint64
+	tracer   *physicalOptimizeOp
+}
+
+// WithCostFlag set costflag
+func (op *PlanCostOption) WithCostFlag(flag uint64) *PlanCostOption {
+	if op == nil {
+		return nil
+	}
+	op.CostFlag = flag
+	return op
+}
+
+// WithOptimizeTracer set tracer
+func (op *PlanCostOption) WithOptimizeTracer(tracer *physicalOptimizeOp) *PlanCostOption {
+	if op == nil {
+		return nil
+	}
+	op.tracer = tracer
+	return op
 }
 
 type baseLogicalPlan struct {
@@ -570,7 +599,7 @@ func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Schema) {
 	childMaxOneRow := make([]bool, len(p.children))
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
@@ -655,10 +684,10 @@ func (p *basePlan) OutputNames() types.NameSlice {
 	return nil
 }
 
-func (p *basePlan) SetOutputNames(names types.NameSlice) {
+func (p *basePlan) SetOutputNames(_ types.NameSlice) {
 }
 
-func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *basePlan) replaceExprColumns(_ map[string]*expression.Column) {
 }
 
 // ID implements Plan ID interface.
@@ -754,7 +783,7 @@ func (p *basePlan) SCtx() sessionctx.Context {
 
 // buildPlanTrace implements Plan
 func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.Cost()}
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.self.Cost()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
 	}

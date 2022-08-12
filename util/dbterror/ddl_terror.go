@@ -368,6 +368,11 @@ var (
 	// ErrIncompatibleTiFlashAndPlacement when placement and tiflash replica options are set at the same time
 	ErrIncompatibleTiFlashAndPlacement = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Placement and tiflash replica options cannot be set at the same time", nil))
 
+	// ErrUnsupportedAlterTableSpec means we don't support this alter table specification (i.e. unknown)
+	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "Unsupported/unknown ALTER TABLE specification"), nil))
+	// ErrGeneralUnsupportedDDL as a generic error to customise by argument
+	ErrGeneralUnsupportedDDL = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s"), nil))
+
 	// ErrAutoConvert when auto convert happens
 	ErrAutoConvert = ClassDDL.NewStd(mysql.ErrAutoConvert)
 	// ErrWrongStringLength when UserName or HostName is too long
@@ -382,6 +387,8 @@ var (
 	ErrCancelFinishedDDLJob = ClassDDL.NewStd(mysql.ErrCancelFinishedDDLJob)
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = ClassDDL.NewStd(mysql.ErrCannotCancelDDLJob)
+	// ErrDDLSetting returns when failing to enable/disable DDL
+	ErrDDLSetting = ClassDDL.NewStd(mysql.ErrDDLSetting)
 
 	// ErrColumnInChange indicates there is modification on the column in parallel.
 	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)

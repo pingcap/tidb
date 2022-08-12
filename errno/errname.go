@@ -913,6 +913,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCTERecursiveForbiddenJoinOrder:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints", nil),
 	ErrInvalidRequiresSingleReference:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must be referenced only once, and not in any subquery", nil),
 	ErrCTEMaxRecursionDepth:                                  mysql.Message("Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value", nil),
+	ErrTableWithoutPrimaryKey:                                mysql.Message("Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),
@@ -1066,6 +1067,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrJSONObjectKeyTooLong:        mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
 	ErrPartitionStatsMissing:       mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
 	ErrPartitionColumnStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions", nil),
+	ErrDDLSetting:                  mysql.Message("Error happened when enable/disable DDL: %s", nil),
 	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),

@@ -174,8 +174,9 @@ func (t *copTask) finishIndexPlan() {
 	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
 
 	// net seek cost
-	var p PhysicalPlan
-	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
+	p := t.indexPlan
+	for len(p.Children()) > 0 {
+		p = p.Children()[0]
 	}
 	is := p.(*PhysicalIndexScan)
 	t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
@@ -185,7 +186,9 @@ func (t *copTask) finishIndexPlan() {
 	}
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	for p = t.tablePlan; len(p.Children()) > 0; p = p.Children()[0] {
+	p = t.tablePlan
+	for len(p.Children()) > 0 {
+		p = p.Children()[0]
 	}
 	ts := p.(*PhysicalTableScan)
 	t.cst += cnt * ts.getScanRowSize() * sessVars.GetScanFactor(tableInfo)
@@ -987,7 +990,8 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 
 // canPushToIndexPlan checks if this TopN can be pushed to the index side of copTask.
 // It can be pushed to the index side when all columns used by ByItems are available from the index side and
-//   there's no prefix index column.
+//
+//	there's no prefix index column.
 func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
 	schema := indexPlan.Schema()
 	for _, col := range byItemCols {
@@ -1600,7 +1604,6 @@ func RemoveUnnecessaryFirstRow(
 	partialGbyItems []expression.Expression,
 	partialSchema *expression.Schema,
 	firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
-
 	partialCursor := 0
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
 	for _, aggFunc := range partialAggFuncs {
