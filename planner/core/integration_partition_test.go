@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -1121,16 +1121,16 @@ func TestRangeColumnsMultiColumn(t *testing.T) {
 
 	tk.MustGetErrCode(`create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)`+
 		`(partition p0 values less than (NULL,NULL,NULL))`,
-		mysql.ErrWrongTypeColumnValue)
+		errno.ErrWrongTypeColumnValue)
 	tk.MustGetErrCode(`create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)`+
 		`(partition p1 values less than (`+strconv.FormatInt(math.MinInt32-1, 10)+`,'0000-00-00',""))`,
-		mysql.ErrWrongTypeColumnValue)
+		errno.ErrWrongTypeColumnValue)
 	tk.MustExec(`create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)` +
 		`(partition p1 values less than (` + strconv.FormatInt(math.MinInt32, 10) + `,'0000-00-00',""),` +
 		`partition p2 values less than (10,'2022-01-01',"Wow"),` +
 		`partition p3 values less than (11,'2022-01-01',MAXVALUE),` +
 		`partition p4 values less than (MAXVALUE,'2022-01-01',"Wow"))`)
-	tk.MustGetErrCode(`insert into t values (`+strconv.FormatInt(math.MinInt32, 10)+`,'0000-00-00',null)`, mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode(`insert into t values (`+strconv.FormatInt(math.MinInt32, 10)+`,'0000-00-00',null)`, errno.ErrTruncatedWrongValue)
 	tk.MustExec(`insert into t values (NULL,NULL,NULL)`)
 	tk.MustExec(`set @@sql_mode = ''`)
 	tk.MustExec(`insert into t values (` + strconv.FormatInt(math.MinInt32, 10) + `,'0000-00-00',null)`)
@@ -1270,7 +1270,7 @@ func TestRangeColumnsTemp(t *testing.T) {
 		` partition p6 values less than (0, '2031-01-01', MAXVALUE),` +
 		` partition p7 values less than (0, MAXVALUE, MAXVALUE),` +
 		` partition p8 values less than (MAXVALUE, MAXVALUE, MAXVALUE))`)
-	tk.MustGetErrCode(`insert into t values (`+strconv.FormatInt(math.MinInt32, 10)+`,'0000-00-00',null)`, mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode(`insert into t values (`+strconv.FormatInt(math.MinInt32, 10)+`,'0000-00-00',null)`, errno.ErrTruncatedWrongValue)
 	tk.MustExec(`insert into t values (NULL,NULL,NULL)`)
 	tk.MustExec(`set @@sql_mode = ''`)
 	tk.MustExec(`insert into t values (` + strconv.FormatInt(math.MinInt32, 10) + `,'0000-00-00',null)`)
