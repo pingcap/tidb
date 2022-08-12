@@ -242,7 +242,7 @@ type ExecStmt struct {
 
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
-	PsStmt      *plannercore.CachedPrepareStmt
+	PsStmt      *plannercore.PlanCacheStmt
 	Ti          *TelemetryInfo
 }
 
@@ -733,7 +733,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		if err1 != nil {
 			return err1
 		}
-		keys = txnCtx.CollectUnchangedLockKeys(keys)
+		keys = txnCtx.CollectUnchangedRowKeys(keys)
 		if len(keys) == 0 {
 			return nil
 		}

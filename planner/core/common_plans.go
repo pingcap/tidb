@@ -188,13 +188,12 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name         string
-	TxtProtoVars []expression.Expression // parsed variables under text protocol
-	BinProtoVars []types.Datum           // parsed variables under binary protocol
-	ExecID       uint32
-	Stmt         ast.StmtNode
-	StmtType     string
-	Plan         Plan
+	Name     string
+	Params   []expression.Expression
+	PrepStmt *PlanCacheStmt
+	Stmt     ast.StmtNode
+	StmtType string
+	Plan     Plan
 }
 
 // Check if result of GetVar expr is BinaryLiteral
@@ -205,7 +204,7 @@ func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) 
 		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
 		if err != nil || isNull {
 			res = false
-		} else if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
+		} else if dt, ok2 := sctx.GetSessionVars().GetUserVarVal(name); ok2 {
 			res = dt.Kind() == types.KindBinaryLiteral
 		}
 	}
@@ -215,55 +214,31 @@ func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) 
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := sctx.GetSessionVars()
-	if e.Name != "" {
-		e.ExecID = vars.PreparedStmtNameToID[e.Name]
-	}
-	preparedPointer, ok := vars.PreparedStmts[e.ExecID]
-	if !ok {
-		return errors.Trace(ErrStmtNotFound)
-	}
-	preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
-	if !ok {
-		return errors.Errorf("invalid CachedPrepareStmt type")
-	}
+	preparedObj := e.PrepStmt
 	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
 
-	paramLen := len(e.BinProtoVars)
-	if paramLen > 0 {
-		// for binary protocol execute, argument is placed in vars.BinProtoVars
-		if len(prepared.Params) != paramLen {
-			return errors.Trace(ErrWrongParamCount)
-		}
-		vars.PreparedParams = e.BinProtoVars
-		for i, val := range vars.PreparedParams {
-			param := prepared.Params[i].(*driver.ParamMarkerExpr)
-			param.Datum = val
-			param.InExecute = true
-		}
-	} else {
-		// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
-		if len(prepared.Params) != len(e.TxtProtoVars) {
-			return errors.Trace(ErrWrongParamCount)
-		}
+	// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
+	if len(prepared.Params) != len(e.Params) {
+		return errors.Trace(ErrWrongParamCount)
+	}
 
-		for i, usingVar := range e.TxtProtoVars {
-			val, err := usingVar.Eval(chunk.Row{})
-			if err != nil {
-				return err
-			}
-			param := prepared.Params[i].(*driver.ParamMarkerExpr)
-			if isGetVarBinaryLiteral(sctx, usingVar) {
-				binVal, convErr := val.ToBytes()
-				if convErr != nil {
-					return convErr
-				}
-				val.SetBinaryLiteral(binVal)
-			}
-			param.Datum = val
-			param.InExecute = true
-			vars.PreparedParams = append(vars.PreparedParams, val)
+	for i, usingParam := range e.Params {
+		val, err := usingParam.Eval(chunk.Row{})
+		if err != nil {
+			return err
 		}
+		param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		if isGetVarBinaryLiteral(sctx, usingParam) {
+			binVal, convErr := val.ToBytes()
+			if convErr != nil {
+				return convErr
+			}
+			val.SetBinaryLiteral(binVal)
+		}
+		param.Datum = val
+		param.InExecute = true
+		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
 
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
@@ -297,7 +272,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		prepared.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
-	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.BinProtoVars, e.TxtProtoVars)
+	plan, names, err := GetPlanFromSessionPlanCache(ctx, sctx, is, preparedObj, e.Params)
 	if err != nil {
 		return err
 	}
@@ -382,7 +357,8 @@ type Simple struct {
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
-//   Used for simple statements executing in coprocessor.
+//
+//	Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
 	basePhysicalPlan
 	Inner Simple

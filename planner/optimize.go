@@ -97,6 +97,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}()
 	}
 
+	// handle the execute statement
+	if execAST, ok := node.(*ast.ExecuteStmt); ok {
+		p, names, err := OptimizeExecStmt(ctx, sctx, execAST, is)
+		return p, names, err
+	}
+
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	originStmtHints, originStmtHintsOffs, warns := handleStmtHints(tableHints)
 	sessVars.StmtCtx.StmtHints = originStmtHints
@@ -305,31 +311,16 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	})
 
 	// build logical plan
-	sctx.GetSessionVars().PlanID = 0
-	sctx.GetSessionVars().PlanColumnID = 0
-	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
-
-	failpoint.Inject("mockRandomPlanID", func() {
-		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
-	})
-
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
-
 	builder.Init(sctx, is, hintProcessor)
-
-	// reset fields about rewrite
-	sctx.GetSessionVars().RewritePhaseInfo.Reset()
-	beginRewrite := time.Now()
-	p, err := builder.Build(ctx, node)
+	p, err := buildLogicalPlan(ctx, sctx, node, builder)
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
 
-	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles
 	// Check privilege. Maybe it's better to move this to the Preprocess, but
 	// we need the table information to check privilege, which is collected
@@ -343,12 +334,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
 		return nil, nil, 0, err
-	}
-
-	// Handle the execute statement.
-	if execPlan, ok := p.(*core.Execute); ok {
-		err := execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		return p, p.OutputNames(), 0, err
 	}
 
 	names := p.OutputNames()
@@ -369,6 +354,46 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	sctx.GetSessionVars().DurationOptimization = time.Since(beginOpt)
 	return finalPlan, names, cost, err
+}
+
+// OptimizeExecStmt to handle the "execute" statement
+func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
+	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+	builder.Init(sctx, is, nil)
+
+	p, err := buildLogicalPlan(ctx, sctx, execAst, builder)
+	if err != nil {
+		return nil, nil, err
+	}
+	if execPlan, ok := p.(*core.Execute); ok {
+		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
+		return execPlan, execPlan.OutputNames(), err
+	}
+	err = errors.Errorf("invalid result plan type, should be Execute")
+	return nil, nil, err
+}
+
+func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
+	sctx.GetSessionVars().PlanID = 0
+	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
+
+	failpoint.Inject("mockRandomPlanID", func() {
+		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
+	})
+
+	// reset fields about rewrite
+	sctx.GetSessionVars().RewritePhaseInfo.Reset()
+	beginRewrite := time.Now()
+	p, err := builder.Build(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
+	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
+	return p, nil
 }
 
 // ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
