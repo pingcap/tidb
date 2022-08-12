@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"go.uber.org/zap"
 )
 
 type collectPredicateColumnsPoint struct{}
@@ -90,6 +92,9 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 	var timeout = time.Duration(waitTime)
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
+		_, digest := stmtCtx.SQLDigest()
+		logutil.BgLogger().Warn("SendLoadRequests failed",
+			zap.String("digest", digest.String()), zap.Error(err))
 		return handleTimeout(stmtCtx)
 	}
 	return nil
@@ -105,6 +110,9 @@ func SyncWaitStatsLoad(plan LogicalPlan) (bool, error) {
 	if success {
 		return true, nil
 	}
+	_, digest := stmtCtx.SQLDigest()
+	logutil.BgLogger().Warn("SyncWaitStatsLoad failed",
+		zap.String("digest", digest.String()))
 	err := handleTimeout(stmtCtx)
 	return false, err
 }

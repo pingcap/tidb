@@ -15,6 +15,7 @@
 package stmtctx
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"strconv"
@@ -293,7 +294,7 @@ type StatementContext struct {
 		// NeededItems stores the columns/indices whose stats are needed for planner.
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan model.TableItemID
+		ResultCh chan StatsLoadResult
 		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
 		Fallback bool
 		// LoadStartTime is to record the load start time to calculate latency
@@ -1013,4 +1014,38 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
 	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
 	return fields
+}
+
+// StatsLoadResult indicates result for StatsLoad
+type StatsLoadResult struct {
+	Item  model.TableItemID
+	Error error
+	Warn  string
+}
+
+// HasErrorOrWarn returns whether result has error or warn
+func (r StatsLoadResult) HasErrorOrWarn() bool {
+	return r.Error != nil || len(r.Warn) > 0
+}
+
+// ErrorAndWarn returns StatsLoadResult err msg
+func (r StatsLoadResult) ErrorAndWarn() string {
+	if r.Error == nil && len(r.Warn) < 1 {
+		return ""
+	}
+	b := bytes.NewBufferString("tableID:")
+	b.WriteString(strconv.FormatInt(r.Item.TableID, 10))
+	b.WriteString(", id:")
+	b.WriteString(strconv.FormatInt(r.Item.ID, 10))
+	b.WriteString(", isIndex:")
+	b.WriteString(strconv.FormatBool(r.Item.IsIndex))
+	if r.Error != nil {
+		b.WriteString(", err:")
+		b.WriteString(r.Error.Error())
+	}
+	if len(r.Warn) > 0 {
+		b.WriteString(", warn:")
+		b.WriteString(r.Warn)
+	}
+	return b.String()
 }
