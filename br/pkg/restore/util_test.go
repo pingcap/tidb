@@ -349,5 +349,4 @@ func TestRewriteFileKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)
-
 }
