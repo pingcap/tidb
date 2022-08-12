@@ -382,22 +382,40 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
-	tryAction := func(mu *actionMu, tracker *Tracker) {
+	actionOne := func(nowAction ActionOnExceed, tracker *Tracker) ActionOnExceed {
+		for nowAction != nil && nowAction.IsFinished() {
+			nowAction = nowAction.GetFallback()
+		}
+		if nowAction != nil {
+			nowAction.Action(tracker)
+		}
+		return nowAction
+	}
+
+	actionAll := func(nowAction ActionOnExceed, tracker *Tracker) ActionOnExceed {
+		nowAction = actionOne(nowAction, tracker)
+		firstAction := nowAction
+		for nowAction != nil {
+			nowAction.SetFallback(actionOne(nowAction.GetFallback(), tracker))
+		}
+		return firstAction
+	}
+
+	tryAction := func(mu *actionMu, tracker *Tracker, all bool) {
 		mu.Lock()
 		defer mu.Unlock()
-		for mu.actionOnExceed != nil && mu.actionOnExceed.IsFinished() {
-			mu.actionOnExceed = mu.actionOnExceed.GetFallback()
-		}
-		if mu.actionOnExceed != nil {
-			mu.actionOnExceed.Action(tracker)
+		if all {
+			mu.actionOnExceed = actionAll(mu.actionOnExceed, tracker)
+		} else {
+			mu.actionOnExceed = actionOne(mu.actionOnExceed, tracker)
 		}
 	}
 
-	if bs > 0 && rootExceedForSoftLimit != nil {
-		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
-	}
 	if bs > 0 && rootExceed != nil {
-		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
+		tryAction(&rootExceed.actionMuForHardLimit, rootExceed, false)
+	}
+	if bs > 0 && rootExceedForSoftLimit != nil {
+		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit, true)
 	}
 }
 
