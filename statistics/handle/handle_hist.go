@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -55,7 +54,6 @@ type NeededItemTask struct {
 	TableItemResult stmtctx.StatsLoadResult
 	ToTimeout       time.Time
 	ResultCh        chan stmtctx.StatsLoadResult
-	Digest          *parser.Digest
 }
 
 // SendLoadRequests send neededColumns requests
@@ -68,14 +66,12 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	sc.StatsLoad.NeededItems = remainedItems
 	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
 	for _, item := range remainedItems {
-		_, digest := sc.SQLDigest()
 		task := &NeededItemTask{
 			TableItemResult: stmtctx.StatsLoadResult{
 				Item: item,
 			},
 			ToTimeout: time.Now().Local().Add(timeout),
 			ResultCh:  sc.StatsLoad.ResultCh,
-			Digest:    digest,
 		}
 		err := h.AppendNeededItem(task, timeout)
 		if err != nil {

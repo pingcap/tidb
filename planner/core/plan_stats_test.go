@@ -269,7 +269,6 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		},
 		ResultCh:  resultCh,
 		ToTimeout: time.Now().Local().Add(timeout),
-		Digest:    &parser.Digest{},
 	}
 	dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
 	stmt, err := p.ParseOneStmt("select * from t where c>1", "", "")
