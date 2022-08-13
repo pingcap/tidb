@@ -45,14 +45,15 @@ func hasCostFlag(costFlag, flag uint64) bool {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *basePhysicalPlan) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *basePhysicalPlan) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		// just calculate the cost once and always reuse it
 		return p.planCost, nil
 	}
 	p.planCost = 0 // the default implementation, the operator have no cost
 	for _, child := range p.children {
-		childCost, err := child.GetPlanCost(taskType, costFlag)
+		childCost, err := child.GetPlanCost(taskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -63,7 +64,8 @@ func (p *basePhysicalPlan) GetPlanCost(taskType property.TaskType, costFlag uint
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
@@ -99,7 +101,7 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 		selfCost = getCardinality(p.children[0], costFlag) * float64(len(p.Conditions)) * cpuFactor
 	}
 
-	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
+	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -122,11 +124,12 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalProjection) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalProjection) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
+	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -183,14 +186,15 @@ func (p *PhysicalIndexLookUpReader) GetCost(costFlag uint64) (cost float64) {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexLookUpReader) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexLookUpReader) GetPlanCost(_ property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	p.planCost = 0
 	// child's cost
 	for _, child := range []PhysicalPlan{p.indexPlan, p.tablePlan} {
-		childCost, err := child.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
+		childCost, err := child.GetPlanCost(property.CopDoubleReadTaskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -204,7 +208,7 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(_ property.TaskType, costFlag ui
 	}
 	ts := tmp.(*PhysicalTableScan)
 	if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
-		tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
+		tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -257,25 +261,33 @@ func (p *PhysicalIndexLookUpReader) estDoubleReadCost(tbl *model.TableInfo, cost
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexReader) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexReader) GetPlanCost(_ property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
+	var rowCount, rowSize, netFactor, indexPlanCost, netSeekCost float64
+	sqlScanConcurrency := p.ctx.GetSessionVars().DistSQLScanConcurrency()
 	// child's cost
-	childCost, err := p.indexPlan.GetPlanCost(property.CopSingleReadTaskType, costFlag)
+	childCost, err := p.indexPlan.GetPlanCost(property.CopSingleReadTaskType, option)
 	if err != nil {
 		return 0, err
 	}
-	p.planCost = childCost
+	indexPlanCost = childCost
+	p.planCost = indexPlanCost
 	// net I/O cost: rows * row-size * net-factor
 	tblStats := getTblStats(p.indexPlan)
-	rowSize := tblStats.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	p.planCost += getCardinality(p.indexPlan, costFlag) * rowSize * getTableNetFactor(p.indexPlan)
+	rowSize = tblStats.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
+	rowCount = getCardinality(p.indexPlan, costFlag)
+	netFactor = getTableNetFactor(p.indexPlan)
+	p.planCost += rowCount * rowSize * netFactor
 	// net seek cost
-	p.planCost += estimateNetSeekCost(p.indexPlan)
+	netSeekCost = estimateNetSeekCost(p.indexPlan)
+	p.planCost += netSeekCost
 	// consider concurrency
-	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	p.planCost /= float64(sqlScanConcurrency)
 
+	setPhysicalIndexReaderCostDetail(p, option.tracer, rowCount, rowSize, netFactor, netSeekCost, indexPlanCost, sqlScanConcurrency)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -288,27 +300,34 @@ func (p *PhysicalIndexReader) GetNetDataSize() float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalTableReader) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalTableReader) GetPlanCost(_ property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	p.planCost = 0
 	netFactor := getTableNetFactor(p.tablePlan)
-	switch p.StoreType {
+	var rowCount, rowSize, netSeekCost, tableCost float64
+	sqlScanConcurrency := p.ctx.GetSessionVars().DistSQLScanConcurrency()
+	storeType := p.StoreType
+	switch storeType {
 	case kv.TiKV:
 		// child's cost
-		childCost, err := p.tablePlan.GetPlanCost(property.CopSingleReadTaskType, costFlag)
+		childCost, err := p.tablePlan.GetPlanCost(property.CopSingleReadTaskType, option)
 		if err != nil {
 			return 0, err
 		}
+		tableCost = childCost
 		p.planCost = childCost
 		// net I/O cost: rows * row-size * net-factor
-		rowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-		p.planCost += getCardinality(p.tablePlan, costFlag) * rowSize * netFactor
+		rowSize = getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+		rowCount = getCardinality(p.tablePlan, costFlag)
+		p.planCost += rowCount * rowSize * netFactor
 		// net seek cost
-		p.planCost += estimateNetSeekCost(p.tablePlan)
+		netSeekCost = estimateNetSeekCost(p.tablePlan)
+		p.planCost += netSeekCost
 		// consider concurrency
-		p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+		p.planCost /= float64(sqlScanConcurrency)
 	case kv.TiFlash:
 		var concurrency, rowSize, seekCost float64
 		_, isMPP := p.tablePlan.(*PhysicalExchangeSender)
@@ -317,7 +336,7 @@ func (p *PhysicalTableReader) GetPlanCost(_ property.TaskType, costFlag uint64) 
 			concurrency = p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 			rowSize = collectRowSizeFromMPPPlan(p.tablePlan)
 			seekCost = accumulateNetSeekCost4MPP(p.tablePlan)
-			childCost, err := p.tablePlan.GetPlanCost(property.MppTaskType, costFlag)
+			childCost, err := p.tablePlan.GetPlanCost(property.MppTaskType, option)
 			if err != nil {
 				return 0, err
 			}
@@ -332,7 +351,7 @@ func (p *PhysicalTableReader) GetPlanCost(_ property.TaskType, costFlag uint64) 
 				// regard the underlying tasks as cop-task on modelVer1 for compatibility
 				tType = property.CopSingleReadTaskType
 			}
-			childCost, err := p.tablePlan.GetPlanCost(tType, costFlag)
+			childCost, err := p.tablePlan.GetPlanCost(tType, option)
 			if err != nil {
 				return 0, err
 			}
@@ -351,6 +370,9 @@ func (p *PhysicalTableReader) GetPlanCost(_ property.TaskType, costFlag uint64) 
 			p.planCost /= 1000000000
 		}
 	}
+	setPhysicalTableReaderCostDetail(p, option.tracer,
+		rowCount, rowSize, netFactor, netSeekCost, tableCost,
+		sqlScanConcurrency, storeType)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -362,13 +384,14 @@ func (p *PhysicalTableReader) GetNetDataSize() float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexMergeReader) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexMergeReader) GetPlanCost(_ property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	p.planCost = 0
 	if tblScan := p.tablePlan; tblScan != nil {
-		childCost, err := tblScan.GetPlanCost(property.CopSingleReadTaskType, costFlag)
+		childCost, err := tblScan.GetPlanCost(property.CopSingleReadTaskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -379,7 +402,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(_ property.TaskType, costFlag uin
 		p.planCost += getCardinality(tblScan, costFlag) * rowSize * netFactor // net I/O cost
 	}
 	for _, partialScan := range p.partialPlans {
-		childCost, err := partialScan.GetPlanCost(property.CopSingleReadTaskType, costFlag)
+		childCost, err := partialScan.GetPlanCost(property.CopSingleReadTaskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -414,21 +437,25 @@ func (p *PhysicalIndexMergeReader) GetPartialReaderNetDataSize(plan PhysicalPlan
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 
 	var selfCost float64
-	switch p.ctx.GetSessionVars().CostModelVersion {
+	var rowCount, rowSize, scanFactor float64
+	costModelVersion := p.ctx.GetSessionVars().CostModelVersion
+	switch costModelVersion {
 	case modelVer1: // scan cost: rows * row-size * scan-factor
-		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
+		scanFactor = p.ctx.GetSessionVars().GetScanFactor(p.Table)
 		if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
-		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
+		rowCount = getCardinality(p, costFlag)
+		rowSize = p.getScanRowSize()
+		selfCost = rowCount * rowSize * scanFactor
 	case modelVer2: // scan cost: rows * log2(row-size) * scan-factor
-		var scanFactor float64
 		switch taskType {
 		case property.MppTaskType: // use a dedicated scan-factor for TiFlash
 			// no need to distinguish `Scan` and `DescScan` for TiFlash for now
@@ -440,45 +467,52 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 			}
 		}
 		// the formula `log(rowSize)` is based on experiment results
-		rowSize := math.Max(p.getScanRowSize(), 2.0) // to guarantee logRowSize >= 1
+		rowSize = math.Max(p.getScanRowSize(), 2.0) // to guarantee logRowSize >= 1
 		logRowSize := math.Log2(rowSize)
-		selfCost = getCardinality(p, costFlag) * logRowSize * scanFactor
+		rowCount = getCardinality(p, costFlag)
+		selfCost = rowCount * logRowSize * scanFactor
 
 		// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
 		if p.StoreType == kv.TiFlash {
 			selfCost += 2000 * logRowSize * scanFactor
 		}
 	}
-
+	setPhysicalTableOrIndexScanCostDetail(p, option.tracer, rowCount, rowSize, scanFactor, costModelVersion)
 	p.planCost = selfCost
 	p.planCostInit = true
 	return p.planCost, nil
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexScan) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexScan) GetPlanCost(_ property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 
 	var selfCost float64
-	switch p.ctx.GetSessionVars().CostModelVersion {
+	var rowCount, rowSize, scanFactor float64
+	costModelVersion := p.ctx.GetSessionVars().CostModelVersion
+	switch costModelVersion {
 	case modelVer1: // scan cost: rows * row-size * scan-factor
-		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
+		scanFactor = p.ctx.GetSessionVars().GetScanFactor(p.Table)
 		if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
-		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
+		rowCount = getCardinality(p, costFlag)
+		rowSize = p.getScanRowSize()
+		selfCost = rowCount * rowSize * scanFactor
 	case modelVer2:
-		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
+		scanFactor = p.ctx.GetSessionVars().GetScanFactor(p.Table)
 		if p.Desc {
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
-		rowSize := math.Max(p.getScanRowSize(), 2.0)
+		rowCount = getCardinality(p, costFlag)
+		rowSize = math.Max(p.getScanRowSize(), 2.0)
 		logRowSize := math.Log2(rowSize)
-		selfCost = getCardinality(p, costFlag) * logRowSize * scanFactor
+		selfCost = rowCount * logRowSize * scanFactor
 	}
-
+	setPhysicalTableOrIndexScanCostDetail(p, option.tracer, rowCount, rowSize, scanFactor, costModelVersion)
 	p.planCost = selfCost
 	p.planCostInit = true
 	return p.planCost, nil
@@ -561,16 +595,17 @@ func (p *PhysicalIndexJoin) estDoubleReadCost(doubleReadRows float64) float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexJoin) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexJoin) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
-	outerCost, err := outerChild.GetPlanCost(taskType, costFlag)
+	outerCost, err := outerChild.GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
-	innerCost, err := innerChild.GetPlanCost(taskType, costFlag)
+	innerCost, err := innerChild.GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -649,16 +684,17 @@ func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexHashJoin) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexHashJoin) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
-	outerCost, err := outerChild.GetPlanCost(taskType, costFlag)
+	outerCost, err := outerChild.GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
-	innerCost, err := innerChild.GetPlanCost(taskType, costFlag)
+	innerCost, err := innerChild.GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -739,16 +775,17 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerCnt, innerCnt, outerCost, innerCos
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexMergeJoin) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalIndexMergeJoin) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
-	outerCost, err := outerChild.GetPlanCost(taskType, costFlag)
+	outerCost, err := outerChild.GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
-	innerCost, err := innerChild.GetPlanCost(taskType, costFlag)
+	innerCost, err := innerChild.GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -791,16 +828,17 @@ func (p *PhysicalApply) GetCost(lCount, rCount, lCost, rCost float64) float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalApply) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalApply) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
-	outerCost, err := outerChild.GetPlanCost(taskType, costFlag)
+	outerCost, err := outerChild.GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
-	innerCost, err := innerChild.GetPlanCost(taskType, costFlag)
+	innerCost, err := innerChild.GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -863,13 +901,14 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalMergeJoin) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalMergeJoin) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	p.planCost = 0
 	for _, child := range p.children {
-		childCost, err := child.GetPlanCost(taskType, costFlag)
+		childCost, err := child.GetPlanCost(taskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -967,13 +1006,14 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	p.planCost = 0
 	for _, child := range p.children {
-		childCost, err := child.GetPlanCost(taskType, costFlag)
+		childCost, err := child.GetPlanCost(taskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -1007,11 +1047,12 @@ func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot, isMPP bool, costF
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalStreamAgg) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalStreamAgg) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
+	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -1054,11 +1095,12 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFla
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalHashAgg) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalHashAgg) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
+	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -1101,11 +1143,12 @@ func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalSort) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalSort) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
+	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -1139,11 +1182,12 @@ func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalTopN) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalTopN) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
+	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -1154,7 +1198,7 @@ func (p *PhysicalTopN) GetPlanCost(taskType property.TaskType, costFlag uint64) 
 }
 
 // GetCost returns cost of the PointGetPlan.
-func (p *BatchPointGetPlan) GetCost() float64 {
+func (p *BatchPointGetPlan) GetCost(opt *physicalOptimizeOp) float64 {
 	cols := p.accessCols
 	if cols == nil {
 		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
@@ -1169,18 +1213,23 @@ func (p *BatchPointGetPlan) GetCost() float64 {
 		rowCount = float64(len(p.IndexValues))
 		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
 	}
-	cost += rowCount * rowSize * sessVars.GetNetworkFactor(p.TblInfo)
-	cost += rowCount * sessVars.GetSeekFactor(p.TblInfo)
-	cost /= float64(sessVars.DistSQLScanConcurrency())
+	networkFactor := sessVars.GetNetworkFactor(p.TblInfo)
+	seekFactor := sessVars.GetSeekFactor(p.TblInfo)
+	scanConcurrency := sessVars.DistSQLScanConcurrency()
+	cost += rowCount * rowSize * networkFactor
+	cost += rowCount * seekFactor
+	cost /= float64(scanConcurrency)
+	setBatchPointGetPlanCostDetail(p, opt, rowCount, rowSize, networkFactor, seekFactor, scanConcurrency)
 	return cost
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *BatchPointGetPlan) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
+func (p *BatchPointGetPlan) GetPlanCost(_ property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	p.planCost = p.GetCost()
+	p.planCost = p.GetCost(option.tracer)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -1198,7 +1247,7 @@ func (p *BatchPointGetPlan) GetAvgRowSize() float64 {
 }
 
 // GetCost returns cost of the PointGetPlan.
-func (p *PointGetPlan) GetCost() float64 {
+func (p *PointGetPlan) GetCost(opt *physicalOptimizeOp) float64 {
 	cols := p.accessCols
 	if cols == nil {
 		return 0 // the cost of PointGet generated in fast plan optimization is always 0
@@ -1211,18 +1260,22 @@ func (p *PointGetPlan) GetCost() float64 {
 	} else {
 		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
 	}
-	cost += rowSize * sessVars.GetNetworkFactor(p.TblInfo)
-	cost += sessVars.GetSeekFactor(p.TblInfo)
+	networkFactor := sessVars.GetNetworkFactor(p.TblInfo)
+	seekFactor := sessVars.GetSeekFactor(p.TblInfo)
+	cost += rowSize * networkFactor
+	cost += seekFactor
 	cost /= float64(sessVars.DistSQLScanConcurrency())
+	setPointGetPlanCostDetail(p, opt, rowSize, networkFactor, seekFactor)
 	return cost
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PointGetPlan) GetPlanCost(_ property.TaskType, costFlag uint64) (float64, error) {
+func (p *PointGetPlan) GetPlanCost(_ property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	p.planCost = p.GetCost()
+	p.planCost = p.GetCost(option.tracer)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -1240,13 +1293,14 @@ func (p *PointGetPlan) GetAvgRowSize() float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalUnionAll) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalUnionAll) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	var childMaxCost float64
 	for _, child := range p.children {
-		childCost, err := child.GetPlanCost(taskType, costFlag)
+		childCost, err := child.GetPlanCost(taskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -1258,11 +1312,12 @@ func (p *PhysicalUnionAll) GetPlanCost(taskType property.TaskType, costFlag uint
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
+	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
