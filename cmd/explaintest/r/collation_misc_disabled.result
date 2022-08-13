@@ -91,6 +91,7 @@ binary	1
 gbk_bin	2
 latin1_bin	1
 utf8_bin	3
+utf8mb3_general_ci	3
 utf8mb4_bin	4
 SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name, id;
 character_set_name	id	sortlen
@@ -99,6 +100,7 @@ binary	63	1
 gbk	87	1
 latin1	47	1
 utf8	83	1
+utf8mb3	33	1
 utf8mb4	46	1
 select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';
 COLLATION_NAME	CHARACTER_SET_NAME
@@ -110,9 +112,11 @@ binary	binary	binary	1
 gbk	Chinese Internal Code Specification	gbk_bin	2
 latin1	Latin1	latin1_bin	1
 utf8	UTF-8 Unicode	utf8_bin	3
+utf8mb3	UTF-8 Unicode	utf8mb3_general_ci	3
 utf8mb4	UTF-8 Unicode	utf8mb4_bin	4
 show collation;
 Collation	Charset	Id	Default	Compiled	Sortlen
+utf8mb3_general_ci	utf8mb3	33	Yes	Yes	1
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1
 latin1_bin	latin1	47	Yes	Yes	1
 binary	binary	63	Yes	Yes	1

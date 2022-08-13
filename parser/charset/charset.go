@@ -57,6 +57,7 @@ var supportedCollations = make([]*Collation, 0, len(supportedCollationNames))
 // CharacterSetInfos contains all the supported charsets.
 var CharacterSetInfos = map[string]*Charset{
 	CharsetUTF8:    {CharsetUTF8, CollationUTF8, make(map[string]*Collation), "UTF-8 Unicode", 3},
+	CharsetUTF8MB3: {CharsetUTF8MB3, CollationUTF8MB3, make(map[string]*Collation), "UTF-8 Unicode", 3},
 	CharsetUTF8MB4: {CharsetUTF8MB4, CollationUTF8MB4, make(map[string]*Collation), "UTF-8 Unicode", 4},
 	CharsetASCII:   {CharsetASCII, CollationASCII, make(map[string]*Collation), "US ASCII", 1},
 	CharsetLatin1:  {CharsetLatin1, CollationLatin1, make(map[string]*Collation), "Latin1", 1},
@@ -67,6 +68,7 @@ var CharacterSetInfos = map[string]*Charset{
 // All the names supported collations should be in the following table.
 var supportedCollationNames = map[string]struct{}{
 	CollationUTF8:    {},
+	CollationUTF8MB3: {},
 	CollationUTF8MB4: {},
 	CollationASCII:   {},
 	CollationLatin1:  {},
@@ -204,6 +206,8 @@ const (
 	CollationBin = "binary"
 	// CollationUTF8 is the default collation for CharsetUTF8.
 	CollationUTF8 = "utf8_bin"
+	// CollationUTF8MB3 is the default collation for CharsetUTF8MB3.
+	CollationUTF8MB3 = "utf8mb3_general_ci"
 	// CollationUTF8MB4 is the default collation for CharsetUTF8MB4.
 	CollationUTF8MB4 = "utf8mb4_bin"
 	// CollationASCII is the default collation for CharsetACSII.
@@ -225,6 +229,8 @@ const (
 	CharsetLatin1 = "latin1"
 	// CharsetUTF8 is the default charset for string types.
 	CharsetUTF8 = "utf8"
+	// CharsetUTF8MB3 is another name of CharsetUTF8.
+	CharsetUTF8MB3 = "utf8mb3"
 	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
 	CharsetUTF8MB4 = "utf8mb4"
 	//revive:disable:exported
@@ -344,6 +350,7 @@ var collations = []*Collation{
 	{31, "latin1", "latin1_german2_ci", false},
 	{32, "armscii8", "armscii8_general_ci", true},
 	{33, "utf8", "utf8_general_ci", false},
+	{33, "utf8mb3", "utf8mb3_general_ci", true},
 	{34, "cp1250", "cp1250_czech_cs", false},
 	{35, "ucs2", "ucs2_general_ci", true},
 	{36, "cp866", "cp866_general_ci", true},

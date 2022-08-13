@@ -67,6 +67,7 @@ func TestGetDefaultCollation(t *testing.T) {
 	}{
 		{"utf8", "utf8_bin", true},
 		{"UTF8", "utf8_bin", true},
+		{"utf8mb3", "utf8mb3_general_ci", true},
 		{"utf8mb4", "utf8mb4_bin", true},
 		{"ascii", "ascii_bin", true},
 		{"binary", "binary", true},
