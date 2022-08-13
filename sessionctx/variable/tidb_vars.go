@@ -794,6 +794,10 @@ const (
 	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
 	// when a single SQL statement exceeds the memory quota specified by the memory quota.
 	TiDBEnableTmpStorageOnOOM = "tidb_enable_tmp_storage_on_oom"
+	// TiDBDDLEnableFastReorg indicates whether to use lighting backfill process for adding index.
+	TiDBDDLEnableFastReorg = "tidb_ddl_fast_reorg"
+	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
+	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 )
 
 // TiDB intentional limits
@@ -1007,6 +1011,9 @@ const (
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
+	DefTiDBEnableFastReorg                         = false
+	DefTiDBDDLEnableFastReorg                      = false
+	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 )
 
 // Process global variables.
@@ -1055,6 +1062,10 @@ var (
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
+	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
+	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
+	// DDLDiskQuota is the temporary variable for set disk quota for lightning
+	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
 )
 
 var (
