@@ -1881,6 +1881,28 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 		rows = dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user LIKE 'test%' ORDER BY user;`)
 		cli.checkRows(t, rows, "test1 N", "test2 N")
 	})
+
+	// 4. A role can be created default with account locked
+	// After unlocked by the ALTER USER statement, the role can connect to server like a user
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`CREATE ROLE role1;`)
+		dbt.MustExec(`GRANT ALL on test.* to 'role1'`)
+		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'role1';`)
+		cli.checkRows(t, rows, "role1 Y")
+		dbt.MustExec(`ALTER USER role1 ACCOUNT UNLOCK;`)
+		rows = dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'role1';`)
+		cli.checkRows(t, rows, "role1 N")
+	})
+	defer cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`DROP ROLE role1;`)
+	})
+	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "role1"
+		config.DBName = "test"
+	}))
+	require.NoError(t, err)
+	require.NoError(t, db.Ping())
+	require.NoError(t, db.Close())
 }
 
 func (cli *testServerClient) runTestDBNameEscape(t *testing.T) {
