@@ -1883,14 +1883,26 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	})
 
 	// 4. A role can be created default with account locked
-	// After unlocked by the ALTER USER statement, the role can connect to server like a user
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`CREATE ROLE role1;`)
 		dbt.MustExec(`GRANT ALL on test.* to 'role1'`)
 		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'role1';`)
 		cli.checkRows(t, rows, "role1 Y")
+	})
+	// When created, the role is locked by default and cannot log in to TiDB
+	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "role1"
+		config.DBName = "test"
+	}))
+	require.NoError(t, err)
+	err = db.Ping()
+	require.Error(t, err)
+	require.Equal(t, "Error 3118: Access denied for user 'role1'@'127.0.0.1'. Account is locked.", err.Error())
+	require.NoError(t, db.Close())
+	// After unlocked by the ALTER USER statement, the role can connect to server like a user
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`ALTER USER role1 ACCOUNT UNLOCK;`)
-		rows = dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'role1';`)
+		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'role1';`)
 		cli.checkRows(t, rows, "role1 N")
 	})
 	defer cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
