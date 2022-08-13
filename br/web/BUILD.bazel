@@ -1,0 +1,24 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@brweb//@bazel/typescript:index.bzl", "ts_project")
+load("@brweb//webpack-cli:index.bzl", webpack = "webpack_cli")
+load("@build_bazel_rules_nodejs//:index.bzl", "js_library")
+
+filegroup(
+    name = "conf",
+    srcs = [
+        "tsconfig.json",
+        "package.json",
+        "package-lock.json",
+        "webpack.config.js",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+ts_project(
+    tsconfig = "tsconfig.json",
+    validate = False,
+    deps = [
+        "@brweb//jss",
+    ],
+)
