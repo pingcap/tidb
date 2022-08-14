@@ -1070,7 +1070,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return false
 		}
 		return true
-	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex, ast.Reverse, ast.Space:
+	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex, ast.Reverse:
 		switch function.Function.PbCode() {
 		case
 			tipb.ScalarFuncSig_LeftUTF8,
@@ -1080,8 +1080,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_Substring3ArgsUTF8,
 			tipb.ScalarFuncSig_SubstringIndex,
 			tipb.ScalarFuncSig_ReverseUTF8,
-			tipb.ScalarFuncSig_Reverse,
-			tipb.ScalarFuncSig_Space:
+			tipb.ScalarFuncSig_Reverse:
 			return true
 		}
 	case ast.Cast:
@@ -1147,7 +1146,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
-	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
+	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase, ast.Space:
 		return true
 	case ast.Sysdate:
 		return true
