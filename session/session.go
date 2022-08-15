@@ -2009,7 +2009,14 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	logStmt(stmt, s)
-	recordSet, err := runStmt(ctx, s, stmt)
+
+	var recordSet sqlexec.RecordSet
+	if stmt.PsStmt != nil { // point plan short path
+		recordSet, err = stmt.PointGet(ctx)
+		s.txn.changeToInvalid()
+	} else {
+		recordSet, err = runStmt(ctx, s, stmt)
+	}
 	if err != nil {
 		if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("run statement failed",

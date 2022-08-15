@@ -57,6 +57,25 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	ret := &plannercore.PreprocessorReturn{}
+	err := plannercore.Preprocess(c.Ctx,
+		stmtNode,
+		plannercore.WithPreprocessorReturn(ret),
+		plannercore.InitTxnContextProvider,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInCompile")); _err_ == nil {
+		sessiontxn.RecordAssert(c.Ctx, "assertTxnManagerInCompile", true)
+		sessiontxn.AssertTxnManagerInfoSchema(c.Ctx, ret.InfoSchema)
+		if ret.LastSnapshotTS != 0 {
+			staleread.AssertStmtStaleness(c.Ctx, true)
+			sessiontxn.AssertTxnManagerReadTS(c.Ctx, ret.LastSnapshotTS)
+		}
+	}
+
 	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
 	sessVars := c.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -64,7 +83,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	var (
 		pointPlanShortPathOK bool
 		preparedObj          *plannercore.PlanCacheStmt
-		err                  error
 	)
 
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
@@ -77,26 +95,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 			return nil, err
 		}
 	}
-
-	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(c.Ctx,
-		stmtNode,
-		plannercore.WithPreprocessorReturn(ret),
-		plannercore.InitTxnContextProvider,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	failpoint.Inject("assertTxnManagerInCompile", func() {
-		sessiontxn.RecordAssert(c.Ctx, "assertTxnManagerInCompile", true)
-		sessiontxn.AssertTxnManagerInfoSchema(c.Ctx, ret.InfoSchema)
-		if ret.LastSnapshotTS != 0 {
-			staleread.AssertStmtStaleness(c.Ctx, true)
-			sessiontxn.AssertTxnManagerReadTS(c.Ctx, ret.LastSnapshotTS)
-		}
-	})
-
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
 	if err != nil {
 		return nil, err
