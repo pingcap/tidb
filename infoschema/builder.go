@@ -172,6 +172,32 @@ func (b *bundleInfoBuilder) updateTableBundles(is *infoSchema, tableID int64) {
 	}
 }
 
+type fkInfoBuilder struct {
+	referTables map[int64]interface{}
+}
+
+func (b *fkInfoBuilder) markReferTableShouldUpdate(tblID int64) {
+	b.referTables[tblID] = struct{}{}
+}
+
+func (b *fkInfoBuilder) updateInfoSchemaFKReferInfos(is *infoSchema) {
+	for tid := range b.referTables {
+		b.updateReferTableInfo(is, tid)
+	}
+}
+
+func (b *fkInfoBuilder) updateReferTableInfo(is *infoSchema, tblID int64) {
+	tbl, ok := is.TableByID(tblID)
+	if !ok {
+		return
+	}
+	dbInfo, ok := is.SchemaByTable(tbl.Meta())
+	if !ok {
+		return
+	}
+	is.buildTableReferredForeignKeys(dbInfo.Name, tbl.Meta())
+}
+
 // Builder builds a new InfoSchema.
 type Builder struct {
 	is *infoSchema
@@ -186,6 +212,7 @@ type Builder struct {
 
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
+	fkInfoBuilder
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -395,8 +422,66 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		referTblIDs, err := b.updateFKReferTables(m, dbInfo, newTableID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tblIDs = append(tblIDs, referTblIDs...)
 	}
 	return tblIDs, nil
+}
+
+func (b *Builder) updateFKReferTables(m *meta.Meta, dbInfo *model.DBInfo, tid int64) ([]int64, error) {
+	var err error
+	tbl, _ := b.is.TableByID(tid)
+	if tbl == nil {
+		return nil, nil
+	}
+	tblInfo := tbl.Meta()
+	// update referred table info.
+	tblIDs := make([]int64, 0, len(tblInfo.ForeignKeys))
+	for _, fk := range tblInfo.ForeignKeys {
+		if fk.RefSchema.L == dbInfo.Name.L && fk.RefTable.L == tblInfo.Name.L {
+			b.markReferTableShouldUpdate(tblInfo.ID)
+			continue
+		}
+		refTable, _ := b.is.TableByName(fk.RefSchema, fk.RefTable)
+		if refTable == nil {
+			continue
+		}
+		if isTableHasFKReferInfo(refTable.Meta(), dbInfo.Name.L, tblInfo.Name.L, fk.Name.L) {
+			continue
+		}
+
+		var refDBInfo *model.DBInfo
+		if fk.RefSchema.L == dbInfo.Name.L {
+			refDBInfo = dbInfo
+		} else {
+			refDBInfo, _ = b.is.SchemaByName(fk.RefSchema)
+			if refDBInfo == nil {
+				continue
+			}
+			refDBInfo = b.getSchemaAndCopyIfNecessary(refDBInfo.Name.L)
+		}
+		refTableID := refTable.Meta().ID
+		refTableAllocs, _ := b.is.AllocByID(refTableID)
+		b.applyDropTable(refDBInfo, refTableID, nil)
+		tblIDs, err = b.applyCreateTable(m, refDBInfo, refTableID, refTableAllocs, model.ActionAddForeignKey, tblIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		b.markReferTableShouldUpdate(refTableID)
+	}
+	return tblIDs, nil
+}
+
+func isTableHasFKReferInfo(referredTblInfo *model.TableInfo, childSchema, childTable, fk string) bool {
+	for _, referredFK := range referredTblInfo.ReferredForeignKeys {
+		if referredFK.ChildSchema.L == childSchema && referredFK.ChildTable.L == childTable && referredFK.ChildFKName.L == fk {
+			return true
+		}
+	}
+	return false
 }
 
 func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
@@ -639,22 +724,6 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			}
 		}
 	}
-	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
-	// update referred table info.
-	for _, fk := range tblInfo.ForeignKeys {
-		if fk.RefSchema.L == dbInfo.Name.L && fk.RefTable.L == tblInfo.Name.L {
-			b.is.buildTableReferredForeignKeys(dbInfo.Name, tblInfo)
-			continue
-		}
-		// todo: use deep copy or another way.
-		refTable, _ := b.is.TableByName(fk.RefSchema, fk.RefTable)
-		if refTable == nil {
-			continue
-		}
-		b.is.buildTableReferredForeignKeys(fk.RefSchema, refTable.Meta())
-		affected = appendAffectedIDs(affected, refTable.Meta())
-	}
-
 	tbl, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -668,6 +737,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		return i.Meta().ID < j.Meta().ID
 	})
 	b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
+	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
 
 	newTbl, ok := b.is.TableByID(tableID)
 	if ok {
@@ -739,6 +809,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 
 // Build builds and returns the built infoschema.
 func (b *Builder) Build() InfoSchema {
+	b.updateInfoSchemaFKReferInfos(b.is)
 	b.updateInfoSchemaBundles(b.is)
 	return b.is
 }
@@ -750,6 +821,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
 	b.copyPoliciesMap(oldIS)
+	b.copyReferredForeignKeyMap(oldIS)
 
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
@@ -772,6 +844,12 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
+	}
+}
+
+func (b *Builder) copyReferredForeignKeyMap(oldIS *infoSchema) {
+	for k, v := range oldIS.referredForeignKeyMap {
+		b.is.referredForeignKeyMap[k] = v
 	}
 }
 
@@ -889,13 +967,15 @@ func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Build
 	return &Builder{
 		store: store,
 		is: &infoSchema{
-			schemaMap:           map[string]*schemaTables{},
-			policyMap:           map[string]*model.PolicyInfo{},
-			ruleBundleMap:       map[int64]*placement.Bundle{},
-			sortedTablesBuckets: make([]sortedTables, bucketCount),
+			schemaMap:             map[string]*schemaTables{},
+			policyMap:             map[string]*model.PolicyInfo{},
+			ruleBundleMap:         map[int64]*placement.Bundle{},
+			sortedTablesBuckets:   make([]sortedTables, bucketCount),
+			referredForeignKeyMap: make(map[SchemaAndTableName]map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo),
 		},
-		dirtyDB: make(map[string]bool),
-		factory: factory,
+		dirtyDB:       make(map[string]bool),
+		factory:       factory,
+		fkInfoBuilder: fkInfoBuilder{referTables: map[int64]interface{}{}},
 	}
 }
 
