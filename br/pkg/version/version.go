@@ -387,7 +387,7 @@ func ParseServerInfo(src string) ServerInfo {
 	var err error
 	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
 	if err != nil {
-		log.L().Warn("fail to parse version, fallback to 5.7.23",
+		log.L().Warn("fail to parse version, fallback to 0.0.0",
 			zap.String("version", versionStr))
 		serverInfo.ServerVersion = semver.New("0.0.0")
 	}
