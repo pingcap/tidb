@@ -3158,7 +3158,7 @@ func TestInvalidDateValueInCreateTable(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 }
 
-func TestOOMActionPriority(t *testing.T) {
+func TestOOMActionFinishedAndRemoved(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

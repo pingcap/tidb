@@ -1255,9 +1255,6 @@ func newRateLimitAction(totalTokenNumber uint) *rateLimitAction {
 // Action implements ActionOnExceed.Action
 func (e *rateLimitAction) Action(t *memory.Tracker) {
 	if !e.isEnabled() {
-		if fallback := e.GetFallback(); fallback != nil {
-			fallback.Action(t)
-		}
 		return
 	}
 	e.conditionLock()

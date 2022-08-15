@@ -591,13 +591,6 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 		a.cond.Wait()
 	}
 	a.cond.L.Unlock()
-
-	if !t.CheckExceed() {
-		return
-	}
-	if fallback := a.GetFallback(); fallback != nil {
-		fallback.Action(t)
-	}
 }
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.

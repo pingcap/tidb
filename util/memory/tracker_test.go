@@ -182,75 +182,56 @@ func TestOOMAction(t *testing.T) {
 	tracker.Consume(10000)
 	require.True(t, action.called)
 
-	// test fallback
-	action1 := &mockAction{}
-	action2 := &mockAction{}
-	tracker.SetActionOnExceed(action1)
-	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
-	require.False(t, action1.called)
-	require.False(t, action2.called)
-	tracker.Consume(10000)
-	require.True(t, action1.called)
-	require.False(t, action2.called)
-	tracker.Consume(10000)
-	require.True(t, action1.called)
-	require.True(t, action2.called)
-
 	// test softLimit
 	tracker = NewTracker(1, 100)
-	action1 = &mockAction{}
-	action2 = &mockAction{}
+	action1 := &mockAction{}
+	action2 := &mockAction{}
 	action3 := &mockAction{}
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action1)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
-	tracker.SetActionOnExceed(action3)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action3)
 	require.False(t, action1.called)
 	require.False(t, action2.called)
 	require.False(t, action3.called)
 	tracker.Consume(80)
-	require.True(t, action1.called)
-	require.False(t, action2.called)
-	require.False(t, action3.called)
-	tracker.Consume(20)
-	require.True(t, action1.called)
-	require.True(t, action2.called) // SoftLimit fallback
-	require.True(t, action3.called) // HardLimit
+	require.True(t, action1.called) // Action All
+	require.True(t, action2.called)
+	require.True(t, action3.called)
 
-	// test fallback
+	// test setFinished
+	tracker.actionMuForSoftLimit.actionOnExceed = nil
 	action1 = &mockAction{}
 	action2 = &mockAction{}
 	action3 = &mockAction{}
 	action4 := &mockAction{}
 	action5 := &mockAction{}
-	tracker.SetActionOnExceed(action1)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action1)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action3)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action4)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action5)
-	require.Equal(t, action1, tracker.actionMuForHardLimit.actionOnExceed)
-	require.Equal(t, action2, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	require.Equal(t, action1, tracker.actionMuForSoftLimit.actionOnExceed)
+	require.Equal(t, action2, tracker.actionMuForSoftLimit.actionOnExceed.GetFallback())
 	action2.SetFinished()
-	require.Equal(t, action3, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	require.Equal(t, action3, tracker.actionMuForSoftLimit.actionOnExceed.GetFallback())
 	action3.SetFinished()
 	action4.SetFinished()
-	require.Equal(t, action5, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	require.Equal(t, action5, tracker.actionMuForSoftLimit.actionOnExceed.GetFallback())
 }
 
 type mockAction struct {
 	BaseOOMAction
-	called   bool
-	priority int64
+	called    bool
+	priority  int64
+	calledNum int64
 }
 
 func (a *mockAction) SetLogHook(hook func(uint64)) {
 }
 
 func (a *mockAction) Action(t *Tracker) {
-	if a.called && a.fallbackAction != nil {
-		a.fallbackAction.Action(t)
-		return
-	}
 	a.called = true
+	a.calledNum++
 }
 
 func (a *mockAction) GetPriority() int64 {
@@ -537,12 +518,12 @@ func TestErrorCode(t *testing.T) {
 	require.Equal(t, errno.ErrMemExceedThreshold, int(terror.ToSQLError(errMemExceedThreshold).Code))
 }
 
-func TestOOMActionPriority(t *testing.T) {
+func TestOOMActionAll(t *testing.T) {
 	tracker := NewTracker(1, 100)
 	// make sure no panic here.
 	tracker.Consume(10000)
 
-	tracker = NewTracker(1, 1)
+	tracker = NewTracker(1, 100)
 	tracker.actionMuForHardLimit.actionOnExceed = nil
 	n := 100
 	actions := make([]*mockAction, n)
@@ -550,24 +531,11 @@ func TestOOMActionPriority(t *testing.T) {
 		actions[i] = &mockAction{priority: int64(i)}
 	}
 
-	randomShuffle := make([]int, n)
 	for i := 0; i < n; i++ {
-		randomShuffle[i] = i
-		pos := rand.Int() % (i + 1)
-		randomShuffle[i], randomShuffle[pos] = randomShuffle[pos], randomShuffle[i]
-	}
-
-	for i := 0; i < n; i++ {
-		tracker.FallbackOldAndSetNewActionForSoftLimit(actions[randomShuffle[i]])
-	}
-	for i := n - 1; i >= 0; i-- {
+		tracker.FallbackOldAndSetNewActionForSoftLimit(actions[i])
 		tracker.Consume(100)
-		for j := n - 1; j >= 0; j-- {
-			if j >= i {
-				require.True(t, actions[j].called)
-			} else {
-				require.False(t, actions[j].called)
-			}
+		for j := 0; j <= i; j++ {
+			require.Equal(t, int64(i+1-j), actions[j].calledNum)
 		}
 	}
 }

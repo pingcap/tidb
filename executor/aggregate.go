@@ -1944,9 +1944,6 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 		atomic.StoreUint32(&a.e.inSpillMode, 1)
 		return
 	}
-	if fallback := a.GetFallback(); fallback != nil {
-		fallback.Action(t)
-	}
 }
 
 // GetPriority get the priority of the Action

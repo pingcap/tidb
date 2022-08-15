@@ -1717,6 +1717,7 @@ func TestDoDDLJobQuit(t *testing.T) {
 }
 
 func TestCoprocessorOOMAction(t *testing.T) {
+	t.Skip("rate limit action can't control the memory usage in time, skip now")
 	// Assert Coprocessor OOMAction
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

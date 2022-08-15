@@ -94,7 +94,7 @@ func TestSpillAction(t *testing.T) {
 	var tracker *memory.Tracker
 	var err error
 	tracker = rc.GetMemTracker()
-	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
+	tracker.SetBytesLimit(chk.MemoryUsage()/4*5 + 3)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(rc.ActionSpillForTest())
 	require.False(t, rc.AlreadySpilledSafeForTest())
 	err = rc.Add(chk)
@@ -156,7 +156,7 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 	var tracker *memory.Tracker
 	var err error
 	tracker = rc.GetMemTracker()
-	tracker.SetBytesLimit(chk.MemoryUsage() + int64(8*chk.NumRows()) + 1)
+	tracker.SetBytesLimit((chk.MemoryUsage()+int64(8*chk.NumRows()))/4*5 + 3)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(rc.ActionSpillForTest())
 	require.False(t, rc.AlreadySpilledSafeForTest())
 	err = rc.Add(chk)
@@ -196,7 +196,7 @@ func TestRowContainerResetAndAction(t *testing.T) {
 	var tracker *memory.Tracker
 	var err error
 	tracker = rc.GetMemTracker()
-	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
+	tracker.SetBytesLimit(chk.MemoryUsage()/4*5 + 3)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(rc.ActionSpillForTest())
 	require.False(t, rc.AlreadySpilledSafeForTest())
 	err = rc.Add(chk)
