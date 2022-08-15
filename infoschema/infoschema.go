@@ -96,6 +96,22 @@ type infoSchema struct {
 
 	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
+
+	// todo(crazycs): should add lock or use concurrent map here?
+	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
+	referredForeignKeyMap map[SchemaAndTableName]map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo
+}
+
+// SchemaAndTableName contains the lower-case schema name and table name.
+type SchemaAndTableName struct {
+	schema string
+	table  string
+}
+
+type SchemaAndTableAndForeignKeyName struct {
+	schema string
+	table  string
+	fk     string
 }
 
 // MockInfoSchema only serves for test.
@@ -405,6 +421,102 @@ func (is *infoSchema) deletePolicy(name string) {
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
 	delete(is.policyMap, name)
+}
+
+func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+	if len(tbInfo.ForeignKeys) == 0 {
+		return
+	}
+	// todo: move this init into infoschema init.
+	if is.referredForeignKeyMap == nil {
+		is.referredForeignKeyMap = make(map[SchemaAndTableName]map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo)
+	}
+	for _, fk := range tbInfo.ForeignKeys {
+		refer := SchemaAndTableName{
+			schema: fk.RefSchema.L,
+			table:  fk.RefTable.L,
+		}
+		referredFKMap := is.referredForeignKeyMap[refer]
+		if referredFKMap == nil {
+			referredFKMap = make(map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo)
+			is.referredForeignKeyMap[refer] = referredFKMap
+		}
+		referredFK := SchemaAndTableAndForeignKeyName{
+			schema: schema.L,
+			table:  tbInfo.Name.L,
+			fk:     fk.Name.L,
+		}
+		referredFKMap[referredFK] = &model.ReferredFKInfo{
+			Cols:        fk.RefCols,
+			ChildSchema: schema,
+			ChildTable:  tbInfo.Name,
+			ChildFKName: fk.Name,
+		}
+	}
+}
+
+func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+	if len(tbInfo.ForeignKeys) == 0 {
+		return
+	}
+	// todo: move this init into infoschema init.
+	if is.referredForeignKeyMap == nil {
+		is.referredForeignKeyMap = make(map[SchemaAndTableName]map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo)
+	}
+	for _, fk := range tbInfo.ForeignKeys {
+		refer := SchemaAndTableName{
+			schema: fk.RefSchema.L,
+			table:  fk.RefTable.L,
+		}
+		referredFKMap := is.referredForeignKeyMap[refer]
+		if referredFKMap == nil {
+			continue
+		}
+		referredFK := SchemaAndTableAndForeignKeyName{
+			schema: schema.L,
+			table:  tbInfo.Name.L,
+			fk:     fk.Name.L,
+		}
+		delete(referredFKMap, referredFK)
+	}
+}
+
+func (is *infoSchema) buildTableReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+	if len(is.referredForeignKeyMap) == 0 {
+		return
+	}
+	name := SchemaAndTableName{
+		schema: schema.L,
+		table:  tbInfo.Name.L,
+	}
+	referredFKMap := is.referredForeignKeyMap[name]
+	referredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKMap))
+	for _, referredFK := range referredFKMap {
+		if !is.CheckReferredForeignKeyValid(schema, tbInfo, referredFK) {
+			continue
+		}
+		referredFKList = append(referredFKList, referredFK)
+	}
+	sort.Slice(referredFKList, func(i, j int) bool {
+		if referredFKList[i].ChildSchema.L != referredFKList[j].ChildSchema.L {
+			return referredFKList[i].ChildSchema.L < referredFKList[j].ChildSchema.L
+		}
+		if referredFKList[i].ChildTable.L != referredFKList[j].ChildTable.L {
+			return referredFKList[i].ChildTable.L < referredFKList[j].ChildTable.L
+		}
+		return referredFKList[i].ChildFKName.L != referredFKList[j].ChildFKName.L
+	})
+	tbInfo.ReferredForeignKeys = referredFKList
+}
+
+func (is *infoSchema) CheckReferredForeignKeyValid(schema model.CIStr, tbInfo *model.TableInfo, referredFK *model.ReferredFKInfo) bool {
+	for _, colName := range referredFK.Cols {
+		col := model.FindColumnInfo(tbInfo.Columns, colName.L)
+		if col == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // LocalTemporaryTables store local temporary tables

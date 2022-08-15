@@ -1478,10 +1478,10 @@ type FKInfo struct {
 
 // ReferredFKInfo provides the cited foreign key in the child table.
 type ReferredFKInfo struct {
-	Cols          []CIStr `json:"cols"`
-	ChildSchemaID CIStr   `json:"child_schema"`
-	ChildTableID  CIStr   `json:"child_table"`
-	ChildFKName   CIStr   `json:"child_fk_name"`
+	Cols        []CIStr `json:"cols"`
+	ChildSchema CIStr   `json:"child_schema"`
+	ChildTable  CIStr   `json:"child_table"`
+	ChildFKName CIStr   `json:"child_fk_name"`
 }
 
 // ReferOptionType is the type for refer options.
@@ -1514,7 +1514,7 @@ func (r ReferOptionType) String() string {
 	return ""
 }
 
-func (fk *FKInfo) String(db, tb, refDB, refTb string) string {
+func (fk *FKInfo) String(db, tb string) string {
 	buf := bytes.Buffer{}
 	buf.WriteString("`" + db + "`.`")
 	buf.WriteString(tb + "`, CONSTRAINT `")
@@ -1526,11 +1526,11 @@ func (fk *FKInfo) String(db, tb, refDB, refTb string) string {
 		buf.WriteString("`" + col.O + "`")
 	}
 	buf.WriteString(") REFERENCES `")
-	if refDB != db {
-		buf.WriteString(refDB)
+	if fk.RefSchema.L != db {
+		buf.WriteString(fk.RefSchema.L)
 		buf.WriteString("`.`")
 	}
-	buf.WriteString(refTb)
+	buf.WriteString(fk.RefTable.L)
 	buf.WriteString("` (")
 	for i, col := range fk.RefCols {
 		if i > 0 {

@@ -1690,9 +1690,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 
 	// Set empty constraint names.
 	for _, constr := range constraints {
-		if constr.Tp == ast.ConstraintForeignKey {
-			setEmptyConstraintName(fkNames, constr, true)
-		} else {
+		if constr.Tp != ast.ConstraintForeignKey {
 			setEmptyConstraintName(constrNames, constr, false)
 		}
 	}
@@ -1814,12 +1812,13 @@ func BuildTableInfo(
 			return nil, dbterror.ErrUnsupportedClusteredSecondaryKey
 		}
 		if constr.Tp == ast.ConstraintForeignKey {
+			fkName := constr.GetForeignKeyName(tbInfo)
 			for _, fk := range tbInfo.ForeignKeys {
-				if fk.Name.L == strings.ToLower(constr.Name) {
+				if fk.Name.L == fkName {
 					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
-			fk, err := buildFKInfo(model.NewCIStr(constr.Name), constr.Keys, constr.Refer, cols, tbInfo)
+			fk, err := buildFKInfo(model.NewCIStr(fkName), constr.Keys, constr.Refer, cols, tbInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -1904,7 +1903,44 @@ func BuildTableInfo(
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 
-	return
+	err = addIndexForFk(ctx, tbInfo)
+	return tbInfo, err
+}
+
+func addIndexForFk(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	for _, fk := range tbInfo.ForeignKeys {
+		if tbInfo.PKIsHandle && len(fk.Cols) == 1 {
+			refColInfo := model.FindColumnInfo(tbInfo.Columns, fk.Cols[0].L)
+			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+				continue
+			}
+		}
+		if model.FindIndexByColumns(tbInfo, fk.Cols...) != nil {
+			continue
+		}
+
+		for _, idx := range tbInfo.Indices {
+			if idx.Name.L == fk.Name.L {
+				return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", fk.Name.O)
+			}
+		}
+
+		keys := make([]*ast.IndexPartSpecification, 0, len(fk.Cols))
+		for _, col := range fk.Cols {
+			keys = append(keys, &ast.IndexPartSpecification{
+				Column: &ast.ColumnName{Name: col},
+				Length: -1,
+			})
+		}
+
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, fk.Name, false, false, false, keys, nil, model.StatePublic)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		idxInfo.ID = AllocateIndexID(tbInfo)
+		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
+	}
+	return nil
 }
 
 func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {

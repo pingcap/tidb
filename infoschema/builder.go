@@ -639,6 +639,22 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			}
 		}
 	}
+	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
+	// update referred table info.
+	for _, fk := range tblInfo.ForeignKeys {
+		if fk.RefSchema.L == dbInfo.Name.L && fk.RefTable.L == tblInfo.Name.L {
+			b.is.buildTableReferredForeignKeys(dbInfo.Name, tblInfo)
+			continue
+		}
+		// todo: use deep copy or another way.
+		refTable, _ := b.is.TableByName(fk.RefSchema, fk.RefTable)
+		if refTable == nil {
+			continue
+		}
+		b.is.buildTableReferredForeignKeys(fk.RefSchema, refTable.Meta())
+		affected = appendAffectedIDs(affected, refTable.Meta())
+	}
+
 	tbl, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -702,6 +718,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 		tblInfo := sortedTbls[idx].Meta()
 		delete(tableNames.tables, tblInfo.Name.L)
 		affected = appendAffectedIDs(affected, tblInfo)
+		b.is.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 	}
 	// Remove the table in sorted table slice.
 	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTbls[0:idx], sortedTbls[idx+1:]...)
