@@ -371,7 +371,8 @@ dumpling_unit_test_in_verify_ci: failpoint-enable tools/bin/gotestsum
 	$(RACE_FLAG) -coverprofile="$(TEST_COVERAGE_DIR)/dumpling_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
-dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
+dumpling_integration_test: dumpling_bins failpoint-enable
+	@make build_dumpling
 	@make failpoint-disable
 	./dumpling/tests/run.sh $(CASE)
 
