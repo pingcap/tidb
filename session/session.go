@@ -2300,12 +2300,7 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	})
 
 	s.sessionVars.StartTime = time.Now()
-	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	preparedObj, err := plannercore.GetPreparedStmt(execStmt, s.GetSessionVars())
-	if err != nil {
-		return nil, err
-	}
-	pointPlanShortPathOK, err := plannercore.IsPointPlanShortPathOK(s, is, preparedObj)
 	if err != nil {
 		return nil, err
 	}
@@ -2325,20 +2320,6 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
-	// handle point plan short path specially
-	if pointPlanShortPathOK {
-		if ep, ok := stmt.Plan.(*plannercore.Execute); ok {
-			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
-				stmtCtx.SetPlan(stmt.Plan)
-				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
-				stmt.Plan = pointPlan
-				stmt.PsStmt = preparedObj
-			} else {
-				// invalid the previous cached point plan
-				preparedObj.PreparedAst.CachedPlan = nil
-			}
-		}
-	}
 
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)

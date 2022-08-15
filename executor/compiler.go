@@ -57,8 +57,29 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
+	sessVars := c.Ctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+	// handle the execute statement
+	var (
+		pointPlanShortPathOK bool
+		preparedObj          *plannercore.PlanCacheStmt
+		err                  error
+	)
+
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars)
+		if err != nil {
+			return nil, err
+		}
+		pointPlanShortPathOK, err = plannercore.IsPointPlanShortPathOK(c.Ctx, is, preparedObj)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	ret := &plannercore.PreprocessorReturn{}
-	err := plannercore.Preprocess(c.Ctx,
+	err = plannercore.Preprocess(c.Ctx,
 		stmtNode,
 		plannercore.WithPreprocessorReturn(ret),
 		plannercore.InitTxnContextProvider,
@@ -76,7 +97,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		}
 	})
 
-	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
 	if err != nil {
 		return nil, err
@@ -87,13 +107,13 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	})
 
 	// TODO: Should we use the Execute statement or the corresponding Prepare statement to record？
-	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
+	CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		lowerPriority = needLowerPriority(finalPlan)
 	}
-	c.Ctx.GetSessionVars().StmtCtx.SetPlan(finalPlan)
-	return &ExecStmt{
+	stmtCtx.SetPlan(finalPlan)
+	stmt := &ExecStmt{
 		GoCtx:         ctx,
 		InfoSchema:    is,
 		Plan:          finalPlan,
@@ -103,7 +123,21 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		Ctx:           c.Ctx,
 		OutputNames:   names,
 		Ti:            &TelemetryInfo{},
-	}, nil
+	}
+	if pointPlanShortPathOK {
+		if ep, ok := stmt.Plan.(*plannercore.Execute); ok {
+			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
+				stmtCtx.SetPlan(stmt.Plan)
+				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
+				stmt.Plan = pointPlan
+				stmt.PsStmt = preparedObj
+			} else {
+				// invalid the previous cached point plan
+				preparedObj.PreparedAst.CachedPlan = nil
+			}
+		}
+	}
+	return stmt, nil
 }
 
 // needLowerPriority checks whether it's needed to lower the execution priority
