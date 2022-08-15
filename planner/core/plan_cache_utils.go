@@ -39,6 +39,45 @@ var (
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
 
+type planCache struct {
+	c *kvcache.SimpleLRUCache
+}
+
+func newPlanCache(c *kvcache.SimpleLRUCache) *planCache {
+	return &planCache{c}
+}
+
+func (pc *planCache) getValidPlan(key *planCacheKey, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
+	val, exists := pc.c.Get(key)
+	if !exists {
+		return nil, false
+	}
+	candidates := val.([]*PlanCacheValue)
+	for _, candidate := range candidates {
+		if !candidate.varTypesUnchanged(paramTypes) {
+			return candidate, true
+		}
+	}
+	return nil, false
+}
+
+func (pc *planCache) putPlan(key *planCacheKey, val *PlanCacheValue) {
+	existingVal, exists := pc.c.Get(key)
+	if !exists {
+		pc.c.Put(key, []*PlanCacheValue{val})
+		return
+	}
+	candidates := existingVal.([]*PlanCacheValue)
+	for i := range candidates {
+		if candidates[i].varTypesUnchanged(val.TxtVarTypes) {
+			candidates[i] = val
+			return // hit an existing value
+		}
+	}
+	candidates = append(candidates, val) // TODO: limit the length
+	pc.c.Put(key, candidates)
+}
+
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
 // Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
@@ -157,7 +196,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 }
 
 // FieldSlice is the slice of the types.FieldType
-type FieldSlice []types.FieldType
+type FieldSlice []*types.FieldType
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
 // Currently this is only used in plan cache to check whether the types of parameters are compatible.
@@ -207,15 +246,15 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userVarTypes := make([]types.FieldType, len(txtVarTps))
+	userVarTypes := make([]*types.FieldType, len(txtVarTps))
 	for i, tp := range txtVarTps {
-		userVarTypes[i] = *tp
+		userVarTypes[i] = tp.Clone()
 	}
 	return &PlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
-		TxtVarTypes:       userVarTypes,
+		TxtVarTypes:       txtVarTps,
 	}
 }
 
