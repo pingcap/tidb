@@ -741,6 +741,7 @@ var tokenMap = map[string]int{
 	"TOKUDB_SNAPPY":            tokudbSnappy,
 	"TOKUDB_UNCOMPRESSED":      tokudbUncompressed,
 	"TOKUDB_ZLIB":              tokudbZlib,
+	"TOKUDB_ZSTD":              tokudbZstd,
 	"TOP":                      top,
 	"TOPN":                     topn,
 	"TRACE":                    trace,
