@@ -166,7 +166,7 @@ func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		sessCtx:   sessCtx,
 		taskCh:    make(chan *reorgBackfillTask, 1),
 		resultCh:  make(chan *backfillResult, 1),
-		priority:  kv.PriorityLow,
+		priority:  reorgInfo.Job.Priority,
 	}
 }
 
@@ -367,7 +367,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	return ranges, nil
 }
 
-func (w *worker) waitTaskResults(workers []*backfillWorker, taskCnt int,
+func (*worker) waitTaskResults(workers []*backfillWorker, taskCnt int,
 	totalAddedCount *int64, startKey kv.Key) (kv.Key, int64, error) {
 	var (
 		addedCount int64
@@ -587,7 +587,7 @@ func setSessCtxLocation(sctx sessionctx.Context, info *reorgInfo) error {
 //
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 
@@ -606,6 +606,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	}
 
 	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
@@ -619,7 +620,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	var litWorkerCnt int
 	if isLightningEnabled(job.ID) && !needRestoreJob(job.ID) {
 		if !isPiTREnable(w) {
-			litWorkerCnt, err = prepareLightningEngine(job, indexInfo.ID, int(workerCnt))
+			litWorkerCnt, err = prepareLightningEngine(job, reorgInfo.currElement.ID, int(workerCnt))
 			if err == nil && workerCnt >= int32(litWorkerCnt) {
 				workerCnt = int32(litWorkerCnt)
 				setNeedRestoreJob(job.ID, true)
@@ -655,7 +656,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		}
 
 		if isLightningEnabled(job.ID) && needRestoreJob(job.ID) && workerCnt > int32(litWorkerCnt) {
-			count, err := prepareLightningEngine(job, indexInfo.ID, int(workerCnt-int32(litWorkerCnt)))
+			count, err := prepareLightningEngine(job, reorgInfo.currElement.ID, int(workerCnt-int32(litWorkerCnt)))
 			if err != nil {
 				errMsg := "Lightning engine lost, maybe cause data consistent problem, rollback job."
 				logutil.BgLogger().Error(errMsg, zap.String("Job ID:", strconv.FormatInt(job.ID, 10)))
@@ -689,7 +690,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			case typeAddIndexWorker:
 				// Firstly, check and try lightning path
 				if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
-					idxWorker, err := newAddIndexWorkerLit(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo, jc, job.ID)
+					idxWorker, err := newAddIndexWorkerLit(sessCtx, w, i, t, decodeColMap, reorgInfo, jc, job.ID)
 					if err == nil {
 						idxWorker.priority = job.Priority
 						backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
@@ -700,7 +701,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 					if isLightningEnabled(job.ID) && !needRestoreJob(job.ID) {
 						newBackfillFlow = true
 					}
-					idxWorker := newAddIndexWorker(sessCtx, i, t, indexInfo, decodeColMap, reorgInfo, jc, newBackfillFlow)
+					idxWorker := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc, newBackfillFlow)
 					idxWorker.priority = job.Priority
 					backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 					idxWorker.isNewBF = newBackfillFlow
@@ -709,13 +710,11 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			case typeUpdateColumnWorker:
 				// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 				sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
-				updateWorker := newUpdateColumnWorker(sessCtx, i, t, oldColInfo, colInfo, decodeColMap, reorgInfo, jc)
-				updateWorker.priority = job.Priority
+				updateWorker := newUpdateColumnWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
 				backfillWorkers = append(backfillWorkers, updateWorker.backfillWorker)
 				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker, job)
 			case typeCleanUpIndexWorker:
 				idxWorker := newCleanUpIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
-				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			default:
@@ -730,6 +729,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		}
 
 		failpoint.Inject("checkBackfillWorkerNum", func(val failpoint.Value) {
+			//nolint:forcetypeassert
 			if val.(bool) {
 				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
 				if num != 0 {
@@ -757,7 +757,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		// Disk quota checking and import partial data into TiKV if needed.
 		// Do lightning flush data to make checkpoint.
 		if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
-			if importPartialDataToTiKV(job.ID, indexInfo.ID) != nil {
+			if importPartialDataToTiKV(job.ID, reorgInfo.currElement.ID) != nil {
 				return errors.Trace(err)
 			}
 		}

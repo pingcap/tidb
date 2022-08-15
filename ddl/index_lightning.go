@@ -180,10 +180,16 @@ type addIndexWorkerLit struct {
 	writerCtx *lit.WorkerContext
 }
 
-func newAddIndexWorkerLit(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext, jobID int64) (*addIndexWorkerLit, error) {
-	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+func newAddIndexWorkerLit(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext, jobID int64) (*addIndexWorkerLit, error) {
+	var index table.Index
+	for _, idx := range t.Indices() {
+		if idx.Meta().ID == reorgInfo.currElement.ID {
+			index = idx
+			break
+		}
+	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
-	engineInfoKey := lit.GenEngineInfoKey(jobID, indexInfo.ID)
+	engineInfoKey := lit.GenEngineInfoKey(jobID, index.Meta().ID)
 
 	lwCtx, err := lit.GlobalEnv.LitMemRoot.RegisterWorkerContext(engineInfoKey, id)
 	if err != nil {

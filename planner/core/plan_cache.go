@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -41,11 +42,82 @@ import (
 	"go.uber.org/zap"
 )
 
+func planCachePreprocess(sctx sessionctx.Context, is infoschema.InfoSchema,
+	stmt *PlanCacheStmt, params []expression.Expression) error {
+	vars := sctx.GetSessionVars()
+	stmtAst := stmt.PreparedAst
+	vars.StmtCtx.StmtType = stmtAst.StmtType
+
+	// step 1: check parameter number
+	if len(stmtAst.Params) != len(params) {
+		return errors.Trace(ErrWrongParamCount)
+	}
+
+	// step 2: set parameter values
+	for i, usingParam := range params {
+		val, err := usingParam.Eval(chunk.Row{})
+		if err != nil {
+			return err
+		}
+		param := stmtAst.Params[i].(*driver.ParamMarkerExpr)
+		if isGetVarBinaryLiteral(sctx, usingParam) {
+			binVal, convErr := val.ToBytes()
+			if convErr != nil {
+				return convErr
+			}
+			val.SetBinaryLiteral(binVal)
+		}
+		param.Datum = val
+		param.InExecute = true
+		vars.PreparedParams = append(vars.PreparedParams, val)
+	}
+
+	// step 3: check schema version
+	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {
+		// In order to avoid some correctness issues, we have to clear the
+		// cached plan once the schema version is changed.
+		// Cached plan in prepared struct does NOT have a "cache key" with
+		// schema version like prepared plan cache key
+		stmtAst.CachedPlan = nil
+		stmt.Executor = nil
+		stmt.ColumnInfos = nil
+		// If the schema version has changed we need to preprocess it again,
+		// if this time it failed, the real reason for the error is schema changed.
+		// Example:
+		// When running update in prepared statement's schema version distinguished from the one of execute statement
+		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
+		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
+		ret := &PreprocessorReturn{InfoSchema: is}
+		err := Preprocess(sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
+		if err != nil {
+			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+		}
+		stmtAst.SchemaVersion = is.SchemaMetaVersion()
+	}
+
+	// step 4: handle expiration
+	// If the lastUpdateTime less than expiredTimeStamp4PC,
+	// it means other sessions have executed 'admin flush instance plan_cache'.
+	// So we need to clear the current session's plan cache.
+	// And update lastUpdateTime to the newest one.
+	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
+	if stmtAst.UseCache && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
+		sctx.PreparedPlanCache().DeleteAll()
+		stmtAst.CachedPlan = nil
+		vars.LastUpdateTime4PC = expiredTimeStamp4PC
+	}
+	return nil
+}
+
 // GetPlanFromSessionPlanCache is the entry point of Plan Cache.
 // It tries to get a valid cached plan from this session's plan cache.
 // If there is no such a plan, it'll call the optimizer to generate a new one.
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
+	if err := planCachePreprocess(sctx, is, stmt, params); err != nil {
+		return nil, nil, err
+	}
+
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
