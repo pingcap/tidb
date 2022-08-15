@@ -1009,7 +1009,7 @@ const (
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLEnableFastReorg                      = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
-	DefTiDBGeneralPlanCacheSize                    = 0
+	DefTiDBGeneralPlanCacheSize                    = 100
 )
 
 // Process global variables.
