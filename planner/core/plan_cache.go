@@ -306,7 +306,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema
 				}
 			}
 			if !hitVal {
-				cacheVals = append(cacheVals.([]*PlanCacheValue), cached)
+				cacheVals = append(cacheVals.([]*PlanCacheValue), cached) // TODO: limit the length
 			}
 			sctx.PreparedPlanCache().Put(cacheKey, cacheVals)
 		} else {
