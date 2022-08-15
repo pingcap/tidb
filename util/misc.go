@@ -559,6 +559,8 @@ var (
 	internalClientInit sync.Once
 	internalHTTPClient *http.Client
 	internalHTTPSchema string
+	// internalHTTPDefaultTimeOut is the default time out for http request
+	internalHTTPDefaultTimeOut = 10 * time.Second
 )
 
 // InternalHTTPClient is used by TiDB-Server to request other components.
@@ -581,12 +583,15 @@ func initInternalClient() {
 	}
 	if tlsCfg == nil {
 		internalHTTPSchema = "http"
-		internalHTTPClient = http.DefaultClient
+		internalHTTPClient = &http.Client{
+			Timeout: internalHTTPDefaultTimeOut,
+		}
 		return
 	}
 	internalHTTPSchema = "https"
 	internalHTTPClient = &http.Client{
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Timeout:   internalHTTPDefaultTimeOut,
 	}
 }
 
