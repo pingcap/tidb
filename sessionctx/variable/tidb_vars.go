@@ -1024,7 +1024,7 @@ var (
 	EnableTmpStorageOnOOM       = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
-	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
+	ddlErrorCountLimit    int64 = DefTiDBDDLErrorCountLimit
 	ddlReorgRowFormat     int64 = DefTiDBRowFormatV2
 	maxDeltaSchemaCount   int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
