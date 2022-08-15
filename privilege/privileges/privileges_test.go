@@ -1912,12 +1912,8 @@ func (s *testPrivilegeSuite) TestGrantOptionAndRevoke(c *C) {
 	))
 }
 
-func TestGrantReferences(t *testing.T) {
-	t.Parallel()
-	store, clean := newStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testPrivilegeSuite) TestGrantReferences(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE SCHEMA reftestdb")
 	tk.MustExec("USE reftestdb")
 	tk.MustExec("CREATE TABLE reftest (a int)")
@@ -1926,7 +1922,7 @@ func TestGrantReferences(t *testing.T) {
 	tk.MustExec("GRANT REFERENCES ON reftestdb.* TO referencesUser")
 	tk.MustExec("GRANT REFERENCES ON reftestdb.reftest TO referencesUser")
 	// Must set a session user to avoid null pointer dereferencing
-	tk.Session().Auth(&auth.UserIdentity{
+	tk.Se.Auth(&auth.UserIdentity{
 		Username: "root",
 		Hostname: "localhost",
 	}, nil, nil)
