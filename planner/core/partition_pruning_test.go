@@ -167,6 +167,7 @@ func TestPartitionRangeForExpr(t *testing.T) {
 		input  string
 		result partitionRangeOR
 	}{
+		{"a < 2 and a > 10", partitionRangeOR{}},
 		{"a > 3", partitionRangeOR{{1, 6}}},
 		{"a < 3", partitionRangeOR{{0, 1}}},
 		{"a >= 11", partitionRangeOR{{3, 6}}},
@@ -355,7 +356,7 @@ func TestPartitionRangePruner2CharWithCollation(t *testing.T) {
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
 		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v", ca.input)
+		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
 
@@ -402,6 +403,8 @@ func TestPartitionRangePruner2Date(t *testing.T) {
 		{"'2003-02-27' >= a", partitionRangeOR{{0, 3}}},
 		{"'20141024' < a", partitionRangeOR{{4, 7}}},
 		{"'2003-03-30' > a", partitionRangeOR{{0, 3}}},
+		{"'2003-03-30' < a AND a < '20080808'", partitionRangeOR{{2, 4}}},
+		{"a between '2003-03-30' AND '20080808'", partitionRangeOR{{2, 4}}},
 	}
 
 	for _, ca := range cases {
@@ -409,7 +412,7 @@ func TestPartitionRangePruner2Date(t *testing.T) {
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
 		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v", ca.input)
+		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v, %v != %v", ca.input, ca.result, result)
 	}
 }
 
@@ -452,6 +455,7 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		input  string
 		result partitionRangeOR
 	}{
+		{"a < 1 and a > 1", partitionRangeOR{}},
 		{"c = 3", partitionRangeOR{{0, len(partDefs)}}},
 		{"b > 3 AND c = 3", partitionRangeOR{{0, len(partDefs)}}},
 		{"a = 5 AND c = 3", partitionRangeOR{{9, 10}}},
@@ -480,6 +484,8 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		{"a < 4 OR (a = 4 AND b < 4) OR (a = 4 AND b = 4 AND c < 4)", partitionRangeOR{{0, 5}}},
 		{"(a,b,c) >= (4,7,4)", partitionRangeOR{{0, len(partDefs)}}},
 		{"(a,b,c) = (4,7,4)", partitionRangeOR{{5, 6}}},
+		{"a < 2 and a > 10", partitionRangeOR{}},
+		{"a < 1 and a > 1", partitionRangeOR{}},
 	}
 
 	for _, ca := range cases {

@@ -934,7 +934,15 @@ func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.E
 
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, exprs, columnsPruner.partCols, lens)
 
-	if err != nil || len(res.Ranges) == 0 {
+	if err != nil {
+		return fullRange(len(columnsPruner.lessThan))
+	}
+	if len(res.Ranges) == 0 {
+		if len(res.AccessConds) == 0 && len(res.RemainedConds) == 0 {
+			// Impossible conditions, like: a > 2 AND a < 1
+			return partitionRangeOR{}
+		}
+		// Could not extract any valid range, use all partitions
 		return fullRange(len(columnsPruner.lessThan))
 	}
 
@@ -953,7 +961,7 @@ func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.E
 				}
 				if con, ok := (*expr).(*expression.Constant); ok {
 					// Add Null as point here?
-					comparer := collate.GetCollator(con.RetType.GetCollate())
+					comparer := collate.GetCollator(columnsPruner.partCols[j].RetType.GetCollate())
 					cmp, err := con.Value.Compare(sctx.GetSessionVars().StmtCtx, &res.Ranges[idx].LowVal[j], comparer)
 					if err != nil {
 						panic("Error in internal compare!?!")
@@ -1060,6 +1068,8 @@ func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.E
 
 func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expression,
 	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
+	// TODO: benchmark the single column RANGE COLUMNS prune implementation vs the multi-column one
+	// and if OK, remove the single column implementation
 	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok && len(columnsPruner.partCols) > 1 {
 		return multiColumnRangeColumnsPruner(sctx, exprs, columnsPruner, result)
 	}

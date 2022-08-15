@@ -794,10 +794,10 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		Exprs: []ast.ExprNode{*partOptions.Interval.LastRangeEnd},
 	}
 	if len(tbInfo.Partition.Columns) > 0 {
-		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, first.Exprs); err != nil {
+		if _, _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, tbInfo, first.Exprs); err != nil {
 			return err
 		}
-		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, last.Exprs); err != nil {
+		if _, _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, tbInfo, last.Exprs); err != nil {
 			return err
 		}
 	} else {
@@ -1099,7 +1099,9 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 		clause := def.Clause.(*ast.PartitionDefinitionClauseIn)
 		if len(tbInfo.Partition.Columns) > 0 {
 			for _, vs := range clause.Values {
-				if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, vs); err != nil {
+				// TODO: use the normalised and formatted strings returned here
+				_, _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, tbInfo, vs)
+				if err != nil {
 					return nil, err
 				}
 			}
@@ -1165,8 +1167,11 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			return nil, err
 		}
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
+		var partValStrings []string
+		var colTypes []types.FieldType
 		if len(tbInfo.Partition.Columns) > 0 {
-			if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, clause.Exprs); err != nil {
+			var err error
+			if partValStrings, colTypes, err = checkAndGetColumnsTypeAndValuesMatch(ctx, tbInfo, clause.Exprs); err != nil {
 				return nil, err
 			}
 		} else {
@@ -1194,14 +1199,30 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 
 		buf := new(bytes.Buffer)
 		// Range columns partitions support multi-column partitions.
-		for _, expr := range clause.Exprs {
+		for i, expr := range clause.Exprs {
 			expr.Accept(exprChecker)
 			if exprChecker.err != nil {
 				return nil, exprChecker.err
 			}
-			expr.Format(buf)
-			piDef.LessThan = append(piDef.LessThan, buf.String())
-			buf.Reset()
+			if len(partValStrings) > i {
+				partVal := partValStrings[i]
+				switch colTypes[i].EvalType() {
+				case types.ETInt:
+					// no wrapping
+				case types.ETDatetime, types.ETString:
+					if _, ok := clause.Exprs[i].(*ast.MaxValueExpr); !ok {
+						// Don't wrap MAXVALUE
+						partVal = driver.WrapInSingleQuotes(partVal)
+					}
+				default:
+					return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+				}
+				piDef.LessThan = append(piDef.LessThan, partVal)
+			} else {
+				expr.Format(buf)
+				piDef.LessThan = append(piDef.LessThan, buf.String())
+				buf.Reset()
+			}
 		}
 		definitions = append(definitions, piDef)
 	}

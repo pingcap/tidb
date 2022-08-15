@@ -125,9 +125,6 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
-			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
-				return -1
-			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
 				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {

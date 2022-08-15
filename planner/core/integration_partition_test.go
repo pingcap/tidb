@@ -1451,3 +1451,91 @@ func TestRangeColumnsExpr(t *testing.T) {
 		"14 <nil> <nil>",
 		"14 10 4"))
 }
+
+func TestPartitionRangePrunerCharWithCollation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database cwc`)
+	tk.MustExec(`use cwc`)
+	// "'c'", "'F'", "'h'", "'L'", "'t'", "MAXVALUE"
+	tk.MustExec(
+		`create table t (a char(32) collate utf8mb4_unicode_ci) ` +
+			`partition by range columns (a) ` +
+			`(partition p0 values less than ('c'),` +
+			` partition p1 values less than ('F'),` +
+			` partition p2 values less than ('h'),` +
+			` partition p3 values less than ('L'),` +
+			` partition p4 values less than ('t'),` +
+			` partition p5 values less than (MAXVALUE))`)
+
+	tk.MustExec(`insert into t values ('a'),('A'),('c'),('C'),('f'),('F'),('h'),('H'),('l'),('L'),('t'),('T'),('z'),('Z')`)
+	tk.MustQuery(`select * from t partition(p0)`).Sort().Check(testkit.Rows("A", "a"))
+	tk.MustQuery(`select * from t partition(p1)`).Sort().Check(testkit.Rows("C", "c"))
+	tk.MustQuery(`select * from t partition(p2)`).Sort().Check(testkit.Rows("F", "f"))
+	tk.MustQuery(`select * from t partition(p3)`).Sort().Check(testkit.Rows("H", "h"))
+	tk.MustQuery(`select * from t partition(p4)`).Sort().Check(testkit.Rows("L", "l"))
+	tk.MustQuery(`select * from t partition(p5)`).Sort().Check(testkit.Rows("T", "Z", "t", "z"))
+	tk.MustQuery(`select * from t where a > 'C' and a < 'q'`).Sort().Check(testkit.Rows("F", "H", "L", "f", "h", "l"))
+	tk.MustQuery(`select * from t where a > 'c' and a < 'Q'`).Sort().Check(testkit.Rows("F", "H", "L", "f", "h", "l"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a > 'C' and a < 'q'`).Check(testkit.Rows(
+		`TableReader 250.00 root partition:p1,p2,p3,p4 data:Selection`,
+		`└─Selection 250.00 cop[tikv]  gt(cwc.t.a, "C"), lt(cwc.t.a, "q")`,
+		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a > 'c' and a < 'Q'`).Check(testkit.Rows(
+		`TableReader 250.00 root partition:p1,p2,p3,p4 data:Selection`,
+		`└─Selection 250.00 cop[tikv]  gt(cwc.t.a, "c"), lt(cwc.t.a, "Q")`,
+		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+}
+
+func TestPartitionRangePrunerDate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database rcd`)
+	tk.MustExec(`use rcd`)
+	tk.MustExec(`create table i (a int, b int, key (a,b))`)
+	tk.MustQuery(`select * from i where a < 1 and a > 2`).Check(testkit.Rows())
+	tk.MustQuery(`explain format = 'brief' select * from i where a < 1 and a > 2`).Check(testkit.Rows("TableDual 0.00 root  rows:0"))
+	tk.MustExec(
+		`create table t (a date) ` +
+			`partition by range columns (a) ` +
+			`(partition p0 values less than ('19990601'),` +
+			` partition p1 values less than ('2000-05-01'),` +
+			` partition p2 values less than ('20080401'),` +
+			` partition p3 values less than ('2010-03-01'),` +
+			` partition p4 values less than ('20160201'),` +
+			` partition p5 values less than ('2020-01-01'),` +
+			` partition p6 values less than (MAXVALUE))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` date DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN ('1999-06-01'),\n" +
+			" PARTITION `p1` VALUES LESS THAN ('2000-05-01'),\n" +
+			" PARTITION `p2` VALUES LESS THAN ('2008-04-01'),\n" +
+			" PARTITION `p3` VALUES LESS THAN ('2010-03-01'),\n" +
+			" PARTITION `p4` VALUES LESS THAN ('2016-02-01'),\n" +
+			" PARTITION `p5` VALUES LESS THAN ('2020-01-01'),\n" +
+			" PARTITION `p6` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`insert into t values ('19990101'),('1999-06-01'),('2000-05-01'),('20080401'),('2010-03-01'),('2016-02-01'),('2020-01-01')`)
+	tk.MustQuery(`select * from t partition(p0)`).Sort().Check(testkit.Rows("1999-01-01"))
+	tk.MustQuery(`select * from t partition(p1)`).Sort().Check(testkit.Rows("1999-06-01"))
+	tk.MustQuery(`select * from t partition(p2)`).Sort().Check(testkit.Rows("2000-05-01"))
+	tk.MustQuery(`select * from t partition(p3)`).Sort().Check(testkit.Rows("2008-04-01"))
+	tk.MustQuery(`select * from t partition(p4)`).Sort().Check(testkit.Rows("2010-03-01"))
+	tk.MustQuery(`select * from t partition(p5)`).Sort().Check(testkit.Rows("2016-02-01"))
+	tk.MustQuery(`select * from t partition(p6)`).Sort().Check(testkit.Rows("2020-01-01"))
+	tk.UsedPartitions(`select * from t where a < '1943-02-12'`).Check(testkit.Rows("p0"))
+	tk.UsedPartitions(`select * from t where a >= '19690213'`).Check(testkit.Rows("all"))
+	tk.UsedPartitions(`select * from t where a > '2003-03-13'`).Check(testkit.Rows("p2 p3 p4 p5 p6"))
+	tk.UsedPartitions(`select * from t where a < '2006-02-03'`).Check(testkit.Rows("p0 p1 p2"))
+	tk.UsedPartitions(`select * from t where a = '20070707'`).Check(testkit.Rows("p2"))
+	tk.UsedPartitions(`select * from t where a > '1949-10-10'`).Check(testkit.Rows("all"))
+	tk.UsedPartitions(`select * from t where a > '2016-02-01' AND a < '20000103'`).Check(testkit.Rows("dual"))
+	tk.UsedPartitions(`select * from t where a < '19691112' or a >= '2019-09-18'`).Check(testkit.Rows("p0 p5 p6"))
+	tk.UsedPartitions(`select * from t where a is null`).Check(testkit.Rows("p0"))
+	tk.UsedPartitions(`select * from t where '2003-02-27' >= a`).Check(testkit.Rows("p0 p1 p2"))
+	tk.UsedPartitions(`select * from t where '20141024' < a`).Check(testkit.Rows("p4 p5 p6"))
+	tk.UsedPartitions(`select * from t where '2003-03-30' > a`).Check(testkit.Rows("p0 p1 p2"))
+	tk.UsedPartitions(`select * from t where a between '2003-03-30' AND '2014-01-01'`).Check(testkit.Rows("p2 p3 p4"))
+}
