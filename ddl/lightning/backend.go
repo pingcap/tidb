@@ -114,7 +114,7 @@ func (g glueLit) Record(string, uint64) {
 // IsEngineLightningBackfill show if lightning backend env is set up.
 func IsEngineLightningBackfill(id int64) bool {
 	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey, false)
+	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
 	if !exist {
 		return false
 	}
@@ -124,7 +124,7 @@ func IsEngineLightningBackfill(id int64) bool {
 // SetEnable set backend status.
 func SetEnable(id int64, value bool) {
 	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey, false)
+	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
 	if exist {
 		bc.enabled = value
 	}
@@ -133,7 +133,7 @@ func SetEnable(id int64, value bool) {
 // NeedRestore shows if engine is created.
 func NeedRestore(id int64) bool {
 	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey, false)
+	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
 	if !exist {
 		return false
 	}
@@ -143,7 +143,7 @@ func NeedRestore(id int64) bool {
 // SetNeedRestore set engine status.
 func SetNeedRestore(id int64, value bool) {
 	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey, false)
+	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
 	if exist {
 		bc.needRestore = value
 	}

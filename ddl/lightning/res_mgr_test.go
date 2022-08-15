@@ -45,7 +45,7 @@ func TestMemoryControl(t *testing.T) {
 	engineKey := "enKey1"
 	wCnt := GlobalEnv.LitMemRoot.workerDegree(8, engineKey, bcKey)
 	require.Equal(t, 8, wCnt)
-	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey, false)
+	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
 	require.Equal(t, true, exist)
 	var uuid uuid.UUID
 	eninfo := NewEngineInfo(1, engineKey, nil, bc, nil, "", uuid, 8)

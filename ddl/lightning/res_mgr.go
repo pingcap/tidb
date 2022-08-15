@@ -311,7 +311,7 @@ func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 		err   error
 		count int
 	)
-	bc, exist := m.getBackendContext(bcKey, true)
+	bc, exist := m.getBackendContext(bcKey)
 	if !exist {
 		logutil.BgLogger().Error(LitErrGetBackendFail, zap.String("backend key", bcKey))
 		return err
@@ -340,12 +340,9 @@ func (m *MemoryRoot) DeleteBackendEngines(bcKey string) error {
 	return err
 }
 
-func (m *MemoryRoot) getBackendContext(bcKey string, needLog bool) (*BackendContext, bool) {
+func (m *MemoryRoot) getBackendContext(bcKey string) (*BackendContext, bool) {
 	bc, exist := m.backendCache[bcKey]
 	if !exist {
-		if needLog {
-			logutil.BgLogger().Warn(LitWarnBackendNOTExist, zap.String("backend key:", bcKey))
-		}
 		return nil, false
 	}
 	return bc, exist

@@ -246,7 +246,10 @@ func CanRestoreReorgTask(jobID int64, indexID int64) bool {
 	engineInfoKey := GenEngineInfoKey(jobID, indexID)
 	bcKey := GenBackendContextKey(jobID)
 	_, enExist := GlobalEnv.LitMemRoot.EngineMgr.LoadEngineInfo(engineInfoKey)
-	_, bcExist := GlobalEnv.LitMemRoot.getBackendContext(bcKey, true)
+	_, bcExist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
+	if !bcExist {
+		logutil.BgLogger().Warn(LitWarnBackendNOTExist, zap.String("backend key:", bcKey))
+	}
 	if enExist && bcExist {
 		return true
 	}
