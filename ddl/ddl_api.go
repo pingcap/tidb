@@ -6439,6 +6439,9 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.Ta
 			return nil, nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
 		s, err := newVal.ToString()
+		if err != nil {
+			return nil, nil, err
+		}
 		valStrings = append(valStrings, s)
 	}
 	return valStrings, colTypes, nil
