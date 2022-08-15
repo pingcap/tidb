@@ -2103,6 +2103,18 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	require.NoError(t, err)
 
 	tk.MustExec("alter table e15 exchange partition p0 with table e16")
+
+	tk.MustExec("create table e17 (a int)")
+	tk.MustExec("alter table e17 set tiflash replica 1")
+	tk.MustExec("insert into e17 values (1)")
+
+	tk.MustExec("create table e18 (a int) partition by range (a) (partition p0 values less than (4), partition p1 values less than (10))")
+	tk.MustExec("alter table e18 set tiflash replica 1")
+	tk.MustExec("insert into e18 values (2)")
+
+	tk.MustExec("alter table e18 exchange partition p0 with table e17")
+	tk.MustQuery("select * /*+ read_from_storage(tiflash[e18]) */ from e18").Check(testkit.Rows("1"))
+	tk.MustQuery("select * /*+ read_from_storage(tiflash[e17]) */ from e17").Check(testkit.Rows("2"))
 }
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
@@ -2375,6 +2387,35 @@ func TestExchangePartitionHook(t *testing.T) {
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
+}
+
+func TestExchangePartitionAutoID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int primary key auto_increment) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 values less than (9),
+        PARTITION p3 values less than (50000000)
+		);`)
+	tk.MustExec(`create table nt(a int primary key auto_increment);`)
+	tk.MustExec(`insert into pt values (0), (4)`)
+	tk.MustExec("insert into nt values (1)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
+	}()
+
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustExec("insert into nt values (NULL)")
+	tk.MustQuery("select count(*) from nt where a >= 4000000").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from pt where a >= 4000000").Check(testkit.Rows("1"))
 }
 
 func TestExchangePartitionExpressIndex(t *testing.T) {
