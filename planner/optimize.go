@@ -377,7 +377,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	exec.Plan = plan
 	exec.SetOutputNames(names)
-	exec.Stmt = execAst
+	exec.Stmt = exec.PrepStmt.PreparedAst.Stmt
 	return exec, names, nil
 }
 
