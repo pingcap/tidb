@@ -1989,6 +1989,31 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs, rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex), nil
 }
 
+func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
+	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) bool {
+		if i.GetMinTs() < j.GetMinTs() {
+			return true
+		} else if i.GetMinTs() > j.GetMinTs() {
+			return false
+		}
+
+		if i.GetMaxTs() < j.GetMaxTs() {
+			return true
+		} else if i.GetMaxTs() > j.GetMaxTs() {
+			return false
+		}
+
+		if i.GetResolvedTs() < j.GetResolvedTs() {
+			return true
+		} else if i.GetResolvedTs() > j.GetResolvedTs() {
+			return false
+		}
+
+		return true
+	})
+	return files
+}
+
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
 func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
@@ -1998,10 +2023,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	progressInc func(),
 ) error {
 	// sort files firstly.
-	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) bool {
-		return i.GetMinTs() < j.GetMinTs()
-	})
-
+	files = SortMetaKVFiles(files)
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 	filesInDefaultCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
@@ -2025,7 +2047,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	}
 
 	// Restore files in default CF.
-	if err := rc.restoreMetaKVFilesWithBatchMethod(
+	if err := rc.RestoreMetaKVFilesWithBatchMethod(
 		ctx,
 		filesInDefaultCF,
 		schemasReplace,
@@ -2037,7 +2059,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	}
 
 	// Restore files in write CF.
-	if err := rc.restoreMetaKVFilesWithBatchMethod(
+	if err := rc.RestoreMetaKVFilesWithBatchMethod(
 		ctx,
 		filesInWriteCF,
 		schemasReplace,
@@ -2055,7 +2077,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	return nil
 }
 
-func (rc *Client) restoreMetaKVFilesWithBatchMethod(
+func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
@@ -2080,7 +2102,7 @@ func (rc *Client) restoreMetaKVFilesWithBatchMethod(
 			rangeMax = f.MaxTs
 			rangeMin = f.MinTs
 		} else {
-			if f.MinTs < rangeMax {
+			if f.MinTs <= rangeMax {
 				rangeMin = mathutil.Min(rangeMin, f.MinTs)
 				rangeMax = mathutil.Max(rangeMax, f.MaxTs)
 			} else {
