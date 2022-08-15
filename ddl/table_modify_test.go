@@ -290,8 +290,7 @@ func TestUnsupportedAlterTableOption(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/35121.
 func TestCreateTableWithNamedPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, primary key clustered (a, b));")
