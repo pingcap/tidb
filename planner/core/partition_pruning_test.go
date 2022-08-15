@@ -137,7 +137,13 @@ func prepareBenchCtx(createTable string, partitionExpr string) *testCtx {
 	}
 	sctx := mock.NewContext()
 	tblInfo, err := ddlhelper.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	if err != nil {
+		return nil
+	}
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	if err != nil {
+		return nil
+	}
 	schema := expression.NewSchema(columns...)
 
 	col, fn, _, err := makePartitionByFnCol(sctx, columns, names, partitionExpr)
