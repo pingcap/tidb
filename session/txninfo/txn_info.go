@@ -18,9 +18,11 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -41,18 +43,49 @@ const (
 	TxnRollingBack
 )
 
-// StateLabel is used to translate TxnRunningState to its prometheus label name.
-var stateLabel map[TxnRunningState]string = map[TxnRunningState]string{
-	TxnIdle:          "idle",
-	TxnRunning:       "executing_sql",
-	TxnLockAcquiring: "acquiring_lock",
-	TxnCommitting:    "committing",
-	TxnRollingBack:   "rolling_back",
+var txnDurationHistogramForState map[TxnRunningState][]prometheus.Observer = map[TxnRunningState][]prometheus.Observer{
+	TxnIdle: []prometheus.Observer{
+		metrics.TxnDurationHistogram.WithLabelValues("idle", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("idle", "true"),
+	},
+	TxnRunning: []prometheus.Observer{
+		metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "true"),
+	},
+	TxnLockAcquiring: []prometheus.Observer{
+		metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "true"),
+	},
+	TxnCommitting: []prometheus.Observer{
+		metrics.TxnDurationHistogram.WithLabelValues("committing", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("committing", "true"),
+	},
+	TxnRollingBack: []prometheus.Observer{
+		metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "true"),
+	},
 }
 
-// StateLabel is used to translate TxnRunningState to its prometheus label name.
-func StateLabel(state TxnRunningState) string {
-	return stateLabel[state]
+var txnStatusEnteringCounterForState map[TxnRunningState]prometheus.Counter = map[TxnRunningState]prometheus.Counter{
+	TxnIdle:          metrics.TxnStatusEnteringCounter.WithLabelValues("idle"),
+	TxnRunning:       metrics.TxnStatusEnteringCounter.WithLabelValues("executing_sql"),
+	TxnLockAcquiring: metrics.TxnStatusEnteringCounter.WithLabelValues("acquiring_lock"),
+	TxnCommitting:    metrics.TxnStatusEnteringCounter.WithLabelValues("committing"),
+	TxnRollingBack:   metrics.TxnStatusEnteringCounter.WithLabelValues("rolling_back"),
+}
+
+// TxnDurationHistogram returns the observer for the given state and hasLock type.
+func TxnDurationHistogram(state TxnRunningState, hasLock bool) prometheus.Observer {
+	hasLockInt := 0
+	if hasLock {
+		hasLockInt = 1
+	}
+	return txnDurationHistogramForState[state][hasLockInt]
+}
+
+// TxnStatusEnteringCounter returns the counter for the given state.
+func TxnStatusEnteringCounter(state TxnRunningState) prometheus.Counter {
+	return txnStatusEnteringCounterForState[state]
 }
 
 const (
