@@ -1929,7 +1929,6 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 		rows = dbt.MustQuery(`SELECT * FROM v;`)
 		cli.checkRows(t, rows, "b")
 	})
-
 }
 
 func (cli *testServerClient) runTestDBNameEscape(t *testing.T) {
