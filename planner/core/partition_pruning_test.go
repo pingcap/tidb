@@ -331,7 +331,7 @@ func TestPartitionRangePruner2VarChar(t *testing.T) {
 		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
-		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
+		result = partitionRangeColumnsForCNFExpr(tc.sctx, expr, pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v", ca.input)
 	}
 }
@@ -381,7 +381,7 @@ func TestPartitionRangePruner2CharWithCollation(t *testing.T) {
 		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
-		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
+		result = partitionRangeColumnsForCNFExpr(tc.sctx, expr, pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
@@ -437,7 +437,8 @@ func TestPartitionRangePruner2Date(t *testing.T) {
 		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
-		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
+		e := expression.SplitCNFItems(expr[0])
+		result = partitionRangeColumnsForCNFExpr(tc.sctx, e, pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v, %v != %v", ca.input, ca.result, result)
 	}
 }
@@ -519,7 +520,7 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
 		e := expression.SplitCNFItems(exprs[0])
-		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
+		result = partitionRangeColumnsForCNFExpr(tc.sctx, e, pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
@@ -561,7 +562,7 @@ func benchmarkRangeColumnsPruner(b *testing.B, parts int) {
 	for i := 0; i < b.N; i++ {
 		result[0] = partitionRange{0, parts}
 		result = result[:1]
-		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
+		result = partitionRangeColumnsForCNFExpr(tc.sctx, e, pruner, result)
 	}
 }
 
