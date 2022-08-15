@@ -2030,9 +2030,6 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	// multiple goroutines running at the same time while session is not goroutine-safe.
 	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.
 	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
-		if err := s.GetSessionVars().SetSystemVar(variable.TiDBEnableWindowFunction, "1"); err != nil {
-			return err
-		}
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
 			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
