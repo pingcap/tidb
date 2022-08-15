@@ -1010,7 +1010,6 @@ const (
 	DefTiDBDDLEnableFastReorg                      = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefTiDBGeneralPlanCacheSize                    = 0
-
 )
 
 // Process global variables.
@@ -1063,8 +1062,8 @@ var (
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
-	GeneralPlanCacheSize              = atomic.NewUint64(DefTiDBGeneralPlanCacheSize) // variables for general plan cache
-
+	// GeneralPlanCacheSize is a variable for general plan cache
+	GeneralPlanCacheSize = atomic.NewUint64(DefTiDBGeneralPlanCacheSize)
 )
 
 var (
