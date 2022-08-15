@@ -367,12 +367,18 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	if execPlan, ok := p.(*core.Execute); ok {
-		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		return execPlan, execPlan.OutputNames(), err
+	exec, ok := p.(*core.Execute)
+	if !ok {
+		return nil, nil, errors.Errorf("invalid result plan type, should be Execute")
 	}
-	err = errors.Errorf("invalid result plan type, should be Execute")
-	return nil, nil, err
+	plan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, is, exec.PrepStmt, exec.Params)
+	if err != nil {
+		return nil, nil, err
+	}
+	exec.Plan = plan
+	exec.SetOutputNames(names)
+	exec.Stmt = exec.PrepStmt.PreparedAst.Stmt
+	return exec, names, nil
 }
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
