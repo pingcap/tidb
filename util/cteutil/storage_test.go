@@ -122,7 +122,7 @@ func TestSpillToDisk(t *testing.T) {
 	memTracker := storage.GetMemTracker()
 	memTracker.SetBytesLimit(inChk.MemoryUsage() + 1)
 	action := tmp.(*StorageRC).ActionSpillForTest()
-	memTracker.FallbackOldAndSetNewAction(action)
+	memTracker.FallbackOldAndSetNewActionForSoftLimit(action)
 	diskTracker := storage.GetDiskTracker()
 
 	// All data is in memory.

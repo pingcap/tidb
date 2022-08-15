@@ -186,7 +186,7 @@ func TestOOMAction(t *testing.T) {
 	action1 := &mockAction{}
 	action2 := &mockAction{}
 	tracker.SetActionOnExceed(action1)
-	tracker.FallbackOldAndSetNewAction(action2)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
 	require.False(t, action1.called)
 	require.False(t, action2.called)
 	tracker.Consume(10000)
@@ -223,10 +223,10 @@ func TestOOMAction(t *testing.T) {
 	action4 := &mockAction{}
 	action5 := &mockAction{}
 	tracker.SetActionOnExceed(action1)
-	tracker.FallbackOldAndSetNewAction(action2)
-	tracker.FallbackOldAndSetNewAction(action3)
-	tracker.FallbackOldAndSetNewAction(action4)
-	tracker.FallbackOldAndSetNewAction(action5)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action3)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action4)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action5)
 	require.Equal(t, action1, tracker.actionMuForHardLimit.actionOnExceed)
 	require.Equal(t, action2, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
 	action2.SetFinished()
@@ -558,7 +558,7 @@ func TestOOMActionPriority(t *testing.T) {
 	}
 
 	for i := 0; i < n; i++ {
-		tracker.FallbackOldAndSetNewAction(actions[randomShuffle[i]])
+		tracker.FallbackOldAndSetNewActionForSoftLimit(actions[randomShuffle[i]])
 	}
 	for i := n - 1; i >= 0; i-- {
 		tracker.Consume(100)

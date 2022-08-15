@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -3180,9 +3179,9 @@ func TestOOMActionPriority(t *testing.T) {
 	tk.MustExec("create table t4(a int)")
 	tk.MustExec("insert into t4 values(1)")
 	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
-	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(true)
+	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForSoftLimitForTest(true)
 	// All actions are finished and removed.
-	require.Equal(t, action.GetPriority(), int64(memory.DefLogPriority))
+	require.Nil(t, action)
 }
 
 func TestTrackAggMemoryUsage(t *testing.T) {

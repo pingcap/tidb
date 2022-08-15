@@ -188,14 +188,6 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMuForHardLimit.Unlock()
 }
 
-// FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesHardLimit
-// and set the original action as its fallback.
-func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
-	t.actionMuForHardLimit.Lock()
-	defer t.actionMuForHardLimit.Unlock()
-	t.actionMuForHardLimit.actionOnExceed = reArrangeFallback(t.actionMuForHardLimit.actionOnExceed, a)
-}
-
 // FallbackOldAndSetNewActionForSoftLimit sets the action when memory usage exceeds bytesSoftLimit
 // and set the original action as its fallback.
 func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
@@ -204,14 +196,14 @@ func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
 	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(t.actionMuForSoftLimit.actionOnExceed, a)
 }
 
-// GetFallbackForTest get the oom action used by test.
-func (t *Tracker) GetFallbackForTest(ignoreFinishedAction bool) ActionOnExceed {
-	t.actionMuForHardLimit.Lock()
-	defer t.actionMuForHardLimit.Unlock()
-	if t.actionMuForHardLimit.actionOnExceed != nil && t.actionMuForHardLimit.actionOnExceed.IsFinished() && ignoreFinishedAction {
-		t.actionMuForHardLimit.actionOnExceed = t.actionMuForHardLimit.actionOnExceed.GetFallback()
+// GetFallbackForSoftLimitForTest get the oom action used by test.
+func (t *Tracker) GetFallbackForSoftLimitForTest(ignoreFinishedAction bool) ActionOnExceed {
+	t.actionMuForSoftLimit.Lock()
+	defer t.actionMuForSoftLimit.Unlock()
+	if t.actionMuForSoftLimit.actionOnExceed != nil && t.actionMuForSoftLimit.actionOnExceed.IsFinished() && ignoreFinishedAction {
+		t.actionMuForSoftLimit.actionOnExceed = t.actionMuForSoftLimit.actionOnExceed.GetFallback()
 	}
-	return t.actionMuForHardLimit.actionOnExceed
+	return t.actionMuForSoftLimit.actionOnExceed
 }
 
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
@@ -395,16 +387,16 @@ func (t *Tracker) Consume(bs int64) {
 	actionAll := func(nowAction ActionOnExceed, tracker *Tracker) ActionOnExceed {
 		nowAction = actionOne(nowAction, tracker)
 		firstAction := nowAction
-		for nowAction != nil {
+		for ; nowAction != nil; nowAction = nowAction.GetFallback() {
 			nowAction.SetFallback(actionOne(nowAction.GetFallback(), tracker))
 		}
 		return firstAction
 	}
 
-	tryAction := func(mu *actionMu, tracker *Tracker, all bool) {
+	tryAction := func(mu *actionMu, tracker *Tracker, actionAllAction bool) {
 		mu.Lock()
 		defer mu.Unlock()
-		if all {
+		if actionAllAction {
 			mu.actionOnExceed = actionAll(mu.actionOnExceed, tracker)
 		} else {
 			mu.actionOnExceed = actionOne(mu.actionOnExceed, tracker)
