@@ -1009,11 +1009,11 @@ const (
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
+	DefTiDBGeneralPlanCacheSize                    = 100
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize           int32  = 10240
 	MinDDLReorgBatchSize           int32  = 32
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	DefTiDBGeneralPlanCacheSize           = 100
 )
 
 // Process global variables.
