@@ -1,4 +1,4 @@
-startup --host_jvm_args=-Xmx16g
+startup --host_jvm_args=-Xmx8g
 startup --unlimit_coredumps
 
 build --java_language_version=17
