@@ -50,12 +50,9 @@ const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
+func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo := job.Args[0].(*model.TableInfo)
-	//fkCheck := job.Args[1].(bool)
-	// todo: fix me
-	fkCheck := true
 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
@@ -155,7 +152,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	tbInfo, err := createTable(d, t, job)
+	tbInfo, err := createTable(d, t, job, fkCheck)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -188,12 +185,11 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	//
 	// &*job clones a stub job from the ActionCreateTables job
 	stubJob := &*job
-	stubJob.Args = make([]interface{}, 2)
+	stubJob.Args = make([]interface{}, 1)
 	for i := range args {
 		stubJob.TableID = args[i].ID
 		stubJob.Args[0] = args[i]
-		stubJob.Args[1] = fkCheck
-		tbInfo, err := createTable(d, t, stubJob)
+		tbInfo, err := createTable(d, t, stubJob, fkCheck)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
