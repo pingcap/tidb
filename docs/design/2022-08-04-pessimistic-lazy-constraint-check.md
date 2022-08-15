@@ -5,7 +5,9 @@
 
 ## Abstract
 
-We propose to make lazy uniqueness check usable not only in optimistic transactions, but also in pessimistic transactions. Then, in certain use cases, we can benefit better latency and throughput from deferring the constraint checks until the transaction commits while not decreasing the success rate.
+We propose to make lazy uniqueness check usable not only in optimistic transactions, but also in pessimistic transactions. Then, in certain use cases, we can benefit better latency and throughput from deferring the uniqueness constraint checks until the transaction commits while not decreasing the success rate.
+
+Similar to the current `tidb_constraint_check_in_place`, this proposal only involves uniqueness constraints of the primary key and unique keys. Other constraints such as `NOT NULL` and foreign keys are not affected.
 
 ## Background
 
@@ -32,13 +34,13 @@ So, skipping pessimistic locks for these keys and deferring constraint checks ca
 
 This feature makes it possible to skip acquiring pessimistic locks for the keys that need uniqueness constraint checks in pessimistic transactions. We do constraint checks for these keys during prewrite.
 
-A session/global system variable `tidb_constraint_check_in_place_optimistic_only` is introduced to control the behavior. The default value is `ON` and the behavior will remain unchanged. When `tidb_constraint_check_in_place_optimistic_only` is `OFF`, the new behavior will take effect in pessimistic transactions.
+A session/global system variable `tidb_constraint_check_in_place_pessimistic` is introduced to control the behavior. The default value is `ON` and the behavior will remain unchanged. When `tidb_constraint_check_in_place_pessimistic` is `OFF`, the new behavior will take effect in pessimistic transactions.
 
 ```sql
 CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY);
 INSERT INTO t1 VALUES (1), (2);
 
-set tidb_constraint_check_in_place_optimistic_only = off;
+set tidb_constraint_check_in_place_pessimistic = off;
 BEGIN PESSIMISTIC;
 SELECT * FROM t1 WHERE id = 1 FOR UPDATE; -- SELECT FOR UPDATE locks key as usual.
 INSERT INTO t1 VALUES (2); -- Skip acquiring the lock and return success.
@@ -79,7 +81,7 @@ message PrewriteRequest {
 
 Because `enum` is compatible with `bool` on the wire, we can seamlessly extend the  `is_pessimistic_lock` field. In a TiDB cluster, TiKV instances are upgraded before TiDB. So, we can make sure TiKV can handle it correctly when TiDB starts using the new protocol.
 
-When `tidb_constraint_check_in_place_optimistic_only` is off, all the keys that have `PresumeKeyNotExists` flags don't need to be locked when executing the DML. They will be marked with a new special flag `NeedConflictCheckInPrewrite`. When the transaction commits, TiDB will set the actions of these keys to `DO_CONSTRAINT_CHECK`. So, TiKV will not check the existence of pessimistic transactions of these keys. Instead, constraint checks should be done for these keys.
+When `tidb_constraint_check_in_place_pessimistic` is off, all the keys that have `PresumeKeyNotExists` flags don't need to be locked when executing the DML. They will be marked with a new special flag `NeedConstraintCheckInPrewrite`. When the transaction commits, TiDB will set the actions of these keys to `DO_CONSTRAINT_CHECK`. So, TiKV will not check the existence of pessimistic locks of these keys. Instead, constraint and write conflict checks should be done for these keys.
 
 #### Behavior of locking lazy checked keys
 
@@ -89,7 +91,7 @@ Consider the following scenario (from @cfzjywxk):
 /* init */ CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY, v int);
 /* init */ INSERT INTO t1 VALUES (1, 1);
 
-/* s1 */ set tidb_constraint_check_in_place_optimistic_only = off;
+/* s1 */ set tidb_constraint_check_in_place_pessimistic = off;
 /* s1 */ BEGIN PESSIMISTIC;
 /* s1 */ INSERT INTO t1 VALUES (1, 2); -- Skip acquiring the lock. So the statement would succeed.
 /* s1 */ SELECT * FROM t1 FOR UPDATE; -- Here the pessimistic lock on row key '1' would be acquired
