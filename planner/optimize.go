@@ -377,7 +377,8 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	exec.Plan = plan
 	exec.SetOutputNames(names)
-	return plan, names, nil
+	exec.Stmt = execAst
+	return exec, names, nil
 }
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
