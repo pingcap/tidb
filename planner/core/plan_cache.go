@@ -218,13 +218,13 @@ func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL strin
 		if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
 			return nil, nil, false, err
 		}
-		cachedVals := cacheValue.([]*PlanCacheValue)
-		for _, cachedVal := range cachedVals {
-			if !cachedVal.varTypesUnchanged(paramTypes) {
+		candidates := cacheValue.([]*PlanCacheValue)
+		for _, candidate := range candidates {
+			if !candidate.varTypesUnchanged(paramTypes) {
 				continue
 			}
 			planValid := true
-			for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
+			for tblInfo, unionScan := range candidate.TblInfo2UnionScan {
 				if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
 					planValid = false
 					// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
@@ -234,10 +234,10 @@ func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL strin
 				}
 			}
 			if planValid {
-				err := RebuildPlan4CachedPlan(cachedVal.Plan)
+				err := RebuildPlan4CachedPlan(candidate.Plan)
 				if err != nil {
 					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
-					return nil, nil, false, nil
+					continue // try the next candidate
 				}
 				sessVars.FoundInPlanCache = true
 				if len(bindSQL) > 0 {
@@ -251,9 +251,9 @@ func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL strin
 					planCacheCounter.Inc()
 				}
 				stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-				return cachedVal.Plan, cachedVal.OutPutNames, true, nil
+				return candidate.Plan, candidate.OutPutNames, true, nil
 			}
-			break
+			// try the next candidate
 		}
 	}
 	return nil, nil, false, nil

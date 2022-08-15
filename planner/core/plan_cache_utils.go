@@ -193,29 +193,29 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	TxtVarTypes       FieldSlice
+	ParamTypes        FieldSlice
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
-	return v.TxtVarTypes.CheckTypesCompatibility4PC(txtVarTps)
+	return v.ParamTypes.CheckTypesCompatibility4PC(txtVarTps)
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	txtVarTps []*types.FieldType) *PlanCacheValue {
+	paramTypes []*types.FieldType) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userVarTypes := make([]types.FieldType, len(txtVarTps))
-	for i, tp := range txtVarTps {
-		userVarTypes[i] = *tp
+	paramTypeList := make([]types.FieldType, len(paramTypes))
+	for i, tp := range paramTypes {
+		paramTypeList[i] = *tp
 	}
 	return &PlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
-		TxtVarTypes:       userVarTypes,
+		ParamTypes:        paramTypeList,
 	}
 }
 
