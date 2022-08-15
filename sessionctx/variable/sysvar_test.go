@@ -1167,7 +1167,7 @@ func TestGeneralPlanCache(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	val, err := vars.GetGlobalSystemVar(TiDBGeneralPlanCacheSize)
 	require.NoError(t, err)
-	require.Equal(t, val, "0")
+	require.Equal(t, val, "100")
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBGeneralPlanCacheSize, "1000"))
 	val, err = vars.GetGlobalSystemVar(TiDBGeneralPlanCacheSize)
 	require.NoError(t, err)
