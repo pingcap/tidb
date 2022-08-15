@@ -387,16 +387,14 @@ func ParseServerInfo(src string) ServerInfo {
 	var err error
 	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
 	if err != nil {
-		log.L().Warn("fail to parse version",
+		log.L().Warn("fail to parse version, fallback to 0.0.0",
 			zap.String("version", versionStr))
+		serverInfo.ServerVersion = semver.New("0.0.0")
 	}
-	var version string
-	if serverInfo.ServerVersion != nil {
-		version = serverInfo.ServerVersion.String()
-	}
+
 	log.L().Info("detect server version",
 		zap.String("type", serverInfo.ServerType.String()),
-		zap.String("version", version))
+		zap.String("version", serverInfo.ServerVersion.String()))
 
 	return serverInfo
 }
