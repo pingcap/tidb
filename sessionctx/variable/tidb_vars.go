@@ -1060,6 +1060,10 @@ var (
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableUnifiedSlowLog              = atomic.NewBool(DefEnableUnifiedSlowLog)
+	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
+	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
+	// DDLDiskQuota is the temporary variable for set disk quota for lightning
+	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
 )
 
 var (
