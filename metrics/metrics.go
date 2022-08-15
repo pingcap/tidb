@@ -150,7 +150,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsInaccuracyRate)
 	prometheus.MustRegister(StmtNodeCounter)
 	prometheus.MustRegister(DbStmtNodeCounter)
-	prometheus.MustRegister(ExecPhaseDuration)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
@@ -194,15 +193,12 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
 	prometheus.MustRegister(StatsHealthyGauge)
-	prometheus.MustRegister(TxnStatusEnteringCounter)
-	prometheus.MustRegister(TxnDurationHistogram)
 	prometheus.MustRegister(LastCheckpoint)
 	prometheus.MustRegister(AdvancerOwner)
 	prometheus.MustRegister(AdvancerTickDuration)
 	prometheus.MustRegister(GetCheckpointBatchSize)
 	prometheus.MustRegister(RegionCheckpointRequest)
 	prometheus.MustRegister(RegionCheckpointFailure)
-
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
