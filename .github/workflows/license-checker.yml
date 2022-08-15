@@ -3,10 +3,10 @@ name: License checker
 on:
   push:
     branches:
-      - master
+      - feature/distribute-reorg
   pull_request:
     branches:
-      - master
+      - feature/distribute-reorg
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}

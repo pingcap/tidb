@@ -1084,6 +1084,32 @@ func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	require.Equal(t, val, "0")
 }
 
+func TestSetTIDBDistributeReorg(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	distributeReorg := GetSysVar(TiDBDDLEnableDistributeReorg)
+
+	// Default off
+	require.Equal(t, distributeReorg.Value, Off)
+
+	// Set to on
+	err := mock.SetGlobalSysVar(TiDBDDLEnableDistributeReorg, On)
+	require.NoError(t, err)
+	val, err := mock.GetGlobalSysVar(TiDBDDLEnableDistributeReorg)
+	require.NoError(t, err)
+	require.Equal(t, On, val)
+
+	// Set to off
+	err = mock.SetGlobalSysVar(TiDBDDLEnableDistributeReorg, Off)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLEnableDistributeReorg)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+}
+
 func TestSetTIDBFastDDL(t *testing.T) {
 	vars := NewSessionVars()
 	mock := NewMockGlobalAccessor4Tests()
