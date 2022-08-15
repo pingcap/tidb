@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/shirou/gopsutil/v3/process"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
@@ -63,9 +64,10 @@ type memoryUsageAlarm struct {
 	memoryUsageAlarmIntervalSeconds       uint64
 	lastCheckTime                         time.Time
 
-	tmpDir              string
-	lastLogFileName     []string
-	lastProfileFileName [][]string // heap, goroutine
+	tmpDir                 string
+	lastLogFileName        []string
+	lastSystemInfoFileName []string
+	lastProfileFileName    [][]string // heap, goroutine
 
 	s3Conf s3Config
 }
@@ -237,6 +239,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 
 	var recordSQLFile string
+	var recordSystemInfoFile string
 	var recordProfileFiles []string
 	if recordSQLFile, record.err = record.recordSQL(sm); record.err != nil {
 		return
@@ -244,10 +247,15 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	if recordProfileFiles, record.err = record.recordProfile(); record.err != nil {
 		return
 	}
+	if recordSystemInfoFile, record.err = record.recordSystemInfoFile(); record.err != nil {
+		return
+	}
+	// for test, will be removed later
 	println(recordSQLFile)
-	recordFiles := make([]string, 0, len(recordProfileFiles)+1)
+	recordFiles := make([]string, 0, len(recordProfileFiles)+2)
 	recordFiles = append(recordFiles, recordSQLFile)
 	recordFiles = append(recordFiles, recordProfileFiles...)
+	recordFiles = append(recordFiles, recordSystemInfoFile)
 	if record.s3Conf.enableUploadOOMRecord {
 		record.createSessionAndUploadFilesToS3(recordFiles)
 	}
@@ -389,5 +397,65 @@ func (record *memoryUsageAlarm) write(i int, item item) (string, error) {
 			logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.Name), zap.Error(err))
 		}
 	}()
+	return fileName, nil
+}
+
+func (record *memoryUsageAlarm) recordSystemInfoFile() (string, error) {
+	procs, _ := process.Processes()
+	pInfos := make([]*process.Process, 0, len(procs))
+	for _, proc := range procs {
+		if name, err := proc.Name(); name != "" && err == nil {
+			pInfos = append(pInfos, proc)
+		}
+	}
+	fileName := filepath.Join(record.tmpDir, "system_info"+record.lastCheckTime.Format(time.RFC3339))
+	record.lastSystemInfoFileName = append(record.lastSystemInfoFileName, fileName)
+	f, err := os.Create(fileName)
+	if err != nil {
+		logutil.BgLogger().Error("create oom record file fail", zap.Error(err))
+		return "", err
+	}
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close oom record file fail", zap.Error(err))
+		}
+	}()
+	slices.SortFunc(pInfos, func(i, j *process.Process) bool {
+		memoryLeft, errLeft := i.MemoryInfo()
+		memoryRight, errRight := j.MemoryInfo()
+		if errLeft != nil {
+			logutil.BgLogger().Error("get system thread memory info failed.", zap.Error(errLeft))
+			return false
+		}
+		if errRight != nil {
+			logutil.BgLogger().Error("get system thread memory info failed.", zap.Error(errRight))
+			return false
+		}
+		return memoryLeft.RSS > memoryRight.RSS
+	})
+	if len(pInfos) > 10 {
+		pInfos = pInfos[:10]
+	}
+	var buf strings.Builder
+	var name string
+	var memInfo *process.MemoryInfoStat
+	for _, pInfo := range pInfos {
+		if name, err = pInfo.Name(); err != nil {
+			return fileName, err
+		}
+		if memInfo, err = pInfo.MemoryInfo(); err != nil {
+			return fileName, err
+		}
+		buf.WriteString(fmt.Sprintf("%v: %v", "pid", pInfo.Pid) + "\n")
+		buf.WriteString(fmt.Sprintf("%v: %v", "name", name) + "\n")
+		buf.WriteString(fmt.Sprintf("%v: %v", "memroy", memInfo.String()) + "\n")
+		buf.WriteString("\n")
+	}
+	_, err = f.WriteString("The 10 system threads with the most memory usage for OOM analysis\n")
+	if _, err = f.WriteString(buf.String()); err != nil {
+		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
+		return fileName, err
+	}
 	return fileName, nil
 }
