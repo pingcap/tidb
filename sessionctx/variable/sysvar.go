@@ -456,18 +456,6 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), nil
 		},
 	},
-	{Scope: ScopeInstance, Name: TiDBPointLockReadUseLastTso, Value: BoolToOnOff(DefTiDBPointLockReadUseLastTso), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
-		PointLockReadUseLastTso.Store(TiDBOptOn(val))
-		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(PointLockReadUseLastTso.Load()), nil
-	}},
-	{Scope: ScopeInstance, Name: TiDBInsertUseLastTso, Value: BoolToOnOff(DefTiDBInsertUseLastTso), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
-		InsertUseLastTso.Store(TiDBOptOn(val))
-		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(InsertUseLastTso.Load()), nil
-	}},
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
@@ -1711,6 +1699,14 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRCReadCheckTS, Type: TypeBool, Value: BoolToOnOff(DefRCReadCheckTS), SetSession: func(s *SessionVars, val string) error {
 		s.RcReadCheckTS = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPointLockReadUseLastTso, Type: TypeBool, Value: BoolToOnOff(DefTiDBPointLockReadUseLastTso), SetSession: func(s *SessionVars, val string) error {
+		s.RcPointLockReadUseLastTso = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBInsertUseLastTso, Type: TypeBool, Value: BoolToOnOff(DefTiDBInsertUseLastTso), SetSession: func(s *SessionVars, val string) error {
+		s.RcInsertUseLastTso = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRemoveOrderbyInSubquery, Value: BoolToOnOff(DefTiDBRemoveOrderbyInSubquery), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {

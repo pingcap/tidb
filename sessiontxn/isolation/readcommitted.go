@@ -125,18 +125,8 @@ func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
 	disableWarmup := false
 	sessionVars := sctx.GetSessionVars()
 	if sessionVars.ConnectionID > 0 &&
-		(variable.InsertUseLastTso.Load() || variable.PointLockReadUseLastTso.Load()) &&
+		(sessionVars.RcInsertUseLastTso || sessionVars.RcPointLockReadUseLastTso) &&
 		sessionVars.InTxn() {
-		/*
-			if _, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt &&
-				(variable.InsertUseLastTso.Load() || variable.PointLockReadUseLastTso.Load()) {
-				return true
-			}
-			if insert, ok := node.(*ast.InsertStmt); ok && insert.Select == nil &&
-				variable.InsertUseLastTso.Load() {
-				return true
-			}
-		*/
 		realNode := node
 		if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
 			prepareStmt, err := plannercore.GetPreparedStmt(execStmt, sessionVars)
@@ -148,9 +138,11 @@ func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
 		}
 		switch v := realNode.(type) {
 		case *ast.InsertStmt:
-			disableWarmup = v.Select == nil
+			disableWarmup = v.Select == nil && sessionVars.RcInsertUseLastTso
 		case *ast.UpdateStmt:
-			disableWarmup = true
+			// It can't judge if a point-update/point-delete/point-lock-read
+			// in `OnStmtStart function, simplify the process
+			disableWarmup = sessionVars.RcPointLockReadUseLastTso
 		case *ast.DeleteStmt:
 			disableWarmup = true
 		case *ast.SelectStmt:
@@ -318,7 +310,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	useLastOracleTS := plannercore.PlanSkipGetTsoFromPD(plan, false)
+	useLastOracleTS := plannercore.PlanSkipGetTsoFromPD(p.sctx, plan, false)
 
 	if useLastOracleTS {
 		p.stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)

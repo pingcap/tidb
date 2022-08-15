@@ -1028,6 +1028,8 @@ const (
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
 	DefTiDBPointLockReadUseLastTso                 = true
 	DefTiDBInsertUseLastTso                        = true
+	DefTiDBPointLockReadUseLastTso                 = false
+	DefTiDBInsertUseLastTso                        = false
 )
 
 // Process global variables.
@@ -1074,8 +1076,6 @@ var (
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
-	PointLockReadUseLastTso           = atomic.NewBool(true)
-	InsertUseLastTso                  = atomic.NewBool(true)
 )
 
 var (

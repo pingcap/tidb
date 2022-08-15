@@ -738,27 +738,27 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	return false
 }
 
-func PlanSkipGetTsoFromPD(plan Plan, inLockOrWriteStmt bool) bool {
+func PlanSkipGetTsoFromPD(sctx sessionctx.Context, plan Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
 	case *PointGetPlan:
-		return variable.PointLockReadUseLastTso.Load() && (v.Lock || inLockOrWriteStmt)
+		return sctx.GetSessionVars().RcPointLockReadUseLastTso && (v.Lock || inLockOrWriteStmt)
 	case PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false
 		}
 		_, isPhysicalLock := v.(*PhysicalLock)
 		for _, p := range v.Children() {
-			if !PlanSkipGetTsoFromPD(p, isPhysicalLock || inLockOrWriteStmt) {
+			if !PlanSkipGetTsoFromPD(sctx, p, isPhysicalLock || inLockOrWriteStmt) {
 				return false
 			}
 		}
 		return true
 	case *Update:
-		return variable.PointLockReadUseLastTso.Load() && PlanSkipGetTsoFromPD(v.SelectPlan, true)
+		return PlanSkipGetTsoFromPD(sctx, v.SelectPlan, true)
 	case *Delete:
-		return variable.PointLockReadUseLastTso.Load() && PlanSkipGetTsoFromPD(v.SelectPlan, true)
+		return PlanSkipGetTsoFromPD(sctx, v.SelectPlan, true)
 	case *Insert:
-		return v.SelectPlan == nil && variable.InsertUseLastTso.Load()
+		return v.SelectPlan == nil && sctx.GetSessionVars().RcInsertUseLastTso
 	}
 	return false
 }
