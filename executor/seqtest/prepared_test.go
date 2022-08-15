@@ -145,6 +145,7 @@ func TestPrepared(t *testing.T) {
 		// Check that ast.Statement created by compiler.Compile has query text.
 		compiler := executor.Compiler{Ctx: tk.Session()}
 		stmt, err := compiler.Compile(context.TODO(), execStmt)
+		require.NoError(t, err)
 
 		// Check that rebuild plan works.
 		err = tk.Session().PrepareTxnCtx(ctx)
