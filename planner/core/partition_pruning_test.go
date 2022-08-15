@@ -129,6 +129,32 @@ type testCtx struct {
 	fn      *expression.ScalarFunction
 }
 
+func prepareBenchCtx(createTable string, partitionExpr string) *testCtx {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(createTable, "", "")
+	if err != nil {
+		return nil
+	}
+	sctx := mock.NewContext()
+	tblInfo, err := ddlhelper.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	schema := expression.NewSchema(columns...)
+
+	col, fn, _, err := makePartitionByFnCol(sctx, columns, names, partitionExpr)
+	if err != nil {
+		return nil
+	}
+	return &testCtx{
+		require: nil,
+		sctx:    sctx,
+		schema:  schema,
+		columns: columns,
+		names:   names,
+		col:     col,
+		fn:      fn,
+	}
+}
+
 func prepareTestCtx(t *testing.T, createTable string, partitionExpr string) *testCtx {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(createTable, "", "")
@@ -496,4 +522,65 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
+}
+
+func benchmarkRangeColumnsPruner(b *testing.B, parts int) {
+	tc := prepareBenchCtx("create table t (a bigint unsigned, b int, c int)", "a")
+	if tc == nil {
+		panic("Failed to initialize benchmark")
+	}
+	lessThan := make([][]*expression.Expression, 0, parts)
+	partDefs := make([][]int64, 0, parts)
+	for i := 0; i < parts-1; i++ {
+		partDefs = append(partDefs, []int64{int64(i * 10000)})
+	}
+	partDefs = append(partDefs, []int64{-99})
+	for i := range partDefs {
+		v := partDefs[i][0]
+		var e *expression.Expression
+		if v == -99 {
+			e = nil // MAXVALUE
+		} else {
+			expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, strconv.FormatInt(v, 10), tc.schema, tc.names)
+			if err != nil {
+				panic(err.Error())
+			}
+			tmp := expr[0]
+			e = &tmp
+		}
+		lessThan = append(lessThan, []*expression.Expression{e})
+	}
+	pruner := &rangeColumnsPruner{lessThan, tc.columns[:1]}
+
+	exprs, err := expression.ParseSimpleExprsWithNames(tc.sctx, "a > 11000", tc.schema, tc.names)
+	if err != nil {
+		panic(err.Error())
+	}
+	result := fullRange(len(lessThan))
+	e := expression.SplitCNFItems(exprs[0])
+	for i := 0; i < b.N; i++ {
+		result[0] = partitionRange{0, parts}
+		result = result[:1]
+		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
+	}
+}
+
+func BenchmarkRangeColumnsPruner2(b *testing.B) {
+	benchmarkRangeColumnsPruner(b, 2)
+}
+
+func BenchmarkRangeColumnsPruner10(b *testing.B) {
+	benchmarkRangeColumnsPruner(b, 10)
+}
+
+func BenchmarkRangeColumnsPruner100(b *testing.B) {
+	benchmarkRangeColumnsPruner(b, 100)
+}
+
+func BenchmarkRangeColumnsPruner1000(b *testing.B) {
+	benchmarkRangeColumnsPruner(b, 1000)
+}
+
+func BenchmarkRangeColumnsPruner8000(b *testing.B) {
+	benchmarkRangeColumnsPruner(b, 8000)
 }

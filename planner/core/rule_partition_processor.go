@@ -948,6 +948,10 @@ func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.E
 
 	rangeOr := make([]partitionRange, 0, len(res.Ranges))
 
+	comparer := make([]collate.Collator, 0, len(columnsPruner.partCols))
+	for i := range columnsPruner.partCols {
+		comparer = append(comparer, collate.GetCollator(columnsPruner.partCols[i].RetType.GetCollate()))
+	}
 	// Create a sort.Search where the compare loops over ColumnValues
 	// Loop over the different ranges and extend/include all the partitions found
 	for idx := range res.Ranges {
@@ -961,8 +965,7 @@ func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.E
 				}
 				if con, ok := (*expr).(*expression.Constant); ok {
 					// Add Null as point here?
-					comparer := collate.GetCollator(columnsPruner.partCols[j].RetType.GetCollate())
-					cmp, err := con.Value.Compare(sctx.GetSessionVars().StmtCtx, &res.Ranges[idx].LowVal[j], comparer)
+					cmp, err := con.Value.Compare(sctx.GetSessionVars().StmtCtx, &res.Ranges[idx].LowVal[j], comparer[j])
 					if err != nil {
 						panic("Error in internal compare!?!")
 					}
@@ -1036,8 +1039,7 @@ func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.E
 				}
 				if con, ok := (*expr).(*expression.Constant); ok {
 					// Add Null as point here?
-					comparer := collate.GetCollator(con.RetType.GetCollate())
-					cmp, err := con.Value.Compare(sctx.GetSessionVars().StmtCtx, &res.Ranges[idx].HighVal[j], comparer)
+					cmp, err := con.Value.Compare(sctx.GetSessionVars().StmtCtx, &res.Ranges[idx].HighVal[j], comparer[j])
 					if err != nil {
 						panic("Error in internal compare!?!")
 					}
@@ -1068,9 +1070,7 @@ func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.E
 
 func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expression,
 	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
-	// TODO: benchmark the single column RANGE COLUMNS prune implementation vs the multi-column one
-	// and if OK, remove the single column implementation
-	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok && len(columnsPruner.partCols) > 1 {
+	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok {
 		return multiColumnRangeColumnsPruner(sctx, exprs, columnsPruner, result)
 	}
 	for i := 0; i < len(exprs); i++ {
