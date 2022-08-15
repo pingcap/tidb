@@ -329,7 +329,7 @@ func parseMember(s *stream, p *PathExpression) bool {
 			return false
 		}
 		dotKey, err = unquoteString(dotKey[1 : len(dotKey)-1])
-		if err != nil || (!wasQuoted && !checkEcmascriptIdentifier(dotKey)) {
+		if err != nil || (!wasQuoted && !isEcmascriptIdentifier(dotKey)) {
 			return false
 		}
 
@@ -338,7 +338,7 @@ func parseMember(s *stream, p *PathExpression) bool {
 	return true
 }
 
-func checkEcmascriptIdentifier(s string) bool {
+func isEcmascriptIdentifier(s string) bool {
 	if s == "" {
 		return false
 	}

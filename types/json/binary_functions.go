@@ -146,9 +146,7 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	return
 }
 
-// quoteString escapes interior quote and other characters for JSON_QUOTE
-// https://dev.mysql.com/doc/refman/5.7/en/json-creation-functions.html#function_json-quote
-// TODO: add JSON_QUOTE builtin
+// quoteString escapes interior quote
 func quoteString(s string) string {
 	var escapeByteMap = map[byte]string{
 		'\\': "\\\\",
@@ -200,7 +198,7 @@ func quoteString(s string) string {
 		ret.WriteString(s[start:])
 	}
 
-	if hasEscaped {
+	if hasEscaped || !isEcmascriptIdentifier(s) {
 		ret.WriteByte('"')
 		return ret.String()
 	}
