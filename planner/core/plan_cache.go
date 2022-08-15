@@ -36,7 +36,6 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -118,7 +117,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 		return nil, nil, err
 	}
 
-	var cacheKey kvcache.Key
+	var cacheKey *planCacheKey
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	stmtAst := stmt.PreparedAst
@@ -153,15 +152,14 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 		}
 	}
 
+	pc := newPlanCache(sctx.PreparedPlanCache())
 	if stmtAst.UseCache && !ignorePlanCache { // for general plans
-		if plan, names, ok, err := getGeneralPlan(sctx, cacheKey, bindSQL, is, stmt,
-			paramTypes); err != nil || ok {
+		if plan, names, ok, err := getGeneralPlan(sctx, pc, cacheKey, bindSQL, is, stmt, paramTypes); err != nil || ok {
 			return plan, names, err
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, is, stmt, ignorePlanCache, cacheKey,
-		latestSchemaVersion, paramNum, paramTypes, bindSQL)
+	return generateNewPlan(ctx, sctx, pc, is, stmt, ignorePlanCache, cacheKey, latestSchemaVersion, paramNum, paramTypes, bindSQL)
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
@@ -208,61 +206,52 @@ func getPointQueryPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmtC
 	return plan, names, true, nil
 }
 
-func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
+func getGeneralPlan(sctx sessionctx.Context, pc *planCache, cacheKey *planCacheKey, bindSQL string,
 	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-		if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
-			return nil, nil, false, err
-		}
-		cachedVals := cacheValue.([]*PlanCacheValue)
-		for _, cachedVal := range cachedVals {
-			if !cachedVal.varTypesUnchanged(paramTypes) {
-				continue
-			}
-			planValid := true
-			for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
-				if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
-					planValid = false
-					// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
-					// rebuilding the filters in UnionScan is pretty trivial.
-					sctx.PreparedPlanCache().Delete(cacheKey)
-					break
-				}
-			}
-			if planValid {
-				err := RebuildPlan4CachedPlan(cachedVal.Plan)
-				if err != nil {
-					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
-					return nil, nil, false, nil
-				}
-				sessVars.FoundInPlanCache = true
-				if len(bindSQL) > 0 {
-					// When the `len(bindSQL) > 0`, it means we use the binding.
-					// So we need to record this.
-					sessVars.FoundInBinding = true
-				}
-				if metrics.ResettablePlanCacheCounterFortTest {
-					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-				} else {
-					planCacheCounter.Inc()
-				}
-				stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-				return cachedVal.Plan, cachedVal.OutPutNames, true, nil
-			}
-			break
+	candidate, exists := pc.getValidPlan(cacheKey, paramTypes)
+	if !exists {
+		return nil, nil, false, nil
+	}
+	if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
+		return nil, nil, false, err
+	}
+	for tblInfo, unionScan := range candidate.TblInfo2UnionScan {
+		if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+			// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
+			// rebuilding the filters in UnionScan is pretty trivial.
+			sctx.PreparedPlanCache().Delete(cacheKey)
+			return nil, nil, false, nil
 		}
 	}
-	return nil, nil, false, nil
+
+	err := RebuildPlan4CachedPlan(candidate.Plan)
+	if err != nil {
+		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+		return nil, nil, false, nil
+	}
+	sessVars.FoundInPlanCache = true
+	if len(bindSQL) > 0 {
+		// When the `len(bindSQL) > 0`, it means we use the binding.
+		// So we need to record this.
+		sessVars.FoundInBinding = true
+	}
+	if metrics.ResettablePlanCacheCounterFortTest {
+		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+	} else {
+		planCacheCounter.Inc()
+	}
+	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	return candidate.Plan, candidate.OutPutNames, true, nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
-func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt,
-	ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64, paramNum int,
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, pc *planCache, is infoschema.InfoSchema, stmt *PlanCacheStmt,
+	ignorePlanCache bool, cacheKey *planCacheKey, latestSchemaVersion int64, paramNum int,
 	paramTypes []*types.FieldType, bindSQL string) (Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
@@ -296,22 +285,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-			hitVal := false
-			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
-				if cacheVal.varTypesUnchanged(paramTypes) {
-					hitVal = true
-					cacheVals.([]*PlanCacheValue)[i] = cached
-					break
-				}
-			}
-			if !hitVal {
-				cacheVals = append(cacheVals.([]*PlanCacheValue), cached)
-			}
-			sctx.PreparedPlanCache().Put(cacheKey, cacheVals)
-		} else {
-			sctx.PreparedPlanCache().Put(cacheKey, []*PlanCacheValue{cached})
-		}
+		pc.putPlan(cacheKey, cached)
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
