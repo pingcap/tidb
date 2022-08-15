@@ -1847,7 +1847,6 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	// 1. test1 can not connect to server
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "test1"
-		config.DBName = "test"
 	}))
 	require.NoError(t, err)
 	err = db.Ping()
@@ -1861,7 +1860,6 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	})
 	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "test1"
-		config.DBName = "test"
 	}))
 	require.NoError(t, err)
 	require.NoError(t, db.Ping())
@@ -1892,7 +1890,6 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	// When created, the role is locked by default and cannot log in to TiDB
 	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "role1"
-		config.DBName = "test"
 	}))
 	require.NoError(t, err)
 	err = db.Ping()
@@ -1910,11 +1907,29 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	})
 	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "role1"
-		config.DBName = "test"
 	}))
 	require.NoError(t, err)
 	require.NoError(t, db.Ping())
 	require.NoError(t, db.Close())
+
+	// 5. The ability to use a view is not affected by locking the account.
+	cli.runTests(t, func(config *mysql.Config) {
+		config.User = "test1"
+	}, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("CREATE TABLE IF NOT EXISTS t (id INT, name VARCHAR(16))")
+		dbt.MustExec("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+	})
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`ALTER USER test1 ACCOUNT LOCK;`)
+		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'test1';`)
+		cli.checkRows(t, rows, "test1 Y")
+		_ = dbt.MustExec("CREATE VIEW v AS SELECT name FROM t WHERE id = 2")
+		rows = dbt.MustQuery("SELECT definer, security_type FROM information_schema.views WHERE table_name = 'v'")
+		cli.checkRows(t, rows, "root@% DEFINER")
+		rows = dbt.MustQuery(`SELECT * FROM v;`)
+		cli.checkRows(t, rows, "b")
+	})
+
 }
 
 func (cli *testServerClient) runTestDBNameEscape(t *testing.T) {
