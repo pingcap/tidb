@@ -164,7 +164,7 @@ func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		sessCtx:   sessCtx,
 		taskCh:    make(chan *reorgBackfillTask, 1),
 		resultCh:  make(chan *backfillResult, 1),
-		priority:  kv.PriorityLow,
+		priority:  reorgInfo.Job.Priority,
 	}
 }
 
@@ -365,7 +365,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	return ranges, nil
 }
 
-func (w *worker) waitTaskResults(workers []*backfillWorker, taskCnt int,
+func (*worker) waitTaskResults(workers []*backfillWorker, taskCnt int,
 	totalAddedCount *int64, startKey kv.Key) (kv.Key, int64, error) {
 	var (
 		addedCount int64
@@ -585,7 +585,7 @@ func setSessCtxLocation(sctx sessionctx.Context, info *reorgInfo) error {
 //
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 
@@ -604,6 +604,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	}
 
 	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
@@ -656,20 +657,17 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:
-				idxWorker := newAddIndexWorker(sessCtx, i, t, indexInfo, decodeColMap, reorgInfo, jc)
-				idxWorker.priority = job.Priority
+				idxWorker := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			case typeUpdateColumnWorker:
 				// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 				sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
-				updateWorker := newUpdateColumnWorker(sessCtx, i, t, oldColInfo, colInfo, decodeColMap, reorgInfo, jc)
-				updateWorker.priority = job.Priority
+				updateWorker := newUpdateColumnWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
 				backfillWorkers = append(backfillWorkers, updateWorker.backfillWorker)
 				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker, job)
 			case typeCleanUpIndexWorker:
 				idxWorker := newCleanUpIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
-				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			default:
@@ -684,6 +682,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		}
 
 		failpoint.Inject("checkBackfillWorkerNum", func(val failpoint.Value) {
+			//nolint:forcetypeassert
 			if val.(bool) {
 				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
 				if num != 0 {
