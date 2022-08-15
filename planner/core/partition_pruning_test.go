@@ -559,6 +559,7 @@ func benchmarkRangeColumnsPruner(b *testing.B, parts int) {
 	}
 	result := fullRange(len(lessThan))
 	e := expression.SplitCNFItems(exprs[0])
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		result[0] = partitionRange{0, parts}
 		result = result[:1]

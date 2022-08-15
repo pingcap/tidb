@@ -1492,6 +1492,7 @@ func TestPartitionRangePrunerDate(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`create database rcd`)
 	tk.MustExec(`use rcd`)
+	tk.MustExec(`set @@tidb_partition_prune_mode = 'dynamic'`)
 	tk.MustExec(`create table i (a int, b int, key (a,b))`)
 	tk.MustQuery(`select * from i where a < 1 and a > 2`).Check(testkit.Rows())
 	tk.MustQuery(`explain format = 'brief' select * from i where a < 1 and a > 2`).Check(testkit.Rows("TableDual 0.00 root  rows:0"))
@@ -1538,4 +1539,25 @@ func TestPartitionRangePrunerDate(t *testing.T) {
 	tk.UsedPartitions(`select * from t where '20141024' < a`).Check(testkit.Rows("p4 p5 p6"))
 	tk.UsedPartitions(`select * from t where '2003-03-30' > a`).Check(testkit.Rows("p0 p1 p2"))
 	tk.UsedPartitions(`select * from t where a between '2003-03-30' AND '2014-01-01'`).Check(testkit.Rows("p2 p3 p4"))
+}
+
+func BenchmarkPartitionRangeColumns(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create schema rcb")
+	tk.MustExec("use rcb")
+	tk.MustExec(`create table t (` +
+		`c1 int primary key clustered,` +
+		`c2 varchar(255))` +
+		` partition by range columns (c1)` +
+		` interval (10000) first partition less than (10000) last partition less than (5120000)`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		val := strconv.FormatInt(int64(rand.Intn(5120000)), 10)
+		tk.MustExec("select * from t where c1 = " + val)
+		//tk.MustExec("insert ignore into t values (" + val + ",'" + val + "')")
+	}
+	b.StopTimer()
 }

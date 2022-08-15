@@ -1581,7 +1581,7 @@ func (s *partitionProcessor) pruneRangeColumnsPartition(ctx sessionctx.Context, 
 		return result, nil
 	}
 
-	pruner, err := makeRangeColumnPruner(columns, names, pi, pe.ForRangeColumnsPruning)
+	pruner, err := makeRangeColumnPruner(columns, names, pi, pe.ForRangeColumnsPruning, pe.ColumnOffset)
 	if err == nil {
 		result = partitionRangeColumnsForCNFExpr(ctx, conds, pruner, result)
 	}
@@ -1594,15 +1594,14 @@ type rangeColumnsPruner struct {
 	partCols []*expression.Column
 }
 
-func makeRangeColumnPruner(columns []*expression.Column, names types.NameSlice, pi *model.PartitionInfo, from *tables.ForRangeColumnsPruning) (*rangeColumnsPruner, error) {
+func makeRangeColumnPruner(columns []*expression.Column, names types.NameSlice, pi *model.PartitionInfo, from *tables.ForRangeColumnsPruning, offsets []int) (*rangeColumnsPruner, error) {
 	if len(pi.Definitions) != len(from.LessThan) {
 		return nil, errors.Trace(fmt.Errorf("Internal error len(pi.Definitions) != len(from.LessThan) %d != %d", len(pi.Definitions), len(from.LessThan)))
 	}
 	schema := expression.NewSchema(columns...)
-	partCols := make([]*expression.Column, 0, len(pi.Columns))
-	for partExprIdx := range pi.Columns {
-		idx := expression.FindFieldNameIdxByColName(names, pi.Columns[partExprIdx].L)
-		partCols = append(partCols, schema.Columns[idx])
+	partCols := make([]*expression.Column, len(offsets))
+	for i, offset := range offsets {
+		partCols[i] = schema.Columns[offset]
 	}
 	lessThan := make([][]*expression.Expression, 0, len(from.LessThan))
 	for i := range from.LessThan {
