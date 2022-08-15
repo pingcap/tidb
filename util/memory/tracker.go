@@ -193,7 +193,11 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
 	t.actionMuForSoftLimit.Lock()
 	defer t.actionMuForSoftLimit.Unlock()
-	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(t.actionMuForSoftLimit.actionOnExceed, a)
+	if a == nil {
+		return
+	}
+	a.SetFallback(t.actionMuForSoftLimit.actionOnExceed)
+	t.actionMuForSoftLimit.actionOnExceed = a
 }
 
 // GetFallbackForSoftLimitForTest get the oom action used by test.
@@ -204,23 +208,6 @@ func (t *Tracker) GetFallbackForSoftLimitForTest(ignoreFinishedAction bool) Acti
 		t.actionMuForSoftLimit.actionOnExceed = t.actionMuForSoftLimit.actionOnExceed.GetFallback()
 	}
 	return t.actionMuForSoftLimit.actionOnExceed
-}
-
-// reArrangeFallback merge two action chains and rearrange them by priority in descending order.
-func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
-	if a.GetPriority() < b.GetPriority() {
-		a, b = b, a
-		a.SetFallback(b)
-	} else {
-		a.SetFallback(reArrangeFallback(a.GetFallback(), b))
-	}
-	return a
 }
 
 // SetLabel sets the label of a Tracker.

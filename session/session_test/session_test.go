@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -2100,15 +2099,8 @@ func TestSetEnableRateLimitAction(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table tmp123(id int)")
 	tk.MustQuery("select * from tmp123;")
-	haveRateLimitAction := false
 	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForSoftLimitForTest(false)
-	for ; action != nil; action = action.GetFallback() {
-		if action.GetPriority() == memory.DefRateLimitPriority {
-			haveRateLimitAction = true
-			break
-		}
-	}
-	require.True(t, haveRateLimitAction)
+	require.NotNil(t, action)
 
 	// assert set sys variable
 	tk.MustExec("set global tidb_enable_rate_limit_action= '0';")
@@ -2118,15 +2110,8 @@ func TestSetEnableRateLimitAction(t *testing.T) {
 	result = tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("0"))
 
-	haveRateLimitAction = false
 	action = tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForSoftLimitForTest(false)
-	for ; action != nil; action = action.GetFallback() {
-		if action.GetPriority() == memory.DefRateLimitPriority {
-			haveRateLimitAction = true
-			break
-		}
-	}
-	require.False(t, haveRateLimitAction)
+	require.Nil(t, action)
 }
 
 func TestStmtHints(t *testing.T) {

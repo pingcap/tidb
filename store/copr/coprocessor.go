@@ -1291,11 +1291,6 @@ func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
 
 }
 
-// GetPriority get the priority of the Action.
-func (e *rateLimitAction) GetPriority() int64 {
-	return memory.DefRateLimitPriority
-}
-
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
 // If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
 // or the token would be return back.

@@ -1946,10 +1946,5 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 	}
 }
 
-// GetPriority get the priority of the Action
-func (a *AggSpillDiskAction) GetPriority() int64 {
-	return memory.DefSpillPriority
-}
-
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *AggSpillDiskAction) SetLogHook(hook func(uint64)) {}

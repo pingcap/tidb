@@ -407,11 +407,6 @@ func (a *SpillDiskAction) Reset() {
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (*SpillDiskAction) SetLogHook(_ func(uint64)) {}
 
-// GetPriority get the priority of the Action.
-func (*SpillDiskAction) GetPriority() int64 {
-	return memory.DefSpillPriority
-}
-
 // WaitForTest waits all goroutine have gone.
 func (a *SpillDiskAction) WaitForTest() {
 	a.testWg.Wait()

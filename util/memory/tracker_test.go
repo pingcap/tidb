@@ -205,11 +205,11 @@ func TestOOMAction(t *testing.T) {
 	action3 = &mockAction{}
 	action4 := &mockAction{}
 	action5 := &mockAction{}
-	tracker.FallbackOldAndSetNewActionForSoftLimit(action1)
-	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
-	tracker.FallbackOldAndSetNewActionForSoftLimit(action3)
-	tracker.FallbackOldAndSetNewActionForSoftLimit(action4)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action5)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action4)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action3)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action1)
 	require.Equal(t, action1, tracker.actionMuForSoftLimit.actionOnExceed)
 	require.Equal(t, action2, tracker.actionMuForSoftLimit.actionOnExceed.GetFallback())
 	action2.SetFinished()
@@ -232,10 +232,6 @@ func (a *mockAction) SetLogHook(hook func(uint64)) {
 func (a *mockAction) Action(t *Tracker) {
 	a.called = true
 	a.calledNum++
-}
-
-func (a *mockAction) GetPriority() int64 {
-	return a.priority
 }
 
 func TestAttachTo(t *testing.T) {

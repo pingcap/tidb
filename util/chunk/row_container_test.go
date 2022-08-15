@@ -156,7 +156,7 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 	var tracker *memory.Tracker
 	var err error
 	tracker = rc.GetMemTracker()
-	tracker.SetBytesLimit((chk.MemoryUsage()+int64(8*chk.NumRows()))/4*5 + 3)
+	tracker.SetBytesLimit((chk.MemoryUsage()+int64(8*chk.NumRows()))/4*5 + 5)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(rc.ActionSpillForTest())
 	require.False(t, rc.AlreadySpilledSafeForTest())
 	err = rc.Add(chk)

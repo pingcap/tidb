@@ -39,8 +39,6 @@ type ActionOnExceed interface {
 	SetFallback(a ActionOnExceed)
 	// GetFallback get the fallback action of the Action.
 	GetFallback() ActionOnExceed
-	// GetPriority get the priority of the Action.
-	GetPriority() int64
 	// SetFinished sets the finished state of the Action.
 	SetFinished()
 	// IsFinished returns the finished state of the Action.
@@ -77,14 +75,6 @@ func (b *BaseOOMAction) GetFallback() ActionOnExceed {
 	return b.fallbackAction
 }
 
-// Default OOM Action priority.
-const (
-	DefPanicPriority = iota
-	DefLogPriority
-	DefSpillPriority
-	DefRateLimitPriority
-)
-
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
 	BaseOOMAction
@@ -114,11 +104,6 @@ func (a *LogOnExceed) Action(t *Tracker) {
 	}
 }
 
-// GetPriority get the priority of the Action
-func (*LogOnExceed) GetPriority() int64 {
-	return DefLogPriority
-}
-
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
 	BaseOOMAction
@@ -146,11 +131,6 @@ func (a *PanicOnExceed) Action(_ *Tracker) {
 		a.logHook(a.ConnID)
 	}
 	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
-}
-
-// GetPriority get the priority of the Action
-func (*PanicOnExceed) GetPriority() int64 {
-	return DefPanicPriority
 }
 
 var (
