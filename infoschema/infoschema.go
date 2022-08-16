@@ -98,7 +98,7 @@ type infoSchema struct {
 	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
 
-	// todo(crazycs): should add lock or use concurrent map here?
+	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName]map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo
 }
@@ -109,6 +109,7 @@ type SchemaAndTableName struct {
 	table  string
 }
 
+// SchemaAndTableName contains the lower-case schema name, table name and foreign key name.
 type SchemaAndTableAndForeignKeyName struct {
 	schema string
 	table  string
@@ -432,20 +433,13 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 		if fk.Version < 1 {
 			continue
 		}
-		refer := SchemaAndTableName{
-			schema: fk.RefSchema.L,
-			table:  fk.RefTable.L,
-		}
+		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
 		referredFKMap := is.referredForeignKeyMap[refer]
 		if referredFKMap == nil {
 			referredFKMap = make(map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo)
 			is.referredForeignKeyMap[refer] = referredFKMap
 		}
-		referredFK := SchemaAndTableAndForeignKeyName{
-			schema: schema.L,
-			table:  tbInfo.Name.L,
-			fk:     fk.Name.L,
-		}
+		referredFK := SchemaAndTableAndForeignKeyName{schema: schema.L, table: tbInfo.Name.L, fk: fk.Name.L}
 		referredFKMap[referredFK] = &model.ReferredFKInfo{
 			Cols:        fk.RefCols,
 			ChildSchema: schema,
@@ -463,19 +457,12 @@ func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *mode
 		if fk.Version < 1 {
 			continue
 		}
-		refer := SchemaAndTableName{
-			schema: fk.RefSchema.L,
-			table:  fk.RefTable.L,
-		}
+		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
 		referredFKMap := is.referredForeignKeyMap[refer]
 		if referredFKMap == nil {
 			continue
 		}
-		referredFK := SchemaAndTableAndForeignKeyName{
-			schema: schema.L,
-			table:  tbInfo.Name.L,
-			fk:     fk.Name.L,
-		}
+		referredFK := SchemaAndTableAndForeignKeyName{schema: schema.L, table: tbInfo.Name.L, fk: fk.Name.L}
 		delete(referredFKMap, referredFK)
 	}
 }
@@ -487,14 +474,11 @@ func (is *infoSchema) buildTableReferredForeignKeys(schema model.CIStr, tbInfo *
 	if len(is.referredForeignKeyMap) == 0 {
 		return
 	}
-	name := SchemaAndTableName{
-		schema: schema.L,
-		table:  tbInfo.Name.L,
-	}
+	name := SchemaAndTableName{schema: schema.L, table: tbInfo.Name.L}
 	referredFKMap := is.referredForeignKeyMap[name]
 	referredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKMap))
 	for _, referredFK := range referredFKMap {
-		if !is.CheckReferredForeignKeyValid(schema, tbInfo, referredFK) {
+		if !CheckReferredForeignKeyValid(tbInfo, referredFK) {
 			continue
 		}
 		referredFKList = append(referredFKList, referredFK)
@@ -511,9 +495,10 @@ func (is *infoSchema) buildTableReferredForeignKeys(schema model.CIStr, tbInfo *
 	tbInfo.ReferredForeignKeys = referredFKList
 }
 
-func (is *infoSchema) CheckReferredForeignKeyValid(schema model.CIStr, tbInfo *model.TableInfo, referredFK *model.ReferredFKInfo) bool {
+// CheckReferredForeignKeyValid checks the referredFK is valid with referTbInfo.
+func CheckReferredForeignKeyValid(referTbInfo *model.TableInfo, referredFK *model.ReferredFKInfo) bool {
 	for _, colName := range referredFK.Cols {
-		col := model.FindColumnInfo(tbInfo.Columns, colName.L)
+		col := model.FindColumnInfo(referTbInfo.Columns, colName.L)
 		if col == nil {
 			return false
 		}

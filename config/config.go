@@ -1300,6 +1300,7 @@ func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
 }
 
+// ForeignKeyEnabled uses to check whether enabled the foreign key feature.
 func ForeignKeyEnabled() bool {
 	return GetGlobalConfig().Experimental.EnableForeignKey
 }

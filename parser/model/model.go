@@ -328,7 +328,7 @@ func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 	return nil
 }
 
-// FindFKInfoByName finds FKInfo in fks by name.
+// FindFKInfoByName finds FKInfo in fks by lowercase name.
 func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 	for _, fk := range fks {
 		if fk.Name.L == name {
@@ -341,14 +341,15 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
 func FindIndexByColumns(tbInfo *TableInfo, cols ...CIStr) *IndexInfo {
 	for _, index := range tbInfo.Indices {
-		if IsIdxPrefixCovered(tbInfo, index, cols...) {
+		if IsIndexPrefixCovered(tbInfo, index, cols...) {
 			return index
 		}
 	}
 	return nil
 }
 
-func IsIdxPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...CIStr) bool {
+// IsIndexPrefixCovered checks the index's columns is begin with the cols.
+func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...CIStr) bool {
 	if len(index.Columns) < len(cols) {
 		return false
 	}
@@ -451,7 +452,7 @@ type TableInfo struct {
 	AutoRandID      int64  `json:"auto_rand_id"`
 	MaxColumnID     int64  `json:"max_col_id"`
 	MaxIndexID      int64  `json:"max_idx_id"`
-	MaxFKIndexID    int64  `json:"max_fk_idx_id"`
+	MaxForeignKeyID int64  `json:"max_fk_id"`
 	MaxConstraintID int64  `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
 	// These changing schema operations don't include 'truncate table' and 'rename table'.

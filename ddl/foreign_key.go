@@ -117,8 +117,8 @@ func onDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 }
 
 func allocateFKIndexID(tblInfo *model.TableInfo) int64 {
-	tblInfo.MaxFKIndexID++
-	return tblInfo.MaxFKIndexID
+	tblInfo.MaxForeignKeyID++
+	return tblInfo.MaxForeignKeyID
 }
 
 func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
@@ -163,7 +163,6 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, job *model.Job, tbInfo *model.T
 		if fk.Version < 1 {
 			continue
 		}
-
 		var referTableInfo *model.TableInfo
 		if fk.RefSchema.L == job.SchemaName && fk.RefTable.L == tbInfo.Name.L {
 			referTableInfo = tbInfo

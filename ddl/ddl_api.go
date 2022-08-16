@@ -1812,13 +1812,16 @@ func BuildTableInfo(
 			return nil, dbterror.ErrUnsupportedClusteredSecondaryKey
 		}
 		if constr.Tp == ast.ConstraintForeignKey {
-			fkName := constr.GetForeignKeyName(tbInfo)
-			for _, fk := range tbInfo.ForeignKeys {
-				if fk.Name.L == fkName {
-					return nil, infoschema.ErrCannotAddForeign
-				}
+			var fkName model.CIStr
+			if constr.Name != "" {
+				fkName = model.NewCIStr(constr.Name)
+			} else {
+				fkName = model.NewCIStr(fmt.Sprintf("fk_%v", tbInfo.MaxForeignKeyID+1))
 			}
-			fk, err := buildFKInfo(model.NewCIStr(fkName), constr.Keys, constr.Refer, cols, tbInfo)
+			if model.FindFKInfoByName(tbInfo.ForeignKeys, fkName.L) != nil {
+				return nil, infoschema.ErrCannotAddForeign
+			}
+			fk, err := buildFKInfo(fkName, constr.Keys, constr.Refer, cols, tbInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -1907,27 +1910,31 @@ func BuildTableInfo(
 	return tbInfo, err
 }
 
+// addIndexForForeignKey uses to auto create an index for the foreign key if the table doesn't have any index cover the
+// foreign key columns.
 func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	if len(tbInfo.ForeignKeys) == 0 {
+		return nil
+	}
+	var handleCol *model.ColumnInfo
+	if tbInfo.PKIsHandle {
+		handleCol = tbInfo.GetPkColInfo()
+	}
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < 1 {
 			continue
 		}
-		if tbInfo.PKIsHandle && len(fk.Cols) == 1 {
-			refColInfo := model.FindColumnInfo(tbInfo.Columns, fk.Cols[0].L)
-			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
-				continue
-			}
+		if handleCol != nil && len(fk.Cols) == 1 && handleCol.Name.L == fk.Cols[0].L {
+			continue
 		}
 		if model.FindIndexByColumns(tbInfo, fk.Cols...) != nil {
 			continue
 		}
-
 		for _, idx := range tbInfo.Indices {
 			if idx.Name.L == fk.Name.L {
 				return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", fk.Name.O)
 			}
 		}
-
 		keys := make([]*ast.IndexPartSpecification, 0, len(fk.Cols))
 		for _, col := range fk.Cols {
 			keys = append(keys, &ast.IndexPartSpecification{
@@ -1935,7 +1942,6 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 				Length: -1,
 			})
 		}
-
 		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, fk.Name, false, false, false, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)

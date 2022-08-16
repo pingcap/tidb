@@ -14,8 +14,6 @@
 package ast
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
@@ -772,13 +770,6 @@ type Constraint struct {
 
 	InColumnName string // Used for Check
 	IsEmptyIndex bool   // Used for Check
-}
-
-func (n *Constraint) GetForeignKeyName(tblInfo *model.TableInfo) string {
-	if n.Name != "" {
-		return n.Name
-	}
-	return fmt.Sprintf("fk_%v", tblInfo.MaxFKIndexID+1)
 }
 
 // Restore implements Node interface.
