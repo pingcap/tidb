@@ -17,13 +17,13 @@ package memory
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/util/mathutil"
 	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/mathutil"
 	atomicutil "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
 )
