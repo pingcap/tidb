@@ -729,7 +729,7 @@ func BenchmarkLocateRegion(t *testing.B) {
 
 	bo := backoff.NewBackoffer(context.Background(), 10)
 	tmp := store.(helper.Storage).GetRegionCache()
-	cache := copr.RegionCache{tmp}
+	cache := copr.RegionCache{RegionCache: tmp}
 	ranges := copr.NewKeyRanges([]kv.KeyRange{
 		{
 			StartKey: []byte("t"),
