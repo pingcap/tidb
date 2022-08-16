@@ -366,6 +366,7 @@ func extractColumnSet(expr Expression, set *intsets.Sparse) {
 	}
 }
 
+// SetExprColumnInOperand is used to set columns in expr as InOperand.
 func SetExprColumnInOperand(expr Expression) Expression {
 	switch v := expr.(type) {
 	case *Column:
