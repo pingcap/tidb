@@ -46,6 +46,7 @@ var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
 // TsoRequestCount is the key for recording tso request counts in some places
 var TsoRequestCount stringutil.StringerStr = "tsoRequestCount"
 
+// don't include begin and commit
 var TsoWaitCount stringutil.StringerStr = "tsoWaitCount"
 
 var TsoUseConstantCount stringutil.StringerStr = "tsoUseConstantCount"
