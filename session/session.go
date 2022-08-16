@@ -2011,11 +2011,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	logStmt(stmt, s)
 
 	var recordSet sqlexec.RecordSet
+	recordSet, err = runStmt(ctx, s, stmt)
 	if stmt.PsStmt != nil { // point plan short path
-		recordSet, err = stmt.PointGet(ctx)
 		s.txn.changeToInvalid()
-	} else {
-		recordSet, err = runStmt(ctx, s, stmt)
 	}
 	if err != nil {
 		if !errIsNoisy(err) {
@@ -2341,13 +2339,13 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
 	logGeneralQuery(stmt, s, true)
 
+	var recordSet sqlexec.RecordSet
+	recordSet, err = runStmt(ctx, s, stmt)
 	if stmt.PsStmt != nil { // point plan short path
-		resultSet, err := stmt.PointGet(ctx)
 		s.txn.changeToInvalid()
-		return resultSet, err
 	}
 
-	return runStmt(ctx, s, stmt)
+	return recordSet, err
 }
 
 // ExecutePreparedStmt executes a prepared statement.

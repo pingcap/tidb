@@ -251,78 +251,6 @@ func (a ExecStmt) GetStmtNode() ast.StmtNode {
 	return a.StmtNode
 }
 
-// PointGet short path for point exec directly from plan, keep only necessary steps
-func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("ExecStmt.PointGet", opentracing.ChildOf(span.Context()))
-		span1.LogKV("sql", a.OriginText())
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
-		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
-		// stale read should not reach here
-		staleread.AssertStmtStaleness(a.Ctx, false)
-		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, a.InfoSchema)
-	})
-
-	ctx = a.observeStmtBeginForTopSQL(ctx)
-	startTs, err := sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
-	if err != nil {
-		return nil, err
-	}
-	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
-
-	// try to reuse point get executor
-	if a.PsStmt.Executor != nil {
-		exec, ok := a.PsStmt.Executor.(*PointGetExecutor)
-		if !ok {
-			logutil.Logger(ctx).Error("invalid executor type, not PointGetExecutor for point get path")
-			a.PsStmt.Executor = nil
-		} else {
-			// CachedPlan type is already checked in last step
-			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
-			exec.Init(pointGetPlan)
-			a.PsStmt.Executor = exec
-		}
-	}
-	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
-		newExecutor := b.build(a.Plan)
-		if b.err != nil {
-			return nil, b.err
-		}
-		a.PsStmt.Executor = newExecutor
-	}
-	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
-
-	if err = pointExecutor.Open(ctx); err != nil {
-		terror.Call(pointExecutor.Close)
-		return nil, err
-	}
-
-	sctx := a.Ctx
-	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
-	cmd := byte(cmd32)
-	var pi processinfoSetter
-	if raw, ok := sctx.(processinfoSetter); ok {
-		pi = raw
-		sql := a.OriginText()
-		maxExecutionTime := getMaxExecutionTime(sctx)
-		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
-		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
-			sctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
-		}
-	}
-
-	return &recordSet{
-		executor:   pointExecutor,
-		stmt:       a,
-		txnStartTS: startTs,
-	}, nil
-}
-
 // OriginText returns original statement as a string.
 func (a *ExecStmt) OriginText() string {
 	return a.Text
@@ -457,9 +385,38 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
-	e, err := a.buildExecutor()
-	if err != nil {
-		return nil, err
+	var e Executor
+	if a.PsStmt != nil {
+		if a.PsStmt.Executor != nil {
+			exec, ok := a.PsStmt.Executor.(*PointGetExecutor)
+			if !ok {
+				logutil.Logger(ctx).Error("invalid executor type, not PointGetExecutor for point get path")
+				a.PsStmt.Executor = nil
+			} else {
+				a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+				// CachedPlan type is already checked in last step
+				pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
+				exec.Init(pointGetPlan)
+				a.PsStmt.Executor = exec
+
+			}
+		}
+
+		if a.PsStmt.Executor == nil {
+			b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
+			newExecutor := b.build(a.Plan)
+			if b.err != nil {
+				return nil, b.err
+			}
+			a.PsStmt.Executor = newExecutor
+		}
+
+		e = a.PsStmt.Executor.(*PointGetExecutor)
+	} else {
+		e, err = a.buildExecutor()
+		if err != nil {
+			return nil, err
+		}
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
