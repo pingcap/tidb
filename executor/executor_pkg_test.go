@@ -480,7 +480,7 @@ func TestSortSpillDisk(t *testing.T) {
 	err = exec.Close()
 	require.NoError(t, err)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 2)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 1)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	require.NoError(t, err)

@@ -17,6 +17,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/mathutil"
 	"runtime"
 	"strconv"
 	"sync"
@@ -116,7 +117,7 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 	t.label = label
 	t.bytesLimit.Store(&bytesLimits{
 		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+		bytesSoftLimit: mathutil.Max(int64(float64(bytesLimit)*softScale), 1),
 	})
 	t.maxConsumed.Store(0)
 	t.isGlobal = false
@@ -133,7 +134,7 @@ func NewTracker(label int, bytesLimit int64) *Tracker {
 	}
 	t.bytesLimit.Store(&bytesLimits{
 		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+		bytesSoftLimit: mathutil.Max(int64(float64(bytesLimit)*softScale), 1),
 	})
 	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = false
@@ -147,7 +148,7 @@ func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 	}
 	t.bytesLimit.Store(&bytesLimits{
 		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+		bytesSoftLimit: mathutil.Max(int64(float64(bytesLimit)*softScale), 1),
 	})
 	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = true
@@ -165,7 +166,7 @@ func (t *Tracker) CheckBytesLimit(val int64) bool {
 func (t *Tracker) SetBytesLimit(bytesLimit int64) {
 	t.bytesLimit.Store(&bytesLimits{
 		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+		bytesSoftLimit: mathutil.Max(int64(float64(bytesLimit)*softScale), 1),
 	})
 }
 

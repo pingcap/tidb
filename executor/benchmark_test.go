@@ -932,7 +932,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	}
 	memLimit := int64(-1)
 	if testCase.disk {
-		memLimit = 2
+		memLimit = 1
 	}
 	t := memory.NewTracker(-1, memLimit)
 	t.SetActionOnExceed(nil)

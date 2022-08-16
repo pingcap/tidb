@@ -519,7 +519,7 @@ func TestOOMActionAll(t *testing.T) {
 	// make sure no panic here.
 	tracker.Consume(10000)
 
-	tracker = NewTracker(1, 100)
+	tracker = NewTracker(1, 1)
 	tracker.actionMuForHardLimit.actionOnExceed = nil
 	n := 100
 	actions := make([]*mockAction, n)
