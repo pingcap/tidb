@@ -393,7 +393,7 @@ func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []exp
 	cpLeftConditions := p.LeftConditions.Clone()
 	cpRightConditions := p.RightConditions.Clone()
 	cpOtherConditions := p.OtherConditions.Clone()
-	cpEqualConditions := make([]*expression.ScalarFunction, len(p.EqualConditions), len(p.EqualConditions))
+	cpEqualConditions := make([]*expression.ScalarFunction, len(p.EqualConditions))
 	for i, one := range p.EqualConditions {
 		cpEqualConditions[i] = one.Clone().(*expression.ScalarFunction)
 	}

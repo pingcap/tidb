@@ -937,7 +937,9 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 					rarg := *col
 					rarg.InOperand = true
 					col = &rarg
-					larg = expression.SetExprColumnInOperand(larg)
+					if larg != nil {
+						lexpr.(*expression.ScalarFunction).GetArgs()[i] = expression.SetExprColumnInOperand(larg)
+					}
 				}
 			}
 			args = append(args, col)
