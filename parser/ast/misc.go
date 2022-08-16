@@ -508,6 +508,10 @@ type ExecuteStmt struct {
 	BinaryArgs interface{}
 	PrepStmt   interface{} // the corresponding prepared statement
 	IdxInMulti int
+
+	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
+	// e.g. select * from t where a>2 --> execute 'select * from t where a>?' using 2
+	FromGeneralStmt bool
 }
 
 // Restore implements Node interface.
