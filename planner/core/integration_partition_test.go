@@ -1561,3 +1561,23 @@ func BenchmarkPartitionRangeColumns(b *testing.B) {
 	}
 	b.StopTimer()
 }
+
+func TestPartitionRangeColumnPruning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database rcd`)
+	tk.MustExec(`use rcd`)
+	tk.MustExec(`create table t1 (a char, b char, c char) ` +
+		`partition by range columns (a,b,c) ` +
+		`( partition p0 values less than ('a','b','c'),` +
+		` partition p1 values less than ('b','c','d'),` +
+		` partition p2 values less than ('d','e','f'))`)
+	tk.MustExec(`insert into t1 values ('a', NULL, 'd')`)
+	tk.MustExec(`analyze table t1`)
+	tk.MustQuery(`explain format=brief select * from t1 where a = 'a' AND c = 'd'`).Check(testkit.Rows(
+		`TableReader 1.00 root partition:p0,p1 data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(rcd.t1.a, "a"), eq(rcd.t1.c, "d")`,
+		`  └─TableFullScan 1.00 cop[tikv] table:t1 keep order:false`))
+	tk.MustQuery(`select * from t1 where a = 'a' AND c = 'd'`).Check(testkit.Rows("a <nil> d"))
+	tk.MustExec(`drop table t1`)
+}

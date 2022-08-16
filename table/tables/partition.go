@@ -529,20 +529,9 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		UpperBounds: locateExprs,
 	}
 
-	// build column offset.
-	partExp := strings.Join(partStrs, ",")
-	exprs, err := parseSimpleExprWithNames(p, ctx, partExp, schema, names)
+	partExpr, _, offset, err := extractPartitionExprColumns(ctx, pi, columns, names)
 	if err != nil {
-		return nil, err
-	}
-	partitionCols := expression.ExtractColumns(exprs)
-	offset := make([]int, len(partitionCols))
-	for i, col := range columns {
-		for j, partitionCol := range partitionCols {
-			if partitionCol.UniqueID == col.UniqueID {
-				offset[j] = i
-			}
-		}
+		return nil, errors.Trace(err)
 	}
 	ret.ColumnOffset = offset
 
@@ -551,7 +540,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ret.Expr = exprs
+		ret.Expr = partExpr
 		ret.ForRangePruning = tmp
 	} else {
 		tmp, err := dataForRangeColumnsPruning(ctx, pi, schema, names, p)
@@ -582,7 +571,7 @@ func findIdxByColUniqueID(cols []*expression.Column, col *expression.Column) int
 	return -1
 }
 
-func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, []*expression.Column, []int, error) {
+func extractPartitionExprColumns(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, []*expression.Column, []int, error) {
 	var cols []*expression.Column
 	var partExpr expression.Expression
 	if len(pi.Columns) == 0 {
@@ -617,7 +606,7 @@ func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	pi := tblInfo.GetPartitionInfo()
-	partExpr, exprCols, offset, err := extractListPartitionExprColumns(ctx, pi, columns, names)
+	partExpr, exprCols, offset, err := extractPartitionExprColumns(ctx, pi, columns, names)
 	if err != nil {
 		return nil, err
 	}
