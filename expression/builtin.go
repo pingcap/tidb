@@ -51,7 +51,6 @@ type baseBuiltinFunc struct {
 	args         []Expression
 	ctx          sessionctx.Context
 	tp           *types.FieldType
-	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
 
 	childrenVectorized bool

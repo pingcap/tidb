@@ -415,9 +415,7 @@ bazel_all_build: bazel_ci_prepare
 		//... --//build:with_nogo_flag=true
 
 bazel_build: bazel_ci_prepare
-	mkdir -p bin
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //tidb-server:tidb-server //tidb-server:tidb-server-check --//build:with_nogo_flag=true
+	./build.sh "$(BAZEL_GLOBAL_CONFIG)" "$(BAZEL_CMD_CONFIG)"
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
