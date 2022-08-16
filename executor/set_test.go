@@ -775,14 +775,14 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_general_plan_cache_size").Check(testkit.Rows("100")) // default value
 	tk.MustExec("set global tidb_general_plan_cache_size = 200")
 	tk.MustQuery("select @@global.tidb_general_plan_cache_size").Check(testkit.Rows("200"))
-	tk.MustExec("set global tidb_general_plan_cache_size = 200000000")
+	tk.MustExec("set global tidb_general_plan_cache_size = 200000000") // overflow
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_general_plan_cache_size value: '200000000'"))
 	tk.MustQuery("select @@global.tidb_general_plan_cache_size").Check(testkit.Rows("100000"))
 	// session scope
 	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("100")) // default value
 	tk.MustExec("set session tidb_general_plan_cache_size = 300")
 	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("300"))
-	tk.MustExec("set session tidb_general_plan_cache_size = -1")
+	tk.MustExec("set session tidb_general_plan_cache_size = -1") // underflow
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_general_plan_cache_size value: '-1'"))
 	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("0"))
 }

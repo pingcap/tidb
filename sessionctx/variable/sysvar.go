@@ -787,6 +787,15 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(PreparedPlanCacheSize.Load(), 10), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBPrepPlanCacheMemoryGuardRatio, Value: strconv.FormatFloat(DefTiDBPrepPlanCacheMemoryGuardRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(s *SessionVars, val string) error {
+		f, err := strconv.ParseFloat(val, 64)
+		if err == nil {
+			PreparedPlanCacheMemoryGuardRatio.Store(f)
+		}
+		return err
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatFloat(PreparedPlanCacheMemoryGuardRatio.Load(), 'f', -1, 64), nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGeneralPlanCache, Value: BoolToOnOff(DefTiDBEnableGeneralPlanCache), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableGeneralPlanCache = TiDBOptOn(val)
 		return nil
@@ -797,15 +806,6 @@ var defaultSysVars = []*SysVar{
 			s.GeneralPlanCacheSize = uVal
 		}
 		return err
-	}},
-	{Scope: ScopeGlobal, Name: TiDBPrepPlanCacheMemoryGuardRatio, Value: strconv.FormatFloat(DefTiDBPrepPlanCacheMemoryGuardRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(s *SessionVars, val string) error {
-		f, err := strconv.ParseFloat(val, 64)
-		if err == nil {
-			PreparedPlanCacheMemoryGuardRatio.Store(f)
-		}
-		return err
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return strconv.FormatFloat(PreparedPlanCacheMemoryGuardRatio.Load(), 'f', -1, 64), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBMemOOMAction, Value: DefTiDBMemOOMAction, PossibleValues: []string{"CANCEL", "LOG"}, Type: TypeEnum,
 		GetGlobal: func(s *SessionVars) (string, error) {
