@@ -885,6 +885,14 @@ def go_deps():
         version = "v0.0.0-20160511215533-1f3b11f56072",
     )
     go_repository(
+        name = "com_github_fatanugraha_noloopclosure",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/fatanugraha/noloopclosure",
+        sum = "h1:kxqwEtwWJoU5fxvgr3nGF8Ky3CZWIay9dB1hfF/3ehA=",
+        version = "v0.1.0",
+    )
+
+    go_repository(
         name = "com_github_fatih_color",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/fatih/color",
