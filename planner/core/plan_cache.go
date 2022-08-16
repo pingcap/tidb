@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
@@ -197,7 +198,11 @@ func getPointQueryPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmtC
 		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 		return nil, nil, false, nil
 	}
-	planCacheCounter.Inc()
+	if metrics.ResettablePlanCacheCounterFortTest {
+		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+	} else {
+		planCacheCounter.Inc()
+	}
 	sessVars.FoundInPlanCache = true
 	stmtCtx.PointExec = true
 	return plan, names, true, nil
@@ -240,7 +245,11 @@ func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL strin
 					// So we need to record this.
 					sessVars.FoundInBinding = true
 				}
-				planCacheCounter.Inc()
+				if metrics.ResettablePlanCacheCounterFortTest {
+					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+				} else {
+					planCacheCounter.Inc()
+				}
 				stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 				return cachedVal.Plan, cachedVal.OutPutNames, true, nil
 			}
