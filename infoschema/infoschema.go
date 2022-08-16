@@ -19,6 +19,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -424,7 +425,13 @@ func (is *infoSchema) deletePolicy(name string) {
 }
 
 func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+	if !config.ForeignKeyEnabled() {
+		return
+	}
 	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < 1 {
+			continue
+		}
 		refer := SchemaAndTableName{
 			schema: fk.RefSchema.L,
 			table:  fk.RefTable.L,
@@ -449,7 +456,13 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 }
 
 func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+	if !config.ForeignKeyEnabled() {
+		return
+	}
 	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < 1 {
+			continue
+		}
 		refer := SchemaAndTableName{
 			schema: fk.RefSchema.L,
 			table:  fk.RefTable.L,
@@ -468,6 +481,9 @@ func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *mode
 }
 
 func (is *infoSchema) buildTableReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+	if !config.ForeignKeyEnabled() {
+		return
+	}
 	if len(is.referredForeignKeyMap) == 0 {
 		return
 	}

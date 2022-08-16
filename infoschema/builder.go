@@ -400,7 +400,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		tbl, _ = b.is.TableByID(newTableID)
 	}
 	// update the table referred tables.
-	if tbl != nil {
+	if config.ForeignKeyEnabled() && tbl != nil {
 		referTblIDs, err := b.updateFKReferTables(m, dbInfo, tbl.Meta(), tableIDIsValid(newTableID))
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -415,6 +415,9 @@ func (b *Builder) updateFKReferTables(m *meta.Meta, dbInfo *model.DBInfo, tblInf
 	// update referred table info.
 	tblIDs := make([]int64, 0, len(tblInfo.ForeignKeys))
 	for _, fk := range tblInfo.ForeignKeys {
+		if fk.Version < 1 {
+			continue
+		}
 		if fk.RefSchema.L == dbInfo.Name.L && fk.RefTable.L == tblInfo.Name.L {
 			continue
 		}

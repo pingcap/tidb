@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -121,8 +122,14 @@ func allocateFKIndexID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
+	if !config.ForeignKeyEnabled() {
+		return nil
+	}
 	fkCheck := sctx.GetSessionVars().ForeignKeyChecks
 	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < 1 {
+			continue
+		}
 		err := checkTableForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
 		if err != nil {
 			return err
@@ -149,20 +156,30 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 }
 
 func checkTableForeignKeyValidInOwner(d *ddlCtx, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) error {
-	fkc := ForeignKeyHelper{
-		schema:   job.SchemaName,
-		schemaID: job.SchemaID,
-		tbInfo:   tbInfo,
+	if !config.ForeignKeyEnabled() {
+		return nil
 	}
-	for _, fkInfo := range tbInfo.ForeignKeys {
-		referTableInfo, err := fkc.getTableFromCache(d, fkInfo.RefSchema, fkInfo.RefTable)
-		if err != nil {
-			if !fkCheck && (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) {
-				continue
-			}
-			return err
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < 1 {
+			continue
 		}
-		err = checkTableForeignKey(referTableInfo, tbInfo, fkInfo)
+
+		var referTableInfo *model.TableInfo
+		if fk.RefSchema.L == job.SchemaName && fk.RefTable.L == tbInfo.Name.L {
+			referTableInfo = tbInfo
+		} else {
+			is := d.infoCache.GetLatest()
+			refTbl, err := is.TableByName(fk.RefSchema, fk.RefTable)
+			if err != nil {
+				if !fkCheck && (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) {
+					continue
+				}
+				return err
+			}
+			referTableInfo = refTbl.Meta()
+		}
+
+		err := checkTableForeignKey(referTableInfo, tbInfo, fk)
 		if err != nil {
 			return err
 		}
@@ -199,23 +216,4 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 		return infoschema.ErrFkNoIndexParent.GenWithStackByArgs(fkInfo.Name.O, fkInfo.RefTable.O)
 	}
 	return nil
-}
-
-type ForeignKeyHelper struct {
-	schema   string
-	schemaID int64
-	tbInfo   *model.TableInfo
-}
-
-func (fkh ForeignKeyHelper) getTableFromCache(d *ddlCtx, schema, table model.CIStr) (*model.TableInfo, error) {
-	// self reference
-	if schema.L == fkh.schema && table.L == fkh.tbInfo.Name.L {
-		return fkh.tbInfo, nil
-	}
-	is := d.infoCache.GetLatest()
-	tbl, err := is.TableByName(schema, table)
-	if err != nil {
-		return nil, err
-	}
-	return tbl.Meta(), nil
 }

@@ -1903,12 +1903,15 @@ func BuildTableInfo(
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 
-	err = addIndexForFk(ctx, tbInfo)
+	err = addIndexForForeignKey(ctx, tbInfo)
 	return tbInfo, err
 }
 
-func addIndexForFk(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < 1 {
+			continue
+		}
 		if tbInfo.PKIsHandle && len(fk.Cols) == 1 {
 			refColInfo := model.FindColumnInfo(tbInfo.Columns, fk.Cols[0].L)
 			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
@@ -6099,7 +6102,6 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 		RefSchema: refer.Table.Schema,
 		RefTable:  refer.Table.Name,
 		Cols:      make([]model.CIStr, len(keys)),
-		Version:   1,
 	}
 	if config.ForeignKeyEnabled() {
 		fkInfo.Version = 1

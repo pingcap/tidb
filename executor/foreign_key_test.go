@@ -17,6 +17,7 @@ package executor_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -26,6 +27,9 @@ import (
 func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableForeignKey = true
+	})
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, a int,b int as (a) virtual);")
 	tk.MustExec("create database test2")
@@ -111,11 +115,33 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	}, *tb5Info.ForeignKeys[0])
 	require.Equal(t, 1, len(tb5Info.Indices))
 	require.Equal(t, "fk_1", tb5Info.Indices[0].Name.L)
+
+	// Test after disable foreign key feature.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableForeignKey = false
+	})
+	tk.MustExec("alter table test.t1 add column x int")
+	tk.MustExec("alter table test2.t2 add column x int")
+	tk.MustExec("alter table test2.t3 add column x int")
+	tk.MustExec("alter table test2.t5 add column x int")
+	tb1Info = getTableInfo(t, dom, "test", "t1")
+	tb2Info = getTableInfo(t, dom, "test2", "t2")
+	tb3Info = getTableInfo(t, dom, "test2", "t3")
+	tb5Info = getTableInfo(t, dom, "test2", "t5")
+	tbls := []*model.TableInfo{tb1Info, tb2Info, tb3Info, tb5Info}
+	fkCnts := []int{0, 1, 1, 1}
+	for i, tbInfo := range tbls {
+		require.Equal(t, 0, len(tbInfo.ReferredForeignKeys))
+		require.Equal(t, fkCnts[i], len(tbInfo.ForeignKeys))
+	}
 }
 
 func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableForeignKey = true
+	})
 	tk.MustExec("create database test2")
 	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("use test2")
@@ -236,20 +262,72 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	}, *tb3Info.ForeignKeys[1])
 }
 
-func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
-	err := dom.Reload()
-	require.NoError(t, err)
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb))
-	require.NoError(t, err)
-	tbl2, exist := is.TableByID(tbl.Meta().ID)
-	require.True(t, exist)
-	require.Equal(t, len(tbl2.Meta().ReferredForeignKeys), len(tbl.Meta().ReferredForeignKeys))
-	return tbl.Meta()
+func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableForeignKey = true
+	})
+	tk.MustExec("create database test2")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, a int, b int as (a) virtual);")
+	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
+	tk.MustExec("use test2")
+	tk.MustExec("rename table test.t2 to test2.t2")
+	tb1Info := getTableInfo(t, dom, "test", "t1")
+	tb2Info := getTableInfo(t, dom, "test2", "t2")
+	require.Equal(t, 0, len(tb1Info.ForeignKeys))
+	require.Equal(t, 1, len(tb1Info.ReferredForeignKeys))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("t2"),
+		ChildFKName: model.NewCIStr("fk_b"),
+	}, *tb1Info.ReferredForeignKeys[0])
+	require.Equal(t, 0, len(tb2Info.ReferredForeignKeys))
+	require.Equal(t, 1, len(tb2Info.ForeignKeys))
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk_b"),
+		RefSchema: model.NewCIStr("test"),
+		RefTable:  model.NewCIStr("t1"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("b")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tb2Info.ForeignKeys[0])
+	// Auto create index for foreign key usage.
+	require.Equal(t, 1, len(tb2Info.Indices))
+	require.Equal(t, "fk_b", tb2Info.Indices[0].Name.L)
+	require.Equal(t, "`test2`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`)", tb2Info.ForeignKeys[0].String("test2", "t2"))
+
+	// TODO(crazycs520): add test for "rename table t1"
+}
+
+func TestCreateTableWithForeignKeyDML(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableForeignKey = true
+	})
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, a int);")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (1, 1)")
+	tk.MustExec("update t1 set a = 2 where id = 1")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
+
+	tk.MustExec("commit")
 }
 
 func TestCreateTableWithForeignKeyError(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableForeignKey = true
+	})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@foreign_key_checks=1")
@@ -372,4 +450,16 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			tk.MustExec(sql)
 		}
 	}
+}
+
+func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
+	err := dom.Reload()
+	require.NoError(t, err)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb))
+	require.NoError(t, err)
+	tbl2, exist := is.TableByID(tbl.Meta().ID)
+	require.True(t, exist)
+	require.Equal(t, len(tbl2.Meta().ReferredForeignKeys), len(tbl.Meta().ReferredForeignKeys))
+	return tbl.Meta()
 }
