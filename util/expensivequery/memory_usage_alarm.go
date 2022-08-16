@@ -253,8 +253,6 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	if recordSystemInfoFile, record.err = record.recordSystemInfoFile(); record.err != nil {
 		return
 	}
-	// for test, will be removed later
-	println(recordSQLFile)
 	recordFiles := make([]string, 0, len(recordProfileFiles)+2)
 	recordFiles = append(recordFiles, recordSQLFile)
 	recordFiles = append(recordFiles, recordProfileFiles...)
