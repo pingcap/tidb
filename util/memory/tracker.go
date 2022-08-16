@@ -362,6 +362,15 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
+	if bs > 0 && rootExceedForSoftLimit != nil {
+		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
+	}
+	if bs > 0 && rootExceed != nil {
+		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
+	}
+}
+
+func tryAction(mu *actionMu, tracker *Tracker) {
 	actionOne := func(nowAction ActionOnExceed, tracker *Tracker) ActionOnExceed {
 		for nowAction != nil && nowAction.IsFinished() {
 			nowAction = nowAction.GetFallback()
@@ -380,23 +389,9 @@ func (t *Tracker) Consume(bs int64) {
 		}
 		return firstAction
 	}
-
-	tryAction := func(mu *actionMu, tracker *Tracker, actionAllAction bool) {
-		mu.Lock()
-		defer mu.Unlock()
-		if actionAllAction {
-			mu.actionOnExceed = actionAll(mu.actionOnExceed, tracker)
-		} else {
-			mu.actionOnExceed = actionOne(mu.actionOnExceed, tracker)
-		}
-	}
-
-	if bs > 0 && rootExceedForSoftLimit != nil {
-		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit, true)
-	}
-	if bs > 0 && rootExceed != nil {
-		tryAction(&rootExceed.actionMuForHardLimit, rootExceed, false)
-	}
+	mu.Lock()
+	defer mu.Unlock()
+	mu.actionOnExceed = actionAll(mu.actionOnExceed, tracker)
 }
 
 // BufferedConsume is used to buffer memory usage and do late consume
