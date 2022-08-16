@@ -435,7 +435,7 @@ func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
 		return nil
 	}
 	if s.preparedPlanCache == nil { // lazy construction
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
 			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	return s.preparedPlanCache
