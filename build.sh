@@ -2,9 +2,21 @@
 
 
 if [ -t 0 ] ; then
-	echo "is a tty"
+	echo "stdin is a tty"
 else
-	echo "not a tty"
+	echo "stdin not a tty"
+fi
+
+if [ -t 1 ] ; then
+	echo "stdout is a tty"
+else
+	echo "stdout not a tty"
+fi
+
+if [ -t 2 ] ; then
+	echo "stderr is a tty"
+else
+	echo "stderr not a tty"
 fi
 
 COLOR=""
