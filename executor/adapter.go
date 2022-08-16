@@ -424,7 +424,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency()
-		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
 		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
@@ -433,7 +432,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
 			sctx.GetSessionVars().SetDistSQLScanConcurrency(oriScan)
 			sctx.GetSessionVars().SetIndexSerialScanConcurrency(oriIndex)
-			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
 		}()
 	}
 
