@@ -141,6 +141,17 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	var referTblInfo *model.TableInfo
 	if fk.RefSchema.L == schema && fk.RefTable.L == tbInfo.Name.L {
+		same := true
+		for i, col := range fk.Cols {
+			if col.L != fk.RefCols[i].L {
+				same = false
+				break
+			}
+		}
+		if same {
+			// self-reference with same columns is not support.
+			return infoschema.ErrCannotAddForeign
+		}
 		referTblInfo = tbInfo
 	} else {
 		referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)

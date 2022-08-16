@@ -407,14 +407,33 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			child: "create table t2 (a int, b varchar(10), foreign key fk_b(b) references t1(a));",
 			err:   "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 'fk_b' in the referenced table 't1'",
 		},
+		{
+			refer: "create table t1 (id int key, a int, index(a));",
+			child: "create table t2 (a int, b int, foreign key fk_b(b) references t1(id, a));",
+			err:   "[schema:1239]Incorrect foreign key definition for 'foreign key without name': Key reference and table reference don't match",
+		},
+		{
+			child: "create table t2 (a int key, foreign key (a) references t2(a));",
+			err:   "[schema:1215]Cannot add foreign key constraint",
+		},
+		{
+			child: "create table t2 (a int, b int, index(a,b), index(b,a), foreign key (a,b) references t2(a,b));",
+			err:   "[schema:1215]Cannot add foreign key constraint",
+		},
+		{
+			child: "create table t2 (a int, b int, index(a,b), foreign key (a,b) references t2(b,a));",
+			err:   "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 'fk_1' in the referenced table 't2'",
+		},
 	}
 	for _, ca := range cases {
 		tk.MustExec("drop table if exists t2")
 		tk.MustExec("drop table if exists t1")
-		tk.MustExec(ca.refer)
+		if ca.refer != "" {
+			tk.MustExec(ca.refer)
+		}
 		err := tk.ExecToErr(ca.child)
 		require.Error(t, err, ca.child)
-		require.Equal(t, ca.err, err.Error())
+		require.Equal(t, ca.err, err.Error(), ca.child)
 	}
 
 	passCases := [][]string{
@@ -441,6 +460,9 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			"set @@foreign_key_checks=0;",
 			"create table t2 (a int, b int, foreign key fk_b(b) references t_unknown(b));",
 			"set @@foreign_key_checks=1;",
+		},
+		{
+			"create table t2 (a int, b int, index(a,b), index(b,a), foreign key (a,b) references t2(b,a));",
 		},
 	}
 	for _, ca := range passCases {
