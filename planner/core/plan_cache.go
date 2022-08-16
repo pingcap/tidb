@@ -154,8 +154,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	}
 
 	if stmtAst.UseCache && !ignorePlanCache { // for general plans
-		if plan, names, ok, err := getGeneralPlan(sctx, cacheKey, bindSQL, is, stmt,
-			paramTypes); err != nil || ok {
+		if plan, names, ok, err := getGeneralPlan(sctx, cacheKey, bindSQL, stmt, paramTypes); err != nil || ok {
 			return plan, names, err
 		}
 	}
@@ -208,8 +207,8 @@ func getPointQueryPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmtC
 	return plan, names, true, nil
 }
 
-func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
+func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key,
+	bindSQL string, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
