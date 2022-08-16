@@ -198,7 +198,42 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	require.Equal(t, "`test`.`t3`, CONSTRAINT `fk_a` FOREIGN KEY (`a`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT", tb3Info.ForeignKeys[0].String("test", "t3"))
 	require.Equal(t, "`test`.`t3`, CONSTRAINT `fk_a2` FOREIGN KEY (`a`) REFERENCES `test2`.`t2` (`id`)", tb3Info.ForeignKeys[1].String("test", "t3"))
 
-	// todo: add test: drop table t2
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("drop table test2.t2")
+	tb1Info = getTableInfo(t, dom, "test", "t1")
+	tb3Info = getTableInfo(t, dom, "test", "t3")
+	require.Equal(t, 0, len(tb1Info.ForeignKeys))
+	require.Equal(t, 1, len(tb1Info.ReferredForeignKeys))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test"),
+		ChildTable:  model.NewCIStr("t3"),
+		ChildFKName: model.NewCIStr("fk_a"),
+	}, *tb1Info.ReferredForeignKeys[0])
+	require.Equal(t, 0, len(tb3Info.ReferredForeignKeys))
+	require.Equal(t, 2, len(tb3Info.ForeignKeys))
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk_a"),
+		RefSchema: model.NewCIStr("test"),
+		RefTable:  model.NewCIStr("t1"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("a")},
+		OnDelete:  2,
+		OnUpdate:  1,
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tb3Info.ForeignKeys[0])
+	require.Equal(t, model.FKInfo{
+		ID:        2,
+		Name:      model.NewCIStr("fk_a2"),
+		RefSchema: model.NewCIStr("test2"),
+		RefTable:  model.NewCIStr("t2"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("a")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tb3Info.ForeignKeys[1])
 }
 
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {

@@ -172,32 +172,6 @@ func (b *bundleInfoBuilder) updateTableBundles(is *infoSchema, tableID int64) {
 	}
 }
 
-type fkInfoBuilder struct {
-	referTables map[int64]interface{}
-}
-
-func (b *fkInfoBuilder) markReferTableShouldUpdate(tblID int64) {
-	b.referTables[tblID] = struct{}{}
-}
-
-func (b *fkInfoBuilder) updateInfoSchemaFKReferInfos(is *infoSchema) {
-	for tid := range b.referTables {
-		b.updateReferTableInfo(is, tid)
-	}
-}
-
-func (b *fkInfoBuilder) updateReferTableInfo(is *infoSchema, tblID int64) {
-	tbl, ok := is.TableByID(tblID)
-	if !ok {
-		return
-	}
-	dbInfo, ok := is.SchemaByTable(tbl.Meta())
-	if !ok {
-		return
-	}
-	is.buildTableReferredForeignKeys(dbInfo.Name, tbl.Meta())
-}
-
 // Builder builds a new InfoSchema.
 type Builder struct {
 	is *infoSchema
@@ -212,7 +186,6 @@ type Builder struct {
 
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
-	fkInfoBuilder
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -380,6 +353,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	b.copySortedTables(oldTableID, newTableID)
 
 	tblIDs := make([]int64, 0, 2)
+	var tbl table.Table
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
@@ -396,6 +370,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			allocs = filterAllocators(diff, oldAllocs)
 		}
 
+		tbl, _ = b.is.TableByID(oldTableID)
 		tmpIDs := tblIDs
 		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
@@ -422,7 +397,11 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		referTblIDs, err := b.updateFKReferTables(m, dbInfo, newTableID)
+		tbl, _ = b.is.TableByID(newTableID)
+	}
+	// update the table referred tables.
+	if tbl != nil {
+		referTblIDs, err := b.updateFKReferTables(m, dbInfo, tbl.Meta(), tableIDIsValid(newTableID))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -431,47 +410,48 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	return tblIDs, nil
 }
 
-func (b *Builder) updateFKReferTables(m *meta.Meta, dbInfo *model.DBInfo, tid int64) ([]int64, error) {
+func (b *Builder) updateFKReferTables(m *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo, isAddReferFKInfo bool) ([]int64, error) {
 	var err error
-	tbl, _ := b.is.TableByID(tid)
-	if tbl == nil {
-		return nil, nil
-	}
-	tblInfo := tbl.Meta()
 	// update referred table info.
 	tblIDs := make([]int64, 0, len(tblInfo.ForeignKeys))
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.RefSchema.L == dbInfo.Name.L && fk.RefTable.L == tblInfo.Name.L {
 			continue
 		}
-		refTable, _ := b.is.TableByName(fk.RefSchema, fk.RefTable)
-		if refTable == nil {
-			continue
-		}
-		if isTableHasFKReferInfo(refTable.Meta(), dbInfo.Name.L, tblInfo.Name.L, fk.Name.L) {
-			continue
-		}
-
-		var refDBInfo *model.DBInfo
-		if fk.RefSchema.L == dbInfo.Name.L {
-			refDBInfo = dbInfo
-		} else {
-			refDBInfo, _ = b.is.SchemaByName(fk.RefSchema)
-			if refDBInfo == nil {
-				continue
-			}
-			refDBInfo = b.getSchemaAndCopyIfNecessary(refDBInfo.Name.L)
-		}
-		refTableID := refTable.Meta().ID
-		refTableAllocs, _ := b.is.AllocByID(refTableID)
-		b.applyDropTable(refDBInfo, refTableID, nil)
-		tblIDs, err = b.applyCreateTable(m, refDBInfo, refTableID, refTableAllocs, model.ActionAddForeignKey, tblIDs)
+		tblIDs, err = b.updateFKReferTable(m, dbInfo, tblInfo, fk, isAddReferFKInfo, tblIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		b.markReferTableShouldUpdate(refTableID)
 	}
 	return tblIDs, nil
+}
+
+func (b *Builder) updateFKReferTable(m *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fk *model.FKInfo, isAddReferFKInfo bool, tblIDs []int64) ([]int64, error) {
+	refTable, _ := b.is.TableByName(fk.RefSchema, fk.RefTable)
+	if refTable == nil {
+		return tblIDs, nil
+	}
+	if isTableHasFKReferInfo(refTable.Meta(), dbInfo.Name.L, tblInfo.Name.L, fk.Name.L) {
+		if isAddReferFKInfo {
+			return tblIDs, nil
+		}
+	} else if !isAddReferFKInfo {
+		return tblIDs, nil
+	}
+	var refDBInfo *model.DBInfo
+	if fk.RefSchema.L == dbInfo.Name.L {
+		refDBInfo = dbInfo
+	} else {
+		refDBInfo, _ = b.is.SchemaByName(fk.RefSchema)
+		if refDBInfo == nil {
+			return tblIDs, nil
+		}
+		refDBInfo = b.getSchemaAndCopyIfNecessary(refDBInfo.Name.L)
+	}
+	refTblID := refTable.Meta().ID
+	refTableAllocs, _ := b.is.AllocByID(refTblID)
+	b.applyDropTable(refDBInfo, refTblID, nil)
+	return b.applyCreateTable(m, refDBInfo, refTblID, refTableAllocs, model.ActionAddForeignKey, tblIDs)
 }
 
 func isTableHasFKReferInfo(referredTblInfo *model.TableInfo, childSchema, childTable, fk string) bool {
@@ -811,7 +791,6 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 
 // Build builds and returns the built infoschema.
 func (b *Builder) Build() InfoSchema {
-	b.updateInfoSchemaFKReferInfos(b.is)
 	b.updateInfoSchemaBundles(b.is)
 	return b.is
 }
@@ -975,9 +954,8 @@ func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Build
 			sortedTablesBuckets:   make([]sortedTables, bucketCount),
 			referredForeignKeyMap: make(map[SchemaAndTableName]map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo),
 		},
-		dirtyDB:       make(map[string]bool),
-		factory:       factory,
-		fkInfoBuilder: fkInfoBuilder{referTables: map[int64]interface{}{}},
+		dirtyDB: make(map[string]bool),
+		factory: factory,
 	}
 }
 
