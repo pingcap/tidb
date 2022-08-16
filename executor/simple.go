@@ -1030,7 +1030,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if len(lockAccount) != 0 {
 			_, _, err := exec.ExecRestrictedSQL(ctx, nil,
 				`UPDATE %n.%n SET account_locked=%? WHERE Host=%? and User=%?;`,
-				mysql.SystemDB, mysql.UserTable, lockAccount, strings.ToLower(spec.User.Hostname), spec.User.Username)
+				mysql.SystemDB, mysql.UserTable, lockAccount, spec.User.Hostname, spec.User.Username)
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
 			}
