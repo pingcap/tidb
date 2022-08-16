@@ -1226,6 +1226,12 @@ type SessionVars struct {
 
 	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
 	EnablePreparedPlanCache bool
+
+	// EnableGeneralPlanCache indicates whether to enable general plan cache.
+	EnableGeneralPlanCache bool
+
+	// GeneralPlanCacheSize controls the size of general plan cache.
+	GeneralPlanCacheSize uint64
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.

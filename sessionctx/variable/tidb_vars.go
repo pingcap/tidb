@@ -717,6 +717,11 @@ const (
 	// When set to (0, 1], Selectivity() will use the value of this variable as the default selectivity of those
 	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
+
+	// TiDBEnableGeneralPlanCache indicates whether to enable general plan cache.
+	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
+	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
+	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
 )
 
 // TiDB vars that have only global scope
@@ -1007,6 +1012,8 @@ const (
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
+	DefTiDBEnableGeneralPlanCache                  = false
+	DefTiDBGeneralPlanCacheSize                    = 100
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize           int32  = 10240
 	MinDDLReorgBatchSize           int32  = 32
