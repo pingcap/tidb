@@ -314,6 +314,12 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "noloopclosure": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "pkgfact": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
