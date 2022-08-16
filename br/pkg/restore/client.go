@@ -1771,17 +1771,6 @@ func (rc *Client) ReadStreamDataFiles(
 		}
 	}
 
-<<<<<<< HEAD
-	// sort files firstly.
-	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
-		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
-			return i.ResolvedTs < j.ResolvedTs
-		} else {
-			return i.MaxTs < j.MaxTs
-		}
-	})
-=======
->>>>>>> 477f3a27c... log-backup: restore meta kv with batch method (#37100)
 	return dFiles, mFiles, nil
 }
 
