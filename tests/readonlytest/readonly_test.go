@@ -46,6 +46,7 @@ type ReadOnlySuite struct {
 func checkVariable(t *testing.T, db *sql.DB, variable string, on bool) {
 	var name, status string
 	rs, err := db.Query(fmt.Sprintf("show variables like '%s'", variable))
+	defer require.NoError(t, rs.Close())
 	require.NoError(t, err)
 	require.True(t, rs.Next())
 
@@ -56,7 +57,6 @@ func checkVariable(t *testing.T, db *sql.DB, variable string, on bool) {
 	} else {
 		require.Equal(t, "OFF", status)
 	}
-	require.NoError(t, rs.Close())
 }
 
 func setVariableNoError(t *testing.T, db *sql.DB, variable string, status int) {
