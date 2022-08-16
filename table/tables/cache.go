@@ -257,9 +257,18 @@ func (c *cachedTable) renewLease(ts uint64, data *cacheData, leaseDuration time.
 
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts, leaseDuration)
+<<<<<<< HEAD
 	newLease, err := c.handle.RenewReadLease(context.Background(), tid, data.Lease, lease)
 	if err != nil && !kv.IsTxnRetryableError(err) {
 		log.Warn("Renew read lease error", zap.Error(err))
+=======
+	newLease, err := handle.RenewReadLease(context.Background(), tid, data.Lease, lease)
+	if err != nil {
+		if !kv.IsTxnRetryableError(err) {
+			log.Warn("Renew read lease error", zap.Error(err))
+		}
+		return
+>>>>>>> 483183e5f... table/tables: fix bug for jepsen test on cached table (#37020)
 	}
 	if newLease > 0 {
 		c.cacheData.Store(&cacheData{
@@ -273,3 +282,57 @@ func (c *cachedTable) renewLease(ts uint64, data *cacheData, leaseDuration time.
 		TestMockRenewLeaseABA2 <- struct{}{}
 	})
 }
+<<<<<<< HEAD
+=======
+
+const cacheTableWriteLease = 5 * time.Second
+
+func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error) {
+	writeLockLease, err := c.lockForWrite(ctx)
+	atomic.StoreUint64(leasePtr, writeLockLease)
+	wg <- err
+	if err != nil {
+		logutil.Logger(ctx).Warn("[cached table] lock for write lock fail", zap.Error(err))
+		return
+	}
+
+	t := time.NewTicker(cacheTableWriteLease / 2)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			if err := c.renew(ctx, leasePtr); err != nil {
+				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail", zap.Error(err))
+				return
+			}
+		case <-exit:
+			return
+		}
+	}
+}
+
+func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
+	oldLease := atomic.LoadUint64(leasePtr)
+	physicalTime := oracle.GetTimeFromTS(oldLease)
+	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
+
+	h := c.TakeStateRemoteHandle()
+	defer c.PutStateRemoteHandle(h)
+
+	succ, err := h.RenewWriteLease(ctx, c.Meta().ID, newLease)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if succ {
+		atomic.StoreUint64(leasePtr, newLease)
+	}
+	return nil
+}
+
+func (c *cachedTable) lockForWrite(ctx context.Context) (uint64, error) {
+	handle := c.TakeStateRemoteHandle()
+	defer c.PutStateRemoteHandle(handle)
+
+	return handle.LockForWrite(ctx, c.Meta().ID, cacheTableWriteLease)
+}
+>>>>>>> 483183e5f... table/tables: fix bug for jepsen test on cached table (#37020)
