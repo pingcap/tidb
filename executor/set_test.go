@@ -784,7 +784,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("300"))
 	tk.MustExec("set session tidb_general_plan_cache_size = -1") // underflow
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_general_plan_cache_size value: '-1'"))
-	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("1"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
