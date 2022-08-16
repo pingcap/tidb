@@ -300,6 +300,22 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		terror.Call(pointExecutor.Close)
 		return nil, err
 	}
+
+	sctx := a.Ctx
+	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
+	cmd := byte(cmd32)
+	var pi processinfoSetter
+	if raw, ok := sctx.(processinfoSetter); ok {
+		pi = raw
+		sql := a.OriginText()
+		maxExecutionTime := getMaxExecutionTime(sctx)
+		// Update processinfo, ShowProcess() will use it.
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
+			sctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		}
+	}
+
 	return &recordSet{
 		executor:   pointExecutor,
 		stmt:       a,
