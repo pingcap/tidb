@@ -121,7 +121,7 @@ func (cb *CommonHandleCols) ResolveIndices(schema *expression.Schema) (HandleCol
 }
 
 // IsInt implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) IsInt() bool {
+func (*CommonHandleCols) IsInt() bool {
 	return false
 }
 
