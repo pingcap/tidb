@@ -738,31 +738,6 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	return false
 }
 
-func PlanSkipGetTsoFromPD(sctx sessionctx.Context, plan Plan, inLockOrWriteStmt bool) bool {
-	switch v := plan.(type) {
-	case *PointGetPlan:
-		return sctx.GetSessionVars().RcPointLockReadUseLastTso && (v.Lock || inLockOrWriteStmt)
-	case PhysicalPlan:
-		if len(v.Children()) == 0 {
-			return false
-		}
-		_, isPhysicalLock := v.(*PhysicalLock)
-		for _, p := range v.Children() {
-			if !PlanSkipGetTsoFromPD(sctx, p, isPhysicalLock || inLockOrWriteStmt) {
-				return false
-			}
-		}
-		return true
-	case *Update:
-		return PlanSkipGetTsoFromPD(sctx, v.SelectPlan, true)
-	case *Delete:
-		return PlanSkipGetTsoFromPD(sctx, v.SelectPlan, true)
-	case *Insert:
-		return v.SelectPlan == nil && sctx.GetSessionVars().RcInsertUseLastTso
-	}
-	return false
-}
-
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
 var DefaultDisabledLogicalRulesList *atomic.Value
 
