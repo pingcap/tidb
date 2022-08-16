@@ -23,6 +23,7 @@ go_test(
         "printer_test.go",
     ],
     embed = [":printer"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

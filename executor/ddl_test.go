@@ -40,6 +40,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -51,8 +52,7 @@ import (
 )
 
 func TestTruncateTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists truncate_test;`)
@@ -70,8 +70,9 @@ func TestTruncateTable(t *testing.T) {
 //  2. A SQL that will fail to execute;
 //  3. Execute DDL.
 func TestInTxnExecDDLFail(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (i int key);")
@@ -85,8 +86,7 @@ func TestInTxnExecDDLFail(t *testing.T) {
 }
 
 func TestInTxnExecDDLInvalid(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -98,12 +98,7 @@ func TestInTxnExecDDLInvalid(t *testing.T) {
 }
 
 func TestCreateTable(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -209,8 +204,7 @@ func TestCreateTable(t *testing.T) {
 }
 
 func TestCreateView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// create an source table
@@ -320,8 +314,7 @@ func TestCreateView(t *testing.T) {
 }
 
 func TestViewRecursion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists t(a int)")
@@ -335,8 +328,7 @@ func TestViewRecursion(t *testing.T) {
 }
 
 func TestIssue16250(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists t(a int)")
@@ -346,8 +338,7 @@ func TestIssue16250(t *testing.T) {
 }
 
 func TestIssue24771(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists zy_tab;`)
@@ -386,8 +377,7 @@ func TestIssue24771(t *testing.T) {
 }
 
 func TestTruncateSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create sequence if not exists seq")
@@ -399,8 +389,7 @@ func TestTruncateSequence(t *testing.T) {
 }
 
 func TestCreateViewWithOverlongColName(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
@@ -448,11 +437,9 @@ func TestCreateViewWithOverlongColName(t *testing.T) {
 }
 
 func TestCreateDropDatabase(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists drop_test;")
@@ -514,8 +501,7 @@ func TestCreateDropDatabase(t *testing.T) {
 }
 
 func TestCreateDropTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -526,8 +512,7 @@ func TestCreateDropTable(t *testing.T) {
 }
 
 func TestCreateDropView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create or replace view drop_test as select 1,2")
@@ -549,8 +534,7 @@ func TestCreateDropView(t *testing.T) {
 }
 
 func TestCreateDropIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -560,8 +544,7 @@ func TestCreateDropIndex(t *testing.T) {
 }
 
 func TestAlterTableAddColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
@@ -591,8 +574,7 @@ func TestAlterTableAddColumn(t *testing.T) {
 }
 
 func TestAlterTableAddColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
@@ -619,8 +601,7 @@ func TestAlterTableAddColumns(t *testing.T) {
 }
 
 func TestAddNotNullColumnNoDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table nn (c1 int)")
@@ -641,8 +622,7 @@ func TestAddNotNullColumnNoDefault(t *testing.T) {
 }
 
 func TestAlterTableModifyColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists mc")
@@ -699,12 +679,10 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	tk.MustExec("drop table if exists err_modify_multiple_collate;")
 	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustGetErrMsg("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error())
-
 }
 
 func TestColumnCharsetAndCollate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	dbName := "col_charset_collate"
 	tk.MustExec("create database " + dbName)
@@ -789,8 +767,7 @@ func TestColumnCharsetAndCollate(t *testing.T) {
 }
 
 func TestTooLargeIdentifierLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// for database.
@@ -826,8 +803,7 @@ func TestTooLargeIdentifierLength(t *testing.T) {
 }
 
 func TestShardRowIDBits(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -950,8 +926,7 @@ func TestShardRowIDBits(t *testing.T) {
 }
 
 func TestAutoRandomBitsData(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create database if not exists test_auto_random_bits")
@@ -1076,8 +1051,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 }
 
 func TestAutoRandomTableOption(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1145,8 +1119,7 @@ func TestAutoRandomTableOption(t *testing.T) {
 // 3: ActionModifyTableAutoIdCache  : it will drop row-id-type allocator.
 // 3: ActionRebaseAutoRandomBase    : it will drop auto-rand-type allocator.
 func TestFilterDifferentAllocators(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1199,8 +1172,7 @@ func TestFilterDifferentAllocators(t *testing.T) {
 }
 
 func TestMaxHandleAddIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -1218,8 +1190,7 @@ func TestMaxHandleAddIndex(t *testing.T) {
 }
 
 func TestSetDDLReorgWorkerCnt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
@@ -1259,8 +1230,7 @@ func TestSetDDLReorgWorkerCnt(t *testing.T) {
 }
 
 func TestSetDDLReorgBatchSize(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
@@ -1298,8 +1268,7 @@ func TestSetDDLReorgBatchSize(t *testing.T) {
 }
 
 func TestIllegalFunctionCall4GeneratedColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -1336,8 +1305,7 @@ func TestIllegalFunctionCall4GeneratedColumns(t *testing.T) {
 }
 
 func TestGeneratedColumnRelatedDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -1370,8 +1338,7 @@ func TestGeneratedColumnRelatedDDL(t *testing.T) {
 }
 
 func TestSetDDLErrorCountLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLVars(tk.Session())
@@ -1401,8 +1368,7 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 // Test issue #9205, fix the precision problem for time type default values
 // See https://github.com/pingcap/tidb/issues/9205 for details
 func TestIssue9205(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
@@ -1442,8 +1408,7 @@ func TestIssue9205(t *testing.T) {
 }
 
 func TestCheckDefaultFsp(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
@@ -1484,8 +1449,7 @@ func TestCheckDefaultFsp(t *testing.T) {
 }
 
 func TestTimestampMinDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tdv;")
@@ -1499,12 +1463,7 @@ func TestRenameTable(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -1565,8 +1524,7 @@ func TestRenameTable(t *testing.T) {
 }
 
 func TestAutoIncrementColumnErrorMessage(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -1587,12 +1545,7 @@ func TestRenameMultiTables(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 

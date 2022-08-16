@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sessiontest
+package session_test
 
 import (
 	"fmt"
@@ -27,13 +27,11 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestLocalTemporaryTableInsert(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -88,8 +86,7 @@ func TestLocalTemporaryTableInsert(t *testing.T) {
 }
 
 func TestLocalTemporaryTableUpdate(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -282,8 +279,7 @@ func TestLocalTemporaryTableUpdate(t *testing.T) {
 func TestTemporaryTableSize(t *testing.T) {
 	// Test the @@tidb_tmp_table_max_size system variable.
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -329,8 +325,7 @@ func TestTemporaryTableSize(t *testing.T) {
 }
 
 func TestGlobalTemporaryTable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -356,9 +351,10 @@ func TestGlobalTemporaryTable(t *testing.T) {
 }
 
 func TestRetryGlobalTemporaryTable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists normal_table")
@@ -404,9 +400,10 @@ func TestRetryGlobalTemporaryTable(t *testing.T) {
 }
 
 func TestRetryLocalTemporaryTable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists normal_table")

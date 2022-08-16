@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -31,7 +30,7 @@ import (
 
 type collectPredicateColumnsPoint struct{}
 
-func (c collectPredicateColumnsPoint) optimize(ctx context.Context, plan LogicalPlan, op *logicalOptimizeOp) (LogicalPlan, error) {
+func (c collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
@@ -57,7 +56,7 @@ func (c collectPredicateColumnsPoint) name() string {
 
 type syncWaitStatsLoadPoint struct{}
 
-func (s syncWaitStatsLoadPoint) optimize(ctx context.Context, plan LogicalPlan, op *logicalOptimizeOp) (LogicalPlan, error) {
+func (s syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
@@ -138,7 +137,7 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 			if idx.Meta().State != model.StatePublic {
 				continue
 			}
-			idxCol := ddl.FindColumnIndexCols(colName, idx.Meta().Columns)
+			idxCol := idx.Meta().FindColumnByName(colName)
 			idxID := idx.Meta().ID
 			if idxCol != nil {
 				tblStats := stats.GetTableStats(tbl.Meta())

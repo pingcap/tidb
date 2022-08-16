@@ -10,7 +10,9 @@ go_library(
 
 go_test(
     name = "worker_test",
+    timeout = "short",
     srcs = ["worker_test.go"],
+    flaky = True,
     deps = [
         ":worker",
         "@com_github_stretchr_testify//require",

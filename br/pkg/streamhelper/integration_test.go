@@ -5,9 +5,11 @@ package streamhelper_test
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"net/url"
+	"path"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -77,7 +79,7 @@ func simpleRanges(tableCount int) streamhelper.Ranges {
 
 func simpleTask(name string, tableCount int) streamhelper.TaskInfo {
 	backend, _ := storage.ParseBackend("noop://", nil)
-	task, err := streamhelper.NewTask(name).
+	task, err := streamhelper.NewTaskInfo(name).
 		FromTS(1).
 		UntilTS(1000).
 		WithRanges(simpleRanges(tableCount)...).
@@ -136,31 +138,33 @@ func TestIntegration(t *testing.T) {
 	metaCli := streamhelper.MetaDataClient{Client: cli}
 	t.Run("TestBasic", func(t *testing.T) { testBasic(t, metaCli, etcd) })
 	t.Run("TestForwardProgress", func(t *testing.T) { testForwardProgress(t, metaCli, etcd) })
-	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.TaskEventClient{MetaDataClient: metaCli}) })
+	t.Run("testGetStorageCheckpoint", func(t *testing.T) { testGetStorageCheckpoint(t, metaCli, etcd) })
+	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+	t.Run("TestStreamCheckpoint", func(t *testing.T) { testStreamCheckpoint(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 }
 
 func TestChecking(t *testing.T) {
 	noop, _ := storage.ParseBackend("noop://", nil)
 	// The name must not contains slash.
-	_, err := streamhelper.NewTask("/root").
+	_, err := streamhelper.NewTaskInfo("/root").
 		WithRange([]byte("1"), []byte("2")).
 		WithTableFilter("*.*").
 		ToStorage(noop).
 		Check()
 	require.ErrorIs(t, errors.Cause(err), berrors.ErrPiTRInvalidTaskInfo)
 	// Must specify the external storage.
-	_, err = streamhelper.NewTask("root").
+	_, err = streamhelper.NewTaskInfo("root").
 		WithRange([]byte("1"), []byte("2")).
 		WithTableFilter("*.*").
 		Check()
 	require.ErrorIs(t, errors.Cause(err), berrors.ErrPiTRInvalidTaskInfo)
 	// Must specift the table filter and range?
-	_, err = streamhelper.NewTask("root").
+	_, err = streamhelper.NewTaskInfo("root").
 		ToStorage(noop).
 		Check()
 	require.ErrorIs(t, errors.Cause(err), berrors.ErrPiTRInvalidTaskInfo)
 	// Happy path.
-	_, err = streamhelper.NewTask("root").
+	_, err = streamhelper.NewTaskInfo("root").
 		WithRange([]byte("1"), []byte("2")).
 		WithTableFilter("*.*").
 		ToStorage(noop).
@@ -229,7 +233,40 @@ func testForwardProgress(t *testing.T, metaCli streamhelper.MetaDataClient, etcd
 	require.Equal(t, store2Checkpoint, uint64(40))
 }
 
-func testStreamListening(t *testing.T, metaCli streamhelper.TaskEventClient) {
+func testGetStorageCheckpoint(t *testing.T, metaCli streamhelper.MetaDataClient, etcd *embed.Etcd) {
+	var (
+		taskName = "my_task"
+		ctx      = context.Background()
+		value    = make([]byte, 8)
+	)
+
+	cases := []struct {
+		storeID           string
+		storageCheckPoint uint64
+	}{
+		{
+			"1",
+			10001,
+		}, {
+			"2",
+			10002,
+		},
+	}
+	for _, c := range cases {
+		key := path.Join(streamhelper.StorageCheckpointOf(taskName), c.storeID)
+		binary.BigEndian.PutUint64(value, c.storageCheckPoint)
+		_, err := metaCli.Put(ctx, key, string(value))
+		require.NoError(t, err)
+	}
+
+	taskInfo := simpleTask(taskName, 1)
+	task := streamhelper.NewTask(&metaCli, taskInfo.PBInfo)
+	ts, err := task.GetStorageCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(10002), ts)
+}
+
+func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ctx, cancel := context.WithCancel(context.Background())
 	taskName := "simple"
 	taskInfo := simpleTask(taskName, 4)
@@ -258,4 +295,25 @@ func testStreamListening(t *testing.T, metaCli streamhelper.TaskEventClient) {
 	cancel()
 	_, ok := <-ch
 	require.False(t, ok)
+}
+
+func testStreamCheckpoint(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	ctx := context.Background()
+	task := "simple"
+	req := require.New(t)
+	getCheckpoint := func() uint64 {
+		resp, err := metaCli.KV.Get(ctx, streamhelper.GlobalCheckpointOf(task))
+		req.NoError(err)
+		if len(resp.Kvs) == 0 {
+			return 0
+		}
+		req.Len(resp.Kvs, 1)
+		return binary.BigEndian.Uint64(resp.Kvs[0].Value)
+	}
+	metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 5)
+	req.EqualValues(5, getCheckpoint())
+	metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 18)
+	req.EqualValues(18, getCheckpoint())
+	metaCli.ClearV3GlobalCheckpointForTask(ctx, task)
+	req.EqualValues(0, getCheckpoint())
 }

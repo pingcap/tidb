@@ -221,6 +221,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildShowDDLJobs(v)
 	case *plannercore.ShowDDLJobQueries:
 		return b.buildShowDDLJobQueries(v)
+	case *plannercore.ShowDDLJobQueriesWithRange:
+		return b.buildShowDDLJobQueriesWithRange(v)
 	case *plannercore.ShowSlow:
 		return b.buildShowSlow(v)
 	case *plannercore.PhysicalShow:
@@ -390,6 +392,15 @@ func (b *executorBuilder) buildShowDDLJobQueries(v *plannercore.ShowDDLJobQuerie
 	return e
 }
 
+func (b *executorBuilder) buildShowDDLJobQueriesWithRange(v *plannercore.ShowDDLJobQueriesWithRange) Executor {
+	e := &ShowDDLJobQueriesWithRangeExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		offset:       v.Offset,
+		limit:        v.Limit,
+	}
+	return e
+}
+
 func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) Executor {
 	e := &ShowSlowExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -418,7 +429,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	tps := make([]*types.FieldType, 0, fullColLen)
 	for _, col := range is.Columns {
-		tps = append(tps, &col.FieldType)
+		tps = append(tps, &(col.FieldType))
 	}
 
 	if !e.isCommonHandle() {
@@ -728,8 +739,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		name:         v.Name,
-		usingVars:    v.TxtProtoVars,
-		id:           v.ExecID,
+		usingVars:    v.Params,
 		stmt:         v.Stmt,
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
@@ -990,7 +1000,46 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 		if len(v.Statement.(*ast.AlterTableStmt).Specs) > 1 && b.Ti != nil {
 			b.Ti.UseMultiSchemaChange = true
 		}
+	case *ast.CreateTableStmt:
+		stmt := v.Statement.(*ast.CreateTableStmt)
+		if stmt != nil && stmt.Partition != nil {
+			if strings.EqualFold(b.ctx.GetSessionVars().EnableTablePartition, "OFF") {
+				break
+			}
+
+			s := stmt.Partition
+			if b.Ti.PartitionTelemetry == nil {
+				b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+			}
+			b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = mathutil.Max(s.Num, uint64(len(s.Definitions)))
+			b.Ti.PartitionTelemetry.UseTablePartition = true
+
+			switch s.Tp {
+			case model.PartitionTypeRange:
+				if s.Sub == nil {
+					if len(s.ColumnNames) > 0 {
+						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
+					} else {
+						b.Ti.PartitionTelemetry.UseTablePartitionRange = true
+					}
+				}
+			case model.PartitionTypeHash:
+				if !s.Linear && s.Sub == nil {
+					b.Ti.PartitionTelemetry.UseTablePartitionHash = true
+				}
+			case model.PartitionTypeList:
+				enable := b.ctx.GetSessionVars().EnableListTablePartition
+				if s.Sub == nil && enable {
+					if len(s.ColumnNames) > 0 {
+						b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true
+					} else {
+						b.Ti.PartitionTelemetry.UseTablePartitionList = true
+					}
+				}
+			}
+		}
 	}
+
 	e := &DDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
@@ -2380,7 +2429,9 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 // From the paper "Random sampling for histogram construction: how much is enough?"'s Corollary 1 to Theorem 5,
 // for a table size n, histogram size k, maximum relative error in bin size f, and error probability gamma,
 // the minimum random sample size is
-//         r = 4 * k * ln(2*n/gamma) / f^2
+//
+//	r = 4 * k * ln(2*n/gamma) / f^2
+//
 // If we take f = 0.5, gamma = 0.01, n =1e6, we would got r = 305.82* k.
 // Since the there's log function over the table size n, the r grows slowly when the n increases.
 // If we take n = 1e12, a 300*k sample still gives <= 0.66 bin size error with probability 0.99.
@@ -2764,7 +2815,6 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
 	execPB, err := p.ToPB(sctx, kv.TiFlash)
 	return []*tipb.Executor{execPB}, err
-
 }
 
 func constructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, storeType kv.StoreType) (dagReq *tipb.DAGRequest, err error) {
@@ -3192,7 +3242,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
-		if val.(bool) != useMPPExecution(b.ctx, v) {
+		if !b.ctx.GetSessionVars().InRestrictedSQL && val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
 				b.err = errors.New("expect mpp but not used")
 			} else {
@@ -4676,6 +4726,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 
+	if plan.IndexInfo != nil {
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, plan.TblInfo.Name.O+":"+plan.IndexInfo.Name.O)
+	}
+
 	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
 		if e.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != b.readReplicaScope {
@@ -5032,7 +5087,7 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 }
 
 func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executor {
-	if v.ReplicaKind != ast.CompactReplicaKindTiFlash {
+	if v.ReplicaKind != ast.CompactReplicaKindTiFlash && v.ReplicaKind != ast.CompactReplicaKindAll {
 		b.err = errors.Errorf("compact %v replica is not supported", strings.ToLower(string(v.ReplicaKind)))
 		return nil
 	}

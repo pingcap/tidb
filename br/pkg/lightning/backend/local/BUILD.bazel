@@ -32,7 +32,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/membuf",
         "//br/pkg/pdutil",
-        "//br/pkg/restore",
+        "//br/pkg/restore/split",
         "//br/pkg/utils",
         "//br/pkg/version",
         "//distsql",
@@ -43,6 +43,7 @@ go_library(
         "//table",
         "//tablecodec",
         "//util/codec",
+        "//util/engine",
         "//util/hack",
         "//util/mathutil",
         "//util/ranger",
@@ -80,6 +81,7 @@ go_library(
 
 go_test(
     name = "local_test",
+    timeout = "short",
     srcs = [
         "engine_test.go",
         "iterator_test.go",
@@ -88,7 +90,9 @@ go_test(
         "localhelper_test.go",
     ],
     embed = [":local"],
+    flaky = True,
     deps = [
+        "//br/pkg/errors",
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
@@ -98,9 +102,8 @@ go_test(
         "//br/pkg/membuf",
         "//br/pkg/mock",
         "//br/pkg/pdutil",
-        "//br/pkg/restore",
+        "//br/pkg/restore/split",
         "//br/pkg/utils",
-        "//br/pkg/version",
         "//kv",
         "//parser/mysql",
         "//sessionctx/stmtctx",
@@ -108,6 +111,7 @@ go_test(
         "//tablecodec",
         "//types",
         "//util/codec",
+        "//util/engine",
         "//util/hack",
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_cockroachdb_pebble//sstable",
