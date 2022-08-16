@@ -118,43 +118,44 @@ type AfFinalResult struct {
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
 // and updates all the items in PartialAggFuncs.
 // The parallel execution flow is as the following graph shows:
-//
-//                            +-------------+
-//                            | Main Thread |
-//                            +------+------+
-//                                   ^
-//                                   |
-//                                   +
-//                              +-+-            +-+
-//                              | |    ......   | |  finalOutputCh
-//                              +++-            +-+
-//                               ^
-//                               |
-//                               +---------------+
-//                               |               |
-//                 +--------------+             +--------------+
-//                 | final worker |     ......  | final worker |
-//                 +------------+-+             +-+------------+
-//                              ^                 ^
-//                              |                 |
-//                             +-+  +-+  ......  +-+
-//                             | |  | |          | |
-//                             ...  ...          ...    partialOutputChs
-//                             | |  | |          | |
-//                             +++  +++          +++
-//                              ^    ^            ^
-//          +-+                 |    |            |
-//          | |        +--------o----+            |
-// inputCh  +-+        |        +-----------------+---+
-//          | |        |                              |
-//          ...    +---+------------+            +----+-----------+
-//          | |    | partial worker |   ......   | partial worker |
-//          +++    +--------------+-+            +-+--------------+
-//           |                     ^                ^
-//           |                     |                |
-//      +----v---------+          +++ +-+          +++
-//      | data fetcher | +------> | | | |  ......  | |   partialInputChs
-//      +--------------+          +-+ +-+          +-+
+/*
+                            +-------------+
+                            | Main Thread |
+                            +------+------+
+                                   ^
+                                   |
+                                   +
+                              +-+-            +-+
+                              | |    ......   | |  finalOutputCh
+                              +++-            +-+
+                               ^
+                               |
+                               +---------------+
+                               |               |
+                 +--------------+             +--------------+
+                 | final worker |     ......  | final worker |
+                 +------------+-+             +-+------------+
+                              ^                 ^
+                              |                 |
+                             +-+  +-+  ......  +-+
+                             | |  | |          | |
+                             ...  ...          ...    partialOutputChs
+                             | |  | |          | |
+                             +++  +++          +++
+                              ^    ^            ^
+          +-+                 |    |            |
+          | |        +--------o----+            |
+ inputCh  +-+        |        +-----------------+---+
+          | |        |                              |
+          ...    +---+------------+            +----+-----------+
+          | |    | partial worker |   ......   | partial worker |
+          +++    +--------------+-+            +-+--------------+
+           |                     ^                ^
+           |                     |                |
+      +----v---------+          +++ +-+          +++
+      | data fetcher | +------> | | | |  ......  | |   partialInputChs
+      +--------------+          +-+ +-+          +-+
+*/
 type HashAggExec struct {
 	baseExecutor
 
@@ -608,27 +609,38 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 	n := len(groupKey)
 	partialResults := make([][]aggfuncs.PartialResult, n)
 	allMemDelta := int64(0)
+	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
 	for i := 0; i < n; i++ {
 		var ok bool
 		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
-		for _, af := range w.aggFuncs {
+		partialResults[i] = make([]aggfuncs.PartialResult, partialResultSize)
+		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
-			partialResults[i] = append(partialResults[i], partialResult)
-			allMemDelta += memDelta + 8 // the memory usage of PartialResult
+			partialResults[i][j] = partialResult
+			allMemDelta += memDelta // the memory usage of PartialResult
 		}
-		mapper[string(groupKey[i])] = partialResults[i]
-		allMemDelta += int64(len(groupKey[i]))
+		allMemDelta += int64(partialResultSize * 8)
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		if len(mapper)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 			w.BInMap++
 		}
+		mapper[string(groupKey[i])] = partialResults[i]
+		allMemDelta += int64(len(groupKey[i]))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(allMemDelta)
 	return partialResults
+}
+
+func (w *baseHashAggWorker) getPartialResultSliceLenConsiderByteAlign() int {
+	length := len(w.aggFuncs)
+	if len(w.aggFuncs) == 1 {
+		return 1
+	}
+	return length + length&1
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
@@ -1098,13 +1110,13 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 			partialResults = append(partialResults, partialResult)
 			allMemDelta += memDelta
 		}
-		e.partialResultMap[groupKey] = partialResults
-		allMemDelta += int64(len(groupKey))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(e.partialResultMap) > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		if len(e.partialResultMap)+1 > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.bInMap))
 			e.bInMap++
 		}
+		e.partialResultMap[groupKey] = partialResults
+		allMemDelta += int64(len(groupKey))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(allMemDelta)

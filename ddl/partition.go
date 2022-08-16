@@ -890,10 +890,11 @@ func astIntValueExprFromStr(s string, unsigned bool) (ast.ExprNode, error) {
 
 // GeneratePartDefsFromInterval generates range partitions from INTERVAL partitioning.
 // Handles
-// - CREATE TABLE: all partitions are generated
-// - ALTER TABLE FIRST PARTITION (expr): Drops all partitions before the partition matching the expr (i.e. sets that partition as the new first partition)
-//                                       i.e. will return the partitions from old FIRST partition to (and including) new FIRST partition
-// - ALTER TABLE LAST PARTITION (expr): Creates new partitions from (excluding) old LAST partition to (including) new LAST partition
+//   - CREATE TABLE: all partitions are generated
+//   - ALTER TABLE FIRST PARTITION (expr): Drops all partitions before the partition matching the expr (i.e. sets that partition as the new first partition)
+//     i.e. will return the partitions from old FIRST partition to (and including) new FIRST partition
+//   - ALTER TABLE LAST PARTITION (expr): Creates new partitions from (excluding) old LAST partition to (including) new LAST partition
+//
 // partition definitions will be set on partitionOptions
 func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType, tbInfo *model.TableInfo, partitionOptions *ast.PartitionOptions) error {
 	if partitionOptions == nil {
@@ -2038,6 +2039,21 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	failpoint.Inject("exchangePartitionAutoID", func(val failpoint.Value) {
+		if val.(bool) {
+			se, err := w.sessPool.get()
+			defer w.sessPool.put(se)
+			if err != nil {
+				failpoint.Return(ver, err)
+			}
+			sess := newSession(se)
+			_, err = sess.execute(context.Background(), "insert into test.pt values (40000000)", "exchange_partition_test")
+			if err != nil {
+				failpoint.Return(ver, err)
+			}
+		}
+	})
 
 	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
 	if err != nil {
