@@ -1,4 +1,4 @@
-#!/usr/bin/env bash -l
+#!/usr/bin/bash -i
 
 
 if [ -t 0 ] ; then
