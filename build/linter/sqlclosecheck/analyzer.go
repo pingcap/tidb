@@ -19,6 +19,7 @@ import (
 	"github.com/ryanrolds/sqlclosecheck/pkg/analyzer"
 )
 
+// Analyzer is the analyzer struct of sqlclosecheck.
 var Analyzer = analyzer.NewAnalyzer()
 
 func init() {
