@@ -290,7 +290,7 @@ func waitForLeaseExpire(oldReadLease, now uint64) time.Duration {
 func (h *stateRemoteHandle) RenewReadLease(ctx context.Context, tid int64, oldLocalLease, newValue uint64) (uint64, error) {
 	var newLease uint64
 	err := h.runInTxn(ctx, false, func(ctx context.Context, now uint64) error {
-		lockType, remoteLease, _, err := h.loadRow(ctx, tid, true)
+		lockType, remoteLease, _, err := h.loadRow(ctx, tid, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
