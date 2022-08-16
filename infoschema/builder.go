@@ -442,7 +442,6 @@ func (b *Builder) updateFKReferTables(m *meta.Meta, dbInfo *model.DBInfo, tid in
 	tblIDs := make([]int64, 0, len(tblInfo.ForeignKeys))
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.RefSchema.L == dbInfo.Name.L && fk.RefTable.L == tblInfo.Name.L {
-			b.markReferTableShouldUpdate(tblInfo.ID)
 			continue
 		}
 		refTable, _ := b.is.TableByName(fk.RefSchema, fk.RefTable)
@@ -728,6 +727,10 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
+	b.is.buildTableReferredForeignKeys(dbInfo.Name, tblInfo)
+
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
 	bucketIdx := tableBucketIdx(tableID)
@@ -737,7 +740,6 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		return i.Meta().ID < j.Meta().ID
 	})
 	b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
-	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
 
 	newTbl, ok := b.is.TableByID(tableID)
 	if ok {
