@@ -135,6 +135,7 @@ nogo(
                "//build/linter/misspell:misspell",
                "//build/linter/prealloc:prealloc",
                "//build/linter/predeclared:predeclared",
+               "//build/linter/sqlclosecheck:sqlclosecheck",
                "//build/linter/unconvert:unconvert",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({

@@ -110,6 +110,7 @@ require (
 	github.com/mgechev/revive v1.2.1
 	github.com/nishanths/predeclared v0.2.2
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
+	github.com/ryanrolds/sqlclosecheck v0.3.0
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	honnef.co/go/tools v0.3.3
