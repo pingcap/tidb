@@ -371,7 +371,8 @@ dumpling_unit_test_in_verify_ci: failpoint-enable tools/bin/gotestsum
 	$(RACE_FLAG) -coverprofile="$(TEST_COVERAGE_DIR)/dumpling_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
-dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
+dumpling_integration_test: dumpling_bins failpoint-enable
+	@make build_dumpling
 	@make failpoint-disable
 	./dumpling/tests/run.sh $(CASE)
 
@@ -402,11 +403,11 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
 		--build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
 		--build_event_json_file=bazel_2.json --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=featuretag \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
 bazel_all_build: bazel_ci_prepare
 	mkdir -p bin
