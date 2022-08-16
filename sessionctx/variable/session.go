@@ -1866,8 +1866,7 @@ func (k planCacheStmtKey) Hash() []byte {
 // AddGeneralPlanCacheStmt adds this PlanCacheStmt into general-plan-cache-stmt cache
 func (s *SessionVars) AddGeneralPlanCacheStmt(sql string, stmt interface{}) {
 	if s.generalPlanCacheStmts == nil {
-		// TODO: make it configurable
-		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(100, 0, 0)
+		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.GeneralPlanCacheSize), 0, 0)
 	}
 	s.generalPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
 }
