@@ -391,11 +391,11 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
-	if bs > 0 && rootExceed != nil {
-		tryAction(&rootExceed.actionMuForHardLimit, rootExceed, false)
-	}
 	if bs > 0 && rootExceedForSoftLimit != nil {
 		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit, true)
+	}
+	if bs > 0 && rootExceed != nil {
+		tryAction(&rootExceed.actionMuForHardLimit, rootExceed, false)
 	}
 }
 

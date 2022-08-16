@@ -57,7 +57,6 @@ func TestMemTracker4UpdateExec(t *testing.T) {
 	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.GetTracker())
 
 	tk.Session().GetSessionVars().MemQuotaQuery = 244
-	tk.MustExec("set tidb_enable_rate_limit_action = off")
 	tk.MustExec("update t_MemTracker4UpdateExec set a = 4")
 	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 }
