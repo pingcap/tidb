@@ -171,10 +171,15 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 				// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
 				goto NoOptimize
 			}
+			tempDecorrelatedProjExprs := make([]expression.Expression, len(proj.Exprs), len(proj.Exprs))
 			for i, expr := range proj.Exprs {
-				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
+				tempDecorrelatedProjExprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}
-			apply.columnSubstitute(proj.Schema(), proj.Exprs)
+			hasFallBack := apply.columnSubstituteAll(proj.Schema(), tempDecorrelatedProjExprs)
+			if hasFallBack {
+				goto NoOptimize
+			}
+			proj.Exprs = tempDecorrelatedProjExprs
 			innerPlan = proj.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
