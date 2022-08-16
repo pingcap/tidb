@@ -383,6 +383,7 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 				if err := rows.Err(); err != nil {
 					return errors.Trace(err)
 				}
+				//nolint:sqlclosecheck
 				if err := rows.Close(); err != nil {
 					return errors.Trace(err)
 				}
