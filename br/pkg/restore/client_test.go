@@ -588,6 +588,42 @@ func TestRestoreMetaKVFilesWithBatchMethod2(t *testing.T) {
 			MinTs: 100,
 			MaxTs: 120,
 		},
+	}
+	batchCount := 0
+	result := make(map[int][]*backuppb.DataFileInfo)
+
+	client := restore.MockClient(nil)
+	err := client.RestoreMetaKVFilesWithBatchMethod(
+		context.Background(),
+		files,
+		nil,
+		nil,
+		nil,
+		func(
+			ctx context.Context,
+			fs []*backuppb.DataFileInfo,
+			schemasReplace *stream.SchemasReplace,
+			updateStats func(kvCount uint64, size uint64),
+			progressInc func(),
+		) error {
+			result[batchCount] = fs
+			batchCount++
+			return nil
+		},
+	)
+	require.Nil(t, err)
+	require.Equal(t, batchCount, 1)
+	require.Equal(t, len(result), 1)
+	require.Equal(t, result[0], files)
+}
+
+func TestRestoreMetaKVFilesWithBatchMethod3(t *testing.T) {
+	files := []*backuppb.DataFileInfo{
+		{
+			Path:  "f1",
+			MinTs: 100,
+			MaxTs: 120,
+		},
 		{
 			Path:  "f2",
 			MinTs: 100,
@@ -637,7 +673,7 @@ func TestRestoreMetaKVFilesWithBatchMethod2(t *testing.T) {
 	require.Equal(t, result[1], files[3:])
 }
 
-func TestRestoreMetaKVFilesWithBatchMethod3(t *testing.T) {
+func TestRestoreMetaKVFilesWithBatchMethod4(t *testing.T) {
 	files := []*backuppb.DataFileInfo{
 		{
 			Path:  "f1",
