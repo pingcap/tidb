@@ -2015,7 +2015,15 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	logStmt(stmt, s)
-	recordSet, err := runStmt(ctx, s, stmt)
+
+	var recordSet sqlexec.RecordSet
+	if stmt.PsStmt != nil { // point plan short path
+		recordSet, err = stmt.PointGet(ctx)
+		s.txn.changeToInvalid()
+	} else {
+		recordSet, err = runStmt(ctx, s, stmt)
+	}
+
 	if err != nil {
 		if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
@@ -2305,16 +2313,30 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 		}
 	})
 
-	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, execStmt, is)
+	s.sessionVars.StartTime = time.Now()
+	preparedObj, err := plannercore.GetPreparedStmt(execStmt, s.GetSessionVars())
+	if err != nil {
+		return nil, err
+	}
+
+	compiler := executor.Compiler{Ctx: s}
+	stmt, err := compiler.Compile(ctx, execStmt)
 	if err == nil {
-		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, st.Plan)
+		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
 	}
 	if err != nil {
 		return nil, err
 	}
+	durCompile := time.Since(s.sessionVars.StartTime)
+	s.GetSessionVars().DurationCompile = durCompile
+
+	stmtCtx := s.GetSessionVars().StmtCtx
+	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
-		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(st.Plan)
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
 		telemetry.CurrentExecuteCount.Inc()
 		if tiFlashPushDown {
 			telemetry.CurrentTiFlashPushDownCount.Inc()
@@ -2324,15 +2346,23 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 		}
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
-	logGeneralQuery(st, s, true)
+	logGeneralQuery(stmt, s, true)
 
-	if st.PsStmt != nil { // point plan short path
-		resultSet, err := st.PointGet(ctx)
+	if stmt.PsStmt != nil { // point plan short path
+		resultSet, err := stmt.PointGet(ctx)
 		s.txn.changeToInvalid()
 		return resultSet, err
 	}
 
-	return runStmt(ctx, s, st)
+	var recordSet sqlexec.RecordSet
+
+	if stmt.PsStmt != nil { // point plan short path
+		recordSet, err = stmt.PointGet(ctx)
+		s.txn.changeToInvalid()
+	} else {
+		recordSet, err = runStmt(ctx, s, stmt)
+	}
+	return recordSet, err
 }
 
 // ExecutePreparedStmt executes a prepared statement.
@@ -2398,7 +2428,6 @@ func (s *session) executePlanCacheStmt(ctx context.Context, stmt *plannercore.Pl
 		}
 	}
 
-	executor.CountStmtNode(stmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	s.txn.onStmtStart(stmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
 

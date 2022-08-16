@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -143,11 +142,10 @@ func TestPrepared(t *testing.T) {
 		prepStmt, err := tk.Session().GetSessionVars().GetPreparedStmtByID(stmtID)
 		require.NoError(t, err)
 		execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: expression.Args2Expressions4Test(1)}
-		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), execStmt,
-			tk.Session().GetInfoSchema().(infoschema.InfoSchema))
+		// Check that ast.Statement created by compiler.Compile has query text.
+		compiler := executor.Compiler{Ctx: tk.Session()}
+		stmt, err := compiler.Compile(context.TODO(), execStmt)
 		require.NoError(t, err)
-		require.Equal(t, query, stmt.OriginText())
 
 		// Check that rebuild plan works.
 		err = tk.Session().PrepareTxnCtx(ctx)
