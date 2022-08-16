@@ -321,7 +321,7 @@ func reCalcCapacity(c *Chunk, maxChunkSize int) int {
 		return c.capacity
 	}
 	if c.capacity == 0 {
-		return InitialCapacity
+		c.capacity = InitialCapacity
 	} else {
 		c.capacity *= 2
 	}
