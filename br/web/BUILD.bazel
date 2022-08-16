@@ -7,9 +7,9 @@ load("@build_bazel_rules_nodejs//:index.bzl", "js_library")
 filegroup(
     name = "conf",
     srcs = [
-        "tsconfig.json",
         "package.json",
         "package-lock.json",
+        "tsconfig.json",
         "webpack.config.js",
     ],
     visibility = ["//visibility:public"],
@@ -18,7 +18,30 @@ filegroup(
 ts_project(
     tsconfig = "tsconfig.json",
     validate = False,
+    visibility = ["//visibility:public"],
     deps = [
-        "@brweb//jss",
+        "@brweb//react",
+    ],
+)
+
+webpack(
+    name = "webpack",
+    args = [
+        "$(execpath src/index.ts)",
+        "--config",
+        "$(execpath webpack.config.js)",
+        "--env.is_bazel_build",
+        "--mode",
+        "production",
+        "-o $@",
+        "--env.output=$@",
+    ],
+    data = glob([
+        "src/**",
+    ]) + [
+        "tsconfig.json",
+        "webpack.config.js",
+    ] + [
+        "@brweb//react",
     ],
 )
