@@ -431,7 +431,7 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) GetPlanCache(generalPlanCache bool) *kvcache.SimpleLRUCache {
+func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache {
 	if generalPlanCache { // use the general plan cache
 		if !s.GetSessionVars().EnableGeneralPlanCache {
 			return nil
