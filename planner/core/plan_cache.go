@@ -154,7 +154,8 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	}
 
 	if stmtAst.UseCache && !ignorePlanCache { // for general plans
-		if plan, names, ok, err := getGeneralPlan(sctx, cacheKey, bindSQL, stmt, paramTypes); err != nil || ok {
+		if plan, names, ok, err := getGeneralPlan(sctx, cacheKey, bindSQL, is, stmt,
+			paramTypes); err != nil || ok {
 			return plan, names, err
 		}
 	}
@@ -207,8 +208,8 @@ func getPointQueryPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmtC
 	return plan, names, true, nil
 }
 
-func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key,
-	bindSQL string, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
+func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
+	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -216,6 +217,9 @@ func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key,
 	cachedVal, exist := getValidPlanFromCache(sctx, cacheKey, paramTypes)
 	if !exist {
 		return nil, nil, false, nil
+	}
+	if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
+		return nil, nil, false, err
 	}
 	for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
 		if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
