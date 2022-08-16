@@ -1,4 +1,4 @@
-#!/usr/bin/bash -i
+#!/usr/bin/bash -l
 
 
 if [ -t 0 ] ; then
