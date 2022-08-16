@@ -975,7 +975,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	do.sysVarCache.RUnlock()
 
 	if !strings.EqualFold(replicaRead, "closest-adaptive") {
-		logutil.BgLogger().Info("closest replica read is not enabled, skip check!", zap.String("mode", replicaRead))
+		logutil.BgLogger().Debug("closest replica read is not enabled, skip check!", zap.String("mode", replicaRead))
 		return nil
 	}
 	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
@@ -983,7 +983,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		return err
 	}
 
-	zones := make(map[string]int)
+	store_zones := make(map[string]int)
 	for _, s := range stores {
 		// skip tumbstone stores or tiflash
 		if s.NodeState == metapb.NodeState_Removing || s.NodeState == metapb.NodeState_Removed || engine.IsTiFlash(s) {
@@ -991,36 +991,41 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		}
 		for _, label := range s.Labels {
 			if label.Key == placement.DCLabelKey && label.Value != "" {
-				zones[label.Value] = 0
+				store_zones[label.Value] = 0
 				break
 			}
 		}
 	}
 
-	servers, err := infosync.GetAllServerInfo(ctx)
-	if err != nil {
-		return err
-	}
-	matches := true
-	for _, s := range servers {
-		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
-			if _, ok := zones[v]; !ok {
-				matches = false
-				break
-			}
-			zones[v] += 1
+	enabled := false
+	// if stores don't have zone labels or are distribued in 1 zone, just disable cloeset replica read.
+	if len(store_zones) > 1 {
+		enabled = true
+		servers, err := infosync.GetAllServerInfo(ctx)
+		if err != nil {
+			return err
 		}
-	}
-	if matches {
-		for _, count := range zones {
-			if count == 0 {
-				matches = false
-				break
+		for _, s := range servers {
+			if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
+				if _, ok := store_zones[v]; !ok {
+					enabled = false
+					break
+				}
+				store_zones[v] += 1
 			}
 		}
+		if enabled {
+			for _, count := range store_zones {
+				if count == 0 {
+					enabled = false
+					break
+				}
+			}
+		}
 	}
-	if variable.SetEnableAdaptiveReplicaRead(matches) {
-		logutil.BgLogger().Info("tidb server adaptive closest replica read is changed", zap.Bool("enable", matches))
+
+	if variable.SetEnableAdaptiveReplicaRead(enabled) {
+		logutil.BgLogger().Info("tidb server adaptive closest replica read is changed", zap.Bool("enable", enabled))
 	}
 	return nil
 }
