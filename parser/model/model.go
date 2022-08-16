@@ -1031,8 +1031,9 @@ func (v *ViewCheckOption) String() string {
 	}
 }
 
-//revive:disable:exported
 // ViewInfo provides meta data describing a DB view.
+//
+//revive:disable:exported
 type ViewInfo struct {
 	Algorithm   ViewAlgorithm      `json:"view_algorithm"`
 	Definer     *auth.UserIdentity `json:"view_definer"`
@@ -1112,7 +1113,7 @@ type PartitionInfo struct {
 	Expr    string        `json:"expr"`
 	Columns []CIStr       `json:"columns"`
 
-	// User may already creates table with partition but table partition is not
+	// User may already create table with partition but table partition is not
 	// yet supported back then. When Enable is true, write/read need use tid
 	// rather than pid.
 	Enable bool `json:"enable"`
@@ -1262,7 +1263,7 @@ func (i *IndexColumn) Clone() *IndexColumn {
 }
 
 // PrimaryKeyType is the type of primary key.
-// Available values are 'clustered', 'nonclustered', and ''(default).
+// Available values are "clustered", "nonclustered", and ""(default).
 type PrimaryKeyType int8
 
 func (p PrimaryKeyType) String() string {

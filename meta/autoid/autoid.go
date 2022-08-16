@@ -702,7 +702,9 @@ func CalcSequenceBatchSize(base, size, increment, offset, min, max int64) (int64
 // SeekToFirstSequenceValue seeks to the next valid value (must be in range of [MIN, max]),
 // the bool indicates whether the first value is got.
 // The seeking formula is describe as below:
-//  nr  := (base + increment - offset) / increment
+//
+//	nr  := (base + increment - offset) / increment
+//
 // first := nr*increment + offset
 // Because formula computation will overflow Int64, so we transfer it to uint64 for distance computation.
 func SeekToFirstSequenceValue(base, increment, offset, min, max int64) (int64, bool) {
@@ -1102,9 +1104,11 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 
 // ShardIDFormat is used to calculate the bit length of different segments in auto id.
 // Generally, an auto id is consist of 4 segments: sign bit, reserved bits, shard bits and incremental bits.
-// Take ``a BIGINT AUTO_INCREMENT PRIMARY KEY`` as an example, assume that the `shard_row_id_bits` = 5,
+// Take "a BIGINT AUTO_INCREMENT PRIMARY KEY" as an example, assume that the `shard_row_id_bits` = 5,
 // the layout is like
-//  | [sign_bit] (1 bit) | [reserved bits] (0 bits) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
+//
+//	| [sign_bit] (1 bit) | [reserved bits] (0 bits) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
+//
 // Please always use NewShardIDFormat() to instantiate.
 type ShardIDFormat struct {
 	FieldType *types.FieldType

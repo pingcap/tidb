@@ -23,7 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -485,7 +485,7 @@ func (d Checker) RegisterStatsHandle(h *handle.Handle) {
 }
 
 // SchemaSyncer implements the DDL interface.
-func (d Checker) SchemaSyncer() util.SchemaSyncer {
+func (d Checker) SchemaSyncer() syncer.SchemaSyncer {
 	return d.realDDL.SchemaSyncer()
 }
 
