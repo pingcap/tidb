@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -217,20 +216,19 @@ func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL strin
 
 	// asynchronously check privilege
 	needPrivilegeCheck := false
-	var privilegeCheckWg util.WaitGroupWrapper
-	var privilegeCheckErr error
+	privilegeCheckErr := make(chan error, 1)
 	defer func() {
 		if needPrivilegeCheck {
-			privilegeCheckWg.Wait()
-			if privilegeCheckErr != nil {
-				err = privilegeCheckErr
+			e := <-privilegeCheckErr
+			if e != nil {
+				err = e
 				ok = false
 			}
 		}
 	}()
-	privilegeCheckWg.Run(func() {
-		privilegeCheckErr = CheckPreparedPriv(sctx, stmt, is)
-	})
+	go func() {
+		privilegeCheckErr <- CheckPreparedPriv(sctx, stmt, is)
+	}()
 
 	cachedVal, exist := getValidPlanFromCache(sctx, cacheKey, paramTypes)
 	if !exist {
