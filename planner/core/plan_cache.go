@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
@@ -209,18 +210,34 @@ func getPointQueryPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmtC
 }
 
 func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
-	[]*types.FieldName, bool, error) {
+	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (_ Plan,
+	_ []*types.FieldName, ok bool, err error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
+
+	// asynchronously check privilege
+	needPrivilegeCheck := false
+	var privilegeCheckWg sync.WaitGroup
+	var privilegeCheckErr error
+	defer func() {
+		if needPrivilegeCheck {
+			privilegeCheckWg.Wait()
+			if privilegeCheckErr != nil {
+				err = privilegeCheckErr
+				ok = false
+			}
+		}
+	}()
+	go func() {
+		privilegeCheckErr = CheckPreparedPriv(sctx, stmt, is)
+		privilegeCheckWg.Done()
+	}()
 
 	cachedVal, exist := getValidPlanFromCache(sctx, cacheKey, paramTypes)
 	if !exist {
 		return nil, nil, false, nil
 	}
-	if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
-		return nil, nil, false, err
-	}
+	needPrivilegeCheck = true
 	for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
 		if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
 			// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
@@ -229,7 +246,7 @@ func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL strin
 			return nil, nil, false, nil
 		}
 	}
-	err := RebuildPlan4CachedPlan(cachedVal.Plan)
+	err = RebuildPlan4CachedPlan(cachedVal.Plan)
 	if err != nil {
 		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 		return nil, nil, false, nil
