@@ -154,9 +154,15 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "types/json/binary_functions.go": "types/json/binary_functions.go",
+      "types/json/binary_test.go": "types/json/binary_test.go",
+      "ddl/backfilling.go": "ddl/backfilling.go",
+      "ddl/column.go": "ddl/column.go",
+      "ddl/index.go": "ddl/index.go",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
+      "planner/core/plan.go": "planner/core/plan.go",
       "errno/": "only table code"
     }
   },
@@ -282,6 +288,11 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "types/json/binary_functions.go": "types/json/binary_functions.go",
+      "types/json/binary_test.go": "types/json/binary_test.go",
+      "ddl/backfilling.go": "ddl/backfilling.go",
+      "ddl/column.go": "ddl/column.go",
+      "ddl/index.go": "ddl/index.go",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
@@ -300,6 +311,7 @@
       "planner/implementation": "planner code",
       "planner/cascades": "planner code",
       "planner/core/plan_cache.go": "planner code",
+      "planner/core/plan.go": "planner/core/plan.go",
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code"
@@ -636,7 +648,13 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "types/json/binary_functions.go": "types/json/binary_functions.go",
+      "types/json/binary_test.go": "types/json/binary_test.go",
+      "ddl/backfilling.go": "ddl/backfilling.go",
+      "ddl/column.go": "ddl/column.go",
+      "ddl/index.go": "ddl/index.go",
       "expression/builtin_cast.go": "enable expression/builtin_cast.go",
+      "planner/core/plan.go": "planner/core/plan.go",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",

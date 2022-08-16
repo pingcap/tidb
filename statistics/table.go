@@ -395,8 +395,15 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSket
 // GetColRowCount tries to get the row count of the a column if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (t *Table) GetColRowCount() float64 {
-	for _, col := range t.Columns {
+	IDs := make([]int64, 0, len(t.Columns))
+	for id := range t.Columns {
+		IDs = append(IDs, id)
+	}
+	slices.Sort(IDs)
+	for _, id := range IDs {
+		col := t.Columns[id]
 		// need to make sure stats on this column is loaded.
+		// TODO: use the new method to check if it's loaded
 		if col != nil && !(col.Histogram.NDV > 0 && col.notNullCount() == 0) && col.TotalRowCount() != 0 {
 			return col.TotalRowCount()
 		}
