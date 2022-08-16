@@ -154,6 +154,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "executor/aggregate.go": "executor/aggregate.go",
       "types/json/binary_functions.go": "types/json/binary_functions.go",
       "types/json/binary_test.go": "types/json/binary_test.go",
       "ddl/backfilling.go": "ddl/backfilling.go",
@@ -288,6 +289,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "executor/aggregate.go": "executor/aggregate.go",
       "types/json/binary_functions.go": "types/json/binary_functions.go",
       "types/json/binary_test.go": "types/json/binary_test.go",
       "ddl/backfilling.go": "ddl/backfilling.go",
@@ -648,6 +650,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "executor/aggregate.go": "executor/aggregate.go",
       "types/json/binary_functions.go": "types/json/binary_functions.go",
       "types/json/binary_test.go": "types/json/binary_test.go",
       "ddl/backfilling.go": "ddl/backfilling.go",
