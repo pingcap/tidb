@@ -73,16 +73,15 @@ type memoryUsageAlarm struct {
 }
 
 func (record *memoryUsageAlarm) initS3Config() {
-	if recordToS3 := config.GetGlobalConfig().S3.EnableUploadOOMRecord; recordToS3 {
-		record.s3Conf.accessKey = config.GetGlobalConfig().S3.AccessKey
-		record.s3Conf.secretKey = config.GetGlobalConfig().S3.SecretKey
-		record.s3Conf.endPoint = config.GetGlobalConfig().S3.EndPoint
-		record.s3Conf.bucketName = config.GetGlobalConfig().S3.BucketName
-		record.s3Conf.disableSSL = config.GetGlobalConfig().S3.DisableSSL
-		record.s3Conf.s3ForcePathStyle = config.GetGlobalConfig().S3.S3ForcePathStyle
-		record.s3Conf.enableUploadOOMRecord = config.GetGlobalConfig().S3.EnableUploadOOMRecord
-		record.s3Conf.timeoutSeconds = config.GetGlobalConfig().S3.TimeoutSeconds
-	}
+	record.s3Conf.accessKey = config.GetGlobalConfig().S3.AccessKey
+	record.s3Conf.secretKey = config.GetGlobalConfig().S3.SecretKey
+	record.s3Conf.endPoint = config.GetGlobalConfig().S3.EndPoint
+	record.s3Conf.regionName = config.GetGlobalConfig().S3.RegionName
+	record.s3Conf.bucketName = config.GetGlobalConfig().S3.BucketName
+	record.s3Conf.disableSSL = config.GetGlobalConfig().S3.DisableSSL
+	record.s3Conf.s3ForcePathStyle = config.GetGlobalConfig().S3.S3ForcePathStyle
+	record.s3Conf.enableUploadOOMRecord = config.GetGlobalConfig().S3.EnableUploadOOMRecord
+	record.s3Conf.timeoutSeconds = config.GetGlobalConfig().S3.TimeoutSeconds
 }
 
 func (record *memoryUsageAlarm) uploadFileToS3(filename string, uploader *s3manager.Uploader, timeout time.Duration) {
@@ -111,7 +110,7 @@ func (record *memoryUsageAlarm) uploadFileToS3(filename string, uploader *s3mana
 }
 
 func (record *memoryUsageAlarm) createSessionAndUploadFilesToS3(filenames []string) {
-	if record.initialized && time.Since(record.lastCheckTime) > time.Duration(record.memoryUsageAlarmIntervalSeconds)*time.Second {
+	if record.initialized {
 		sess, err := session.NewSession(&aws.Config{
 			Credentials:      credentials.NewStaticCredentials(record.s3Conf.accessKey, record.s3Conf.secretKey, ""),
 			Endpoint:         aws.String(record.s3Conf.endPoint),
@@ -131,7 +130,9 @@ func (record *memoryUsageAlarm) createSessionAndUploadFilesToS3(filenames []stri
 }
 
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
-	record.initS3Config()
+	if recordToS3 := config.GetGlobalConfig().S3.EnableUploadOOMRecord; recordToS3 {
+		record.initS3Config()
+	}
 	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
 	record.memoryUsageAlarmDesensitizationEnable = variable.MemoryUsageAlarmDesensitizationEnable.Load()
 	record.memoryUsageAlarmTruncationEnable = variable.MemoryUsageAlarmTruncationEnable.Load()
@@ -313,6 +314,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 	if _, err = f.WriteString(buf.String()); err != nil {
 		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
 	}
+	buf.WriteString("\n")
 
 	printTop10 := func(cmp func(i, j *util.ProcessInfo) bool) {
 		slices.SortFunc(pinfo, cmp)
@@ -405,7 +407,7 @@ func (record *memoryUsageAlarm) recordSystemInfoFile() (string, error) {
 	procs, _ := process.Processes()
 	pInfos := make([]*process.Process, 0, len(procs))
 	for _, proc := range procs {
-		if name, err := proc.Name(); name != "" && err == nil {
+		if _, err := proc.MemoryInfo(); err == nil {
 			pInfos = append(pInfos, proc)
 		}
 	}
