@@ -432,7 +432,7 @@ func (s *session) SetCollation(coID int) error {
 }
 
 func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache {
-	if generalPlanCache { // use the general plan cache
+	if isGeneralPlanCache { // use the general plan cache
 		if !s.GetSessionVars().EnableGeneralPlanCache {
 			return nil
 		}

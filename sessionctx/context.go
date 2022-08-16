@@ -108,7 +108,7 @@ type Context interface {
 
 	// GetPlanCache returns the cache of the physical plan.
 	// generalPlanCache indicates to return the general plan cache or the prepared plan cache.
-	GetPlanCache(generalPlanCache bool) *kvcache.SimpleLRUCache
+	GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
