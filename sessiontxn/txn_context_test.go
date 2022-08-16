@@ -971,8 +971,7 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
@@ -1006,24 +1005,24 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 	for i := 1; i < 100; i++ {
 		tk.MustExec("begin pessimistic")
 
-		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		require.NoError(t, stmt.Close())
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, []types.Datum{types.NewDatum(1)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlSelectID2, []types.Datum{types.NewDatum(9)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlSelectID2, expression.Args2Expressions4Test(9))
 		require.NoError(t, err)
 		require.NoError(t, stmt.Close())
 
 		val := i * 10
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, []types.Datum{types.NewDatum(val), types.NewDatum(val), types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, expression.Args2Expressions4Test(val, val, val))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID, []types.Datum{types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID, expression.Args2Expressions4Test(val))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
 
@@ -1043,21 +1042,21 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 
 	for i := 1; i < 100; i++ {
 		tk.MustExec("begin pessimistic")
-		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		require.NoError(t, stmt.Close())
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, []types.Datum{types.NewDatum(1)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
 
 		val := i * 10
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, []types.Datum{types.NewDatum(val), types.NewDatum(val), types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, expression.Args2Expressions4Test(val, val, val))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID, []types.Datum{types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID, expression.Args2Expressions4Test(val))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
 		tk.MustExec("commit")
@@ -1072,8 +1071,7 @@ func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	// ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
