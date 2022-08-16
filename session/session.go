@@ -2011,9 +2011,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	logStmt(stmt, s)
 
 	var recordSet sqlexec.RecordSet
-	recordSet, err = runStmt(ctx, s, stmt)
 	if stmt.PsStmt != nil { // point plan short path
+		recordSet, err = stmt.PointGet(ctx)
 		s.txn.changeToInvalid()
+	} else {
+		recordSet, err = runStmt(ctx, s, stmt)
 	}
 
 	if err != nil {
@@ -2347,9 +2349,12 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	}
 
 	var recordSet sqlexec.RecordSet
-	recordSet, err = runStmt(ctx, s, stmt)
+
 	if stmt.PsStmt != nil { // point plan short path
+		recordSet, err = stmt.PointGet(ctx)
 		s.txn.changeToInvalid()
+	} else {
+		recordSet, err = runStmt(ctx, s, stmt)
 	}
 	return recordSet, err
 }
