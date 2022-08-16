@@ -402,6 +402,9 @@ func IsFastPlan(p plannercore.Plan) bool {
 // like the INSERT, UPDATE statements, it executes in this function. If the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
+	if a.PsStmt != nil {
+		return a.PointGet(ctx)
+	}
 	defer func() {
 		r := recover()
 		if r == nil {

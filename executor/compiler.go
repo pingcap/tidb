@@ -86,12 +86,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	)
 
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars)
-		if err != nil {
+		if preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars); err != nil {
 			return nil, err
 		}
-		pointPlanShortPathOK, err = plannercore.IsPointPlanShortPathOK(c.Ctx, is, preparedObj)
-		if err != nil {
+		if pointPlanShortPathOK, err = plannercore.IsPointPlanShortPathOK(c.Ctx, is, preparedObj); err != nil {
 			return nil, err
 		}
 	}
