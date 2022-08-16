@@ -2238,8 +2238,8 @@ func (rc *Client) restoreMetaKvEntries(
 	rc.rawKVClient.SetColumnFamily(columnFamily)
 
 	for _, entry := range entries {
-		log.Debug("txn entry", zap.Uint64("key-ts", entry.ts), zap.Int("txnKey-len", len(entry.e.Key)),
-			zap.Int("txnValue-len", len(entry.e.Value)), zap.ByteString("txnKey", entry.e.Key))
+		log.Debug("txn entry", zap.Uint64("key-ts", entry.ts), zap.Int("key-len", len(entry.e.Key)),
+			zap.Int("value-len", len(entry.e.Value)), zap.ByteString("key", entry.e.Key))
 
 		newEntry, err := sr.RewriteKvEntry(&entry.e, columnFamily)
 		if err != nil {
@@ -2249,8 +2249,8 @@ func (rc *Client) restoreMetaKvEntries(
 		} else if newEntry == nil {
 			continue
 		}
-		log.Debug("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
-			zap.Int("newValue-len", len(entry.e.Value)), zap.ByteString("newkey", newEntry.Key))
+		log.Debug("rewrite txn entry", zap.Int("new-key-len", len(newEntry.Key)),
+			zap.Int("new-value-len", len(entry.e.Value)), zap.ByteString("new-key", newEntry.Key))
 
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
 			return 0, 0, errors.Trace(err)
