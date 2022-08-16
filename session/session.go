@@ -232,6 +232,7 @@ type session struct {
 	store kv.Storage
 
 	preparedPlanCache *kvcache.SimpleLRUCache
+	generalPlanCache  *kvcache.SimpleLRUCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -371,7 +372,7 @@ func (s *session) cleanRetryInfo() {
 				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				s.PreparedPlanCache().Delete(cacheKey)
+				s.GetPlanCache(false).Delete(cacheKey)
 			}
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
@@ -430,7 +431,19 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
+func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache {
+	if isGeneralPlanCache { // use the general plan cache
+		if !s.GetSessionVars().EnableGeneralPlanCache {
+			return nil
+		}
+		if s.generalPlanCache == nil { // lazy construction
+			s.generalPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+		}
+		return s.generalPlanCache
+	}
+
+	// use the prepared plan cache
 	if !s.GetSessionVars().EnablePreparedPlanCache {
 		return nil
 	}
