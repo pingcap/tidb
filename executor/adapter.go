@@ -988,46 +988,78 @@ var (
 	execCommitWaitLatch    = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatch, "0")
 	execCommitWaitBinlog   = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitBinlog, "0")
 	execWriteResponse      = metrics.ExecPhaseDuration.WithLabelValues(phaseWriteResponse, "0")
+	execUnknown            = metrics.ExecPhaseDuration.WithLabelValues("unknown", "0")
+
+	// pre-define observers for internal queries
+	execBuildLockingInternal       = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildLocking, "1")
+	execOpenLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenLocking, "1")
+	execNextLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseNextLocking, "1")
+	execLockLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseLockLocking, "1")
+	execBuildFinalInternal         = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildFinal, "1")
+	execOpenFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenFinal, "1")
+	execNextFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseNextFinal, "1")
+	execLockFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseLockFinal, "1")
+	execCommitPrewriteInternal     = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitPrewrite, "1")
+	execCommitCommitInternal       = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitCommit, "1")
+	execCommitWaitCommitTSInternal = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitCommitTS, "1")
+	execCommitWaitLatestTSInternal = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatestTS, "1")
+	execCommitWaitLatchInternal    = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatch, "1")
+	execCommitWaitBinlogInternal   = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitBinlog, "1")
+	execWriteResponseInternal      = metrics.ExecPhaseDuration.WithLabelValues(phaseWriteResponse, "1")
+	execUnknownInternal            = metrics.ExecPhaseDuration.WithLabelValues("unknown", "1")
 )
+
+var phaseDurationObserverMap map[string]prometheus.Observer
+var phaseDurationObserverMapInternal map[string]prometheus.Observer
+
+func init() {
+	phaseDurationObserverMap = map[string]prometheus.Observer{
+		phaseBuildLocking:       execBuildLocking,
+		phaseOpenLocking:        execOpenLocking,
+		phaseNextLocking:        execNextLocking,
+		phaseLockLocking:        execLockLocking,
+		phaseBuildFinal:         execBuildFinal,
+		phaseOpenFinal:          execOpenFinal,
+		phaseNextFinal:          execNextFinal,
+		phaseLockFinal:          execLockFinal,
+		phaseCommitPrewrite:     execCommitPrewrite,
+		phaseCommitCommit:       execCommitCommit,
+		phaseCommitWaitCommitTS: execCommitWaitCommitTS,
+		phaseCommitWaitLatestTS: execCommitWaitLatestTS,
+		phaseCommitWaitLatch:    execCommitWaitLatch,
+		phaseCommitWaitBinlog:   execCommitWaitBinlog,
+		phaseWriteResponse:      execWriteResponse,
+	}
+	phaseDurationObserverMapInternal = map[string]prometheus.Observer{
+		phaseBuildLocking:       execBuildLockingInternal,
+		phaseOpenLocking:        execOpenLockingInternal,
+		phaseNextLocking:        execNextLockingInternal,
+		phaseLockLocking:        execLockLockingInternal,
+		phaseBuildFinal:         execBuildFinalInternal,
+		phaseOpenFinal:          execOpenFinalInternal,
+		phaseNextFinal:          execNextFinalInternal,
+		phaseLockFinal:          execLockFinalInternal,
+		phaseCommitPrewrite:     execCommitPrewriteInternal,
+		phaseCommitCommit:       execCommitCommitInternal,
+		phaseCommitWaitCommitTS: execCommitWaitCommitTSInternal,
+		phaseCommitWaitLatestTS: execCommitWaitLatestTSInternal,
+		phaseCommitWaitLatch:    execCommitWaitLatchInternal,
+		phaseCommitWaitBinlog:   execCommitWaitBinlogInternal,
+		phaseWriteResponse:      execWriteResponseInternal,
+	}
+}
 
 func getPhaseDurationObserver(phase string, internal bool) prometheus.Observer {
 	if internal {
-		return metrics.ExecPhaseDuration.WithLabelValues(phase, "1")
+		if ob, found := phaseDurationObserverMapInternal[phase]; found {
+			return ob
+		}
+		return execUnknownInternal
 	}
-	switch phase {
-	case phaseBuildLocking:
-		return execBuildLocking
-	case phaseOpenLocking:
-		return execOpenLocking
-	case phaseNextLocking:
-		return execNextLocking
-	case phaseLockLocking:
-		return execLockLocking
-	case phaseBuildFinal:
-		return execBuildFinal
-	case phaseOpenFinal:
-		return execOpenFinal
-	case phaseNextFinal:
-		return execNextFinal
-	case phaseLockFinal:
-		return execLockFinal
-	case phaseCommitPrewrite:
-		return execCommitPrewrite
-	case phaseCommitCommit:
-		return execCommitCommit
-	case phaseCommitWaitCommitTS:
-		return execCommitWaitCommitTS
-	case phaseCommitWaitLatestTS:
-		return execCommitWaitLatestTS
-	case phaseCommitWaitLatch:
-		return execCommitWaitLatch
-	case phaseCommitWaitBinlog:
-		return execCommitWaitBinlog
-	case phaseWriteResponse:
-		return execWriteResponse
-	default:
-		return metrics.ExecPhaseDuration.WithLabelValues(phase, "0")
+	if ob, found := phaseDurationObserverMap[phase]; found {
+		return ob
 	}
+	return execUnknown
 }
 
 func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.CommitDetails) {
