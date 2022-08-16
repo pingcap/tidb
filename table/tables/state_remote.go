@@ -219,7 +219,7 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 			if _, err = h.execSQL(ctx,
 				"update mysql.table_cache_meta set lock_type='INTEND', oldReadLease=%?, lease=%? where tid=%?",
 				lease,
-				ts,
+				newLease,
 				tid); err != nil {
 				return errors.Trace(err)
 			}
