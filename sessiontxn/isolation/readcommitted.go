@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
@@ -193,6 +194,9 @@ func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 		if ts, err = future.Wait(); err != nil {
 			return
 		}
+		failpoint.Inject("waitTsoOfOracleFuture", func() {
+			sessiontxn.TsoWaitCountInc(p.sctx)
+		})
 		txnCtx.SetForUpdateTS(ts)
 		ts = txnCtx.GetForUpdateTS()
 		p.latestOracleTS = ts
@@ -303,12 +307,18 @@ func PlanSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 // AdviseOptimizeWithPlan in RC covers much fewer cases compared with pessimistic repeatable read.
 // We do not fetch latest ts immediately for such scenes.
 // 1. PointGet of SELECT ... FOR UPDATE  2. Insert without select 3. update by PointGet 4. delete by PointGet.
-// The func `planner.Optimize` always calls the `txnManger.AdviseWarmup` to warmup in the past, it makes all sqls
-// execept `SELECT` with RcCheckTs make a tso request, but whether to use the tso request and wait it are depended
-// on `AdviseOptimizeWithPlan`. For insert statements without select, they always don't use the above tso, don't
-// wait for it either. If tidb_rc_point_lock_read_use_last_tso is ON, we disable `planner.Optimize` to call the
-// `txnManger.AdviseWarmup` so that it doesn't make tso requests for update/delete/select text protocol statments, and
-// we use the p.latestOracleTS. If tidb_rc_insert_use_last_tso is ON, we don't make tso requests too.
+// The func `planner.Optimize` always calls the `txnManger.AdviseWarmup` to warmup in the past, it makes a tso request
+// for all sqls execept `SELECT` with RcCheckTs, but whether to use the tso request and wait it are depended
+// on `AdviseOptimizeWithPlan`.
+// (a) text protocol request
+// For insert statements without select, they always don't use the above tso, don't wait for it either.
+// If tidb_rc_insert_use_last_tso is ON, we don't make tso requests too, we use the p.latestOracleTS.
+// If tidb_rc_insert_use_last_tso is OFF, we make tso requests but don't wait.
+// For update/delete/select statements, if tidb_rc_point_lock_read_use_last_tso is ON, we don't make tso requests,
+// we use the p.latestOracleTS.
+// (b) binary protocol request(prepare mode)
+// For insert statements without select,we don't make tso requests whatever tidb_rc_insert_use_last_tso is ON or OFF.
+// For update/delete/select statements, the behaviour is as text protocol request.
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
@@ -329,6 +339,9 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 	useLastOracleTS := PlanSkipGetTsoFromPD(p.sctx, plan, false)
 
 	if useLastOracleTS {
+		failpoint.Inject("tsoUseConstantFuture", func() {
+			sessiontxn.TsoUseConstantCountInc(p.sctx)
+		})
 		p.stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	}
 

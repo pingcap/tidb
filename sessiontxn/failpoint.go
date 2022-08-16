@@ -46,6 +46,10 @@ var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
 // TsoRequestCount is the key for recording tso request counts in some places
 var TsoRequestCount stringutil.StringerStr = "tsoRequestCount"
 
+var TsoWaitCount stringutil.StringerStr = "tsoWaitCount"
+
+var TsoUseConstantCount stringutil.StringerStr = "tsoUseConstantCount"
+
 // AssertLockErr is used to record the lock errors we encountered
 // Only for test
 var AssertLockErr stringutil.StringerStr = "assertLockError"
@@ -124,6 +128,24 @@ func TsoRequestCountInc(sctx sessionctx.Context) {
 	}
 	count++
 	sctx.SetValue(TsoRequestCount, count)
+}
+
+func TsoWaitCountInc(sctx sessionctx.Context) {
+	count, ok := sctx.Value(TsoWaitCount).(uint64)
+	if !ok {
+		count = 0
+	}
+	count++
+	sctx.SetValue(TsoWaitCount, count)
+}
+
+func TsoUseConstantCountInc(sctx sessionctx.Context) {
+	count, ok := sctx.Value(TsoUseConstantCount).(uint64)
+	if !ok {
+		count = 0
+	}
+	count++
+	sctx.SetValue(TsoUseConstantCount, count)
 }
 
 // ExecTestHook is used only for test. It consumes hookKey in session wait do what it gets from it.

@@ -1031,8 +1031,8 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(198), count)
 
-	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = false")
-	tk.MustExec("set global tidb_rc_insert_use_last_tso = false")
+	tk.MustExec("set session tidb_rc_point_lock_read_use_last_tso = false")
+	tk.MustExec("set session tidb_rc_insert_use_last_tso = false")
 	tk.MustExec("delete from t1")
 	tk.MustExec("delete from t2")
 	tk.MustExec("insert into t1 values (1, 1, 1)")
@@ -1062,7 +1062,7 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	count = sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(693), count)
+	require.Equal(t, uint64(594), count)
 
 }
 
@@ -1078,6 +1078,8 @@ func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = true")
+	tk.MustExec("set global tidb_rc_insert_use_last_tso = true")
 	tk.RefreshSession()
 	sctx := tk.Session()
 
@@ -1110,8 +1112,8 @@ func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(297), count)
 
-	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = false")
-	tk.MustExec("set global tidb_rc_insert_use_last_tso = false")
+	tk.MustExec("set session tidb_rc_point_lock_read_use_last_tso = false")
+	tk.MustExec("set session tidb_rc_insert_use_last_tso = false")
 	tk.MustExec("delete from t1")
 	tk.MustExec("delete from t2")
 	tk.MustExec("insert into t1 values (1, 1, 1)")
@@ -1131,4 +1133,54 @@ func TestRcTSOCmdCountForSQLExecute(t *testing.T) {
 	}
 	count = sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(792), count)
+}
+
+func TestRcTSOCmdCountForSQLExecute2(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/tsoUseConstantFuture", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/waitTsoOfOracleFuture", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/tsoUseConstantFuture"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/waitTsoOfOracleFuture"))
+	}()
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = true")
+	tk.MustExec("set global tidb_rc_insert_use_last_tso = true")
+	tk.RefreshSession()
+	sctx := tk.Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("create table t2(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t2 values (1, 1, 1)")
+	tk.MustExec("insert into t2 values (10, 10, 10)")
+	tk.MustExec("insert into t2 values (20, 20, 20)")
+
+	res := tk.MustQuery("show variables like 'transaction_isolation'")
+	require.Equal(t, "READ-COMMITTED", res.Rows()[0][1])
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
+	sctx.SetValue(sessiontxn.TsoUseConstantCount, 0)
+	sctx.SetValue(sessiontxn.TsoWaitCount, 0)
+
+	for i := 0; i < 10; i++ {
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("select * from t1 where id1 = 1 for update union select * from t2 where id1 = 2 for update")
+		tk.MustExec("select id1*2 from t1 where id1 = 1 for update union select id1*2 from t2 where id1 = 2 for update")
+		tk.MustExec("commit")
+	}
+	countTsoRequest := sctx.Value(sessiontxn.TsoRequestCount)
+	countTsoUseConstant := sctx.Value(sessiontxn.TsoUseConstantCount)
+	countWaitTsoOracle := sctx.Value(sessiontxn.TsoWaitCount)
+	require.Equal(t, uint64(40), countTsoRequest)
+	require.Equal(t, uint64(40), countTsoUseConstant)
+	require.Equal(t, uint64(20), countWaitTsoOracle)
 }
