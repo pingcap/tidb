@@ -380,14 +380,13 @@ func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*proper
 // eg: projection: constant("guo") --> column8, once upper layer substitution failed here, the lower layer behind
 // projection can't supply column8 anymore.
 //
-//    upper OP (depend on column8)   --> projection(constant "guo" --> column8)  --> lower layer OP
-//              |                                                       ^
-//              +-------------------------------------------------------+
+//	upper OP (depend on column8)   --> projection(constant "guo" --> column8)  --> lower layer OP
+//	          |                                                       ^
+//	          +-------------------------------------------------------+
 //
-//    upper OP (depend on column8)   --> lower layer OP
-//              |                             ^
-//              +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
-//
+//	upper OP (depend on column8)   --> lower layer OP
+//	          |                             ^
+//	          +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
 func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []expression.Expression) (hasFallback bool) {
 	// make a copy of exprs for convenience of substitution (may change/partially change the expr tree)
 	cpLeftConditions := p.LeftConditions.Clone()

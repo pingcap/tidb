@@ -390,8 +390,9 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 
 // ColumnSubstituteAll substitutes the columns just like ColumnSubstitute, but we don't accept partial substitution.
 // Only accept:
+//
 //	1: substitute them all once find col in schema.
-//  2: nothing in expr can be substituted.
+//	2: nothing in expr can be substituted.
 func ColumnSubstituteAll(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
 	_, hasFallBack, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, true)
 	return hasFallBack, resExpr
