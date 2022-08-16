@@ -41,37 +41,48 @@ const (
 	TxnCommitting
 	// TxnRollingBack means the transaction is rolling back
 	TxnRollingBack
+	// TxnStateCounter is a marker of the number of states, ensuring we don't miss any of them
+	TxnStateCounter
 )
 
-var txnDurationHistogramForState map[TxnRunningState][]prometheus.Observer = map[TxnRunningState][]prometheus.Observer{
-	TxnIdle: []prometheus.Observer{
+var txnDurationHistogramForState [][]prometheus.Observer = [][]prometheus.Observer{
+	{
 		metrics.TxnDurationHistogram.WithLabelValues("idle", "false"),
 		metrics.TxnDurationHistogram.WithLabelValues("idle", "true"),
 	},
-	TxnRunning: []prometheus.Observer{
+	{
 		metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "false"),
 		metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "true"),
 	},
-	TxnLockAcquiring: []prometheus.Observer{
+	{
 		metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "false"),
 		metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "true"),
 	},
-	TxnCommitting: []prometheus.Observer{
+	{
 		metrics.TxnDurationHistogram.WithLabelValues("committing", "false"),
 		metrics.TxnDurationHistogram.WithLabelValues("committing", "true"),
 	},
-	TxnRollingBack: []prometheus.Observer{
+	{
 		metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "false"),
 		metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "true"),
 	},
 }
 
-var txnStatusEnteringCounterForState map[TxnRunningState]prometheus.Counter = map[TxnRunningState]prometheus.Counter{
-	TxnIdle:          metrics.TxnStatusEnteringCounter.WithLabelValues("idle"),
-	TxnRunning:       metrics.TxnStatusEnteringCounter.WithLabelValues("executing_sql"),
-	TxnLockAcquiring: metrics.TxnStatusEnteringCounter.WithLabelValues("acquiring_lock"),
-	TxnCommitting:    metrics.TxnStatusEnteringCounter.WithLabelValues("committing"),
-	TxnRollingBack:   metrics.TxnStatusEnteringCounter.WithLabelValues("rolling_back"),
+var txnStatusEnteringCounterForState []prometheus.Counter = []prometheus.Counter{
+	metrics.TxnStatusEnteringCounter.WithLabelValues("idle"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("executing_sql"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("acquiring_lock"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("committing"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("rolling_back"),
+}
+
+func init() {
+	if len(txnDurationHistogramForState) != int(TxnStateCounter) {
+		panic("len(txnDurationHistogramForState) != TxnStateCounter")
+	}
+	if len(txnStatusEnteringCounterForState) != int(TxnStateCounter) {
+		panic("len(txnStatusEnteringCounterForState) != TxnStateCounter")
+	}
 }
 
 // TxnDurationHistogram returns the observer for the given state and hasLock type.
