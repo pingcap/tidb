@@ -796,6 +796,17 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatFloat(PreparedPlanCacheMemoryGuardRatio.Load(), 'f', -1, 64), nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGeneralPlanCache, Value: BoolToOnOff(DefTiDBEnableGeneralPlanCache), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableGeneralPlanCache = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBGeneralPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBGeneralPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
+		uVal, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			s.GeneralPlanCacheSize = uVal
+		}
+		return err
+	}},
 	{Scope: ScopeGlobal, Name: TiDBMemOOMAction, Value: DefTiDBMemOOMAction, PossibleValues: []string{"CANCEL", "LOG"}, Type: TypeEnum,
 		GetGlobal: func(s *SessionVars) (string, error) {
 			return OOMAction.Load(), nil
