@@ -1816,13 +1816,22 @@ func TestSetTopSQLVariables(t *testing.T) {
 func TestPreparePlanCacheValid(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
+	// global scope
+	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("100")) // default value
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_size value: '0'"))
 	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 2")
 	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("2"))
+	// session scope
+	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("100")) // default value
+	tk.MustExec("SET SESSION tidb_prepared_plan_cache_size = 0")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_size value: '0'"))
+	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
+	tk.MustExec("SET SESSION tidb_prepared_plan_cache_size = 2")
+	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("2"))
 
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = -0.1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
