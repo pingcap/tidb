@@ -1159,25 +1159,3 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatInt(pb, 10), val)
 }
-
-func TestGeneralPlanCache(t *testing.T) {
-	vars := NewSessionVars()
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
-	val, err := vars.GetGlobalSystemVar(TiDBGeneralPlanCacheSize)
-	require.NoError(t, err)
-	require.Equal(t, val, "100")
-	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBGeneralPlanCacheSize, "1000"))
-	val, err = vars.GetGlobalSystemVar(TiDBGeneralPlanCacheSize)
-	require.NoError(t, err)
-	require.Equal(t, val, "1000")
-	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBGeneralPlanCacheSize, "-1"))
-	val, err = vars.GetGlobalSystemVar(TiDBGeneralPlanCacheSize)
-	require.NoError(t, err)
-	require.Equal(t, val, "0")
-	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBGeneralPlanCacheSize, "1000000"))
-	val, err = vars.GetGlobalSystemVar(TiDBGeneralPlanCacheSize)
-	require.NoError(t, err)
-	require.Equal(t, val, "100000")
-}
