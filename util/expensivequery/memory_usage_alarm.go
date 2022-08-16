@@ -171,6 +171,9 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 		if strings.Contains(f.Name(), "goroutine") {
 			record.lastProfileFileName[1] = append(record.lastProfileFileName[1], name)
 		}
+		if strings.Contains(f.Name(), "system_info") {
+			record.lastSystemInfoFileName = append(record.lastSystemInfoFileName, name)
+		}
 	}
 	record.initialized = true
 }
@@ -276,7 +279,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 }
 
-func getRelevantSystemVariableBuf() strings.Builder {
+func (record *memoryUsageAlarm) getRelevantSystemVariableBuf() strings.Builder {
 	var buf strings.Builder
 	buf.WriteString(fmt.Sprintf("System variables : \n"))
 	buf.WriteString(fmt.Sprintf("oom-action: %v \n", config.GetGlobalConfig().OOMAction))
@@ -308,7 +311,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 		}
 	}()
 
-	buf := getRelevantSystemVariableBuf()
+	buf := record.getRelevantSystemVariableBuf()
 	if _, err = f.WriteString(buf.String()); err != nil {
 		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
 	}
