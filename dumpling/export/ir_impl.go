@@ -99,6 +99,7 @@ func (iter *multiQueriesChunkIter) nextRows() {
 			}
 		}
 		tctx.L().Debug("try to start nextRows", zap.String("query", iter.queries[iter.id]))
+		//nolint:sqlclosecheck
 		rows, err = conn.QueryContext(tctx, iter.queries[iter.id])
 		if err != nil {
 			return
@@ -203,6 +204,7 @@ func newTableData(query string, colLength int, needColTypes bool) *tableData {
 func (td *tableData) Start(tctx *tcontext.Context, conn *sql.Conn) error {
 	tctx.L().Debug("try to start tableData", zap.String("query", td.query))
 	rows, err := conn.QueryContext(tctx, td.query)
+	defer rows.Close()
 	if err != nil {
 		return errors.Annotatef(err, "sql: %s", td.query)
 	}
