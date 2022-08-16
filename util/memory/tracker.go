@@ -17,13 +17,13 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/util/mathutil"
 	atomicutil "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
 )
@@ -117,7 +117,7 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 	t.label = label
 	t.bytesLimit.Store(&bytesLimits{
 		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: mathutil.Max(int64(float64(bytesLimit)*softScale), 1),
+		bytesSoftLimit: int64(math.Ceil(float64(bytesLimit) * softScale)),
 	})
 	t.maxConsumed.Store(0)
 	t.isGlobal = false
@@ -134,7 +134,7 @@ func NewTracker(label int, bytesLimit int64) *Tracker {
 	}
 	t.bytesLimit.Store(&bytesLimits{
 		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: mathutil.Max(int64(float64(bytesLimit)*softScale), 1),
+		bytesSoftLimit: int64(math.Ceil(float64(bytesLimit) * softScale)),
 	})
 	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = false
@@ -148,7 +148,7 @@ func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 	}
 	t.bytesLimit.Store(&bytesLimits{
 		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: mathutil.Max(int64(float64(bytesLimit)*softScale), 1),
+		bytesSoftLimit: int64(math.Ceil(float64(bytesLimit) * softScale)),
 	})
 	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = true
@@ -166,7 +166,7 @@ func (t *Tracker) CheckBytesLimit(val int64) bool {
 func (t *Tracker) SetBytesLimit(bytesLimit int64) {
 	t.bytesLimit.Store(&bytesLimits{
 		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: mathutil.Max(int64(float64(bytesLimit)*softScale), 1),
+		bytesSoftLimit: int64(math.Ceil(float64(bytesLimit) * softScale)),
 	})
 }
 
