@@ -983,7 +983,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		return err
 	}
 
-	store_zones := make(map[string]int)
+	storeZones := make(map[string]int)
 	for _, s := range stores {
 		// skip tumbstone stores or tiflash
 		if s.NodeState == metapb.NodeState_Removing || s.NodeState == metapb.NodeState_Removed || engine.IsTiFlash(s) {
@@ -991,7 +991,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		}
 		for _, label := range s.Labels {
 			if label.Key == placement.DCLabelKey && label.Value != "" {
-				store_zones[label.Value] = 0
+				storeZones[label.Value] = 0
 				break
 			}
 		}
@@ -999,7 +999,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 	enabled := false
 	// if stores don't have zone labels or are distribued in 1 zone, just disable cloeset replica read.
-	if len(store_zones) > 1 {
+	if len(storeZones) > 1 {
 		enabled = true
 		servers, err := infosync.GetAllServerInfo(ctx)
 		if err != nil {
@@ -1007,15 +1007,15 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		}
 		for _, s := range servers {
 			if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
-				if _, ok := store_zones[v]; !ok {
+				if _, ok := storeZones[v]; !ok {
 					enabled = false
 					break
 				}
-				store_zones[v] += 1
+				storeZones[v] += 1
 			}
 		}
 		if enabled {
-			for _, count := range store_zones {
+			for _, count := range storeZones {
 				if count == 0 {
 					enabled = false
 					break
