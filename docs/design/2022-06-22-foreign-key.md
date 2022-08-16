@@ -18,8 +18,8 @@ type TableInfo struct {
     ...
     ForeignKeys         []*FKInfo            `json:"fk_info"`
     ReferredForeignKeys []*ReferredFKInfo    `json:"referred_fk_info"`
-    // MaxFKIndexID uses to allocate foreign key ID. Or use MaxConstraintID instead. 
-    MaxFKIndexID        int64                `json:"max_fk_idx_id"`
+    // MaxFKIndexID uses to allocate foreign key ID.
+    MaxForeignKeyID     int64                `json:"max_fk_id"`
     ...
 }
 
@@ -27,23 +27,22 @@ type TableInfo struct {
 type FKInfo struct {
     ID          int64       `json:"id"`
     Name        CIStr       `json:"fk_name"`
-    RefSchemaID CIStr       `json:"ref_schema_id"`
-    RefTableID  CIStr       `json:"ref_table_id"`
+    RefSchema   CIStr       `json:"ref_schema"`
+    RefTable    CIStr       `json:"ref_table"`
     RefCols     []CIStr     `json:"ref_cols"`
     Cols        []CIStr     `json:"cols"`
     OnDelete    int         `json:"on_delete"`
     OnUpdate    int         `json:"on_update"`
     State       SchemaState `json:"state"`
-    // Deprecated
-    RefTable CIStr `json:"ref_table"`
+    Version     int         `json:"version"`
 }
 
 // ReferredFKInfo provides the referred foreign key in the child table.
 type ReferredFKInfo struct {
     Cols          []CIStr `json:"cols"`
-    ChildSchemaID int64   `json:"child_schema_id"`
-    ChildTableID  int64   `json:"child_table_id"`
-    ChildFKIndex  CIStr   `json:"child_fk_index"`
+    ChildSchema   CIStr   `json:"child_schema"`
+    ChildTable    CIStr   `json:"child_table"`
+    ChildFKName   CIStr   `json:"child_fk"`
 }
 
 ```
@@ -51,6 +50,23 @@ type ReferredFKInfo struct {
 Struct `FKInfo` uses for child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
   - `Version`: uses to distinguish between old and new versions.
 Struct `ReferredFKInfo` is used to record the tables that are referencing the current table.
+
+Why `FKInfo` and `ReferredFKInfo` record the table/schema name instead of table/schema id? Because we may don't know the table/schema id when build `FKInfo`. Here is an example:
+
+```sql
+>set @@foreign_key_checks=0;
+Query OK, 0 rows affected
+>create table t2 (a int key, foreign key fk(a) references t1(id));
+Query OK, 0 rows affected
+>create table t1 (id int key);
+Query OK, 0 rows affected
+>set @@foreign_key_checks=1;
+Query OK, 0 rows affected
+>insert into t2 values (1);
+(1452, 'Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))')
+```
+
+As you can see, the table `t2` is refer to table `t1`, and when create table `t2`, the table `t1` still not be created, so we can't know the id of table `t1`.
 
 ### Create Table with Foreign Key
 
