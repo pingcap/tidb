@@ -21,7 +21,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"go.etcd.io/etcd/tests/v3/integration"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
 )
 
