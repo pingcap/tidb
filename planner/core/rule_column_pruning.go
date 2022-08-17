@@ -192,19 +192,17 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 		_, hashMatch := seen[hash]
 		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
-		if hashMatch {
-			// do nothing, should be filtered
-		} else if len(cols) == 0 {
-			if !expression.IsRuntimeConstExpr(byItem.Expr) {
+		if !hashMatch {
+			if len(cols) == 0 {
+				if !expression.IsRuntimeConstExpr(byItem.Expr) {
+					pruned = false
+					byItems = append(byItems, byItem)
+				}
+			} else if byItem.Expr.GetType().GetType() != mysql.TypeNull {
 				pruned = false
+				parentUsedCols = append(parentUsedCols, cols...)
 				byItems = append(byItems, byItem)
 			}
-		} else if byItem.Expr.GetType().GetType() == mysql.TypeNull {
-			// do nothing, should be filtered
-		} else {
-			pruned = false
-			parentUsedCols = append(parentUsedCols, cols...)
-			byItems = append(byItems, byItem)
 		}
 		if pruned {
 			prunedByItems = append(prunedByItems, byItem)
