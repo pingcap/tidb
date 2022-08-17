@@ -220,12 +220,10 @@ func getGeneralPlan(sctx sessionctx.Context, isGeneralPlanCache bool, cacheKey k
 	needPrivilegeCheck := false
 	privilegeCheckErr := make(chan error, 1)
 	defer func() {
-		if needPrivilegeCheck {
-			e := <-privilegeCheckErr
-			if e != nil {
-				err = e
-				ok = false
-			}
+		e := <-privilegeCheckErr
+		if needPrivilegeCheck && e != nil {
+			err = e
+			ok = false
 		}
 	}()
 	go func() {
