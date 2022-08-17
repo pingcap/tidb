@@ -90,9 +90,7 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 	var timeout = time.Duration(waitTime)
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
-		_, digest := stmtCtx.SQLDigest()
-		logutil.BgLogger().Warn("SendLoadRequests failed",
-			zap.String("digest", digest.String()), zap.Error(err))
+		logutil.BgLogger().Warn("SendLoadRequests failed", zap.Error(err))
 		stmtCtx.IsSyncStatsFailed = true
 		return handleTimeout(stmtCtx)
 	}
@@ -109,9 +107,7 @@ func SyncWaitStatsLoad(plan LogicalPlan) (bool, error) {
 	if success {
 		return true, nil
 	}
-	_, digest := stmtCtx.SQLDigest()
-	logutil.BgLogger().Warn("SyncWaitStatsLoad failed",
-		zap.String("digest", digest.String()))
+	logutil.BgLogger().Warn("SyncWaitStatsLoad failed")
 	stmtCtx.IsSyncStatsFailed = true
 	err := handleTimeout(stmtCtx)
 	return false, err

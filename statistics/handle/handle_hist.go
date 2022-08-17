@@ -85,13 +85,11 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 	if len(sc.StatsLoad.NeededItems) <= 0 {
 		return true
 	}
-	_, digest := sc.SQLDigest()
 	var errorMsgs []string
 	defer func() {
 		if len(errorMsgs) > 0 {
 			logutil.BgLogger().Warn("SyncWaitStatsLoad meets error",
-				zap.Strings("errors", errorMsgs),
-				zap.String("digest", digest.String()))
+				zap.Strings("errors", errorMsgs))
 		}
 		sc.StatsLoad.NeededItems = nil
 	}()
