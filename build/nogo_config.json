@@ -287,6 +287,7 @@
     },
     "only_files": {
       "ddl/backfilling.go": "ddl/backfilling.go",
+      "ddl/lightning": "ddl/lightning",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
       "expression/builtin_cast.go": "expression/builtin_cast code",

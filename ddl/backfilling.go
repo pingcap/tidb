@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/lightning"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -618,12 +619,12 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	// if litWorkerCnt is 0 or err exist, means no resource for lightning execution,
 	// then go back use kernel way to backfill index.
 	var litWorkerCnt int
-	if isLightningEnabled(job.ID) && !needRestoreJob(job.ID) {
+	if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && !bc.NeedRestore() {
 		if !isPiTREnable(w) {
 			litWorkerCnt, err = prepareLightningEngine(job, reorgInfo.currElement.ID, int(workerCnt))
 			if err == nil && workerCnt >= int32(litWorkerCnt) {
 				workerCnt = int32(litWorkerCnt)
-				setNeedRestoreJob(job.ID, true)
+				bc.SetNeedRestore(true)
 			} else {
 				logutil.BgLogger().Error("Lighting Create Engine failed.", zap.Error(err))
 			}
@@ -655,7 +656,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			workerCnt = int32(len(kvRanges))
 		}
 
-		if isLightningEnabled(job.ID) && needRestoreJob(job.ID) && workerCnt > int32(litWorkerCnt) {
+		if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && bc.NeedRestore() && workerCnt > int32(litWorkerCnt) {
 			count, err := prepareLightningEngine(job, reorgInfo.currElement.ID, int(workerCnt-int32(litWorkerCnt)))
 			if err != nil {
 				errMsg := "Lightning engine lost, maybe cause data consistent problem, rollback job."
@@ -688,8 +689,8 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:
-				// Firstly, check and try lightning path
-				if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
+				// Firstly, check and try lightning path.
+				if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && bc.NeedRestore() {
 					idxWorker, err := newAddIndexWorkerLit(sessCtx, w, i, t, decodeColMap, reorgInfo, jc, job.ID)
 					if err == nil {
 						idxWorker.priority = job.Priority
@@ -698,7 +699,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 					}
 				} else {
 					var newBackfillFlow bool = false
-					if isLightningEnabled(job.ID) && !needRestoreJob(job.ID) {
+					if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && !bc.NeedRestore() {
 						newBackfillFlow = true
 					}
 					idxWorker := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc, newBackfillFlow)
@@ -756,8 +757,10 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 		// Disk quota checking and import partial data into TiKV if needed.
 		// Do lightning flush data to make checkpoint.
-		if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
-			if importPartialDataToTiKV(job.ID, reorgInfo.currElement.ID) != nil {
+		if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && bc.NeedRestore() {
+			engineKey := lightning.GenEngineInfoKey(job.ID, reorgInfo.currElement.ID)
+			err := bc.Flush(engineKey)
+			if err != nil {
 				return errors.Trace(err)
 			}
 		}

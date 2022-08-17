@@ -23,10 +23,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	tikv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -44,13 +40,13 @@ type engineInfo struct {
 	cfg          *backend.EngineConfig
 	tableName    string
 	writerCount  int
-	writerCache  map[string]*backend.LocalEngineWriter
+	writerCache  resourceManager[backend.LocalEngineWriter]
+	memRoot      MemRoot
 }
 
 // NewEngineInfo create a new EngineInfo struct.
-func NewEngineInfo(
-	id int64, key string, cfg *backend.EngineConfig, bCtx *BackendContext,
-	en *backend.OpenedEngine, tblName string, uuid uuid.UUID, wCnt int) *engineInfo {
+func NewEngineInfo(id int64, key string, cfg *backend.EngineConfig, bCtx *BackendContext,
+	en *backend.OpenedEngine, tblName string, uuid uuid.UUID, wCnt int, memRoot MemRoot) *engineInfo {
 	ei := engineInfo{
 		id:           id,
 		key:          key,
@@ -60,60 +56,44 @@ func NewEngineInfo(
 		uuid:         uuid,
 		tableName:    tblName,
 		writerCount:  wCnt,
-		writerCache:  make(map[string]*backend.LocalEngineWriter, wCnt),
+		memRoot:      memRoot,
 	}
+	ei.writerCache.init(wCnt)
 	return &ei
 }
 
-// GenEngineInfoKey generate one engine key with jobID and indexID.
-func GenEngineInfoKey(jobID int64, indexID int64) string {
-	return strconv.FormatInt(jobID, 10) + strconv.FormatInt(indexID, 10)
-}
-
-// CreateEngine will create a engine to do backfill task for one add index reorg task.
-func CreateEngine(
-	ctx context.Context,
-	job *model.Job,
-	backendKey string,
-	engineKey string,
-	indexID int64,
-	wCnt int) (err error) {
-	// Get a created backend to create engine under it.
-	bc := GlobalEnv.LitMemRoot.backendCache[backendKey]
-	// Open one engine under an existing backend.
-	cfg := generateLocalEngineConfig(job.ID, job.SchemaName, job.TableName)
-	en, err := bc.backend.OpenEngine(ctx, cfg, job.TableName, int32(indexID))
+// Flush imports all the key-values in engine to the storage.
+func (ei *engineInfo) Flush(ctx context.Context) error {
+	err := ei.openedEngine.Flush(ctx)
 	if err != nil {
-		errMsg := LitErrCreateEngineFail + err.Error()
-		logutil.BgLogger().Error(errMsg)
-		return errors.New(errMsg)
+		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.String("Engine key:", ei.key))
+		return err
 	}
-	id := en.GetEngineUUID()
-	ei := NewEngineInfo(indexID, engineKey, cfg, bc, en, job.TableName, id, wCnt)
-	GlobalEnv.LitMemRoot.EngineMgr.StoreEngineInfo(engineKey, ei)
-	bc.engineCache[engineKey] = ei
 	return nil
 }
 
-// FinishIndexOp will finish local index preparation job and ingest index sst file into TiKV.
-func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, unique bool) (err error) {
-	var errMsg string
-	var keyMsg string
-	ei, exist := GlobalEnv.LitMemRoot.EngineMgr.LoadEngineInfo(engineInfoKey)
-	if !exist {
-		return errors.New(LitErrGetEngineFail)
+func (ei *engineInfo) Clean() error {
+	indexEngine := ei.openedEngine
+	closedEngine, err := indexEngine.Close(ei.backCtx.ctx, ei.cfg)
+	if err != nil {
+		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.String("Engine key", ei.key))
 	}
-	defer func() {
-		GlobalEnv.LitMemRoot.EngineMgr.ReleaseEngine(engineInfoKey)
-	}()
+	// Here the local intermediate file will be removed.
+	err = closedEngine.Cleanup(ei.backCtx.ctx)
+	if err != nil {
+		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.String("Engine key", ei.key))
+	}
+	return err
+}
 
-	keyMsg = "backend key:" + ei.backCtx.key + "Engine key:" + ei.key
+func (ei *engineInfo) ImportAndClean() error {
+	keyMsg := "backend key:" + ei.backCtx.key + "Engine key:" + ei.key
 	// Close engine and finish local tasks of lightning.
 	logutil.BgLogger().Info(LitInfoCloseEngine, zap.String("backend key", ei.backCtx.key), zap.String("Engine key", ei.key))
 	indexEngine := ei.openedEngine
 	closeEngine, err1 := indexEngine.Close(ei.backCtx.ctx, ei.cfg)
 	if err1 != nil {
-		errMsg = LitErrCloseEngineErr + keyMsg
+		errMsg := LitErrCloseEngineErr + keyMsg
 		logutil.BgLogger().Error(errMsg)
 		return errors.New(errMsg)
 	}
@@ -121,114 +101,89 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 	// Reset disk quota before ingest, if user changed it.
 	GlobalEnv.checkAndResetQuota()
 
-	// Ingest data to TiKV
+	// Ingest data to TiKV.
 	logutil.BgLogger().Info(LitInfoStartImport, zap.String("backend key", ei.backCtx.key),
 		zap.String("Engine key", ei.key),
 		zap.String("Split Region Size", strconv.FormatInt(int64(config.SplitRegionSize), 10)))
-	err = closeEngine.Import(ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err := closeEngine.Import(ei.backCtx.ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
-		errMsg = LitErrIngestDataErr + keyMsg
+		errMsg := LitErrIngestDataErr + keyMsg
 		logutil.BgLogger().Error(errMsg)
 		return errors.New(errMsg)
 	}
 
 	// Clean up the engine local workspace.
-	err = closeEngine.Cleanup(ctx)
+	err = closeEngine.Cleanup(ei.backCtx.ctx)
 	if err != nil {
-		errMsg = LitErrCloseEngineErr + keyMsg
+		errMsg := LitErrCloseEngineErr + keyMsg
 		logutil.BgLogger().Error(errMsg)
 		return errors.New(errMsg)
-	}
-
-	// Check Remote duplicate value for index
-	if unique {
-		hasDupe, err := ei.backCtx.backend.CollectRemoteDuplicateIndex(ctx, tbl, ei.tableName, &kv.SessionOptions{
-			SQLMode: mysql.ModeStrictAllTables,
-			SysVars: ei.backCtx.sysVars,
-		}, ei.id)
-		if err != nil {
-			errMsg = LitErrRemoteDupCheckrr + keyMsg
-			logutil.BgLogger().Error(errMsg)
-			return errors.New(errMsg)
-		} else if hasDupe {
-			errMsg = LitErrRemoteDupExistErr + keyMsg
-			logutil.BgLogger().Error(errMsg)
-			return tikv.ErrKeyExists
-		}
-	}
-	return nil
-}
-
-// FlushEngine flush the lightning engine memory data into local disk.
-func FlushEngine(engineKey string, ei *engineInfo) error {
-	err := ei.openedEngine.Flush(ei.backCtx.ctx)
-	if err != nil {
-		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.String("Engine key:", engineKey))
-		return err
-	}
-	return nil
-}
-
-// UnsafeImportEngineData check if disk consumption is over disk quota, if yes then ingest temp file into TiKV
-func UnsafeImportEngineData(jobID int64, indexID int64) error {
-	engineKey := GenEngineInfoKey(jobID, indexID)
-	ei, exist := GlobalEnv.LitMemRoot.EngineMgr.LoadEngineInfo(engineKey)
-	if !exist {
-		logutil.BgLogger().Error(LitErrGetEngineFail, zap.String("Engine key:", engineKey))
-		return errors.New(LitErrGetEngineFail)
-	}
-
-	totalStorageUsed, totalStorageAvail := GlobalEnv.LitMemRoot.DiskStat()
-	GlobalEnv.checkAndResetQuota()
-	if GlobalEnv.NeedImportEngineData(totalStorageUsed, totalStorageAvail) {
-		// ToDo it should be changed according checkpoint solution.
-		// Flush writer cached data into local disk for engine first.
-		err := FlushEngine(engineKey, ei)
-		if err != nil {
-			return err
-		}
-		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.String("Engine key:", engineKey), zap.String("Current total available disk:", strconv.FormatUint(totalStorageAvail, 10)))
-		err = ei.backCtx.backend.UnsafeImportAndReset(ei.backCtx.ctx, ei.uuid, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys))
-		if err != nil {
-			logutil.BgLogger().Error(LitErrIngestDataErr, zap.String("Engine key:", engineKey),
-				zap.String("import partial file failed, current disk storage remains", strconv.FormatUint(totalStorageAvail, 10)))
-			return err
-		}
 	}
 	return nil
 }
 
 // WorkerContext used keep one lightning local writer for one backfill worker.
 type WorkerContext struct {
-	eInfo  *engineInfo
+	ctx    context.Context
 	lWrite *backend.LocalEngineWriter
+}
+
+func (ei *engineInfo) NewWorkerCtx(id int) (*WorkerContext, error) {
+	memRequire := StructSizeWorkerCtx
+	// First to check the memory usage.
+	ei.memRoot.RefreshConsumption()
+	err := ei.memRoot.TryConsume(memRequire)
+	if err != nil {
+		logutil.BgLogger().Error(LitErrAllocMemFail, zap.String("Engine key", ei.key),
+			zap.String("worker Id:", strconv.Itoa(id)),
+			zap.String("Memory allocate:", strconv.FormatInt(memRequire, 10)),
+			zap.String("Current Memory Usage:", strconv.FormatInt(ei.memRoot.CurrentUsage(), 10)),
+			zap.String("Memory limitation:", strconv.FormatInt(ei.memRoot.MaxMemoryQuota(), 10)))
+		return nil, err
+	}
+
+	wCtx, err := ei.newWorkerContext(id)
+	if err != nil {
+		logutil.BgLogger().Error(LitErrCreateContextFail, zap.String("Engine key", ei.key),
+			zap.String("worker Id:", strconv.Itoa(id)),
+			zap.String("Memory allocate:", strconv.FormatInt(memRequire, 10)),
+			zap.String("Current Memory Usage:", strconv.FormatInt(ei.memRoot.CurrentUsage(), 10)),
+			zap.String("Memory limitation:", strconv.FormatInt(ei.memRoot.MaxMemoryQuota(), 10)))
+		return nil, err
+	}
+
+	ei.memRoot.Consume(memRequire)
+	logutil.BgLogger().Info(LitInfoCreateWrite, zap.String("Engine key", ei.key),
+		zap.String("worker Id:", strconv.Itoa(id)),
+		zap.String("Memory allocate:", strconv.FormatInt(memRequire, 10)),
+		zap.String("Current Memory Usage:", strconv.FormatInt(ei.memRoot.CurrentUsage(), 10)),
+		zap.String("Memory limitation:", strconv.FormatInt(ei.memRoot.MaxMemoryQuota(), 10)))
+	return wCtx, err
 }
 
 // InitWorkerContext will get worker local writer from engine info writer cache first, if exists.
 // If local writer not exist, then create new one and store it into engine info writer cache.
 // note: operate ei.writeCache map is not thread safe please make sure there is sync mechanism to
 // make sure the safe.
-func (wCtx *WorkerContext) InitWorkerContext(engineKey string, workerID int) (err error) {
-	wCtxKey := engineKey + strconv.Itoa(workerID)
-	ei, exist := GlobalEnv.LitMemRoot.EngineMgr.enginePool[engineKey]
-	if !exist {
-		return errors.New(LitErrGetEngineFail)
-	}
-	wCtx.eInfo = ei
-
+func (ei *engineInfo) newWorkerContext(workerID int) (*WorkerContext, error) {
+	wCtxKey := ei.key + strconv.Itoa(workerID)
 	// First get local writer from engine cache.
-	wCtx.lWrite, exist = ei.writerCache[wCtxKey]
+	lWrite, exist := ei.writerCache.Load(wCtxKey)
 	// If not exist then build one
 	if !exist {
-		wCtx.lWrite, err = ei.openedEngine.LocalWriter(ei.backCtx.ctx, &backend.LocalWriterConfig{})
+		var err error
+		lWrite, err = ei.openedEngine.LocalWriter(ei.backCtx.ctx, &backend.LocalWriterConfig{})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		// Cache the lwriter, here we do not lock, because this is done under mem root alloc
 		// process it own the lock already while alloc object.
-		ei.writerCache[wCtxKey] = wCtx.lWrite
+		ei.writerCache.Store(wCtxKey, lWrite)
 	}
-	return nil
+	return &WorkerContext{
+		ctx:    ei.backCtx.ctx,
+		lWrite: lWrite,
+	}, nil
 }
 
 // WriteRow Write one row into local writer buffer.
@@ -237,19 +192,24 @@ func (wCtx *WorkerContext) WriteRow(key, idxVal []byte) error {
 	kvs[0].Key = key
 	kvs[0].Val = idxVal
 	row := kv.MakeRowsFromKvPairs(kvs)
-	return wCtx.lWrite.WriteRows(wCtx.eInfo.backCtx.ctx, nil, row)
+	return wCtx.lWrite.WriteRows(wCtx.ctx, nil, row)
+}
+
+// GenEngineInfoKey generate one engine key with jobID and indexID.
+func GenEngineInfoKey(jobID int64, indexID int64) string {
+	return strconv.FormatInt(jobID, 10) + strconv.FormatInt(indexID, 10)
 }
 
 // CanRestoreReorgTask only when backend and Engine still be cached, then the task could be restored,
 // otherwise return false to let reorg task restart.
 func CanRestoreReorgTask(jobID int64, indexID int64) bool {
-	engineInfoKey := GenEngineInfoKey(jobID, indexID)
-	bcKey := GenBackendContextKey(jobID)
-	_, enExist := GlobalEnv.LitMemRoot.EngineMgr.LoadEngineInfo(engineInfoKey)
-	_, bcExist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
+	bc, bcExist := BackCtxMgr.Load(jobID)
 	if !bcExist {
-		logutil.BgLogger().Warn(LitWarnBackendNOTExist, zap.String("backend key:", bcKey))
+		logutil.BgLogger().Warn(LitWarnBackendNOTExist, zap.Int64("backend key:", jobID))
+		return false
 	}
+	engineInfoKey := GenEngineInfoKey(jobID, indexID)
+	_, enExist := bc.EngMgr.Load(engineInfoKey)
 	if enExist && bcExist {
 		return true
 	}

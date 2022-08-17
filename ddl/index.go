@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/lightning"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -598,9 +599,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateNone:
 		// Determine whether the lightning backfill process will be used.
 		if IsEnableFastReorg() {
-			err = prepareBackend(w.ctx, indexInfo.Unique, job, job.ReorgMeta.SQLMode)
+			err = lightning.BackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
 			if err == nil {
-				setLightningEnabled(job.ID, true)
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
 		}
@@ -711,26 +711,27 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	case model.BackfillStateRunning:
 		logutil.BgLogger().Info("Lightning backfill state running")
 		// Restore reorg task if it interrupts during backfill state and TiDB owner is not changed or restarted.
-		if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
-			// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consistent.
-			// TODO：Should be changed after checkpoint.
-			if !canRestoreReorgTask(job, indexInfo.ID) {
-				job.SnapshotVer = 0
-				reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
-				if err != nil || reorgInfo.first {
-					return false, ver, errors.Trace(err)
+		if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok {
+			if bc.NeedRestore() {
+				// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consistent.
+				// TODO：Should be changed after checkpoint.
+				if !canRestoreReorgTask(job, indexInfo.ID) {
+					job.SnapshotVer = 0
+					reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
+					if err != nil || reorgInfo.first {
+						return false, ver, errors.Trace(err)
+					}
 				}
 			}
-		} else if !isLightningEnabled(job.ID) {
+		} else {
 			// Be here, means the DDL Owner changed or restarted, the reorg state is re-entered.
 			// If it is an empty table, do not need to start lightning backfiller.
 			if reorgInfo.StartKey == nil && reorgInfo.EndKey == nil {
 				return false, ver, nil
 			}
 
-			err = prepareBackend(w.ctx, indexInfo.Unique, job, reorgInfo.ReorgMeta.SQLMode)
+			err = lightning.BackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, reorgInfo.ReorgMeta.SQLMode)
 			if err == nil {
-				setLightningEnabled(job.ID, true)
 				// Todo: refactor when checkpoint implement.
 				if err := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err != nil {
 					logutil.BgLogger().Warn("[ddl] Lightning: removeDDLReorgHandle failed", zap.Error(err))
@@ -767,7 +768,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		logutil.BgLogger().Info("Lightning finished merge the increment part of adding index")
 		// Clean lightning backend.
-		cleanUpLightningEnv(reorgInfo, false)
+		cleanUpLightningEnv(reorgInfo, false, indexInfo.ID)
 		return true, ver, nil
 	default:
 		return false, 0, errors.New("Lightning go fast path wrong sub states: should not happened")
@@ -858,7 +859,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		return true, ver, errors.Trace(err)
 	}
 	// Cleanup lightning engines.
-	err = cleanUpLightningEngines(reorgInfo)
+	cleanUpLightningEngines(reorgInfo)
 	return false, ver, errors.Trace(err)
 }
 

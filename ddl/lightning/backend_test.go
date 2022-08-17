@@ -37,8 +37,8 @@ func TestAdjustMemory(t *testing.T) {
 	}
 	InitGlobalLightningBackendEnv()
 	for _, test := range tests {
-		GlobalEnv.LitMemRoot.Reset(test.quota)
-		cfg, err := generateLightningConfig("bckey", false)
+		BackCtxMgr.MemRoot.SetMaxMemoryQuota(test.quota)
+		cfg, err := generateLightningConfig(BackCtxMgr.MemRoot, 1, false)
 		require.NoError(t, err)
 		require.Equal(t, test.lsize, int64(cfg.TikvImporter.LocalWriterMemCacheSize))
 		require.Equal(t, test.ensize, int64(cfg.TikvImporter.EngineMemCacheSize))
@@ -50,37 +50,36 @@ func TestLightningBackend(t *testing.T) {
 	InitGlobalLightningBackendEnv()
 	require.Equal(t, GlobalEnv.IsInited, true)
 	ctx := context.Background()
-	require.Equal(t, GlobalEnv.LitMemRoot.currUsage, int64(0))
+	require.Equal(t, BackCtxMgr.MemRoot.CurrentUsage(), int64(0))
 	// Init important variables
 	sysVars := obtainImportantVariables()
-	bckey := "bckey1"
-	cfg, err := generateLightningConfig(bckey, false)
+	jobID := int64(1)
+	cfg, err := generateLightningConfig(BackCtxMgr.MemRoot, jobID, false)
 	require.NoError(t, err)
-	GlobalEnv.LitMemRoot.backendCache[bckey] = newBackendContext(ctx, bckey, nil, cfg, sysVars)
+	BackCtxMgr.Store(jobID, newBackendContext(ctx, jobID, nil, cfg, sysVars, BackCtxMgr.MemRoot))
 	require.NoError(t, err)
 
 	// Memory allocate failed
-	GlobalEnv.LitMemRoot.currUsage = GlobalEnv.LitMemRoot.maxLimit
-	err = GlobalEnv.LitMemRoot.checkMemoryUsage(StructSizeBackendCtx)
+	BackCtxMgr.MemRoot.SetMaxMemoryQuota(BackCtxMgr.MemRoot.CurrentUsage())
+	err = BackCtxMgr.MemRoot.TryConsume(StructSizeBackendCtx)
 	require.Error(t, err)
 
 	// variable test
-	isEnable := IsEngineLightningBackfill(1)
-	needRestore := NeedRestore(1)
+	bc, isEnable := BackCtxMgr.Load(1)
+	needRestore := bc.NeedRestore()
 	require.Equal(t, false, isEnable)
 	require.Equal(t, false, needRestore)
 
-	bckey = "2"
-	GlobalEnv.LitMemRoot.backendCache[bckey] = newBackendContext(ctx, bckey, nil, cfg, sysVars)
-	isEnable = IsEngineLightningBackfill(2)
-	needRestore = NeedRestore(2)
+	jobID = 2
+	BackCtxMgr.Store(jobID, newBackendContext(ctx, jobID, nil, cfg, sysVars, BackCtxMgr.MemRoot))
+	bc, isEnable = BackCtxMgr.Load(2)
+	needRestore = bc.NeedRestore()
 	require.Equal(t, false, isEnable)
 	require.Equal(t, false, needRestore)
 
-	SetEnable(2, true)
-	SetNeedRestore(2, true)
-	isEnable = IsEngineLightningBackfill(2)
-	needRestore = NeedRestore(2)
+	bc.SetNeedRestore(true)
+	bc, isEnable = BackCtxMgr.Load(2)
+	needRestore = bc.NeedRestore()
 	require.Equal(t, true, isEnable)
 	require.Equal(t, true, needRestore)
 }

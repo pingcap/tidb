@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	trans "github.com/pingcap/tidb/store/driver/txn"
@@ -75,50 +74,21 @@ func isPiTREnable(w *worker) bool {
 	return lit.CheckPiTR(ctx)
 }
 
-func isLightningEnabled(id int64) bool {
-	return lit.IsEngineLightningBackfill(id)
-}
-
-func setLightningEnabled(id int64, value bool) {
-	lit.SetEnable(id, value)
-}
-
-func needRestoreJob(id int64) bool {
-	return lit.NeedRestore(id)
-}
-
-func setNeedRestoreJob(id int64, value bool) {
-	lit.SetNeedRestore(id, value)
-}
-
-func prepareBackend(ctx context.Context, unique bool, job *model.Job, sqlMode mysql.SQLMode) (err error) {
-	bcKey := lit.GenBackendContextKey(job.ID)
-	// Create and register the backend of lightning.
-	err = lit.GlobalEnv.LitMemRoot.RegisterBackendContext(ctx, unique, bcKey, sqlMode)
-	if err != nil {
-		lit.GlobalEnv.LitMemRoot.DeleteBackendContext(bcKey)
-		return err
-	}
-
-	return err
-}
-
 func prepareLightningEngine(job *model.Job, indexID int64, workerCnt int) (wCnt int, err error) {
-	bcKey := lit.GenBackendContextKey(job.ID)
 	enginKey := lit.GenEngineInfoKey(job.ID, indexID)
-	wCnt, err = lit.GlobalEnv.LitMemRoot.RegisterEngineInfo(job, bcKey, enginKey, indexID, workerCnt)
+	bc, _ := lit.BackCtxMgr.Load(job.ID)
+	wCnt, err = bc.EngMgr.Register(bc, job, enginKey, indexID, workerCnt)
 	if err != nil {
-		lit.GlobalEnv.LitMemRoot.DeleteBackendContext(bcKey)
+		lit.BackCtxMgr.Unregister(job.ID)
 	}
 	return wCnt, err
 }
 
 // importIndexDataToStore import local index sst file into TiKV.
 func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexID int64, unique bool, tbl table.Table) error {
-	if isLightningEnabled(reorg.ID) && needRestoreJob(reorg.ID) {
+	if bc, ok := lit.BackCtxMgr.Load(reorg.Job.ID); ok && bc.NeedRestore() {
 		engineInfoKey := lit.GenEngineInfoKey(reorg.ID, indexID)
-		// just log info.
-		err := lit.FinishIndexOp(ctx, engineInfoKey, tbl, unique)
+		err := bc.FinishImport(engineInfoKey, unique, tbl)
 		if err != nil {
 			err = errors.Trace(err)
 			return err
@@ -130,30 +100,26 @@ func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexID int64
 }
 
 // cleanUpLightningEnv will clean one DDL job's backend context.
-func cleanUpLightningEnv(reorg *reorgInfo, isCanceled bool, indexIDs ...int64) {
-	if isLightningEnabled(reorg.ID) {
-		bcKey := lit.GenBackendContextKey(reorg.ID)
+func cleanUpLightningEnv(reorg *reorgInfo, isCanceled bool, indexID int64) {
+	if bc, ok := lit.BackCtxMgr.Load(reorg.Job.ID); ok {
 		// If reorg is cancelled, need to clean up engine.
 		if isCanceled {
-			lit.GlobalEnv.LitMemRoot.ClearEngines(reorg.ID, indexIDs...)
+			eiKey := lit.GenEngineInfoKey(reorg.ID, indexID)
+			ei, exist := bc.EngMgr.Load(eiKey)
+			if exist {
+				_ = ei.Clean()
+			}
 		}
-		lit.GlobalEnv.LitMemRoot.DeleteBackendContext(bcKey)
+		lit.BackCtxMgr.Unregister(reorg.ID)
 	}
 }
 
 // cleanUpLightningEngines will clean one DDL job's engines.
-func cleanUpLightningEngines(reorg *reorgInfo) error {
-	if isLightningEnabled(reorg.ID) {
-		bcKey := lit.GenBackendContextKey(reorg.ID)
-		setNeedRestoreJob(reorg.ID, false)
-		return lit.GlobalEnv.LitMemRoot.DeleteBackendEngines(bcKey)
+func cleanUpLightningEngines(reorg *reorgInfo) {
+	if bc, ok := lit.BackCtxMgr.Load(reorg.Job.ID); ok {
+		bc.SetNeedRestore(false)
+		bc.EngMgr.UnregisterAll()
 	}
-	return nil
-}
-
-// Disk quota checking and ingest data.
-func importPartialDataToTiKV(jobID int64, indexID int64) error {
-	return lit.UnsafeImportEngineData(jobID, indexID)
 }
 
 // Check if this reorg is a restore reorg task
@@ -190,8 +156,9 @@ func newAddIndexWorkerLit(sessCtx sessionctx.Context, worker *worker, id int, t 
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	engineInfoKey := lit.GenEngineInfoKey(jobID, index.Meta().ID)
-
-	lwCtx, err := lit.GlobalEnv.LitMemRoot.RegisterWorkerContext(engineInfoKey, id)
+	bc, _ := lit.BackCtxMgr.Load(jobID)
+	ei, _ := bc.EngMgr.Load(engineInfoKey)
+	lwCtx, err := ei.NewWorkerCtx(id)
 	if err != nil {
 		return nil, err
 	}

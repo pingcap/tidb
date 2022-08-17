@@ -27,7 +27,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func generateLightningConfig(bcKey string, unique bool) (*config.Config, error) {
+func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config.Config, error) {
+	bcKey := GenBackendContextKey(jobID)
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 	// Each backend will build a single dir in lightning dir.
@@ -37,7 +38,7 @@ func generateLightningConfig(bcKey string, unique bool) (*config.Config, error) 
 		logutil.BgLogger().Warn(LitWarnConfigError, zap.Error(err))
 		return nil, err
 	}
-	adjustImportMemory(cfg)
+	adjustImportMemory(memRoot, cfg)
 	cfg.Checkpoint.Enable = true
 	if unique {
 		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRecord
@@ -76,10 +77,10 @@ func generateLocalEngineConfig(id int64, db, tbName string) *backend.EngineConfi
 }
 
 // Adjust lightning memory parameters according memory root's max limitation
-func adjustImportMemory(cfg *config.Config) {
+func adjustImportMemory(memRoot MemRoot, cfg *config.Config) {
 	var scale int64
 	// Try aggressive resource usage successful.
-	if tryAggressiveMemory(cfg) {
+	if tryAggressiveMemory(memRoot, cfg) {
 		return
 	}
 
@@ -90,8 +91,9 @@ func adjustImportMemory(cfg *config.Config) {
 		zap.String("EngineMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
 		zap.String("range concurrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
 
-	if defaultMemSize > GlobalEnv.LitMemRoot.maxLimit {
-		scale = defaultMemSize / GlobalEnv.LitMemRoot.maxLimit
+	maxLimit := memRoot.MaxMemoryQuota()
+	if defaultMemSize > maxLimit {
+		scale = defaultMemSize / maxLimit
 	}
 
 	if scale == 1 || scale == 0 {
@@ -108,12 +110,12 @@ func adjustImportMemory(cfg *config.Config) {
 }
 
 // tryAggressiveMemory lightning memory parameters according memory root's max limitation.
-func tryAggressiveMemory(cfg *config.Config) bool {
+func tryAggressiveMemory(memRoot MemRoot, cfg *config.Config) bool {
 	var defaultMemSize int64
 	defaultMemSize = int64(int(cfg.TikvImporter.LocalWriterMemCacheSize) * cfg.TikvImporter.RangeConcurrency)
 	defaultMemSize += int64(cfg.TikvImporter.EngineMemCacheSize)
 
-	if (defaultMemSize + GlobalEnv.LitMemRoot.currUsage) > GlobalEnv.LitMemRoot.maxLimit {
+	if (defaultMemSize + memRoot.CurrentUsage()) > memRoot.MaxMemoryQuota() {
 		return false
 	}
 	logutil.BgLogger().Info(LitInfoChgMemSetting,

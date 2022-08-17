@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/lightning"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -258,7 +259,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
 		}
 		// If go through new backfill path, will delay remove operation.
-		if !isLightningEnabled(reorgInfo.ID) {
+		if _, ok := lightning.BackCtxMgr.Load(reorgInfo.Job.ID); !ok {
 			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 				logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 				return errors.Trace(err1)
@@ -325,7 +326,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		// For lightning there is a part import should be counted.
-		if isLightningEnabled(reorgInfo.ID) {
+		if _, ok := lightning.BackCtxMgr.Load(reorgInfo.Job.ID); ok {
 			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorgInfo.SchemaName, tblInfo.Name.String()).Set(BackfillProgressPercent * progress * 100)
 		} else {
 			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
@@ -395,13 +396,14 @@ type reorgInfo struct {
 }
 
 func (r *reorgInfo) String() string {
+	_, isEnabled := lightning.BackCtxMgr.Load(r.Job.ID)
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
 		"StartHandle:" + tryDecodeToHandleString(r.StartKey) + "," +
 		"EndHandle:" + tryDecodeToHandleString(r.EndKey) + "," +
 		"First:" + strconv.FormatBool(r.first) + "," +
 		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10) + "," +
-		"Lightning execution:" + strconv.FormatBool(isLightningEnabled(r.ID))
+		"Lightning execution:" + strconv.FormatBool(isEnabled)
 }
 
 func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {

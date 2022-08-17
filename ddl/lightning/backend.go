@@ -16,18 +16,16 @@ package lightning
 
 import (
 	"context"
-	"database/sql"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/model"
+	tikv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -37,114 +35,82 @@ type BackendContext struct {
 	backend     *backend.Backend
 	ctx         context.Context
 	cfg         *config.Config
-	engineCache map[string]*engineInfo
+	EngMgr      engineManager
 	sysVars     map[string]string
-	enabled     bool
 	needRestore bool
 }
 
-func newBackendContext(ctx context.Context, key string, be *backend.Backend, cfg *config.Config, vars map[string]string) *BackendContext {
-	return &BackendContext{
-		key:         key,
-		backend:     be,
-		ctx:         ctx,
-		cfg:         cfg,
-		engineCache: make(map[string]*engineInfo, 10),
-		sysVars:     vars,
+// FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
+// removes the engine from the backend context.
+func (bc *BackendContext) FinishImport(engineInfoKey string, unique bool, tbl table.Table) error {
+	var errMsg string
+	var keyMsg string
+	ei, exist := bc.EngMgr.Load(engineInfoKey)
+	if !exist {
+		return errors.New(LitErrGetEngineFail)
 	}
-}
+	defer func() {
+		bc.EngMgr.Drop(engineInfoKey)
+	}()
 
-func createLocalBackend(ctx context.Context, cfg *config.Config, glue glue.Glue) (backend.Backend, error) {
-	tls, err := cfg.ToTLS()
+	err := ei.ImportAndClean()
 	if err != nil {
-		log.L().Error(LitErrCreateBackendFail, zap.Error(err))
-		return backend.Backend{}, err
+		return err
 	}
 
-	errorMgr := errormanager.New(nil, cfg, log.FromContext(ctx))
-	return local.NewLocalBackend(ctx, tls, cfg, glue, int(GlobalEnv.limit), errorMgr)
-}
-
-// GenBackendContextKey generate a backend key from job id for a DDL job.
-func GenBackendContextKey(jobID int64) string {
-	return strconv.FormatInt(jobID, 10)
-}
-
-type glueLit struct{}
-
-// OwnsSQLExecutor Implement interface OwnsSQLExecutor.
-func (g glueLit) OwnsSQLExecutor() bool {
-	return false
-}
-
-// GetSQLExecutor Implement interface GetSQLExecutor.
-func (g glueLit) GetSQLExecutor() glue.SQLExecutor {
+	// Check Remote duplicate value for index
+	if unique {
+		hasDupe, err := bc.backend.CollectRemoteDuplicateIndex(bc.ctx, tbl, ei.tableName, &kv.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+			SysVars: ei.backCtx.sysVars,
+		}, ei.id)
+		if err != nil {
+			errMsg = LitErrRemoteDupCheckrr + keyMsg
+			logutil.BgLogger().Error(errMsg)
+			return errors.New(errMsg)
+		} else if hasDupe {
+			errMsg = LitErrRemoteDupExistErr + keyMsg
+			logutil.BgLogger().Error(errMsg)
+			return tikv.ErrKeyExists
+		}
+	}
 	return nil
 }
 
-// GetDB Implement interface GetDB.
-func (g glueLit) GetDB() (*sql.DB, error) {
-	return nil, nil
-}
+// Flush checks the disk quota and imports the current key-values in engine to the storage.
+func (bc *BackendContext) Flush(engineKey string) error {
+	ei, exist := bc.EngMgr.Load(engineKey)
+	if !exist {
+		logutil.BgLogger().Error(LitErrGetEngineFail, zap.String("Engine key:", engineKey))
+		return errors.New(LitErrGetEngineFail)
+	}
 
-// GetParser Implement interface GetParser.
-func (g glueLit) GetParser() *parser.Parser {
+	totalStorageUsed, totalStorageAvail := GlobalEnv.DiskStat()
+	GlobalEnv.checkAndResetQuota()
+	if GlobalEnv.NeedImportEngineData(totalStorageUsed, totalStorageAvail) {
+		// ToDo it should be changed according checkpoint solution.
+		// Flush writer cached data into local disk for engine first.
+		err := ei.Flush(bc.ctx)
+		if err != nil {
+			return err
+		}
+		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.String("Engine key:", engineKey), zap.String("Current total available disk:", strconv.FormatUint(totalStorageAvail, 10)))
+		err = bc.backend.UnsafeImportAndReset(ei.backCtx.ctx, ei.uuid, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys))
+		if err != nil {
+			logutil.BgLogger().Error(LitErrIngestDataErr, zap.String("Engine key:", engineKey),
+				zap.String("import partial file failed, current disk storage remains", strconv.FormatUint(totalStorageAvail, 10)))
+			return err
+		}
+	}
 	return nil
 }
 
-// GetTables Implement interface GetTables.
-func (g glueLit) GetTables(context.Context, string) ([]*model.TableInfo, error) {
-	return nil, nil
-}
-
-// GetSession Implement interface GetSession.
-func (g glueLit) GetSession(context.Context) (checkpoints.Session, error) {
-	return nil, nil
-}
-
-// OpenCheckpointsDB Implement interface OpenCheckpointsDB.
-func (g glueLit) OpenCheckpointsDB(context.Context, *config.Config) (checkpoints.DB, error) {
-	return nil, nil
-}
-
-// Record is used to report some information (key, value) to host TiDB, including progress, stage currently.
-func (g glueLit) Record(string, uint64) {
-}
-
-// IsEngineLightningBackfill show if lightning backend env is set up.
-func IsEngineLightningBackfill(id int64) bool {
-	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
-	if !exist {
-		return false
-	}
-	return bc.enabled
-}
-
-// SetEnable set backend status.
-func SetEnable(id int64, value bool) {
-	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
-	if exist {
-		bc.enabled = value
-	}
-}
-
-// NeedRestore shows if engine is created.
-func NeedRestore(id int64) bool {
-	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
-	if !exist {
-		return false
-	}
+// NeedRestore indicates whether the backfill job need to be restored.
+func (bc *BackendContext) NeedRestore() bool {
 	return bc.needRestore
 }
 
-// SetNeedRestore set engine status.
-func SetNeedRestore(id int64, value bool) {
-	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
-	if exist {
-		bc.needRestore = value
-	}
+// SetNeedRestore sets the need restore flag.
+func (bc *BackendContext) SetNeedRestore(needRestore bool) {
+	bc.needRestore = needRestore
 }

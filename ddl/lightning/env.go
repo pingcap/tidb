@@ -32,12 +32,6 @@ import (
 )
 
 const (
-	_kb                     = 1024
-	_mb                     = 1024 * _kb
-	_gb                     = 1024 * _mb
-	_tb                     = 1024 * _gb
-	_pb                     = 1024 * _tb
-	flushSize               = 8 * _mb
 	importThreshold float32 = 0.15
 )
 
@@ -54,7 +48,6 @@ type Env struct {
 	limit int64
 	ClusterInfo
 	SortPath   string
-	LitMemRoot MemoryRoot
 	diskQuota  int64
 	IsInited   bool
 	isTestMode bool
@@ -62,7 +55,9 @@ type Env struct {
 
 var (
 	// GlobalEnv global lightning environment var.
-	GlobalEnv   Env
+	GlobalEnv Env
+	// BackCtxMgr is the entry for the lightning backfill process.
+	BackCtxMgr  backendCtxManager
 	maxMemLimit uint64 = 1 * _gb
 )
 
@@ -108,7 +103,8 @@ func InitGlobalLightningBackendEnv() {
 			zap.Error(err),
 			zap.String("will use default memory limitation:", strconv.FormatUint(maxMemLimit, 10)))
 	}
-	GlobalEnv.LitMemRoot.init(int64(maxMemLimit))
+	memRoot := NewMemRootImpl(int64(maxMemLimit), &BackCtxMgr)
+	BackCtxMgr.init(memRoot)
 	// If Generated sortPath failed, lightning will initial failed.
 	// also if the disk quota is not a proper value
 	GlobalEnv.SortPath, err = genLightningDataDir(cfg.TempDir, cfg.Port)
@@ -135,11 +131,24 @@ func InitGlobalLightningBackendEnv() {
 
 	GlobalEnv.IsInited = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
-		zap.String("Current memory usage:", strconv.FormatInt(GlobalEnv.LitMemRoot.currUsage, 10)),
+		zap.String("Current memory usage:", strconv.FormatInt(BackCtxMgr.MemRoot.CurrentUsage(), 10)),
 		zap.String("Memory limitation set to:", strconv.FormatUint(maxMemLimit, 10)),
 		zap.String("Sort Path disk quota:", strconv.FormatInt(GlobalEnv.diskQuota, 10)),
 		zap.String("Max open file number:", strconv.FormatInt(GlobalEnv.limit, 10)),
 		zap.String("Lightning is initialized:", strconv.FormatBool(GlobalEnv.IsInited)))
+}
+
+// DiskStat check total lightning disk usage and storage available space.
+func (*Env) DiskStat() (total uint64, available uint64) {
+	totalDiskUsed := BackCtxMgr.CheckDiskQuota(GlobalEnv.diskQuota)
+	sz, err := lcom.GetStorageSize(GlobalEnv.SortPath)
+	if err != nil {
+		logutil.BgLogger().Error(LitErrGetStorageQuota,
+			zap.String("OS error:", err.Error()),
+			zap.String("default disk quota", strconv.FormatInt(GlobalEnv.diskQuota, 10)))
+		return uint64(totalDiskUsed), uint64(GlobalEnv.diskQuota)
+	}
+	return uint64(totalDiskUsed), sz.Available
 }
 
 // parseDiskQuota init dist quota for lightning execution environment. it will

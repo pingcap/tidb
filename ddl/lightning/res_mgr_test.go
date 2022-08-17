@@ -25,77 +25,77 @@ import (
 func TestMemoryControl(t *testing.T) {
 	GlobalEnv.SetMinQuota()
 	InitGlobalLightningBackendEnv()
-	GlobalEnv.LitMemRoot.maxLimit = int64(2 * _gb)
+	BackCtxMgr.MemRoot.SetMaxMemoryQuota(int64(2 * _gb))
 	require.Equal(t, true, GlobalEnv.IsInited)
-	require.Equal(t, int64(0), GlobalEnv.LitMemRoot.currUsage)
+	require.Equal(t, int64(0), BackCtxMgr.MemRoot.CurrentUsage())
 
 	ctx := context.Background()
 	// Init important variables
 	sysVars := obtainImportantVariables()
-	bcKey := "bcKey1"
-	cfg, err := generateLightningConfig(bcKey, false)
+	jobID := int64(1)
+	cfg, err := generateLightningConfig(BackCtxMgr.MemRoot, jobID, false)
 	require.NoError(t, err)
-	GlobalEnv.LitMemRoot.backendCache[bcKey] = newBackendContext(ctx, bcKey, nil, cfg, sysVars)
+	BackCtxMgr.Store(jobID, newBackendContext(ctx, jobID, nil, cfg, sysVars, BackCtxMgr.MemRoot))
 
 	// Run one add index with 8 workers, test memory consumption.
 	requireMem := StructSizeBackendCtx
-	GlobalEnv.LitMemRoot.currUsage += requireMem
+	BackCtxMgr.MemRoot.Consume(requireMem)
 	requireMem = StructSizeEngineInfo
-	GlobalEnv.LitMemRoot.currUsage += requireMem
+	BackCtxMgr.MemRoot.Consume(requireMem)
 	engineKey := "enKey1"
-	wCnt := GlobalEnv.LitMemRoot.workerDegree(8, engineKey, bcKey)
+	wCnt := BackCtxMgr.MemRoot.WorkerDegree(8, engineKey, jobID)
 	require.Equal(t, 8, wCnt)
-	bc, exist := GlobalEnv.LitMemRoot.getBackendContext(bcKey)
+	bc, exist := BackCtxMgr.Load(jobID)
 	require.Equal(t, true, exist)
 	var uuid uuid.UUID
-	eninfo := NewEngineInfo(1, engineKey, nil, bc, nil, "", uuid, 8)
-	bc.engineCache[engineKey] = eninfo
+	eninfo := NewEngineInfo(1, engineKey, nil, bc, nil, "", uuid, 8, BackCtxMgr.MemRoot)
+	bc.EngMgr.Store(engineKey, eninfo)
 	// add 8 workers more
-	wCnt = GlobalEnv.LitMemRoot.workerDegree(8, engineKey, bcKey)
+	wCnt = BackCtxMgr.MemRoot.WorkerDegree(8, engineKey, jobID)
 	require.Equal(t, 8, wCnt)
-	en, exist1 := bc.engineCache[engineKey]
+	en, exist1 := bc.EngMgr.Load(engineKey)
 	en.writerCount += wCnt
 	require.Equal(t, true, exist1)
 	require.Equal(t, 16, en.writerCount)
 	// Add 8 workers more
-	wCnt = GlobalEnv.LitMemRoot.workerDegree(8, engineKey, bcKey)
+	wCnt = BackCtxMgr.MemRoot.WorkerDegree(8, engineKey, jobID)
 	require.Equal(t, 0, wCnt)
 
 	type TestCase struct {
 		name      string
-		bcKey     string
+		bcKey     int64
 		enKey     string
 		writerCnt int
 	}
 	tests := []TestCase{
-		{"case2", "bcKey2", "enKey2", 8},
-		{"case3", "bcKey3", "enKey3", 2},
-		{"case4", "bcKey4", "enKey4", 1},
-		{"case5", "bcKey5", "enKey5", 0},
+		{"case2", 2, "enKey2", 8},
+		{"case3", 3, "enKey3", 2},
+		{"case4", 4, "enKey4", 1},
+		{"case5", 5, "enKey5", 0},
 	}
 	for _, test := range tests {
 		// Run second add index with 16 worker, memory consumption
-		bcKey = test.bcKey
+		jobID = test.bcKey
 		requireMem = StructSizeBackendCtx
-		GlobalEnv.LitMemRoot.currUsage += requireMem
+		BackCtxMgr.MemRoot.Consume(requireMem)
 		requireMem = StructSizeEngineInfo
-		GlobalEnv.LitMemRoot.currUsage += requireMem
+		BackCtxMgr.MemRoot.Consume(requireMem)
 		engineKey = test.enKey
-		GlobalEnv.LitMemRoot.backendCache[bcKey] = newBackendContext(ctx, bcKey, nil, cfg, sysVars)
-		wCnt = GlobalEnv.LitMemRoot.workerDegree(16, engineKey, bcKey)
+		BackCtxMgr.Store(jobID, newBackendContext(ctx, jobID, nil, cfg, sysVars, BackCtxMgr.MemRoot))
+		wCnt = BackCtxMgr.MemRoot.WorkerDegree(16, engineKey, jobID)
 		require.Equal(t, test.writerCnt, wCnt)
 	}
 
 	for _, test := range tests {
-		GlobalEnv.LitMemRoot.currUsage -= GlobalEnv.LitMemRoot.structSize[test.enKey]
-		GlobalEnv.LitMemRoot.currUsage -= StructSizeEngineInfo
-		GlobalEnv.LitMemRoot.currUsage -= StructSizeBackendCtx
+		BackCtxMgr.MemRoot.ReleaseWithTag(test.enKey)
+		BackCtxMgr.MemRoot.Release(StructSizeEngineInfo)
+		BackCtxMgr.MemRoot.Release(StructSizeBackendCtx)
 	}
 
-	GlobalEnv.LitMemRoot.currUsage -= GlobalEnv.LitMemRoot.structSize["enKey1"]
-	GlobalEnv.LitMemRoot.currUsage -= StructSizeEngineInfo
-	GlobalEnv.LitMemRoot.currUsage -= StructSizeBackendCtx
-	require.Equal(t, int64(0), GlobalEnv.LitMemRoot.currUsage)
+	BackCtxMgr.MemRoot.ReleaseWithTag("enKey1")
+	BackCtxMgr.MemRoot.Release(StructSizeEngineInfo)
+	BackCtxMgr.MemRoot.Release(StructSizeBackendCtx)
+	require.Equal(t, int64(0), BackCtxMgr.MemRoot.CurrentUsage())
 }
 
 func TestStructSize(t *testing.T) {
