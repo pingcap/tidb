@@ -5983,7 +5983,7 @@ func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p LogicalPlan, a
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  newArg.GetType(),
 		}
-		newColIndex += 1
+		newColIndex++
 		newArgList = append(newArgList, col)
 	}
 	return newArgList, nil
