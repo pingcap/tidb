@@ -757,6 +757,7 @@ func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expre
 		cols:             cols,
 		lengths:          lengths,
 		mergeConsecutive: true,
+		rangeMemQuota:    sctx.GetSessionVars().OptimizerMemQuota,
 	}
 	return d.detachCondAndBuildRangeForCols()
 }
@@ -767,6 +768,7 @@ type rangeDetacher struct {
 	cols             []*expression.Column
 	lengths          []int
 	mergeConsecutive bool
+	rangeMemQuota    int64
 }
 
 func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, error) {
