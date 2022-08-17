@@ -28,7 +28,14 @@ type TiFlashRecorder struct {
 	items map[int64]int
 }
 
+func NewTiFlashRecorder() *TiFlashRecorder {
+	return &TiFlashRecorder{
+		items: map[int64]int{},
+	}
+}
+
 func (r *TiFlashRecorder) AddTable(tableID int64, replica int) {
+	log.Info("recording tiflash replica", zap.Int64("table", tableID), zap.Int("replica", replica))
 	r.items[tableID] = replica
 }
 
@@ -36,15 +43,24 @@ func (r *TiFlashRecorder) DelTable(tableID int64) {
 	delete(r.items, tableID)
 }
 
-func (r *TiFlashRecorder) Iterate(f func(tableID int64, replica int)) {
+func (r *TiFlashRecorder) iterate(f func(tableID int64, replica int)) {
 	for k, v := range r.items {
 		f(k, v)
 	}
 }
 
+func (r *TiFlashRecorder) Rewrite(oldID int64, newID int64) {
+	old, ok := r.items[oldID]
+	log.Info("rewriting tiflash replica", zap.Int64("old", oldID), zap.Int64("new", newID), zap.Bool("success", ok))
+	if ok {
+		r.items[newID] = old
+		delete(r.items, oldID)
+	}
+}
+
 func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []string {
 	items := make([]string, 0, len(r.items))
-	r.Iterate(func(id int64, replica int) {
+	r.iterate(func(id int64, replica int) {
 		table, ok := info.TableByID(id)
 		if !ok {
 			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
@@ -55,7 +71,9 @@ func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []s
 			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
 			return
 		}
-		items = append(items, fmt.Sprintf("ALTER TABLE %s SET TIFLASH REPLICA %d", utils.EncloseDBAndTable(schema.Name.O, table.Meta().Name.O)))
+		items = append(items, fmt.Sprintf(
+			"ALTER TABLE %s SET TIFLASH REPLICA %d",
+			utils.EncloseDBAndTable(schema.Name.O, table.Meta().Name.O), replica))
 	})
 	return items
 }

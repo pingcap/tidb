@@ -580,6 +580,31 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// don't return immediately, wait all pipeline done.
 	}
 
+	if cfg.tiflashRecorder != nil {
+		obChan := make(chan restore.CreatedTable, 32)
+		ts := tableStream
+
+		go func() {
+			defer close(obChan)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case t, ok := <-ts:
+					if !ok {
+						return
+					}
+					if cfg.tiflashRecorder != nil {
+						cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
+					}
+					obChan <- t
+				}
+			}
+		}()
+
+		tableStream = obChan
+	}
+
 	tableFileMap := restore.MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
