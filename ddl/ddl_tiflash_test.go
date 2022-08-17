@@ -987,7 +987,7 @@ func TestTiFlashProgress(t *testing.T) {
 	tk.MustExec("truncate table tiflash_d.t")
 	mustAbsent(tb.Meta().ID)
 
-	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
+	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
 	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
 	tk.MustExec("drop table tiflash_d.t")
 	mustAbsent(tb.Meta().ID)
