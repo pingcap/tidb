@@ -100,16 +100,8 @@ func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexID int64
 }
 
 // cleanUpLightningEnv will clean one DDL job's backend context.
-func cleanUpLightningEnv(reorg *reorgInfo, isCanceled bool, indexID int64) {
-	if bc, ok := lit.BackCtxMgr.Load(reorg.Job.ID); ok {
-		// If reorg is cancelled, need to clean up engine.
-		if isCanceled {
-			eiKey := lit.GenEngineInfoKey(reorg.ID, indexID)
-			ei, exist := bc.EngMgr.Load(eiKey)
-			if exist {
-				_ = ei.Clean()
-			}
-		}
+func cleanUpLightningEnv(reorg *reorgInfo) {
+	if _, ok := lit.BackCtxMgr.Load(reorg.Job.ID); ok {
 		lit.BackCtxMgr.Unregister(reorg.ID)
 	}
 }

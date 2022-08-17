@@ -768,7 +768,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		logutil.BgLogger().Info("Lightning finished merge the increment part of adding index")
 		// Clean lightning backend.
-		cleanUpLightningEnv(reorgInfo, false, indexInfo.ID)
+		cleanUpLightningEnv(reorgInfo)
 		return true, ver, nil
 	default:
 		return false, 0, errors.New("Lightning go fast path wrong sub states: should not happened")
@@ -822,7 +822,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		// others errors that occurs in reorg processing.
 		// For error that will rollback the add index statement, here only remove locale lightning
 		// files, other rollback process will follow add index roll back flow.
-		cleanUpLightningEnv(reorgInfo, true, indexInfo.ID)
+		cleanUpLightningEnv(reorgInfo)
 		return false, ver, errors.Trace(err)
 	}
 	// Ingest data to TiKV
@@ -837,7 +837,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		} else {
 			logutil.BgLogger().Warn("Lightning import error:", zap.Error(err))
 		}
-		cleanUpLightningEnv(reorgInfo, true, indexInfo.ID)
+		cleanUpLightningEnv(reorgInfo)
 		return false, ver, errors.Trace(err)
 	}
 

@@ -508,7 +508,8 @@ func jobNeedGC(job *model.Job) bool {
 				if err != nil {
 					// Get index id error.
 					if indexID != 0 {
-						logutil.BgLogger().Info("Lightning clean temp index data failed, please clean it manually,",
+						logutil.BgLogger().Info("Lightning clean temp index data failed, please clean it manually",
+							zap.Error(err),
 							zap.String("Job Args:", job.String()),
 							zap.String("RawArgs:", string(job.RawArgs)))
 					}

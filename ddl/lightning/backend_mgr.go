@@ -122,6 +122,7 @@ func (m *backendCtxManager) Unregister(jobID int64) {
 		logutil.BgLogger().Error(LitErrGetBackendFail, zap.Int64("backend key", jobID))
 	}
 	bc.EngMgr.UnregisterAll()
+	bc.backend.Close()
 	m.Drop(jobID)
 	logutil.BgLogger().Info(LitInfoCloseBackend, zap.Int64("backend key", jobID),
 		zap.String("Current Memory Usage:", strconv.FormatInt(m.MemRoot.CurrentUsage(), 10)),
@@ -131,19 +132,25 @@ func (m *backendCtxManager) Unregister(jobID int64) {
 // CheckDiskQuota checks the disk quota.
 func (m *backendCtxManager) CheckDiskQuota(quota int64) int64 {
 	var totalDiskUsed int64
-	for _, bc := range m.resourceManager.item {
-		_, _, bcDiskUsed, _ := bc.backend.CheckDiskQuota(quota)
-		totalDiskUsed += bcDiskUsed
+	for _, key := range m.Keys() {
+		bc, exists := m.resourceManager.Load(key)
+		if exists {
+			_, _, bcDiskUsed, _ := bc.backend.CheckDiskQuota(quota)
+			totalDiskUsed += bcDiskUsed
+		}
 	}
 	return totalDiskUsed
 }
 
 // UpdateMemoryUsage collects the memory usages from all the backend and updates it to the memRoot.
 func (m *backendCtxManager) UpdateMemoryUsage() {
-	for _, bc := range m.resourceManager.item {
-		curSize := bc.backend.TotalMemoryConsume()
-		m.MemRoot.ReleaseWithTag(bc.key)
-		m.MemRoot.ConsumeWithTag(bc.key, curSize)
+	for _, key := range m.Keys() {
+		bc, exists := m.resourceManager.Load(key)
+		if exists {
+			curSize := bc.backend.TotalMemoryConsume()
+			m.MemRoot.ReleaseWithTag(bc.key)
+			m.MemRoot.ConsumeWithTag(bc.key, curSize)
+		}
 	}
 }
 

@@ -72,7 +72,7 @@ func (ei *engineInfo) Flush(ctx context.Context) error {
 	return nil
 }
 
-func (ei *engineInfo) Clean() error {
+func (ei *engineInfo) Clean() {
 	indexEngine := ei.openedEngine
 	closedEngine, err := indexEngine.Close(ei.backCtx.ctx, ei.cfg)
 	if err != nil {
@@ -83,7 +83,6 @@ func (ei *engineInfo) Clean() error {
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.String("Engine key", ei.key))
 	}
-	return err
 }
 
 func (ei *engineInfo) ImportAndClean() error {

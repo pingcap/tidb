@@ -50,3 +50,14 @@ func (m *resourceManager[T]) Drop(key string) {
 	defer m.mu.Unlock()
 	delete(m.item, key)
 }
+
+// Keys returns all the keys in the map.
+func (m *resourceManager[T]) Keys() []string {
+	ret := make([]string, 0, len(m.item))
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for k := range m.item {
+		ret = append(ret, k)
+	}
+	return ret
+}

@@ -47,7 +47,7 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, engineKey s
 				zap.String("Engine key", engineKey),
 				zap.String("Expected worker count:", strconv.Itoa(wCnt)),
 				zap.String("Current alloc worker count:", strconv.Itoa(newWorkerCount)))
-			return 0, errors.New(LitErrCleanEngineErr)
+			return 0, errors.New(LitErrCreateEngineFail)
 		}
 		// Firstly, update and check the current memory usage.
 		m.MemRoot.RefreshConsumption()
@@ -92,6 +92,7 @@ func (m *engineManager) Unregister(engineKey string) {
 	if !exists {
 		return
 	}
+	ei.Clean()
 	m.Drop(engineKey)
 	m.MemRoot.ReleaseWithTag(engineKey)
 	m.MemRoot.Release(StructSizeWorkerCtx * int64(ei.writerCount))
@@ -100,11 +101,7 @@ func (m *engineManager) Unregister(engineKey string) {
 
 // UnregisterAll delete all engineInfo from the engineManager.
 func (m *engineManager) UnregisterAll() {
-	count := len(m.item)
-	for k, en := range m.item {
-		m.MemRoot.ReleaseWithTag(k)
-		delete(m.item, k)
-		m.MemRoot.Release(StructSizeWorkerCtx * int64(en.writerCount))
+	for _, key := range m.Keys() {
+		m.Unregister(key)
 	}
-	m.MemRoot.Release(StructSizeEngineInfo * int64(count))
 }
