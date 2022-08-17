@@ -582,7 +582,7 @@ REBUILD:
 			if !hitVal {
 				cacheVals = append(cacheVals.([]*PlanCacheValue), cached)
 				valLen := len(cacheVals.([]*PlanCacheValue))
-				if valLen > 10 {
+				if valLen > 20 {
 					logutil.BgLogger().Warn("cached plan list is too long",
 						zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
 						zap.String("sql_digest", preparedStmt.SQLDigest4PC),
