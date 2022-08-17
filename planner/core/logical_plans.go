@@ -389,13 +389,15 @@ func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*proper
 //	          +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
 func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []expression.Expression) (hasFallback bool) {
 	// make a copy of exprs for convenience of substitution (may change/partially change the expr tree)
-	cpLeftConditions := p.LeftConditions.Clone()
-	cpRightConditions := p.RightConditions.Clone()
-	cpOtherConditions := p.OtherConditions.Clone()
+	cpLeftConditions := make(expression.CNFExprs, len(p.LeftConditions))
+	cpRightConditions := make(expression.CNFExprs, len(p.RightConditions))
+	cpOtherConditions := make(expression.CNFExprs, len(p.OtherConditions))
 	cpEqualConditions := make([]*expression.ScalarFunction, len(p.EqualConditions))
-	for i, one := range p.EqualConditions {
-		cpEqualConditions[i] = one.Clone().(*expression.ScalarFunction)
-	}
+	copy(cpLeftConditions, p.LeftConditions)
+	copy(cpRightConditions, p.RightConditions)
+	copy(cpOtherConditions, p.OtherConditions)
+	copy(cpEqualConditions, p.EqualConditions)
+
 	// try to substitute columns in these condition.
 	for i, cond := range cpLeftConditions {
 		if hasFallback, cpLeftConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFallback {
