@@ -232,6 +232,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Result_rows: 12345
 # Succ: true
 # IsExplicitTxn: true
+# IsSyncStatsFailed: false
 # IsWriteCacheTable: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
