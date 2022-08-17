@@ -122,10 +122,36 @@ delete from t_reference where id = 1; --Since doesn't know foreign key informati
 
 So, when create a table with foreign key, we need multi-schema version change:
 
-1. None -> Write Only: Create table with state is `write-only`, and update all reference tables info.
-2. Write Only -> Done: Update the new created table state to `public`.
+1. None -> Write Only: Create table with state is `write-only`.
+2. Write Only -> Done: Update the created table state to `public`.
 
-In step-1, we need update some table info in one schema-version. Technically, we can implement it since we already support `ActionCreateTables` DDL job.
+#### Maintain ReferredFKInfo
+
+Why need to maintain `ReferredFKInfo` in reference table? When execute `UPDATE`/`DELETE` in reference table, we need the `ReferredFKInfo` of reference table to do foreign key check/cascade.
+
+How to maintain `ReferredFKInfo` in reference table? When we create table with foreign key, we didn't add `ReferredFKInfo` into reference table, because the reference table may not have been created yet,
+when `foreign_key_checks` variable value is `OFF`, the user can create child table before reference table.
+
+We decided to maintain `ReferredFKInfo` while TiDB loading schema. At first, `infoSchema` will record all table's `ReferredFKInfo`:
+
+```go
+type infoSchema struct {
+    // referredForeignKeyMap records all table's ReferredFKInfo.
+    // referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
+    referredForeignKeyMap map[SchemaAndTableName]map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo
+}
+```
+
+Function `applyTableUpdate` uses `applyDropTable` to drop the old table, uses `applyCreateTable` to create the new table.
+
+In function `applyDropTable`, we will delete the table's foreign key information from `infoSchema.referredForeignKeyMap`.
+
+In function `applyCreateTable`, we will add the table's foreign key information into `infoSchema.referredForeignKeyMap` first, 
+then get the table's `ReferredFKInfo` by schema name and table name, then store the `ReferredFKInfo` into `TableInfo.ReferredForeignKeys`.
+
+Then `applyTableUpdate` will also need to reload the old/new table's referred table information, also uses `applyDropTable` to drop the old reference table, use `applyCreateTable` to create new reference table.
+
+That's all.
 
 ### Alter Table Add Foreign Key
 
