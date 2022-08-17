@@ -242,7 +242,6 @@ func (q *QueryBlock) addTblColsFromSlice(tblName string, colUIDs []int64, names 
 			TblName: tblName,
 		}
 	}
-	return
 }
 
 // AddProjCol maps a column to an expression string.
@@ -334,7 +333,7 @@ func (q *QueryBlock) Decorrelate(uid int64, left *QueryBlock) {
 func (q *QueryBlock) replaceUnknownCol(uid int64, name string) bool {
 	q.joinList.replaceUnknownCol(uid, name)
 
-	var newConds []string
+	newConds := make([]string, 0, len(q.WhereConds))
 	for _, cond := range q.WhereConds {
 		newCond := strings.ReplaceAll(cond, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
 		newConds = append(newConds, newCond)
@@ -345,14 +344,14 @@ func (q *QueryBlock) replaceUnknownCol(uid int64, name string) bool {
 		col.Expr = strings.ReplaceAll(col.Expr, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
 	}
 
-	newConds = make([]string, 0)
+	newConds = make([]string, 0, len(q.HavingConds))
 	for _, cond := range q.HavingConds {
 		newCond := strings.ReplaceAll(cond, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
 		newConds = append(newConds, newCond)
 	}
 	q.HavingConds = newConds
 
-	newConds = make([]string, 0)
+	newConds = make([]string, 0, len(q.GroupByCols))
 	for _, cond := range q.GroupByCols {
 		newCond := strings.ReplaceAll(cond, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
 		newConds = append(newConds, newCond)
@@ -363,7 +362,7 @@ func (q *QueryBlock) replaceUnknownCol(uid int64, name string) bool {
 
 func (jl joinList) replaceUnknownCol(uid int64, name string) {
 	for _, item := range jl {
-		var newConds []string
+		newConds := make([]string, 0, len(item.JoinCond))
 		for _, cond := range item.JoinCond {
 			newCond := strings.ReplaceAll(cond, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
 			newConds = append(newConds, newCond)

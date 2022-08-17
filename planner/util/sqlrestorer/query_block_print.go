@@ -76,7 +76,8 @@ func (q *QueryBlock) String() string {
 		builder.WriteString(", ")
 		builder.WriteString(col.Expr + " AS " + col.AsName)
 	}
-	builder.WriteString(" FROM " + q.joinList.String())
+	builder.WriteString(" FROM ")
+	builder.WriteString(q.joinList.String())
 	if len(q.WhereConds) > 0 {
 		builder.WriteString(" WHERE ")
 		first = true
@@ -325,7 +326,7 @@ func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expressio
 		for _, col := range inCondsRightCOls {
 			right.AddOutputCol(col.UniqueID)
 		}
-		InExprRightPart := "(" + right.String() + ")"
+		inExprRightPart := "(" + right.String() + ")"
 		var leftCols []string
 		for _, col := range inCondsLeftCols {
 			s, err := q.ExprToString(col, false)
@@ -334,16 +335,16 @@ func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expressio
 			}
 			leftCols = append(leftCols, s)
 		}
-		InExprLeftPart := ""
+		inExprLeftPart := ""
 		if len(leftCols) == 1 {
-			InExprLeftPart = leftCols[0]
+			inExprLeftPart = leftCols[0]
 		} else {
-			InExprLeftPart = "(" + strings.Join(leftCols, ", ") + ")"
+			inExprLeftPart = "(" + strings.Join(leftCols, ", ") + ")"
 		}
 		if !isAntiJoin {
-			expr = InExprLeftPart + " IN " + InExprRightPart
+			expr = inExprLeftPart + " IN " + inExprRightPart
 		} else {
-			expr = InExprLeftPart + " NOT IN " + InExprRightPart
+			expr = inExprLeftPart + " NOT IN " + inExprRightPart
 		}
 	} else {
 		for _, col := range rightChildSchema.Columns {
