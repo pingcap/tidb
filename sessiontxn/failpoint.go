@@ -46,9 +46,10 @@ var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
 // TsoRequestCount is the key for recording tso request counts in some places
 var TsoRequestCount stringutil.StringerStr = "tsoRequestCount"
 
-// don't include begin and commit
+// TsoWaitCount doesn't include begin and commit
 var TsoWaitCount stringutil.StringerStr = "tsoWaitCount"
 
+// TsoUseConstantCount is the key for constant tso counter
 var TsoUseConstantCount stringutil.StringerStr = "tsoUseConstantCount"
 
 // AssertLockErr is used to record the lock errors we encountered
@@ -131,6 +132,7 @@ func TsoRequestCountInc(sctx sessionctx.Context) {
 	sctx.SetValue(TsoRequestCount, count)
 }
 
+// TsoWaitCountInc is used to test waiting tso count
 func TsoWaitCountInc(sctx sessionctx.Context) {
 	count, ok := sctx.Value(TsoWaitCount).(uint64)
 	if !ok {
@@ -140,6 +142,7 @@ func TsoWaitCountInc(sctx sessionctx.Context) {
 	sctx.SetValue(TsoWaitCount, count)
 }
 
+// TsoUseConstantCountInc is used to test constant tso count
 func TsoUseConstantCountInc(sctx sessionctx.Context) {
 	count, ok := sctx.Value(TsoUseConstantCount).(uint64)
 	if !ok {

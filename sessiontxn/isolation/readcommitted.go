@@ -284,7 +284,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 	return nil
 }
 
-func PlanSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLockOrWriteStmt bool) bool {
+func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
 		return sctx.GetSessionVars().RcPointLockReadUseLastTso && (v.Lock || inLockOrWriteStmt)
@@ -294,15 +294,15 @@ func PlanSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 		}
 		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
 		for _, p := range v.Children() {
-			if !PlanSkipGetTsoFromPD(sctx, p, isPhysicalLock || inLockOrWriteStmt) {
+			if !planSkipGetTsoFromPD(sctx, p, isPhysicalLock || inLockOrWriteStmt) {
 				return false
 			}
 		}
 		return true
 	case *plannercore.Update:
-		return PlanSkipGetTsoFromPD(sctx, v.SelectPlan, true)
+		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
 	case *plannercore.Delete:
-		return PlanSkipGetTsoFromPD(sctx, v.SelectPlan, true)
+		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
 	case *plannercore.Insert:
 		// RcInsertUseLastTso controls whether to make a tso request, but not to whether to wait tso requst.
 		// Insert sqls are always optimized to use last tso here.
@@ -343,7 +343,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	useLastOracleTS := PlanSkipGetTsoFromPD(p.sctx, plan, false)
+	useLastOracleTS := planSkipGetTsoFromPD(p.sctx, plan, false)
 
 	if useLastOracleTS {
 		failpoint.Inject("tsoUseConstantFuture", func() {
