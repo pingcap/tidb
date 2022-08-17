@@ -128,7 +128,6 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 	}
 	count = sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(594), count)
-
 }
 
 func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
