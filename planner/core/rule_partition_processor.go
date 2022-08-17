@@ -1070,7 +1070,9 @@ func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.E
 
 func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expression,
 	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
-	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok {
+	// TODO: When the ranger/detacher handles varchar_col_general_ci cmp constant bin collation
+	// remove the check for single column RANGE COLUMNS and remove the single column implementation
+	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok && len(columnsPruner.partCols) > 1 {
 		return multiColumnRangeColumnsPruner(sctx, exprs, columnsPruner, result)
 	}
 	for i := 0; i < len(exprs); i++ {
