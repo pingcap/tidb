@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -1642,7 +1643,7 @@ func (rc *Client) getTiFlashNodeCount(ctx context.Context) (uint64, error) {
 func (rc *Client) PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	tables []*metautil.Table,
-	recorder *TiFlashRecorder,
+	recorder *tiflashrec.TiFlashRecorder,
 ) error {
 	tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
 	if err != nil {
@@ -1652,7 +1653,7 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 		if recorder != nil ||
 			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > tiFlashStoreCount) {
 			if recorder != nil && table.Info.TiFlashReplica != nil {
-				recorder.AddTable(table.Info.ID, int(table.Info.TiFlashReplica.Count))
+				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
 			}
 			// we cannot satisfy TiFlash replica in restore cluster. so we should
 			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash

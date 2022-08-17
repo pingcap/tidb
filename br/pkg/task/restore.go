@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -163,9 +164,9 @@ type RestoreConfig struct {
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
-	StartTS         uint64                   `json:"start-ts" toml:"start-ts"`
-	RestoreTS       uint64                   `json:"restore-ts" toml:"restore-ts"`
-	tiflashRecorder *restore.TiFlashRecorder `json:"-" toml:"-"`
+	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
+	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
+	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
