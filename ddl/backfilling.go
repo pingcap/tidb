@@ -930,7 +930,7 @@ func getIndexRangeEndKey(ctx *JobContext, store kv.Storage, priority int, t tabl
 	return it.Key(), nil
 }
 
-func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+func (w *worker) writeTempIndexRecord(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 
@@ -1000,6 +1000,7 @@ func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfi
 		}
 
 		failpoint.Inject("checkMergeWorkerNum", func(val failpoint.Value) {
+			//nolint:forcetypeassert
 			if val.(bool) {
 				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
 				if num != 0 {

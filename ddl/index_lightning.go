@@ -524,7 +524,7 @@ func (w *worker) updateMergeInfo(t table.PartitionedTable, idxID int64, reorg *r
 
 func (w *worker) addPhysicalTempIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to merge temp index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writeTempIndexRecord(t, typeAddIndexWorker, indexInfo, nil, nil, reorgInfo)
+	return w.writeTempIndexRecord(t, indexInfo, reorgInfo)
 }
 
 func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
