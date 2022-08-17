@@ -1575,10 +1575,16 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 }
 
 // Parameterize Parameterizes this sql.
-func (s *session) Parameterize(ctx context.Context, originSQL string) (*ast.ExecuteStmt, bool) {
+func (s *session) Parameterize(ctx context.Context, originSQL string) (exec *ast.ExecuteStmt, ok bool) {
 	if !s.GetSessionVars().EnableGeneralPlanCache {
 		return nil, false
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			exec = nil
+			ok = false
+		}
+	}()
 	p := plannercore.GetParameterizer(s)
 	if p == nil {
 		return nil, false
@@ -1591,12 +1597,12 @@ func (s *session) Parameterize(ctx context.Context, originSQL string) (*ast.Exec
 	if err != nil {
 		return nil, false
 	}
-	execStmt := &ast.ExecuteStmt{
+	exec = &ast.ExecuteStmt{
 		BinaryArgs:      params,
 		PrepStmt:        stmt,
 		FromGeneralStmt: true,
 	}
-	return execStmt, true
+	return exec, true
 }
 
 // Parse parses a query string to raw ast.StmtNode.

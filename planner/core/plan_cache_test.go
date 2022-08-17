@@ -2,13 +2,13 @@ package core_test
 
 import (
 	"errors"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 )
