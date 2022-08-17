@@ -951,6 +951,7 @@ func TestTiFlashBatchUnsupported(t *testing.T) {
 
 func TestTiFlashProgress(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
+	s.tiflash.NotAvailable = true
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
 
@@ -961,6 +962,7 @@ func TestTiFlashProgress(t *testing.T) {
 	infosync.SetEtcdClient(cluster.Client(0))
 	tk.MustExec("create database tiflash_d")
 	tk.MustExec("create table tiflash_d.t(z int)")
+	tk.MustExec("alter table tiflash_d.t set tiflash replica 1")
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
@@ -985,10 +987,10 @@ func TestTiFlashProgress(t *testing.T) {
 	tk.MustExec("truncate table tiflash_d.t")
 	mustAbsent(tb.Meta().ID)
 
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
 	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
 	tk.MustExec("drop table tiflash_d.t")
 	mustAbsent(tb.Meta().ID)
 
 	time.Sleep(100 * time.Millisecond)
 }
-
