@@ -28,11 +28,9 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1715,7 +1713,7 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 	b.StopTimer()
 }
 
-func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
+func BenchmarkCompileStmt(b *testing.B) {
 	// See issue https://github.com/pingcap/tidb/issues/27633
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -1815,13 +1813,13 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	args := []types.Datum{types.NewDatum(3401544)}
-	is := se.GetInfoSchema()
+	args := expression.Args2Expressions4Test(3401544)
 
 	b.ResetTimer()
 	stmtExec := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
+	compiler := executor.Compiler{Ctx: se}
 	for i := 0; i < b.N; i++ {
-		_, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, is.(infoschema.InfoSchema))
+		_, err := compiler.Compile(context.Background(), stmtExec)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1860,6 +1858,6 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkHashPartitionPruningPointSelect,
 		BenchmarkHashPartitionPruningMultiSelect,
 		BenchmarkInsertIntoSelect,
-		BenchmarkCompileExecutePreparedStmt,
+		BenchmarkCompileStmt,
 	)
 }

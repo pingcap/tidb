@@ -287,7 +287,9 @@ func (p *PhysicalIndexReader) GetPlanCost(_ property.TaskType, option *PlanCostO
 	// consider concurrency
 	p.planCost /= float64(sqlScanConcurrency)
 
-	setPhysicalIndexReaderCostDetail(p, option.tracer, rowCount, rowSize, netFactor, netSeekCost, indexPlanCost, sqlScanConcurrency)
+	if option.tracer != nil {
+		setPhysicalIndexReaderCostDetail(p, option.tracer, rowCount, rowSize, netFactor, netSeekCost, indexPlanCost, sqlScanConcurrency)
+	}
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -370,9 +372,11 @@ func (p *PhysicalTableReader) GetPlanCost(_ property.TaskType, option *PlanCostO
 			p.planCost /= 1000000000
 		}
 	}
-	setPhysicalTableReaderCostDetail(p, option.tracer,
-		rowCount, rowSize, netFactor, netSeekCost, tableCost,
-		sqlScanConcurrency, storeType)
+	if option.tracer != nil {
+		setPhysicalTableReaderCostDetail(p, option.tracer,
+			rowCount, rowSize, netFactor, netSeekCost, tableCost,
+			sqlScanConcurrency, storeType)
+	}
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -477,7 +481,9 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, option *Plan
 			selfCost += 2000 * logRowSize * scanFactor
 		}
 	}
-	setPhysicalTableOrIndexScanCostDetail(p, option.tracer, rowCount, rowSize, scanFactor, costModelVersion)
+	if option.tracer != nil {
+		setPhysicalTableOrIndexScanCostDetail(p, option.tracer, rowCount, rowSize, scanFactor, costModelVersion)
+	}
 	p.planCost = selfCost
 	p.planCostInit = true
 	return p.planCost, nil
@@ -512,7 +518,9 @@ func (p *PhysicalIndexScan) GetPlanCost(_ property.TaskType, option *PlanCostOpt
 		logRowSize := math.Log2(rowSize)
 		selfCost = rowCount * logRowSize * scanFactor
 	}
-	setPhysicalTableOrIndexScanCostDetail(p, option.tracer, rowCount, rowSize, scanFactor, costModelVersion)
+	if option.tracer != nil {
+		setPhysicalTableOrIndexScanCostDetail(p, option.tracer, rowCount, rowSize, scanFactor, costModelVersion)
+	}
 	p.planCost = selfCost
 	p.planCostInit = true
 	return p.planCost, nil
@@ -1219,7 +1227,9 @@ func (p *BatchPointGetPlan) GetCost(opt *physicalOptimizeOp) float64 {
 	cost += rowCount * rowSize * networkFactor
 	cost += rowCount * seekFactor
 	cost /= float64(scanConcurrency)
-	setBatchPointGetPlanCostDetail(p, opt, rowCount, rowSize, networkFactor, seekFactor, scanConcurrency)
+	if opt != nil {
+		setBatchPointGetPlanCostDetail(p, opt, rowCount, rowSize, networkFactor, seekFactor, scanConcurrency)
+	}
 	return cost
 }
 
@@ -1265,7 +1275,9 @@ func (p *PointGetPlan) GetCost(opt *physicalOptimizeOp) float64 {
 	cost += rowSize * networkFactor
 	cost += seekFactor
 	cost /= float64(sessVars.DistSQLScanConcurrency())
-	setPointGetPlanCostDetail(p, opt, rowSize, networkFactor, seekFactor)
+	if opt != nil {
+		setPointGetPlanCostDetail(p, opt, rowSize, networkFactor, seekFactor)
+	}
 	return cost
 }
 
