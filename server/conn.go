@@ -1806,14 +1806,11 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
-
 	var stmts []ast.StmtNode
 	if execStmt, ok := cc.ctx.Parameterize(ctx, sql); ok {
 		stmts = append(stmts, execStmt)
-	} else {
-		if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
-			return err
-		}
+	} else if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
+		return err
 	}
 
 	if len(stmts) == 0 {
