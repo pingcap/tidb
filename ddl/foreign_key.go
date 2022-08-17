@@ -135,6 +135,22 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 			return err
 		}
 	}
+
+	referredFKInfos := is.GetTableReferredForeignKeys(schema, tbInfo.Name.L)
+	for _, referredFK := range referredFKInfos {
+		childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+		if err != nil {
+			return err
+		}
+		fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
+		if fk == nil {
+			continue
+		}
+		err = checkTableForeignKey(tbInfo, childTable.Meta(), fk)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -167,6 +183,7 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 }
 
 func checkTableForeignKeyValidInOwner(d *ddlCtx, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) error {
+	is := d.infoCache.GetLatest()
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < 1 {
 			continue
@@ -175,18 +192,32 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, job *model.Job, tbInfo *model.T
 		if fk.RefSchema.L == job.SchemaName && fk.RefTable.L == tbInfo.Name.L {
 			referTableInfo = tbInfo
 		} else {
-			is := d.infoCache.GetLatest()
-			refTbl, err := is.TableByName(fk.RefSchema, fk.RefTable)
+			referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
 			if err != nil {
 				if !fkCheck && (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) {
 					continue
 				}
 				return err
 			}
-			referTableInfo = refTbl.Meta()
+			referTableInfo = referTable.Meta()
 		}
 
 		err := checkTableForeignKey(referTableInfo, tbInfo, fk)
+		if err != nil {
+			return err
+		}
+	}
+	referredFKInfos := is.GetTableReferredForeignKeys(job.SchemaName, tbInfo.Name.L)
+	for _, referredFK := range referredFKInfos {
+		childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+		if err != nil {
+			return err
+		}
+		fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
+		if fk == nil {
+			continue
+		}
+		err = checkTableForeignKey(tbInfo, childTable.Meta(), fk)
 		if err != nil {
 			return err
 		}
@@ -202,7 +233,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(fkInfo.RefCols[i].O)
 		}
 		if refCol.IsGenerated() && !refCol.GeneratedStored {
-			return infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name.O, fkInfo.RefCols[i].O)
+			return infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(tblInfo.Name.L+"."+fkInfo.Name.L, fkInfo.RefCols[i].O)
 		}
 		col := model.FindColumnInfo(tblInfo.Columns, fkInfo.Cols[i].L)
 		if col == nil {
@@ -212,7 +243,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 			mysql.HasUnsignedFlag(col.GetFlag()) != mysql.HasUnsignedFlag(refCol.GetFlag()) ||
 			col.GetCharset() != refCol.GetCharset() ||
 			col.GetCollate() != refCol.GetCollate() {
-			return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(col.Name, refCol.Name, fkInfo.Name)
+			return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(col.Name, refCol.Name, tblInfo.Name.L+"."+fkInfo.Name.L)
 		}
 		if len(fkInfo.RefCols) == 1 && mysql.HasPriKeyFlag(refCol.GetFlag()) && referTblInfo.PKIsHandle {
 			return nil
@@ -220,7 +251,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	}
 	// check refer columns should have index.
 	if model.FindIndexByColumns(referTblInfo, fkInfo.RefCols...) == nil {
-		return infoschema.ErrFkNoIndexParent.GenWithStackByArgs(fkInfo.Name.O, fkInfo.RefTable.O)
+		return infoschema.ErrFkNoIndexParent.GenWithStackByArgs(tblInfo.Name.L+"."+fkInfo.Name.L, fkInfo.RefTable.O)
 	}
 	return nil
 }

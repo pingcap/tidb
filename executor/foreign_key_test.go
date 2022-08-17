@@ -330,110 +330,130 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 	})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@foreign_key_checks=1")
 
 	cases := []struct {
-		refer string
-		child string
-		err   string
+		prepare []string
+		refer   string
+		create  string
+		err     string
 	}{
 		{
-			refer: "create table t1 (id int, a int, b int);",
-			child: "create table t2 (a int, b int, foreign key fk_b(b) references t_unknown(b));",
-			err:   "[schema:1146]Table 'test.t_unknown' doesn't exist",
+			refer:  "create table t1 (id int, a int, b int);",
+			create: "create table t2 (a int, b int, foreign key fk_b(b) references t_unknown(b));",
+			err:    "[schema:1146]Table 'test.t_unknown' doesn't exist",
 		},
 		{
-			refer: "create table t1 (id int, a int, b int);",
-			child: "create table t2 (a int, b int, foreign key fk_b(b) references t1(c_unknown));",
-			err:   "[ddl:1072]Key column 'c_unknown' doesn't exist in table",
+			refer:  "create table t1 (id int, a int, b int);",
+			create: "create table t2 (a int, b int, foreign key fk_b(b) references t1(c_unknown));",
+			err:    "[ddl:1072]Key column 'c_unknown' doesn't exist in table",
 		},
 		{
-			refer: "create table t1 (id int, a int, b int);",
-			child: "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
-			err:   "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+			refer:  "create table t1 (id int, a int, b int);",
+			create: "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
+			err:    "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 't2.fk_b' in the referenced table 't1'",
 		},
 		{
-			refer: "create table t1 (id int, a int, b int not null, index(b));",
-			child: "create table t2 (a int, b int not null, foreign key fk_b(b) references t1(b) on update set null);",
-			err:   "[schema:1830]Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
+			refer:  "create table t1 (id int, a int, b int not null, index(b));",
+			create: "create table t2 (a int, b int not null, foreign key fk_b(b) references t1(b) on update set null);",
+			err:    "[schema:1830]Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
 		},
 		{
-			refer: "create table t1 (id int, a int, b int not null, index(b));",
-			child: "create table t2 (a int, b int not null, foreign key fk_b(b) references t1(b) on delete set null);",
-			err:   "[schema:1830]Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
+			refer:  "create table t1 (id int, a int, b int not null, index(b));",
+			create: "create table t2 (a int, b int not null, foreign key fk_b(b) references t1(b) on delete set null);",
+			err:    "[schema:1830]Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
 		},
 		{
-			refer: "create table t1 (id int key, a int, b int as (a) virtual, index(b));",
-			child: "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
-			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
+			refer:  "create table t1 (id int key, a int, b int as (a) virtual, index(b));",
+			create: "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
+			err:    "[schema:3733]Foreign key 't2.fk_b' uses virtual column 'b' which is not supported.",
 		},
 		{
-			refer: "create table t1 (id int key, a int, b int, index(b));",
-			child: "create table t2 (a int, b int as (a) virtual, foreign key fk_b(b) references t1(b));",
-			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
+			refer:  "create table t1 (id int key, a int, b int, index(b));",
+			create: "create table t2 (a int, b int as (a) virtual, foreign key fk_b(b) references t1(b));",
+			err:    "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
 		},
 		{
-			refer: "create table t1 (id int key, a int);",
-			child: "create table t2 (a int, b varchar(10), foreign key fk(b) references t1(id));",
-			err:   "[ddl:3780]Referencing column 'b' and referenced column 'id' in foreign key constraint 'fk' are incompatible.",
+			refer:  "create table t1 (id int key, a int);",
+			create: "create table t2 (a int, b varchar(10), foreign key fk(b) references t1(id));",
+			err:    "[ddl:3780]Referencing column 'b' and referenced column 'id' in foreign key constraint 't2.fk' are incompatible.",
 		},
 		{
-			refer: "create table t1 (id int key, a int not null, index(a));",
-			child: "create table t2 (a int, b int unsigned, foreign key fk_b(b) references t1(a));",
-			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+			refer:  "create table t1 (id int key, a int not null, index(a));",
+			create: "create table t2 (a int, b int unsigned, foreign key fk_b(b) references t1(a));",
+			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 't2.fk_b' are incompatible.",
 		},
 		{
-			refer: "create table t1 (id int key, a bigint, index(a));",
-			child: "create table t2 (a int, b int, foreign key fk_b(b) references t1(a));",
-			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+			refer:  "create table t1 (id int key, a bigint, index(a));",
+			create: "create table t2 (a int, b int, foreign key fk_b(b) references t1(a));",
+			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 't2.fk_b' are incompatible.",
 		},
 		{
-			refer: "create table t1 (id int key, a varchar(10) charset utf8, index(a));",
-			child: "create table t2 (a int, b varchar(10) charset utf8mb4, foreign key fk_b(b) references t1(a));",
-			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+			refer:  "create table t1 (id int key, a varchar(10) charset utf8, index(a));",
+			create: "create table t2 (a int, b varchar(10) charset utf8mb4, foreign key fk_b(b) references t1(a));",
+			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 't2.fk_b' are incompatible.",
 		},
 		{
-			refer: "create table t1 (id int key, a varchar(10) collate utf8_bin, index(a));",
-			child: "create table t2 (a int, b varchar(10) collate utf8mb4_bin, foreign key fk_b(b) references t1(a));",
-			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+			refer:  "create table t1 (id int key, a varchar(10) collate utf8_bin, index(a));",
+			create: "create table t2 (a int, b varchar(10) collate utf8mb4_bin, foreign key fk_b(b) references t1(a));",
+			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 't2.fk_b' are incompatible.",
 		},
 		{
-			refer: "create table t1 (id int key, a varchar(10));",
-			child: "create table t2 (a int, b varchar(10), foreign key fk_b(b) references t1(a));",
-			err:   "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+			refer:  "create table t1 (id int key, a varchar(10));",
+			create: "create table t2 (a int, b varchar(10), foreign key fk_b(b) references t1(a));",
+			err:    "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 't2.fk_b' in the referenced table 't1'",
 		},
 		{
-			refer: "create table t1 (id int key, a varchar(10), index (a(5)));",
-			child: "create table t2 (a int, b varchar(10), foreign key fk_b(b) references t1(a));",
-			err:   "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+			refer:  "create table t1 (id int key, a varchar(10), index (a(5)));",
+			create: "create table t2 (a int, b varchar(10), foreign key fk_b(b) references t1(a));",
+			err:    "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 't2.fk_b' in the referenced table 't1'",
 		},
 		{
-			refer: "create table t1 (id int key, a int, index(a));",
-			child: "create table t2 (a int, b int, foreign key fk_b(b) references t1(id, a));",
-			err:   "[schema:1239]Incorrect foreign key definition for 'foreign key without name': Key reference and table reference don't match",
+			refer:  "create table t1 (id int key, a int, index(a));",
+			create: "create table t2 (a int, b int, foreign key fk_b(b) references t1(id, a));",
+			err:    "[schema:1239]Incorrect foreign key definition for 'foreign key without name': Key reference and table reference don't match",
 		},
 		{
-			child: "create table t2 (a int key, foreign key (a) references t2(a));",
-			err:   "[schema:1215]Cannot add foreign key constraint",
+			create: "create table t2 (a int key, foreign key (a) references t2(a));",
+			err:    "[schema:1215]Cannot add foreign key constraint",
 		},
 		{
-			child: "create table t2 (a int, b int, index(a,b), index(b,a), foreign key (a,b) references t2(a,b));",
-			err:   "[schema:1215]Cannot add foreign key constraint",
+			create: "create table t2 (a int, b int, index(a,b), index(b,a), foreign key (a,b) references t2(a,b));",
+			err:    "[schema:1215]Cannot add foreign key constraint",
 		},
 		{
-			child: "create table t2 (a int, b int, index(a,b), foreign key (a,b) references t2(b,a));",
-			err:   "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 'fk_1' in the referenced table 't2'",
+			create: "create table t2 (a int, b int, index(a,b), foreign key (a,b) references t2(b,a));",
+			err:    "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 't2.fk_1' in the referenced table 't2'",
+		},
+		{
+			prepare: []string{
+				"set @@foreign_key_checks=0;",
+				"create table t2 (a int, b int, index(a), foreign key (a) references t1(id));",
+			},
+			create: "create table t1 (id int, a int);",
+			err:    "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 't2.fk_1' in the referenced table 't1'",
+		},
+		{
+			prepare: []string{
+				"set @@foreign_key_checks=0;",
+				"create table t2 (a int, b int, index(a), foreign key (a) references t1(id));",
+			},
+			create: "create table t1 (id bigint key, a int);",
+			err:    "[ddl:3780]Referencing column 'a' and referenced column 'id' in foreign key constraint 't2.fk_1' are incompatible.",
 		},
 	}
 	for _, ca := range cases {
 		tk.MustExec("drop table if exists t2")
 		tk.MustExec("drop table if exists t1")
+		tk.MustExec("set @@foreign_key_checks=1")
+		for _, sql := range ca.prepare {
+			tk.MustExec(sql)
+		}
 		if ca.refer != "" {
 			tk.MustExec(ca.refer)
 		}
-		err := tk.ExecToErr(ca.child)
-		require.Error(t, err, ca.child)
-		require.Equal(t, ca.err, err.Error(), ca.child)
+		err := tk.ExecToErr(ca.create)
+		require.Error(t, err, ca.create)
+		require.Equal(t, ca.err, err.Error(), ca.create)
 	}
 
 	passCases := [][]string{

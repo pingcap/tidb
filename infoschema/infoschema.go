@@ -61,6 +61,8 @@ type InfoSchema interface {
 	AllPlacementBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
+	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
+	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 }
 
 type sortedTables []table.Table
@@ -468,23 +470,35 @@ func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *mode
 }
 
 func (is *infoSchema) buildTableReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
-	if !config.ForeignKeyEnabled() {
+	referredFKList := is.GetTableReferredForeignKeys(schema.L, tbInfo.Name.L)
+	if len(referredFKList) == 0 {
 		return
 	}
-	if len(is.referredForeignKeyMap) == 0 {
-		return
-	}
-	name := SchemaAndTableName{schema: schema.L, table: tbInfo.Name.L}
-	referredFKMap := is.referredForeignKeyMap[name]
-	referredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKMap))
-	for _, referredFK := range referredFKMap {
+	tbInfo.ReferredForeignKeys = make([]*model.ReferredFKInfo, 0, len(referredFKList))
+	for _, referredFK := range referredFKList {
 		if !CheckReferredForeignKeyValid(tbInfo, referredFK) {
 			continue
 		}
+		tbInfo.ReferredForeignKeys = append(tbInfo.ReferredForeignKeys, referredFK)
+	}
+}
+
+// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
+func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+	if !config.ForeignKeyEnabled() {
+		return nil
+	}
+	if len(is.referredForeignKeyMap) == 0 {
+		return nil
+	}
+	name := SchemaAndTableName{schema: schema, table: table}
+	referredFKMap := is.referredForeignKeyMap[name]
+	referredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKMap))
+	for _, referredFK := range referredFKMap {
 		referredFKList = append(referredFKList, referredFK)
 	}
 	if len(referredFKList) == 0 {
-		return
+		return nil
 	}
 	sort.Slice(referredFKList, func(i, j int) bool {
 		if referredFKList[i].ChildSchema.L != referredFKList[j].ChildSchema.L {
@@ -495,7 +509,7 @@ func (is *infoSchema) buildTableReferredForeignKeys(schema model.CIStr, tbInfo *
 		}
 		return referredFKList[i].ChildFKName.L != referredFKList[j].ChildFKName.L
 	})
-	tbInfo.ReferredForeignKeys = referredFKList
+	return referredFKList
 }
 
 // CheckReferredForeignKeyValid checks the referredFK is valid with referTbInfo.
