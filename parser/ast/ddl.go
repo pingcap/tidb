@@ -533,9 +533,9 @@ type ColumnOption struct {
 	// Stored is only for ColumnOptionGenerated, default is false.
 	Stored bool
 	// Refer is used for foreign key.
-	Refer               *ReferenceDef
-	StrValue            string
-	AutoRandomBitLength int
+	Refer       *ReferenceDef
+	StrValue    string
+	AutoRandOpt AutoRandomOption
 	// Enforced is only for Check, default is true.
 	Enforced bool
 	// Name is only used for Check Constraint name.
@@ -631,8 +631,13 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 	case ColumnOptionAutoRandom:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAutoRandom, func() error {
 			ctx.WriteKeyWord("AUTO_RANDOM")
-			if n.AutoRandomBitLength != types.UnspecifiedLength {
-				ctx.WritePlainf("(%d)", n.AutoRandomBitLength)
+			opt := n.AutoRandOpt
+			if opt.ShardBits != types.UnspecifiedLength {
+				if opt.RangeBits != types.UnspecifiedLength {
+					ctx.WritePlainf("(%d, %d)", opt.ShardBits, opt.RangeBits)
+				} else {
+					ctx.WritePlainf("(%d)", opt.ShardBits)
+				}
 			}
 			return nil
 		})
@@ -657,6 +662,14 @@ func (n *ColumnOption) Accept(v Visitor) (Node, bool) {
 		n.Expr = node.(ExprNode)
 	}
 	return v.Leave(n)
+}
+
+// AutoRandomOption contains the length of shard bits and range bits.
+type AutoRandomOption struct {
+	// ShardBits is the number of bits used to store the shard.
+	ShardBits int
+	// RangeBits is the number of int primary key bits that will be used by TiDB.
+	RangeBits int
 }
 
 // IndexVisibility is the option for index visibility.
@@ -2077,6 +2090,7 @@ const (
 	TokuDBRowFormatLzma
 	TokuDBRowFormatSnappy
 	TokuDBRowFormatUncompressed
+	TokuDBRowFormatZstd
 )
 
 // OnDuplicateKeyHandlingType is the option that handle unique key values in 'CREATE TABLE ... SELECT' or `LOAD DATA`.
@@ -2238,6 +2252,8 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("TOKUDB_LZMA")
 		case TokuDBRowFormatSnappy:
 			ctx.WriteKeyWord("TOKUDB_SNAPPY")
+		case TokuDBRowFormatZstd:
+			ctx.WriteKeyWord("TOKUDB_ZSTD")
 		case TokuDBRowFormatUncompressed:
 			ctx.WriteKeyWord("TOKUDB_UNCOMPRESSED")
 		default:

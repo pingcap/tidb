@@ -237,9 +237,9 @@ func rebaseAutoRandomValue(ctx context.Context, sctx sessionctx.Context, t table
 	if recordID < 0 {
 		return nil
 	}
-	layout := autoid.NewShardIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
+	shardFmt := autoid.NewShardIDFormat(&col.FieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	// Set bits except incremental_bits to zero.
-	recordID = recordID & (1<<layout.IncrementalBits - 1)
+	recordID = recordID & shardFmt.IncrementalMask()
 	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
 }
 
