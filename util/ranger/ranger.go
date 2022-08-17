@@ -366,8 +366,7 @@ func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp
 	return buildColumnRange(conds, sctx, tp, false, colLen)
 }
 
-// buildCNFIndexRange builds the range for index where the top layer is CNF.
-func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
+func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType,
 	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
 	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	var (
@@ -408,6 +407,16 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	return ranges, nil
+}
+
+// buildCNFIndexRange builds the range for index where the top layer is CNF.
+func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
+	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
+	ranges, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessCondition)
+	if err != nil {
+		return nil, err
 	}
 
 	// Take prefix index into consideration.
