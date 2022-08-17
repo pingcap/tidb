@@ -21,6 +21,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -947,3 +948,47 @@ func TestTiFlashBatchUnsupported(t *testing.T) {
 	require.Equal(t, "In total 2 tables: 1 succeed, 0 failed, 1 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	tk.MustGetErrCode("alter database information_schema set tiflash replica 1", 8200)
 }
+
+func TestTiFlashProgress(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	infosync.SetEtcdClient(cluster.Client(0))
+	tk.MustExec("create database tiflash_d")
+	tk.MustExec("create table tiflash_d.t(z int)")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	mustExist := func(tid int64) {
+		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		require.NoError(t, err)
+		_, ok := pm[tb.Meta().ID]
+		require.True(t, ok)
+	}
+	mustAbsent := func(tid int64) {
+		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		require.NoError(t, err)
+		_, ok := pm[tb.Meta().ID]
+		require.False(t, ok)
+	}
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	mustExist(tb.Meta().ID)
+	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta().ID)
+	mustAbsent(tb.Meta().ID)
+
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	tk.MustExec("truncate table tiflash_d.t")
+	mustAbsent(tb.Meta().ID)
+
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	tk.MustExec("drop table tiflash_d.t")
+	mustAbsent(tb.Meta().ID)
+
+	time.Sleep(100 * time.Millisecond)
+}
+
