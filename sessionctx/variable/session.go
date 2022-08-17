@@ -212,11 +212,8 @@ type SavepointRecord struct {
 	TxnCtxSavepoint TxnCtxNeedToRestore
 }
 
-// GetShard returns the shard prefix for the next `count` rowids.
-func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uint64, reserveSignBit bool, count int) int64 {
-	if shardRowIDBits == 0 {
-		return 0
-	}
+// GetCurrentShard returns the shard for the next `count` IDs.
+func (tc *TransactionContext) GetCurrentShard(count int) int64 {
 	if tc.shardRand == nil {
 		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
@@ -225,12 +222,7 @@ func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uin
 		tc.shardRemain = tc.ShardStep
 	}
 	tc.shardRemain -= count
-
-	var signBitLength uint64
-	if reserveSignBit {
-		signBitLength = 1
-	}
-	return (tc.currentShard & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - signBitLength)
+	return tc.currentShard
 }
 
 func (tc *TransactionContext) updateShard() {
@@ -1226,6 +1218,15 @@ type SessionVars struct {
 
 	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
 	EnablePreparedPlanCache bool
+
+	// GeneralPlanCacheSize controls the size of general plan cache.
+	PreparedPlanCacheSize uint64
+
+	// EnableGeneralPlanCache indicates whether to enable general plan cache.
+	EnableGeneralPlanCache bool
+
+	// GeneralPlanCacheSize controls the size of general plan cache.
+	GeneralPlanCacheSize uint64
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1857,8 +1858,7 @@ func (k planCacheStmtKey) Hash() []byte {
 // AddGeneralPlanCacheStmt adds this PlanCacheStmt into general-plan-cache-stmt cache
 func (s *SessionVars) AddGeneralPlanCacheStmt(sql string, stmt interface{}) {
 	if s.generalPlanCacheStmts == nil {
-		// TODO: make it configurable
-		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(100, 0, 0)
+		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.GeneralPlanCacheSize), 0, 0)
 	}
 	s.generalPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
 }
