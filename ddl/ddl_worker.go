@@ -50,8 +50,6 @@ import (
 )
 
 var (
-	// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
-	RunWorker = true
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = atomicutil.NewInt32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
@@ -404,7 +402,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		sess, err1 := d.sessPool.get()
 		if err1 == nil {
 			sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			err1 = insertDDLJobs2Table(newSession(sess), jobTasks, true)
+			err1 = insertDDLJobs2Table(newSession(sess), true, jobTasks...)
 			d.sessPool.put(sess)
 		}
 		err = err1
@@ -702,7 +700,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 	}
 	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
 		if val.(bool) {
-			time.Sleep(time.Duration(rand.Intn(5)) * time.Second) // #nosec G404
+			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
 		}
 	})
 	txn, err := w.sess.txn()
@@ -1285,7 +1283,6 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
-		d.schemaSyncer.NotifyCleanExpiredPaths()
 		// Wait until timeout.
 		<-ctx.Done()
 		return

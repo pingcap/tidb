@@ -264,9 +264,10 @@ func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *ty
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. Else constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( a0 NE b0, a0 op b0,
-// 		IF ( isNull(a0 NE b0), Null,
-// 			IF ( a1 NE b1, a1 op b1,
-// 				IF ( isNull(a1 NE b1), Null, a2 op b2))))`
+//
+//	IF ( isNull(a0 NE b0), Null,
+//		IF ( a1 NE b1, a1 op b1,
+//			IF ( isNull(a1 NE b1), Null, a2 op b2))))`
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
@@ -339,7 +340,7 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 		er.b.hasValidSemiJoinHint = oldHasHint
 	}()
 
-	np, err = er.b.buildResultSetNode(ctx, subq.Query)
+	np, err = er.b.buildResultSetNode(ctx, subq.Query, false)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1279,14 +1280,10 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			// Store the field type of the variable into SessionVars.UserVarTypes.
 			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
 			// GetVar has not been executed to fill the SessionVars.Users.
-			sessionVars.UsersLock.Lock()
-			sessionVars.UserVarTypes[name] = tp
-			sessionVars.UsersLock.Unlock()
+			sessionVars.SetUserVarType(name, tp)
 			return
 		}
-		sessionVars.UsersLock.RLock()
-		tp, ok := sessionVars.UserVarTypes[name]
-		sessionVars.UsersLock.RUnlock()
+		tp, ok := sessionVars.GetUserVarType(name)
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			tp.SetFlen(mysql.MaxFieldVarCharLength)
@@ -1334,9 +1331,9 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	if sysVar.HasNoneScope() {
 		val = sysVar.Value
 	} else if v.IsGlobal {
-		val, err = variable.GetGlobalSystemVar(sessionVars, name)
+		val, err = sessionVars.GetGlobalSystemVar(name)
 	} else {
-		val, err = variable.GetSessionOrGlobalSystemVar(sessionVars, name)
+		val, err = sessionVars.GetSessionOrGlobalSystemVar(name)
 	}
 	if err != nil {
 		er.err = err
@@ -2167,7 +2164,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		}
 		cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
 		for _, col := range tblInfo.Columns {
-			cols[col.ID] = &col.FieldType
+			cols[col.ID] = &(col.FieldType)
 		}
 		handleColIDs := make([]int64, 0, len(idxInfo.Columns))
 		for _, col := range idxInfo.Columns {

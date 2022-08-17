@@ -62,8 +62,7 @@ func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 }
 
 func TestInfoSchemaFieldValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -173,8 +172,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 }
 
 func TestCharacterSetCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -248,8 +246,7 @@ func TestCharacterSetCollations(t *testing.T) {
 }
 
 func TestCurrentTimestampAsDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -327,8 +324,7 @@ func (sm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
 }
 
 func TestSomeTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -504,8 +500,7 @@ INSERT INTO ...;
 }
 
 func TestTableRowIDShardingInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS `sharding_info_test_db`")
@@ -551,12 +546,17 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key clustered auto_random(1))")
 	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
 
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t6` (a bigint key clustered auto_random(2, 32))")
+	assertShardingInfo("t6", "PK_AUTO_RANDOM_BITS=2, RANGE BITS=32")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t7` (a bigint key clustered auto_random(5, 64))")
+	assertShardingInfo("t7", "PK_AUTO_RANDOM_BITS=5")
+
 	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
 }
 
 func TestSlowQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Prepare slow log file.
@@ -597,8 +597,7 @@ func TestSlowQuery(t *testing.T) {
 }
 
 func TestColumnStatistics(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
@@ -606,8 +605,7 @@ func TestColumnStatistics(t *testing.T) {
 
 func TestTableIfHasColumn(t *testing.T) {
 	columnName := variable.SlowLogHasMoreResults
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	slowLogFileName := "tidb-slow.log"
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	require.NoError(t, err)
@@ -630,12 +628,10 @@ WHERE table_name = 'slow_query' and column_name = '` + columnName + `'`).
 	//check select
 	tk.MustQuery(`select ` + columnName +
 		` from information_schema.slow_query`).Check(testkit.Rows("1"))
-
 }
 
 func TestReloadDropDatabase(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_dbs")
@@ -655,8 +651,7 @@ func TestReloadDropDatabase(t *testing.T) {
 }
 
 func TestSystemSchemaID(t *testing.T) {
-	_, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	_, dom := testkit.CreateMockStoreAndDomain(t)
 
 	uniqueIDMap := make(map[int64]string)
 	checkSystemSchemaTableID(t, dom, "information_schema", autoid.InformationSchemaDBID, 1, 10000, uniqueIDMap)
@@ -686,8 +681,7 @@ func checkSystemSchemaTableID(t *testing.T, dom *domain.Domain, dbName string, d
 }
 
 func TestSelectHiddenColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS `test_hidden`;")
@@ -739,8 +733,7 @@ func TestFormatVersion(t *testing.T) {
 
 // TestStmtSummaryTable Test statements_summary.
 func TestStmtSummaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 
@@ -917,8 +910,7 @@ func TestStmtSummaryTable(t *testing.T) {
 }
 
 func TestStmtSummaryTablePrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 
@@ -974,8 +966,7 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 }
 
 func TestCapturePrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 
@@ -1030,8 +1021,7 @@ func TestCapturePrivilege(t *testing.T) {
 }
 
 func TestIssue18845(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'user18845'@'localhost';`)
@@ -1046,8 +1036,7 @@ func TestIssue18845(t *testing.T) {
 
 // TestStmtSummaryInternalQuery Test statements_summary_history.
 func TestStmtSummaryInternalQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 	originalVal := config.CheckTableBeforeDrop
@@ -1105,8 +1094,7 @@ func TestStmtSummaryInternalQuery(t *testing.T) {
 
 // TestStmtSummaryErrorCount Test error count and warning count.
 func TestStmtSummaryErrorCount(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 
@@ -1130,8 +1118,7 @@ func TestStmtSummaryErrorCount(t *testing.T) {
 }
 
 func TestStmtSummaryPreparedStatements(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 
@@ -1153,8 +1140,7 @@ func TestStmtSummaryPreparedStatements(t *testing.T) {
 }
 
 func TestStmtSummarySensitiveQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
@@ -1176,8 +1162,7 @@ func TestStmtSummarySensitiveQuery(t *testing.T) {
 
 // TestSimpleStmtSummaryEvictedCount test stmtSummaryEvictedCount
 func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	now := time.Now().Unix()
 	interval := int64(1800)
@@ -1254,8 +1239,7 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 }
 
 func TestStmtSummaryEvictedPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	interval := int64(1800)
 	tk := newTestKitWithRoot(t, store)
@@ -1288,8 +1272,7 @@ func TestStmtSummaryEvictedPointGet(t *testing.T) {
 }
 
 func TestStmtSummaryTableOther(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	interval := int64(1800)
 	tk := newTestKitWithRoot(t, store)
@@ -1322,8 +1305,7 @@ func TestStmtSummaryTableOther(t *testing.T) {
 }
 
 func TestStmtSummaryHistoryTableOther(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 	// disable refreshing summary
@@ -1359,11 +1341,9 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 }
 
 func TestPerformanceSchemaforPlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tmp := testkit.NewTestKit(t, store)
-	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
-	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
+	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
 
 	tk := newTestKitWithPlanCache(t, store)
 
@@ -1403,8 +1383,7 @@ func TestServerInfoResolveLoopBackAddr(t *testing.T) {
 }
 
 func TestInfoSchemaClientErrors(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 
@@ -1430,8 +1409,7 @@ func TestInfoSchemaClientErrors(t *testing.T) {
 }
 
 func TestTiDBTrx(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 	tk.MustExec("drop table if exists test_tidb_trx")
@@ -1480,8 +1458,7 @@ func TestTiDBTrx(t *testing.T) {
 }
 
 func TestTiDBTrxSummary(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 	tk.MustExec("drop table if exists test_tidb_trx")
@@ -1511,8 +1488,7 @@ func TestTiDBTrxSummary(t *testing.T) {
 }
 
 func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := newTestKitWithRoot(t, store)
 	tk.MustExec("create user 'testuser'@'localhost'")
@@ -1535,8 +1511,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 }
 
 func TestAttributes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	// test the failpoint for testing
 	fpName := "github.com/pingcap/tidb/executor/mockOutputOfAttributes"
@@ -1552,8 +1527,7 @@ func TestAttributes(t *testing.T) {
 }
 
 func TestReferentialConstraints(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -1567,8 +1541,7 @@ func TestReferentialConstraints(t *testing.T) {
 }
 
 func TestVariablesInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -1615,8 +1588,7 @@ func TestVariablesInfo(t *testing.T) {
 
 // TestTableConstraintsContainForeignKeys TiDB Issue: https://github.com/pingcap/tidb/issues/28918
 func TestTableConstraintsContainForeignKeys(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE tableconstraints")
 	tk.MustExec("use tableconstraints")

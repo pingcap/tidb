@@ -113,7 +113,6 @@ func TestMergeRanges(t *testing.T) {
 		})
 		require.Equal(t, c.expected, result, "case = %d", i)
 	}
-
 }
 
 func TestInsertRanges(t *testing.T) {

@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -57,13 +58,13 @@ var (
 //
 // The execution flow is really like IndexLookUpReader. However, it uses multiple index scans
 // or table scans to get the handles:
-// 1. use the partialTableWorkers and partialIndexWorkers to fetch the handles (a batch per time)
-//    and send them to the indexMergeProcessWorker.
-// 2. indexMergeProcessWorker do the `Union` operation for a batch of handles it have got.
-//    For every handle in the batch:
-//    1. check whether it has been accessed.
-//    2. if not, record it and send it to the indexMergeTableScanWorker.
-//    3. if accessed, just ignore it.
+//  1. use the partialTableWorkers and partialIndexWorkers to fetch the handles (a batch per time)
+//     and send them to the indexMergeProcessWorker.
+//  2. indexMergeProcessWorker do the `Union` operation for a batch of handles it have got.
+//     For every handle in the batch:
+//  1. check whether it has been accessed.
+//  2. if not, record it and send it to the indexMergeTableScanWorker.
+//  3. if accessed, just ignore it.
 type IndexMergeReaderExecutor struct {
 	baseExecutor
 
@@ -324,6 +325,10 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 
 					// init kvReq and worker for this partition
+					// The key ranges should be ordered.
+					slices.SortFunc(keyRange, func(i, j kv.KeyRange) bool {
+						return bytes.Compare(i.StartKey, j.StartKey) < 0
+					})
 					kvReq, err := builder.SetKeyRanges(keyRange).Build()
 					if err != nil {
 						worker.syncErr(e.resultCh, err)

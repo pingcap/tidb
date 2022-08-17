@@ -721,7 +721,7 @@ Projection	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
 └─Sort	1304801.67	root		Column#35:desc
   └─Selection	1304801.67	root		gt(Column#35, NULL)
     └─HashAgg	1631002.09	root		group by:Column#61, funcs:sum(Column#59)->Column#35, funcs:firstrow(Column#60)->tpch.partsupp.ps_partkey
-      └─Projection	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY))->Column#59, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
+      └─Projection	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(10,0) BINARY))->Column#59, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
         └─HashJoin	1631002.09	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
           ├─HashJoin(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
           │ ├─TableReader(Build)	1.00	root		data:Selection
@@ -1160,7 +1160,7 @@ Sort	20000.00	root		tpch.supplier.s_name
   │ └─TableReader(Probe)	500000.00	root		data:TableFullScan
   │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
   └─HashAgg(Probe)	257492.04	root		group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey
-    └─Selection	257492.04	root		gt(cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY), mul(0.5, Column#44))
+    └─Selection	257492.04	root		gt(cast(tpch.partsupp.ps_availqty, decimal(10,0) BINARY), mul(0.5, Column#44))
       └─HashAgg	321865.05	root		group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
         └─HashJoin	9711455.06	root		left outer join, equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
           ├─IndexHashJoin(Build)	321865.05	root		inner join, inner:IndexLookUp, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey, equal cond:eq(tpch.part.p_partkey, tpch.partsupp.ps_partkey)

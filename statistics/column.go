@@ -221,7 +221,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 			if !rg.LowExclude && !rg.HighExclude {
 				// In this case, the row count is at most 1.
 				if pkIsHandle {
-					rowCount += 1
+					rowCount++
 					continue
 				}
 				var cnt float64
@@ -455,4 +455,22 @@ func (c *Column) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum, lowE
 		return histBetweenCnt
 	}
 	return float64(c.TopN.BetweenCount(lowEncoded, highEncoded)) + histBetweenCnt
+}
+
+// StatusToString gets the string info of StatsLoadedStatus
+func (s StatsLoadedStatus) StatusToString() string {
+	if !s.statsInitialized {
+		return "unInitialized"
+	}
+	switch s.evictedStatus {
+	case allLoaded:
+		return "allLoaded"
+	case onlyCmsEvicted:
+		return "onlyCmsEvicted"
+	case onlyHistRemained:
+		return "onlyHistRemained"
+	case allEvicted:
+		return "allEvicted"
+	}
+	return "unknown"
 }

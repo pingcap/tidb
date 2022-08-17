@@ -40,6 +40,7 @@ go_library(
         "//util/domainutil",
         "//util/execdetails",
         "//util/logutil",
+        "//util/mathutil",
         "//util/mock",
         "//util/pdapi",
         "//util/sem",
@@ -58,6 +59,7 @@ go_library(
 
 go_test(
     name = "infoschema_test",
+    timeout = "short",
     srcs = [
         "cache_test.go",
         "cluster_tables_test.go",

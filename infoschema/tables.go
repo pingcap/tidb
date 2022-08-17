@@ -1510,7 +1510,7 @@ var tablePlacementPoliciesCols = []columnInfo{
 
 var tableVariablesInfoCols = []columnInfo{
 	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "VARIABLES_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "VARIABLE_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "DEFAULT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "CURRENT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 64},
@@ -1521,10 +1521,11 @@ var tableVariablesInfoCols = []columnInfo{
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
-//  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
-//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
-//  - "PK_AUTO_RANDOM_BITS={bit_number}": for tables of which primary key is sharded row id.
-//  - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+//   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
+//   - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
+//   - "PK_AUTO_RANDOM_BITS={bit_number}, RANGE BITS={bit_number}": for tables of which primary key is sharded row id.
+//   - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+//
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
 func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface{} {
@@ -1535,6 +1536,10 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 	if tableInfo.PKIsHandle {
 		if tableInfo.ContainsAutoRandomBits() {
 			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
+			rangeBits := tableInfo.AutoRandomRangeBits
+			if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
+				shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
+			}
 		} else {
 			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
 		}
@@ -1857,7 +1862,7 @@ func GetDataFromSessionVariables(ctx sessionctx.Context) ([][]types.Datum, error
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, v := range sysVars {
 		var value string
-		value, err := variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
+		value, err := sessionVars.GetSessionOrGlobalSystemVar(v.Name)
 		if err != nil {
 			return nil, err
 		}
