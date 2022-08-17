@@ -268,6 +268,12 @@ func (d Checker) RecoverTable(ctx sessionctx.Context, recoverInfo *ddl.RecoverIn
 	panic("implement me")
 }
 
+// FlashbackCluster implements the DDL interface.
+func (d Checker) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) (err error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 // DropView implements the DDL interface.
 func (d Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	err = d.realDDL.DropView(ctx, stmt)
