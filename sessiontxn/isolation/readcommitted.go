@@ -124,14 +124,21 @@ func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
 	if sessionVars.ConnectionID > 0 &&
 		(sessionVars.RcInsertUseLastTso || sessionVars.RcPointLockReadUseLastTso) &&
 		sessionVars.InTxn() {
-		if _, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-			// In fact, Optimize hasn't called `txnManager.AdviseWarmup()` for `ExecuteStmt` any more.
-			return true
+		realNode := node
+		if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+			// In fact, Optimize hasn't called `txnManager.AdviseWarmup()` for `ExecuteStmt` any more if
+			// use cached plan.
+			prepareStmt, err := plannercore.GetPreparedStmt(execStmt, sessionVars)
+			if err != nil {
+				logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
+				return false
+			}
+			realNode = prepareStmt.PreparedAst.Stmt
 		}
 		// It can't judge if node is a point-update/point-delete/point-lock-read in `OnStmtStart function.
 		// To simplify the process, disable calling `txnManager.AdviseWarmup()` in Optimize for update/delete/select
 		// statements which makes tso wait time a little more for text protocol sql
-		switch v := node.(type) {
+		switch v := realNode.(type) {
 		case *ast.InsertStmt:
 			disableWarmup = v.Select == nil && sessionVars.RcInsertUseLastTso
 		case *ast.UpdateStmt:
