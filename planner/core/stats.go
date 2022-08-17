@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/planner/util/sql_restorer"
+	"github.com/pingcap/tidb/planner/util/sqlrestorer"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1328,11 +1328,11 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			colIDs = append(colIDs, col.UniqueID)
 			outNames = append(outNames, x.Columns[i].Name.O)
 		}
-		query := sql_restorer.NewQBFromTable(x.tableInfo.Name.O, colIDs, outNames,
+		query := sqlrestorer.NewQBFromTable(x.tableInfo.Name.O, colIDs, outNames,
 			&stmtctx.CETraceTblNameAlloc, &stmtctx.CETraceColNameAlloc)
 
 		for _, cond := range x.pushedDownConds {
-			query.Stage = sql_restorer.StageWhere
+			query.Stage = sqlrestorer.StageWhere
 			s, err := query.ExprToString(cond, false)
 			if err != nil {
 				return
@@ -1355,7 +1355,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		}
 		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
 			// For SemiJoin and AntiSemiJoin, we convert it to a filter and put it into the WHERE clause.
-			left = left.GenQBNotAfter(sql_restorer.StageWhere)
+			left = left.GenQBNotAfter(sqlrestorer.StageWhere)
 
 			expr := left.SemiJoinToExprString(x.JoinType == AntiSemiJoin, joinConds,
 				p.Children()[0].Schema(), p.Children()[1].Schema(), right)
@@ -1364,7 +1364,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
 			// For LeftOuterSemiJoin and AntiLeftOuterSemiJoin, we convert it to an expression and
 			// register it as a projected column.
-			left = left.GenQBNotAfter(sql_restorer.StageProjection)
+			left = left.GenQBNotAfter(sqlrestorer.StageProjection)
 
 			expr := left.SemiJoinToExprString(x.JoinType == AntiLeftOuterSemiJoin, joinConds,
 				p.Children()[0].Schema(), p.Children()[1].Schema(), right)
@@ -1373,8 +1373,8 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			p.Stats().SQLRestorer = left
 		} else {
 			// For InnerJoin, LeftOuterJoin and RightOuterJoin, just join the two subtree as in the SQL.
-			left = left.GenQBNotAfter(sql_restorer.StageJoin)
-			right = right.GenQBNotAfter(sql_restorer.StageJoin)
+			left = left.GenQBNotAfter(sqlrestorer.StageJoin)
+			right = right.GenQBNotAfter(sqlrestorer.StageJoin)
 
 			query := left.Clone()
 			query.ResetOutputCol()
@@ -1397,7 +1397,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			joinConds = append(joinConds, cond)
 		}
 		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
-			left = left.GenQBNotAfter(sql_restorer.StageWhere)
+			left = left.GenQBNotAfter(sqlrestorer.StageWhere)
 
 			for _, col := range x.CorCols {
 				right.Decorrelate(col.Column.UniqueID, left)
@@ -1407,7 +1407,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			left.WhereConds = append(left.WhereConds, expr)
 			p.Stats().SQLRestorer = left
 		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
-			left = left.GenQBNotAfter(sql_restorer.StageProjection)
+			left = left.GenQBNotAfter(sqlrestorer.StageProjection)
 
 			for _, col := range x.CorCols {
 				right.Decorrelate(col.Column.UniqueID, left)
@@ -1418,8 +1418,8 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			left.AddProjCol(schema[len(schema)-1].UniqueID, expr)
 			p.Stats().SQLRestorer = left
 		} else {
-			left = left.GenQBNotAfter(sql_restorer.StageJoin)
-			right = right.GenQBNotAfter(sql_restorer.StageWhere)
+			left = left.GenQBNotAfter(sqlrestorer.StageJoin)
+			right = right.GenQBNotAfter(sqlrestorer.StageWhere)
 
 			for _, col := range x.CorCols {
 				right.Decorrelate(col.Column.UniqueID, left)
@@ -1456,7 +1456,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		if childQuery == nil {
 			return
 		}
-		query := childQuery.GenQBNotAfter(sql_restorer.StageAgg)
+		query := childQuery.GenQBNotAfter(sqlrestorer.StageAgg)
 
 		for _, cond := range x.Conditions {
 			// If this Selection is for WHERE, there should be no projected columns yet.
@@ -1466,9 +1466,9 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			if err != nil {
 				return
 			}
-			if query.Stage <= sql_restorer.StageWhere {
+			if query.Stage <= sqlrestorer.StageWhere {
 				query.WhereConds = append(query.WhereConds, s)
-				query.Stage = sql_restorer.StageWhere
+				query.Stage = sqlrestorer.StageWhere
 			} else {
 				query.HavingConds = append(query.HavingConds, s)
 			}
@@ -1480,9 +1480,9 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		if childQuery == nil {
 			return
 		}
-		query := childQuery.GenQBNotAfter(sql_restorer.StageProjection)
+		query := childQuery.GenQBNotAfter(sqlrestorer.StageProjection)
 
-		query.Stage = sql_restorer.StageProjection
+		query.Stage = sqlrestorer.StageProjection
 		outputCols := x.Schema().Columns
 		for i := range x.Exprs {
 			s, err := query.ExprToString(x.Exprs[i], false)
@@ -1497,9 +1497,9 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		if childQuery == nil {
 			return
 		}
-		query := childQuery.GenQBNotAfter(sql_restorer.StageProjection)
+		query := childQuery.GenQBNotAfter(sqlrestorer.StageProjection)
 
-		query.Stage = sql_restorer.StageAgg
+		query.Stage = sqlrestorer.StageAgg
 		groupBys := x.GroupByItems
 		for _, item := range groupBys {
 			// group by columns can use projected columns
@@ -1524,9 +1524,9 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		if childQuery == nil {
 			return
 		}
-		query := childQuery.GenQBNotAfter(sql_restorer.StageOrderBy)
+		query := childQuery.GenQBNotAfter(sqlrestorer.StageOrderBy)
 
-		query.Stage = sql_restorer.StageLimit
+		query.Stage = sqlrestorer.StageLimit
 		query.Limit = x.Count
 		query.Offset = x.Offset
 		p.Stats().SQLRestorer = query
@@ -1536,9 +1536,9 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		if childQuery == nil {
 			return
 		}
-		query := childQuery.GenQBNotAfter(sql_restorer.StageOrderBy)
+		query := childQuery.GenQBNotAfter(sqlrestorer.StageOrderBy)
 
-		query.Stage = sql_restorer.StageLimit
+		query.Stage = sqlrestorer.StageLimit
 		query.Limit = 1
 		p.Stats().SQLRestorer = query
 	default:

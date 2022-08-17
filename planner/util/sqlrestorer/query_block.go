@@ -1,4 +1,18 @@
-package sql_restorer
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package sqlrestorer
 
 import (
 	"fmt"
@@ -19,7 +33,10 @@ type QueryBlock struct {
 	Limit       uint64
 	Offset      uint64
 
-	tableCols     map[int64]*tableCol
+	// tableCols contains columns that directly come from tables, or joinList.
+	tableCols map[int64]*tableCol
+	// projectedCols means columns that come from "expr as col_1" in the select list.
+	// The "expr" might be aggregate functions, subqueries or other expressions.
 	projectedCols map[int64]*projectedCol
 
 	Stage Stage
@@ -58,21 +75,36 @@ type joinItem struct {
 	AsName string
 }
 
+// Stage indicate a QueryBlock is in which stage of the semantic of a SELECT statement.
+// See the comments below for details.
 type Stage uint
 
 const (
+	// StageJoin means this QueryBlock only has joinList,
+	// and its WhereConds, GroupByCols, HavingConds, Limit, Offset and projectedCols are all empty.
 	StageJoin Stage = iota
+	// StageWhere means this QueryBlock may have WhereConds compared to StageJoin,
+	// and it doesn't have other clauses and projectedCols.
 	StageWhere
+	// StageProjection means this QueryBlock may have projectedCols compared to StageWhere.
 	StageProjection
+	// StageAgg means this QueryBlock may have GroupByCols and HavingConds compared to StageWhere,
+	// and there might be aggregate functions in projectedCols.
 	StageAgg
+	// StageWindow is not used now. We expect there might be window functions in projectedCols in this stage.
 	StageWindow
+	// StageOrderBy means this QueryBlock may have OrderByCols compared to StageWindow,
+	// but we don't support restoring OrderByCols for now.
 	StageOrderBy
+	// StageLimit means this QueryBlock may have Limit and Offset compared to StageOrderBy,
 	StageLimit
 )
 
 type projectedCol struct {
 	Expr   string
 	AsName string
+	// Trying to use a projectedCol will mark it as needed.
+	// If a projectedCol is not needed, it will not be printed in the final SQL result.
 	Needed bool
 }
 
@@ -93,6 +125,8 @@ func (q *QueryBlock) allocColName() string {
 	return name
 }
 
+// Clone returns a QueryBlock the same as the original.
+// For slice and map, only the container itself is copied, the contents in it are not copied.
 func (q *QueryBlock) Clone() *QueryBlock {
 	if q == nil {
 		return nil
@@ -127,6 +161,8 @@ func (q *QueryBlock) Clone() *QueryBlock {
 	return res
 }
 
+// NewQBFromTable generate a new QueryBlock from a table name and its output column IDs and names.
+// Two allocators are expected to be statement-level allocators to make sure there's no repeated table or column names.
 func NewQBFromTable(tblName string, colIDs []int64, colNames []string, tblNameAlloc, colNameAlloc *atomic2.Uint64) *QueryBlock {
 	res := newQB()
 	res.Stage = StageJoin
@@ -209,6 +245,7 @@ func (q *QueryBlock) addTblColsFromSlice(tblName string, colUIDs []int64, names 
 	return
 }
 
+// AddProjCol maps a column to an expression string.
 func (q *QueryBlock) AddProjCol(colUID int64, expr string) {
 	name := q.allocColName()
 	q.projectedCols[colUID] = &projectedCol{
@@ -218,6 +255,7 @@ func (q *QueryBlock) AddProjCol(colUID int64, expr string) {
 	}
 }
 
+// AddOutputCol mark the column need to be output, and this will make this column printed in the select list in the final SQL.
 func (q *QueryBlock) AddOutputCol(colUID int64) {
 	// Allocate a unique name for every output column to avoid duplicate names in the SELECT fields,
 	// especially when we are joining tables and some of them have the same column names.
@@ -230,12 +268,15 @@ func (q *QueryBlock) AddOutputCol(colUID int64) {
 	q.outputCol[colUID] = name
 }
 
+// ResetOutputCol clears all output columns.
 func (q *QueryBlock) ResetOutputCol() {
 	q.outputCol = make(map[int64]string)
 }
 
 const unknownColumnPlaceholder = "%COLUMN%"
 
+// ContainUnknownCol checks if there's unresolved column in this QueryBlock.
+// This is expected to check if there's correlated columns that are still unresolved.
 func (q *QueryBlock) ContainUnknownCol() bool {
 	if q.joinList.containUnknownCol() {
 		return true

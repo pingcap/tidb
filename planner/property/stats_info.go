@@ -17,7 +17,7 @@ package property
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/planner/util/sql_restorer"
+	"github.com/pingcap/tidb/planner/util/sqlrestorer"
 	"github.com/pingcap/tidb/statistics"
 )
 
@@ -51,7 +51,7 @@ type StatsInfo struct {
 	// SQLRestorer helps to restore a logical plan tree to a SQL.
 	// It's placed here because now we only use it for cardinality estimation tracing, and it only
 	// supports part of logical operators.
-	SQLRestorer *sql_restorer.QueryBlock
+	SQLRestorer *sqlrestorer.QueryBlock
 }
 
 // String implements fmt.Stringer interface.
