@@ -179,18 +179,18 @@ func setPhysicalIndexReaderCostDetail(p *PhysicalIndexReader, opt *physicalOptim
 
 func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp, spill bool,
 	buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
-	cpuCost, probeCPUCost, memCost, diskCost, probeDiskCost float64,
+	cpuCost, probeCPUCost, memCost, diskCost, probeDiskCost,
+	diskFactor, memoryFactor, concurrencyFactor float64,
 	memQuota int64) {
 	if opt == nil {
 		return
 	}
 	detail := tracing.NewPhysicalPlanCostDetail(p.ID(), p.TP())
-	sessVars := p.ctx.GetSessionVars()
 	diskCostDetail := &HashJoinDiskCostDetail{
 		Spill:           spill,
 		UseOuterToBuild: p.UseOuterToBuild,
 		BuildRowCount:   buildCnt,
-		DiskFactor:      sessVars.GetDiskFactor(),
+		DiskFactor:      diskFactor,
 		RowSize:         rowSize,
 		ProbeDiskCost: &HashJoinProbeDiskCostDetail{
 			SelectionFactor: SelectionFactor,
@@ -205,13 +205,13 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
 		MemQuota:      memQuota,
 		RowSize:       rowSize,
 		BuildRowCount: buildCnt,
-		MemoryFactor:  sessVars.GetMemoryFactor(),
+		MemoryFactor:  memoryFactor,
 		Cost:          memCost,
 	}
 	cpuCostDetail := &HashJoinCPUCostDetail{
 		BuildRowCount:     buildCnt,
 		CPUFactor:         cpuFactor,
-		ConcurrencyFactor: sessVars.GetConcurrencyFactor(),
+		ConcurrencyFactor: concurrencyFactor,
 		ProbeCost: &HashJoinProbeCostDetail{
 			NumPairs:        numPairs,
 			HasConditions:   len(p.LeftConditions)+len(p.RightConditions) > 0,
@@ -258,21 +258,19 @@ type HashJoinCPUCostDetail struct {
 	HashJoinConcurrency uint                     `json:"hashJoinConcurrency"`
 	Spill               bool                     `json:"spill"`
 	Cost                float64                  `json:"cost"`
+	UseOuterToBuild     bool                     `json:"useOuterToBuild"`
 }
 
 func (h *HashJoinCPUCostDetail) desc() string {
 	var cpuCostDesc string
-	buildCostDesc := fmt.Sprintf("%s*%s", BuildRowCountLbl, CPUFactorLbl)
-	if h.Spill {
-		cpuCostDesc = fmt.Sprintf("%s+%s+(%s+1)*%s)+%s",
-			buildCostDesc,
-			ProbeCostDetailLbl, HashJoinConcurrencyLbl, ConcurrencyFactorLbl,
-			buildCostDesc)
-	} else {
-		cpuCostDesc = fmt.Sprintf("%s+%s+(%s+1)*%s)+%s/%s",
-			buildCostDesc,
-			ProbeCostDetailLbl, HashJoinConcurrencyLbl, ConcurrencyFactorLbl,
-			buildCostDesc, HashJoinConcurrencyLbl)
+	buildCostDesc := fmt.Sprintf("%s+(%s+1)*%s)+%s*%s",
+		ProbeCostDetailLbl, HashJoinConcurrencyLbl, ConcurrencyFactorLbl, BuildRowCountLbl, CPUFactorLbl)
+	if h.UseOuterToBuild {
+		if h.Spill {
+			buildCostDesc = fmt.Sprintf("%s+%s*%s", buildCostDesc, BuildRowCountLbl, CPUFactorLbl)
+		} else {
+			buildCostDesc = fmt.Sprintf("%s+%s*%s/%s", buildCostDesc, BuildRowCountLbl, CPUFactorLbl, HashJoinConcurrencyLbl)
+		}
 	}
 	return cpuCostDesc
 }
