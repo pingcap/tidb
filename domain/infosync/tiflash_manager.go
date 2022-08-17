@@ -255,6 +255,7 @@ type MockTiFlash struct {
 	PdEnabled                   bool
 	TiflashDelay                time.Duration
 	StartTime                   time.Time
+	NotAvailable                bool
 }
 
 func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
@@ -277,6 +278,10 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 			return
 		}
 		table, ok := tiflash.SyncStatus[tableID]
+		if tiflash.NotAvailable {
+			// No region is available, so the table is not available.
+			table.Regions = []int{}
+		}
 		if !ok {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("0\n\n"))
@@ -306,6 +311,7 @@ func NewMockTiFlash() *MockTiFlash {
 		PdEnabled:                   true,
 		TiflashDelay:                0,
 		StartTime:                   time.Now(),
+		NotAvailable:                false,
 	}
 	tiflash.setUpMockTiFlashHTTPServer()
 	return tiflash
