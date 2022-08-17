@@ -479,7 +479,7 @@ create table log_message_1 (
 		},
 		{
 			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202020'), partition p2 values less than ('20:20:10'));",
-			dbterror.ErrRangeNotIncreasing,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202090'));",
