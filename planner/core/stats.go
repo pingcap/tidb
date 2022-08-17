@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/sql_restorer"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -129,7 +130,9 @@ func (p *baseLogicalPlan) recursiveDeriveStats(colGroups [][]*expression.Column)
 		childStats[i] = childProfile
 		childSchema[i] = child.Schema()
 	}
-	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
+	stats, err := p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
+	p.TraceStats(childStats)
+	return stats, err
 }
 
 // ExtractColGroups implements LogicalPlan ExtractColGroups interface.
@@ -385,7 +388,6 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		// Just reload the GroupNDVs.
 		selectivity := ds.stats.RowCount / ds.tableStats.RowCount
 		ds.stats = ds.tableStats.Scale(selectivity)
-		ds.TraceStats(nil)
 		return ds.stats, nil
 	}
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
@@ -462,7 +464,6 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		stmtCtx.AppendWarning(errors.Errorf(msg))
 		logutil.BgLogger().Debug(msg)
 	}
-	ds.TraceStats(nil)
 	return ds.stats, nil
 }
 
@@ -761,7 +762,6 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 	}
 	p.stats = childStats[0].Scale(SelectionFactor)
 	p.stats.GroupNDVs = nil
-	p.TraceStats(childStats)
 	return p.stats, nil
 }
 
@@ -908,7 +908,6 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID] = getColsNDV(cols, childSchema[0], childProfile)
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-	p.TraceStats(childStats)
 	return p.stats, nil
 }
 
@@ -980,7 +979,6 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 	}
 	la.inputCount = childProfile.RowCount
 	la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
-	la.TraceStats(childStats)
 	return la.stats, nil
 }
 
@@ -1080,7 +1078,6 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		ColNDVs:  colNDVs,
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childStats)
-	p.TraceStats(childStats)
 	return p.stats, nil
 }
 
@@ -1197,7 +1194,7 @@ func getSingletonStats(schema *expression.Schema) *property.StatsInfo {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -1317,8 +1314,10 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 	if !stmtctx.EnableOptimizerCETrace {
 		return
 	}
+	if p.Stats() != nil && p.Stats().SQLRestorer != nil {
+		return
+	}
 	needTrace := false
-	lp := p.self
 	switch x := p.self.(type) {
 	case *DataSource:
 		colIDs := make([]int64, 0)
@@ -1327,51 +1326,62 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			colIDs = append(colIDs, col.UniqueID)
 			outNames = append(outNames, x.Columns[i].Name.O)
 		}
-		query := property.QueryBlock{
-			Stage:        property.StageJoin,
-			TblNameAlloc: &stmtctx.CETraceTblNameAlloc,
-			ColNameAlloc: &stmtctx.CETraceColNameAlloc,
-		}
-		tbl := &property.JoinItem{Table: x.tableInfo.Name.O}
-		tbl.AsName = query.AllocTblName()
-		query.JoinList = property.JoinList{tbl}
-		query.AddTblColsFromSlice(tbl.AsName, colIDs, outNames)
+		query := sql_restorer.NewQBFromTable(x.tableInfo.Name.O, colIDs, outNames,
+			&stmtctx.CETraceTblNameAlloc, &stmtctx.CETraceColNameAlloc)
+
 		for _, cond := range x.pushedDownConds {
-			query.Stage = property.StageWhere
+			query.Stage = sql_restorer.StageWhere
 			s, err := query.ExprToString(cond, false)
 			if err != nil {
 				panic(err)
 			}
 			query.WhereConds = append(query.WhereConds, s)
 		}
-		p.Stats().SQLRestorer = &query
+		p.Stats().SQLRestorer = query
 	case *LogicalJoin:
 		left := childStats[0].SQLRestorer
 		right := childStats[1].SQLRestorer
 		if left == nil || right == nil {
 			return
 		}
-		left = left.GenQBNotAfter(property.StageJoin)
-		right = right.GenQBNotAfter(property.StageJoin)
-		query := &property.QueryBlock{
-			Stage:        property.StageJoin,
-			TblNameAlloc: &stmtctx.CETraceTblNameAlloc,
-			ColNameAlloc: &stmtctx.CETraceColNameAlloc,
+		joinConds := make([]expression.Expression, 0, 8)
+		joinConds = append(joinConds, x.LeftConditions...)
+		joinConds = append(joinConds, x.RightConditions...)
+		joinConds = append(joinConds, x.OtherConditions...)
+		for _, cond := range x.EqualConditions {
+			joinConds = append(joinConds, cond)
 		}
+		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
+			left = left.GenQBNotAfter(sql_restorer.StageWhere)
 
-		query.JoinList = append(query.JoinList, left.JoinList...)
-		query.AddTblColsFromQB(left)
+			expr := left.SemiJoinToExprString(x.JoinType == AntiSemiJoin, joinConds,
+				p.Children()[0].Schema(), p.Children()[1].Schema(), right)
+			left.WhereConds = append(left.WhereConds, expr)
+			p.Stats().SQLRestorer = left
+		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
+			left = left.GenQBNotAfter(sql_restorer.StageProjection)
 
-		var r *property.JoinItem
-		if len(right.JoinList) == 1 {
-			r = right.JoinList[0]
+			expr := left.SemiJoinToExprString(x.JoinType == AntiLeftOuterSemiJoin, joinConds,
+				p.Children()[0].Schema(), p.Children()[1].Schema(), right)
+			schema := x.Schema().Columns
+			left.AddProjCol(schema[len(schema)-1].UniqueID, expr)
+			p.Stats().SQLRestorer = left
 		} else {
-			r = &property.JoinItem{
-				SubJoinList: right.JoinList,
-			}
+			left = left.GenQBNotAfter(sql_restorer.StageJoin)
+			right = right.GenQBNotAfter(sql_restorer.StageJoin)
+
+			query := left.Clone()
+			query.ResetOutputCol()
+			query.JoinQB(right, x.JoinType.String(), joinConds)
+			p.Stats().SQLRestorer = query
 		}
-		query.JoinList = append(query.JoinList, r)
-		query.AddTblColsFromQB(right)
+		needTrace = true
+	case *LogicalApply:
+		left := childStats[0].SQLRestorer
+		right := childStats[1].SQLRestorer
+		if left == nil || right == nil {
+			return
+		}
 
 		joinConds := make([]expression.Expression, 0, 8)
 		joinConds = append(joinConds, x.LeftConditions...)
@@ -1380,33 +1390,79 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		for _, cond := range x.EqualConditions {
 			joinConds = append(joinConds, cond)
 		}
-		joinItem := query.JoinList[len(query.JoinList)-1]
-		joinItem.JoinType = x.JoinType.String()
-		for _, cond := range joinConds {
-			s, err := query.ExprToString(cond, false)
-			if err != nil {
-				panic(err)
+		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
+			left = left.GenQBNotAfter(sql_restorer.StageWhere)
+
+			for _, col := range x.CorCols {
+				right.Decorrelate(col.Column.UniqueID, left)
 			}
-			joinItem.JoinCond = append(joinItem.JoinCond, s)
+			expr := left.SemiJoinToExprString(x.JoinType == AntiSemiJoin, joinConds,
+				p.Children()[0].Schema(), p.Children()[1].Schema(), right)
+			left.WhereConds = append(left.WhereConds, expr)
+			p.Stats().SQLRestorer = left
+		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
+			left = left.GenQBNotAfter(sql_restorer.StageProjection)
+
+			for _, col := range x.CorCols {
+				right.Decorrelate(col.Column.UniqueID, left)
+			}
+			expr := left.SemiJoinToExprString(x.JoinType == AntiLeftOuterSemiJoin, joinConds,
+				p.Children()[0].Schema(), p.Children()[1].Schema(), right)
+			schema := x.Schema().Columns
+			left.AddProjCol(schema[len(schema)-1].UniqueID, expr)
+			p.Stats().SQLRestorer = left
+		} else {
+			left = left.GenQBNotAfter(sql_restorer.StageJoin)
+			right = right.GenQBNotAfter(sql_restorer.StageWhere)
+
+			for _, col := range x.CorCols {
+				right.Decorrelate(col.Column.UniqueID, left)
+			}
+
+			for _, expr := range joinConds {
+				s, err := right.ExprToString(expr, true)
+				if err != nil {
+					panic(err)
+				}
+				right.WhereConds = append(right.WhereConds, s)
+			}
+
+			cols := expression.ExtractColumnsFromExpressions(nil, joinConds, nil)
+			for _, col := range cols {
+				if p.Children()[0].Schema().Contains(col) {
+					right.Decorrelate(col.UniqueID, left)
+				}
+			}
+
+			schema := x.Schema().Columns
+			leftSchemaLen := x.Children()[0].Schema().Len()
+			rightSchema := x.Children()[1].Schema().Columns
+			for i := leftSchemaLen; i < len(schema); i++ {
+				tmp := right.Clone()
+				tmp.AddOutputCol(rightSchema[i-leftSchemaLen].UniqueID)
+				scalarSubQ := "(" + tmp.String() + ")"
+				left.AddProjCol(schema[i].UniqueID, scalarSubQ)
+			}
+			p.Stats().SQLRestorer = left
 		}
-		p.Stats().SQLRestorer = query
-		needTrace = true
 	case *LogicalSelection:
 		childQuery := childStats[0].SQLRestorer
 		if childQuery == nil {
 			return
 		}
-		query := childQuery.GenQBNotAfter(property.StageOrderBy)
+		query := childQuery.GenQBNotAfter(sql_restorer.StageAgg)
+
 		for _, cond := range x.Conditions {
 			// If this Selection is for WHERE, there should be no projected columns yet.
 			// If it's for HAVING, we can use projected columns.
+			// So we can safely set `useProjectedCol` to true.
 			s, err := query.ExprToString(cond, true)
 			if err != nil {
 				panic(err)
 			}
-			if query.Stage <= property.StageWhere {
+			if query.Stage <= sql_restorer.StageWhere {
 				query.WhereConds = append(query.WhereConds, s)
-				query.Stage = property.StageWhere
+				query.Stage = sql_restorer.StageWhere
 			} else {
 				query.HavingConds = append(query.HavingConds, s)
 			}
@@ -1418,7 +1474,9 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		if childQuery == nil {
 			return
 		}
-		query := childQuery.GenQBNotAfter(property.StageProjection)
+		query := childQuery.GenQBNotAfter(sql_restorer.StageProjection)
+
+		query.Stage = sql_restorer.StageProjection
 		outputCols := x.Schema().Columns
 		for i := range x.Exprs {
 			s, err := query.ExprToString(x.Exprs[i], false)
@@ -1427,15 +1485,15 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			}
 			query.AddProjCol(outputCols[i].UniqueID, s)
 		}
-		query.Stage = property.StageProjection
 		p.Stats().SQLRestorer = query
 	case *LogicalAggregation:
 		childQuery := childStats[0].SQLRestorer
 		if childQuery == nil {
 			return
 		}
-		query := childQuery.GenQBNotAfter(property.StageProjection)
-		query.Stage = property.StageAgg
+		query := childQuery.GenQBNotAfter(sql_restorer.StageProjection)
+
+		query.Stage = sql_restorer.StageAgg
 		groupBys := x.GroupByItems
 		for _, item := range groupBys {
 			s, err := query.ExprToString(item, true)
@@ -1454,13 +1512,37 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		}
 		p.Stats().SQLRestorer = query
 		needTrace = true
+	case *LogicalLimit:
+		childQuery := childStats[0].SQLRestorer
+		if childQuery == nil {
+			return
+		}
+		query := childQuery.GenQBNotAfter(sql_restorer.StageOrderBy)
+
+		query.Stage = sql_restorer.StageLimit
+		query.Limit = x.Count
+		query.Offset = x.Offset
+		p.Stats().SQLRestorer = query
+	case *LogicalMaxOneRow:
+		// Regard MaxOneRow as Limit 1.
+		childQuery := childStats[0].SQLRestorer
+		if childQuery == nil {
+			return
+		}
+		query := childQuery.GenQBNotAfter(sql_restorer.StageOrderBy)
+
+		query.Stage = sql_restorer.StageLimit
+		query.Limit = 1
+		p.Stats().SQLRestorer = query
+	default:
+		return
 	}
 
 	p.Stats().SQLRestorer.ResetOutputCol()
-	for _, col := range lp.Schema().Columns {
+	for _, col := range p.self.Schema().Columns {
 		p.Stats().SQLRestorer.AddOutputCol(col.UniqueID)
 	}
-	if !needTrace {
+	if !needTrace || p.Stats().SQLRestorer.ContainUnknownCol() {
 		return
 	}
 	stmtctx.OptimizerCETrace = append(stmtctx.OptimizerCETrace, &tracing.CETraceRecord{

@@ -17,6 +17,7 @@ package property
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/planner/util/sql_restorer"
 	"github.com/pingcap/tidb/statistics"
 )
 
@@ -47,11 +48,10 @@ type StatsInfo struct {
 	// GroupNDVs stores the NDV of column groups.
 	GroupNDVs []GroupNDV
 
-	// SQLRestorer helps to restore a plan tree to a SQL.
+	// SQLRestorer helps to restore a logical plan tree to a SQL.
 	// It's placed here because now we only use it for cardinality estimation tracing, and it only
 	// supports part of logical operators.
-	// Maybe we should put it into baseplan someday.
-	SQLRestorer *QueryBlock
+	SQLRestorer *sql_restorer.QueryBlock
 }
 
 // String implements fmt.Stringer interface.
