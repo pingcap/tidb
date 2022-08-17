@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
@@ -50,7 +51,7 @@ const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.TableInfo, error) {
+func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo := job.Args[0].(*model.TableInfo)
 
@@ -63,17 +64,11 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 		return tbInfo, errors.Trace(err)
 	}
 
-	err = checkTableForeignKeyValidInOwner(d, job, tbInfo, fkCheck)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return tbInfo, errors.Trace(err)
-	}
 	// allocate foreign key ID.
 	for _, fkInfo := range tbInfo.ForeignKeys {
 		fkInfo.ID = allocateFKIndexID(tbInfo)
 		fkInfo.State = model.StatePublic
 	}
-
 	switch tbInfo.State {
 	case model.StateNone:
 		// none -> public
@@ -152,7 +147,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	tbInfo, err := createTable(d, t, job, fkCheck)
+	if config.ForeignKeyEnabled() && len(tbInfo.ForeignKeys) > 0 {
+		return createTableWithForeignKeys(d, t, job, tbInfo, fkCheck)
+	}
+
+	tbInfo, err := createTable(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -165,6 +164,44 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
+	return ver, errors.Trace(err)
+}
+
+func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
+	switch job.SchemaState {
+	case model.StateNone:
+		err = checkTableForeignKeyValidInOwner(d, job, tbInfo, fkCheck)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// create table in non-public state
+		tbInfo, err = createTable(d, t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		tbInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(d, t, job, tbInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
+	case model.StateWriteOnly:
+		tbInfo.State = model.StatePublic
+		// to make sure when load schema info, infoschema should drop the table info first and then apllyCreateTable,
+		// otherwise, is.TableByID return the old table info since the old table info doesn't been deleted.
+		originalJobType := job.Type
+		job.Type = model.ActionAddForeignKey
+		ver, err = updateVersionAndTableInfo(d, t, job, tbInfo, true)
+		job.Type = originalJobType
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		return ver, nil
+	default:
+		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
+	}
 	return ver, errors.Trace(err)
 }
 
@@ -189,7 +226,7 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	for i := range args {
 		stubJob.TableID = args[i].ID
 		stubJob.Args[0] = args[i]
-		tbInfo, err := createTable(d, t, stubJob, fkCheck)
+		tbInfo, err := createTable(d, t, stubJob)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
