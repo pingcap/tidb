@@ -85,6 +85,8 @@ const (
 	DefExpensiveQueryTimeThreshold = 60
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
+	// DefTempDir is the default temporary directory path for TiDB.
+	DefTempDir = "/tmp/tidb"
 )
 
 // Valid config maps
@@ -170,6 +172,7 @@ type Config struct {
 	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool   `toml:"split-table" json:"split-table"`
 	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
+	TempDir          string `toml:"temp-dir" json:"temp-dir"`
 	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
@@ -810,6 +813,7 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
+	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
 	MemQuotaQuery:                1 << 30,

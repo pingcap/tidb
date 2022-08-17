@@ -2097,7 +2097,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + hash partition + IndexReader as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(thash.a) from thash use index(a) where thash.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2111,7 +2111,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + hash partition + TableReader as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(thash.b) from thash ignore index(a) where thash.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2125,7 +2125,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + hash partition + IndexLookUp as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─HashAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2140,7 +2140,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + range partition + IndexReader as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(trange.a) from trange use index(a) where trange.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2154,7 +2154,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + range partition + TableReader as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(trange.b) from trange ignore index(a) where trange.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2168,7 +2168,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + range partition + IndexLookUp as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─HashAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,

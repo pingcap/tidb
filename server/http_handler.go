@@ -392,6 +392,9 @@ type ddlHookHandler struct {
 type valueHandler struct {
 }
 
+// labelHandler is the handler for set labels
+type labelHandler struct{}
+
 const (
 	opTableRegions     = "regions"
 	opTableRanges      = "ranges"
@@ -2085,9 +2088,9 @@ func (h *testHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // Supported operations:
-//   * resolvelock?safepoint={uint64}&physical={bool}:
-//	   * safepoint: resolve all locks whose timestamp is less than the safepoint.
-//	   * physical: whether it uses physical(green GC) mode to scan locks. Default is true.
+//   - resolvelock?safepoint={uint64}&physical={bool}:
+//   - safepoint: resolve all locks whose timestamp is less than the safepoint.
+//   - physical: whether it uses physical(green GC) mode to scan locks. Default is true.
 func (h *testHandler) handleGC(op string, w http.ResponseWriter, req *http.Request) {
 	if !atomic.CompareAndSwapUint32(&h.gcIsRunning, 0, 1) {
 		writeError(w, errors.New("GC is running"))
@@ -2157,4 +2160,33 @@ func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	ctx := req.Context()
 	logutil.Logger(ctx).Info("change ddl hook success", zap.String("to_ddl_hook", req.FormValue("ddl_hook")))
+}
+
+// ServeHTTP handles request of set server labels.
+func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	labels := make(map[string]string)
+	err := json.NewDecoder(req.Body).Decode(&labels)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	if len(labels) > 0 {
+		cfg := *config.GetGlobalConfig()
+		if cfg.Labels == nil {
+			cfg.Labels = make(map[string]string, len(labels))
+		}
+		for k, v := range labels {
+			cfg.Labels[k] = v
+		}
+		config.StoreGlobalConfig(&cfg)
+		logutil.BgLogger().Info("update server labels", zap.Any("labels", cfg.Labels))
+	}
+
+	writeData(w, config.GetGlobalConfig().Labels)
 }
