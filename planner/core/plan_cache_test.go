@@ -80,12 +80,26 @@ func TestGeneralPlanCacheParameterizer(t *testing.T) {
 
 	tk.MustExec("set tidb_enable_general_plan_cache=1")
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int, key(a))")
-	tk.MustExec("select * from t where a > 1")
-	tk.MustExec("select * from t where a > 2")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (0), (1), (2), (3), (4), (5)")
+	tk.MustQuery("select * from t where a > 1").Sort().Check(testkit.Rows("2", "3", "4", "5"))
+	tk.MustQuery("select * from t where a > 3").Sort().Check(testkit.Rows("4", "5"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustExec("select * from t where a > 2 and a < 100")
+	tk.MustQuery("select * from t where a > 1 and a < 5").Sort().Check(testkit.Rows("2", "3", "4"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustExec("select * from t where a > 2 and a < 2200")
+	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	mp.action = "error"
+	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	mp.action = "panic"
+	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	mp.action = "not_support"
+	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	mp.action = ""
+	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
