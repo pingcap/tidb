@@ -39,8 +39,8 @@ var (
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
 
-func getValidPlanFromCache(sctx sessionctx.Context, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
-	cache := sctx.PreparedPlanCache()
+func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
+	cache := sctx.GetPlanCache(isGeneralPlanCache)
 	val, exist := cache.Get(key)
 	if !exist {
 		return nil, exist
@@ -54,8 +54,8 @@ func getValidPlanFromCache(sctx sessionctx.Context, key kvcache.Key, paramTypes 
 	return nil, false
 }
 
-func putPlanIntoCache(sctx sessionctx.Context, key kvcache.Key, plan *PlanCacheValue) {
-	cache := sctx.PreparedPlanCache()
+func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue) {
+	cache := sctx.GetPlanCache(isGeneralPlanCache)
 	val, exist := cache.Get(key)
 	if !exist {
 		cache.Put(key, []*PlanCacheValue{plan})
