@@ -137,7 +137,7 @@ One problem is that if ddl owner is moved to DDL service cluster, no one will up
 
 #### infosync.Infosyncer
 
-`infosync.Infosyncer` is used by DDL worker to interact with PD like updating placement rule or server infos. However, it is a global variable of golang currently. To run multiple DDL owner in one tidb instance, we must make sure each DDL owner has its own `Infosyncer` in `ddlCtx`. It is easy to make it when `NewDDL` and we can pass a new created `Infosyncer` to the ddl object.
+`infosync.Infosyncer` is used by DDL worker to interact with PD like updating placement rule or server infos. However, it is a static variable of golang currently. To run multiple DDL owner in one tidb instance, we must make sure each DDL owner has its own `Infosyncer` in `ddlCtx`. It is easy to make it when `NewDDL` and we can pass a new created `Infosyncer` to the ddl object.
 
 However, sometimes it's hard to access a context which has a `Infosyncer` object, we still need to keep a global reference for the default `Infosyncer`. The "default" `Infosyncer` means it is the `Infosyncer` of the current domain of the service cluster, not any of the registered clusters. The default `Infosyncer` can be used by other components except for DDL.
 
@@ -160,3 +160,13 @@ For `admin show ddl`, it's not safe to allow user to see the worker node's IP an
 #### GC
 
 Every tidb-server will update the key `/tidb/server/minstartts/{ddl_id}` with their min start ts of all running transactions. If a DDL owner is running in DDL service cluster, it should also update this key to avoid some records is deleted by mistake.
+
+#### System Variables
+
+In this design, DDL owners from multiple clusters will be running in one tidb-server process. One problem is that which configuration should we use in DDL owner? For system variables, there are 4 scopes: "none", "global", "instance" and "session", we can talk about them separately.
+
+The variables with scope "none" and "instance" store their values in static fields, so different DDL owners in the same tidb-server process will get the same value. But it is safe for their semantics.
+
+The variables with scope "session" store their values in a session context, so different DDL owners will get the value from the different `sessionctx.Context` objects. Notice that a new created `sessionctx.Context` should inherit the domain's global value if a variable also has "global" scope, so we need to keep sync with global value changes like what `LoadSysVarCacheLoop` do.
+
+Some variables which are defined with only one scope "global" store the values in static fields. This may cause a problem that when the DDL owner of registered cluster want to read these variables, they may get the values from other domain by mistake. For these variables, we should avoid storing the value in static fields by moving them to `variable.SessionVars` in `sessionctx.Context`.
