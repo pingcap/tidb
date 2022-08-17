@@ -37,6 +37,8 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id) ON UPDATE RESTRICT ON DELETE CASCADE)")
 	tb1Info := getTableInfo(t, dom, "test", "t1")
 	tb2Info := getTableInfo(t, dom, "test2", "t2")
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test", "t1")))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
 	require.Equal(t, 1, len(tb1Info.ReferredForeignKeys))
 	require.Equal(t, model.ReferredFKInfo{
@@ -67,6 +69,8 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk.MustExec("create table t3 (id int, b int, index idx_b(b), foreign key fk_b(b) references t2(id) ON UPDATE SET NULL ON DELETE NO ACTION)")
 	tb2Info = getTableInfo(t, dom, "test2", "t2")
 	tb3Info := getTableInfo(t, dom, "test2", "t3")
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	require.Equal(t, 1, len(tb2Info.ReferredForeignKeys))
 	require.Equal(t, model.ReferredFKInfo{
@@ -95,6 +99,7 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 
 	tk.MustExec("create table t5 (id int key, a int, b int, foreign key (a) references t5(id));")
 	tb5Info := getTableInfo(t, dom, "test2", "t5")
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
 	require.Equal(t, 1, len(tb5Info.ForeignKeys))
 	require.Equal(t, 1, len(tb5Info.ReferredForeignKeys))
 	require.Equal(t, model.ReferredFKInfo{
@@ -115,6 +120,10 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	}, *tb5Info.ForeignKeys[0])
 	require.Equal(t, 1, len(tb5Info.Indices))
 	require.Equal(t, "fk_1", tb5Info.Indices[0].Name.L)
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test", "t1")))
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
+	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
 
 	// Test after disable foreign key feature.
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -128,6 +137,10 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	tb2Info = getTableInfo(t, dom, "test2", "t2")
 	tb3Info = getTableInfo(t, dom, "test2", "t3")
 	tb5Info = getTableInfo(t, dom, "test2", "t5")
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test", "t1")))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
 	tbls := []*model.TableInfo{tb1Info, tb2Info, tb3Info, tb5Info}
 	fkCnts := []int{0, 1, 1, 1}
 	for i, tbInfo := range tbls {

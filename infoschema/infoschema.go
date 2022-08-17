@@ -102,20 +102,13 @@ type infoSchema struct {
 
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
-	referredForeignKeyMap map[SchemaAndTableName]map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo
+	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
 }
 
 // SchemaAndTableName contains the lower-case schema name and table name.
 type SchemaAndTableName struct {
 	schema string
 	table  string
-}
-
-// SchemaAndTableAndForeignKeyName contains the lower-case schema name, table name and foreign key name.
-type SchemaAndTableAndForeignKeyName struct {
-	schema string
-	table  string
-	fk     string
 }
 
 // MockInfoSchema only serves for test.
@@ -436,18 +429,35 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 			continue
 		}
 		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
-		referredFKMap := is.referredForeignKeyMap[refer]
-		if referredFKMap == nil {
-			referredFKMap = make(map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo)
-			is.referredForeignKeyMap[refer] = referredFKMap
+		referredFKList := is.referredForeignKeyMap[refer]
+		found := false
+		for _, referredFK := range referredFKList {
+			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
+				referredFK.Cols = fk.RefCols
+				found = true
+				break
+			}
 		}
-		referredFK := SchemaAndTableAndForeignKeyName{schema: schema.L, table: tbInfo.Name.L, fk: fk.Name.L}
-		referredFKMap[referredFK] = &model.ReferredFKInfo{
+		if found {
+			continue
+		}
+
+		referredFKList = append(referredFKList, &model.ReferredFKInfo{
 			Cols:        fk.RefCols,
 			ChildSchema: schema,
 			ChildTable:  tbInfo.Name,
 			ChildFKName: fk.Name,
-		}
+		})
+		sort.Slice(referredFKList, func(i, j int) bool {
+			if referredFKList[i].ChildSchema.L != referredFKList[j].ChildSchema.L {
+				return referredFKList[i].ChildSchema.L < referredFKList[j].ChildSchema.L
+			}
+			if referredFKList[i].ChildTable.L != referredFKList[j].ChildTable.L {
+				return referredFKList[i].ChildTable.L < referredFKList[j].ChildTable.L
+			}
+			return referredFKList[i].ChildFKName.L != referredFKList[j].ChildFKName.L
+		})
+		is.referredForeignKeyMap[refer] = referredFKList
 	}
 }
 
@@ -460,12 +470,16 @@ func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *mode
 			continue
 		}
 		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
-		referredFKMap := is.referredForeignKeyMap[refer]
-		if referredFKMap == nil {
+		referredFKList := is.referredForeignKeyMap[refer]
+		if len(referredFKList) == 0 {
 			continue
 		}
-		referredFK := SchemaAndTableAndForeignKeyName{schema: schema.L, table: tbInfo.Name.L, fk: fk.Name.L}
-		delete(referredFKMap, referredFK)
+		for i, referredFK := range referredFKList {
+			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
+				is.referredForeignKeyMap[refer] = append(referredFKList[:i], referredFKList[i+1:]...)
+				break
+			}
+		}
 	}
 }
 
@@ -492,24 +506,7 @@ func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model
 		return nil
 	}
 	name := SchemaAndTableName{schema: schema, table: table}
-	referredFKMap := is.referredForeignKeyMap[name]
-	referredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKMap))
-	for _, referredFK := range referredFKMap {
-		referredFKList = append(referredFKList, referredFK)
-	}
-	if len(referredFKList) == 0 {
-		return nil
-	}
-	sort.Slice(referredFKList, func(i, j int) bool {
-		if referredFKList[i].ChildSchema.L != referredFKList[j].ChildSchema.L {
-			return referredFKList[i].ChildSchema.L < referredFKList[j].ChildSchema.L
-		}
-		if referredFKList[i].ChildTable.L != referredFKList[j].ChildTable.L {
-			return referredFKList[i].ChildTable.L < referredFKList[j].ChildTable.L
-		}
-		return referredFKList[i].ChildFKName.L != referredFKList[j].ChildFKName.L
-	})
-	return referredFKList
+	return is.referredForeignKeyMap[name]
 }
 
 // CheckReferredForeignKeyValid checks the referredFK is valid with referTbInfo.

@@ -1014,7 +1014,7 @@ func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Build
 			policyMap:             map[string]*model.PolicyInfo{},
 			ruleBundleMap:         map[int64]*placement.Bundle{},
 			sortedTablesBuckets:   make([]sortedTables, bucketCount),
-			referredForeignKeyMap: make(map[SchemaAndTableName]map[SchemaAndTableAndForeignKeyName]*model.ReferredFKInfo),
+			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 		},
 		dirtyDB: make(map[string]bool),
 		factory: factory,
