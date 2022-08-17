@@ -106,7 +106,7 @@ Create a table with foreign key, check the following conditions when a DDL job i
 
 #### Handle In DDL Owner
 
-When DDL Owner handle create table job, DDL owner need to create a new table, and update the reference tables information.
+When DDL Owner handle create table job, DDL owner need to create a new table.
 
 At the same point in time, there may be two versions of the schema in the TiDB cluster, so we can't create new table and 
 update all reference tables in one schema version, since this may break foreign key constraint, such as delete reference table
