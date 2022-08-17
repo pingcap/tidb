@@ -2710,6 +2710,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.BinaryPlan) != 0 {
 		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
+	if len(logItems.StatsLoadStatus) > 0 {
+		writeSlowLogItem(&buf, SlowLogStatsLoadStatus, logItems.StatsLoadStatus)
+	}
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
@@ -2723,10 +2726,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	buf.WriteString(logItems.SQL)
 	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
 		buf.WriteString(";")
-	}
-
-	if len(logItems.StatsLoadStatus) > 0 {
-		writeSlowLogItem(&buf, SlowLogStatsLoadStatus, logItems.StatsLoadStatus)
 	}
 
 	return buf.String()
