@@ -263,13 +263,13 @@ type HashJoinCPUCostDetail struct {
 
 func (h *HashJoinCPUCostDetail) desc() string {
 	var cpuCostDesc string
-	buildCostDesc := fmt.Sprintf("%s+(%s+1)*%s)+%s*%s",
-		ProbeCostDetailLbl, HashJoinConcurrencyLbl, ConcurrencyFactorLbl, BuildRowCountLbl, CPUFactorLbl)
+	buildCostDesc := fmt.Sprintf("%s*%s", BuildRowCountLbl, CPUFactorLbl)
+	cpuCostDesc = fmt.Sprintf("%s+%s+(%s+1)*%s)", buildCostDesc, ProbeCostDetailLbl, HashJoinConcurrencyLbl, ConcurrencyFactorLbl)
 	if h.UseOuterToBuild {
 		if h.Spill {
-			buildCostDesc = fmt.Sprintf("%s+%s*%s", buildCostDesc, BuildRowCountLbl, CPUFactorLbl)
+			cpuCostDesc = fmt.Sprintf("%s+%s", cpuCostDesc, buildCostDesc)
 		} else {
-			buildCostDesc = fmt.Sprintf("%s+%s*%s/%s", buildCostDesc, BuildRowCountLbl, CPUFactorLbl, HashJoinConcurrencyLbl)
+			buildCostDesc = fmt.Sprintf("%s+%s/%s", cpuCostDesc, buildCostDesc, HashJoinConcurrencyLbl)
 		}
 	}
 	return cpuCostDesc
