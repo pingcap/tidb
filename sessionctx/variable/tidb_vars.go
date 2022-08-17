@@ -729,9 +729,9 @@ const (
 	// TiDBEnableGeneralPlanCache indicates whether to enable general plan cache.
 	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
 	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
-	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
-	TiDBPointLockReadUseLastTso    = "tidb_rc_point_lock_read_use_last_tso"
-	TiDBInsertUseLastTso           = "tidb_rc_insert_use_last_tso"
+	TiDBGeneralPlanCacheSize    = "tidb_general_plan_cache_size"
+	TiDBPointLockReadUseLastTso = "tidb_rc_point_lock_read_use_last_tso"
+	TiDBInsertUseLastTso        = "tidb_rc_insert_use_last_tso"
 )
 
 // TiDB vars that have only global scope
@@ -1026,10 +1026,8 @@ const (
 	MaxDDLReorgBatchSize           int32  = 10240
 	MinDDLReorgBatchSize           int32  = 32
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	DefTiDBPointLockReadUseLastTso                 = true
-	DefTiDBInsertUseLastTso                        = true
-	DefTiDBPointLockReadUseLastTso                 = false
-	DefTiDBInsertUseLastTso                        = false
+	DefTiDBPointLockReadUseLastTso        = false
+	DefTiDBInsertUseLastTso               = false
 )
 
 // Process global variables.
