@@ -34,6 +34,8 @@ So, skipping pessimistic locks for these keys and deferring constraint checks ca
 
 This feature makes it possible to skip acquiring pessimistic locks for the keys that need uniqueness constraint checks in pessimistic transactions. We do constraint checks for these keys during prewrite.
 
+The main affected statements include simple `INSERT` and `UPDATE` that involve primary key or unique keys. `INSERT ON DUPLICATE` and `INSERT IGNORE` are not affected because they don't raise errors for duplicated entries.
+
 A session/global system variable `tidb_constraint_check_in_place_pessimistic` is introduced to control the behavior. The default value is `ON` and the behavior will remain unchanged. When `tidb_constraint_check_in_place_pessimistic` is `OFF`, the new behavior will take effect in pessimistic transactions.
 
 ```sql
