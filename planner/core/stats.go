@@ -1309,6 +1309,8 @@ func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Sch
 	return p.stats, nil
 }
 
+// TraceStats record estimated row count and the corresponding logical plan tree if CE trace is enabled.
+// Most logic of this method is for converting a logical plan tree to a SQL.
 func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 	stmtctx := p.SCtx().GetSessionVars().StmtCtx
 	if !stmtctx.EnableOptimizerCETrace {
@@ -1333,7 +1335,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			query.Stage = sql_restorer.StageWhere
 			s, err := query.ExprToString(cond, false)
 			if err != nil {
-				panic(err)
+				return
 			}
 			query.WhereConds = append(query.WhereConds, s)
 		}
@@ -1352,6 +1354,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			joinConds = append(joinConds, cond)
 		}
 		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
+			// For SemiJoin and AntiSemiJoin, we convert it to a filter and put it into the WHERE clause.
 			left = left.GenQBNotAfter(sql_restorer.StageWhere)
 
 			expr := left.SemiJoinToExprString(x.JoinType == AntiSemiJoin, joinConds,
@@ -1359,6 +1362,8 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			left.WhereConds = append(left.WhereConds, expr)
 			p.Stats().SQLRestorer = left
 		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
+			// For LeftOuterSemiJoin and AntiLeftOuterSemiJoin, we convert it to an expression and
+			// register it as a projected column.
 			left = left.GenQBNotAfter(sql_restorer.StageProjection)
 
 			expr := left.SemiJoinToExprString(x.JoinType == AntiLeftOuterSemiJoin, joinConds,
@@ -1367,6 +1372,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			left.AddProjCol(schema[len(schema)-1].UniqueID, expr)
 			p.Stats().SQLRestorer = left
 		} else {
+			// For InnerJoin, LeftOuterJoin and RightOuterJoin, just join the two subtree as in the SQL.
 			left = left.GenQBNotAfter(sql_restorer.StageJoin)
 			right = right.GenQBNotAfter(sql_restorer.StageJoin)
 
@@ -1422,7 +1428,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			for _, expr := range joinConds {
 				s, err := right.ExprToString(expr, true)
 				if err != nil {
-					panic(err)
+					return
 				}
 				right.WhereConds = append(right.WhereConds, s)
 			}
@@ -1458,7 +1464,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			// So we can safely set `useProjectedCol` to true.
 			s, err := query.ExprToString(cond, true)
 			if err != nil {
-				panic(err)
+				return
 			}
 			if query.Stage <= sql_restorer.StageWhere {
 				query.WhereConds = append(query.WhereConds, s)
@@ -1481,7 +1487,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		for i := range x.Exprs {
 			s, err := query.ExprToString(x.Exprs[i], false)
 			if err != nil {
-				panic(err)
+				return
 			}
 			query.AddProjCol(outputCols[i].UniqueID, s)
 		}
@@ -1496,9 +1502,10 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		query.Stage = sql_restorer.StageAgg
 		groupBys := x.GroupByItems
 		for _, item := range groupBys {
+			// group by columns can use projected columns
 			s, err := query.ExprToString(item, true)
 			if err != nil {
-				panic(err)
+				return
 			}
 			query.GroupByCols = append(query.GroupByCols, s)
 		}
@@ -1506,7 +1513,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		for i, agg := range x.AggFuncs {
 			s, err := query.AggFuncToString(agg)
 			if err != nil {
-				panic(err)
+				return
 			}
 			query.AddProjCol(outputCols[i].UniqueID, s)
 		}

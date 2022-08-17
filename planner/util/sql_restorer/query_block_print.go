@@ -140,6 +140,13 @@ func (jl joinList) String() string {
 	return res
 }
 
+// ExprToString print an expression as a string.
+// useProjectedCol means if projected columns can be used when printing.
+// Example:
+//
+//	There is a projected column: a + 10 as n, and n's unique ID is 2.
+//	When trying to print a column with unique ID is 2, if useProjectedCol is true, it will be n,
+//	 otherwise, it will be a + 10
 func (q *QueryBlock) ExprToString(e expression.Expression, useProjectedCol bool) (string, error) {
 	switch expr := e.(type) {
 	case *expression.ScalarFunction:
@@ -185,6 +192,7 @@ func (q *QueryBlock) ExprToString(e expression.Expression, useProjectedCol bool)
 	return "", errors.New("unexpected type of Expression")
 }
 
+// ByItemToString print ByItems as a string.
 func (q *QueryBlock) ByItemToString(items []*util.ByItems, useProjectedCol bool) (string, error) {
 	str := ""
 	for i, item := range items {
@@ -203,8 +211,10 @@ func (q *QueryBlock) ByItemToString(items []*util.ByItems, useProjectedCol bool)
 	return str, nil
 }
 
+// AggFuncToString print an aggregate function as a string.
 func (q *QueryBlock) AggFuncToString(agg *aggregation.AggFuncDesc) (string, error) {
 	if agg.Name == "firstrow" {
+		// Projected columns can't be used in aggregate functions, so useProjectedCol is false.
 		s, err := q.ExprToString(agg.Args[0], false)
 		if err != nil {
 			return s, err
@@ -253,6 +263,7 @@ func (q *QueryBlock) AggFuncToString(agg *aggregation.AggFuncDesc) (string, erro
 	return str, nil
 }
 
+// SemiJoinToExprString convert a [Anti] [LeftOuter] SemiJoin to an expression.
 func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expression.Expression,
 	leftChildSchema, rightChildSchema *expression.Schema, right *QueryBlock) string {
 	var inCondsLeftCols, inCondsRightCOls []*expression.Column
