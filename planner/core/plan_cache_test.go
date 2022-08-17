@@ -23,18 +23,15 @@ func (mp *mockParameterizer) Parameterize(originSQL string) (paramSQL string, pa
 		return "", nil, false, errors.New("error")
 	case "not_support":
 		return "", nil, false, nil
-	case "panic":
-		panic("panic")
 	}
-	// only support SQL like 'select * from t where col {op} {val} and ...'
+	// only support SQL like 'select * from t where col {op} {int} and ...'
 	prefix := "select * from t where "
 	if !strings.HasPrefix(originSQL, prefix) {
 		return "", nil, false, nil
 	}
 	buf := make([]byte, 0, 32)
 	buf = append(buf, prefix...)
-	condStrs := strings.Split(originSQL[len(prefix):], "and")
-	for i, condStr := range condStrs {
+	for i, condStr := range strings.Split(originSQL[len(prefix):], "and") {
 		if i > 0 {
 			buf = append(buf, " and "...)
 		}
@@ -45,30 +42,14 @@ func (mp *mockParameterizer) Parameterize(originSQL string) (paramSQL string, pa
 		buf = append(buf, tmp[0]...)
 		buf = append(buf, tmp[1]...)
 		buf = append(buf, '?')
-		param, err := mp.param(tmp[2])
+
+		intParam, err := strconv.Atoi(tmp[2])
 		if err != nil {
 			return "", nil, false, nil
 		}
-		params = append(params, param)
+		params = append(params, &expression.Constant{Value: types.NewDatum(intParam), RetType: types.NewFieldType(mysql.TypeLong)})
 	}
 	return string(buf), params, true, nil
-}
-
-func (mp *mockParameterizer) param(valStr string) (v expression.Expression, err error) {
-	valStr = strings.TrimSpace(valStr)
-	var t byte
-	var val interface{}
-	if valStr[0] == '"' { // string value
-		val, err = strconv.Unquote(valStr)
-		t = mysql.TypeVarchar
-	} else if strings.Contains(valStr, ".") { // double
-		val, err = strconv.ParseFloat(valStr, 64)
-		t = mysql.TypeDouble
-	} else { // int
-		val, err = strconv.Atoi(valStr)
-		t = mysql.TypeLong
-	}
-	return &expression.Constant{Value: types.NewDatum(val), RetType: types.NewFieldType(t)}, err
 }
 
 func TestGeneralPlanCacheParameterizer(t *testing.T) {
@@ -91,9 +72,6 @@ func TestGeneralPlanCacheParameterizer(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	mp.action = "error"
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	mp.action = "panic"
 	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	mp.action = "not_support"

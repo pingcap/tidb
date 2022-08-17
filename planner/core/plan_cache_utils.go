@@ -300,19 +300,18 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 // Parameterizer used to parameterize a general statement.
 // e.g. 'select * from t where a>23' --> 'select * from t where a>?' + 23
 type Parameterizer interface {
-	// Parameterize this specific sql.
-	// ok indicates whether this sql is supported.
+	// Parameterize this specific sql, ok indicates whether this sql is supported.
 	Parameterize(originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error)
 }
 
 // ParameterizerKey is used to get a parameterizer from a ctx, only for test.
 const ParameterizerKey = stringutil.StringerStr("parameterizerKey")
 
-// GetParameterizer returns a parameterizer.
-func GetParameterizer(sctx sessionctx.Context) Parameterizer {
-	if v := sctx.Value(ParameterizerKey); v != nil {
-		return v.(Parameterizer)
+// Parameterize parameterizes this sql, used by general plan cache.
+func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error) {
+	if v := sctx.Value(ParameterizerKey); v != nil { // for test
+		return v.(Parameterizer).Parameterize(originSQL)
 	}
 	// TODO: implement it
-	return nil
+	return "", nil, false, nil
 }

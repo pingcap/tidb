@@ -1579,30 +1579,19 @@ func (s *session) Parameterize(ctx context.Context, originSQL string) (exec *ast
 	if !s.GetSessionVars().EnableGeneralPlanCache {
 		return nil, false
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			exec = nil
-			ok = false
-		}
-	}()
-	p := plannercore.GetParameterizer(s)
-	if p == nil {
-		return nil, false
-	}
-	paramSQL, params, ok, err := p.Parameterize(originSQL)
+	paramSQL, params, ok, err := plannercore.Parameterize(s, originSQL)
 	if !ok || err != nil {
 		return nil, ok
 	}
-	stmt, err := s.CacheGeneralStmt(paramSQL)
+	cachedStmt, err := s.CacheGeneralStmt(paramSQL)
 	if err != nil {
 		return nil, false
 	}
-	exec = &ast.ExecuteStmt{
+	return &ast.ExecuteStmt{
 		BinaryArgs:      params,
-		PrepStmt:        stmt,
+		PrepStmt:        cachedStmt,
 		FromGeneralStmt: true,
-	}
-	return exec, true
+	}, true
 }
 
 // Parse parses a query string to raw ast.StmtNode.
