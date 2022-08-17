@@ -122,7 +122,9 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsage                         = metrics.TelemetrySQLCTECnt
+	telemetryCTEUsageRecurCTE                 = metrics.TelemetrySQLCTECnt.WithLabelValues("recursive_cte")
+	telemetryCTEUsageNonRecurCTE              = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
+	telemetryCTEUsageNotCTE                   = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
 	telemetryMultiSchemaChangeUsage           = metrics.TelemetryMultiSchemaChangeCnt
 	telemetryTablePartitionUsage              = metrics.TelemetryTablePartitionCnt
 	telemetryTablePartitionListUsage          = metrics.TelemetryTablePartitionListCnt
@@ -230,6 +232,7 @@ type session struct {
 	store kv.Storage
 
 	preparedPlanCache *kvcache.SimpleLRUCache
+	generalPlanCache  *kvcache.SimpleLRUCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -369,7 +372,7 @@ func (s *session) cleanRetryInfo() {
 				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				s.PreparedPlanCache().Delete(cacheKey)
+				s.GetPlanCache(false).Delete(cacheKey)
 			}
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
@@ -428,12 +431,24 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
+func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache {
+	if isGeneralPlanCache { // use the general plan cache
+		if !s.GetSessionVars().EnableGeneralPlanCache {
+			return nil
+		}
+		if s.generalPlanCache == nil { // lazy construction
+			s.generalPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+		}
+		return s.generalPlanCache
+	}
+
+	// use the prepared plan cache
 	if !s.GetSessionVars().EnablePreparedPlanCache {
 		return nil
 	}
 	if s.preparedPlanCache == nil { // lazy construction
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
 			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	return s.preparedPlanCache
@@ -1226,6 +1241,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		err = se.sessionVars.SetSystemVar(variable.TiDBEnableWindowFunction, variable.BoolToOnOff(variable.DefEnableWindowFunction))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		// Internal session uses default format to prevent memory leak problem.
@@ -2009,7 +2028,15 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	logStmt(stmt, s)
-	recordSet, err := runStmt(ctx, s, stmt)
+
+	var recordSet sqlexec.RecordSet
+	if stmt.PsStmt != nil { // point plan short path
+		recordSet, err = stmt.PointGet(ctx)
+		s.txn.changeToInvalid()
+	} else {
+		recordSet, err = runStmt(ctx, s, stmt)
+	}
+
 	if err != nil {
 		if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
@@ -2299,16 +2326,30 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 		}
 	})
 
-	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, execStmt, is)
+	s.sessionVars.StartTime = time.Now()
+	preparedObj, err := plannercore.GetPreparedStmt(execStmt, s.GetSessionVars())
+	if err != nil {
+		return nil, err
+	}
+
+	compiler := executor.Compiler{Ctx: s}
+	stmt, err := compiler.Compile(ctx, execStmt)
 	if err == nil {
-		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, st.Plan)
+		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
 	}
 	if err != nil {
 		return nil, err
 	}
+	durCompile := time.Since(s.sessionVars.StartTime)
+	s.GetSessionVars().DurationCompile = durCompile
+
+	stmtCtx := s.GetSessionVars().StmtCtx
+	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
-		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(st.Plan)
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
 		telemetry.CurrentExecuteCount.Inc()
 		if tiFlashPushDown {
 			telemetry.CurrentTiFlashPushDownCount.Inc()
@@ -2318,15 +2359,23 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 		}
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
-	logGeneralQuery(st, s, true)
+	logGeneralQuery(stmt, s, true)
 
-	if st.PsStmt != nil { // point plan short path
-		resultSet, err := st.PointGet(ctx)
+	if stmt.PsStmt != nil { // point plan short path
+		resultSet, err := stmt.PointGet(ctx)
 		s.txn.changeToInvalid()
 		return resultSet, err
 	}
 
-	return runStmt(ctx, s, st)
+	var recordSet sqlexec.RecordSet
+
+	if stmt.PsStmt != nil { // point plan short path
+		recordSet, err = stmt.PointGet(ctx)
+		s.txn.changeToInvalid()
+	} else {
+		recordSet, err = runStmt(ctx, s, stmt)
+	}
+	return recordSet, err
 }
 
 // ExecutePreparedStmt executes a prepared statement.
@@ -2392,7 +2441,6 @@ func (s *session) executePlanCacheStmt(ctx context.Context, stmt *plannercore.Pl
 		}
 	}
 
-	executor.CountStmtNode(stmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	s.txn.onStmtStart(stmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
 
@@ -3332,11 +3380,11 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 	ti := es.Ti
 	if ti.UseRecursive {
-		telemetryCTEUsage.WithLabelValues("recurCTE").Inc()
+		telemetryCTEUsageRecurCTE.Inc()
 	} else if ti.UseNonRecursive {
-		telemetryCTEUsage.WithLabelValues("nonRecurCTE").Inc()
+		telemetryCTEUsageNonRecurCTE.Inc()
 	} else {
-		telemetryCTEUsage.WithLabelValues("notCTE").Inc()
+		telemetryCTEUsageNotCTE.Inc()
 	}
 
 	if ti.UseMultiSchemaChange {
