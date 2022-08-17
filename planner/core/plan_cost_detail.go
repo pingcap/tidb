@@ -269,7 +269,7 @@ func (h *HashJoinCPUCostDetail) desc() string {
 		if h.Spill {
 			cpuCostDesc = fmt.Sprintf("%s+%s", cpuCostDesc, buildCostDesc)
 		} else {
-			buildCostDesc = fmt.Sprintf("%s+%s/%s", cpuCostDesc, buildCostDesc, HashJoinConcurrencyLbl)
+			cpuCostDesc = fmt.Sprintf("%s+%s/%s", cpuCostDesc, buildCostDesc, HashJoinConcurrencyLbl)
 		}
 	}
 	return cpuCostDesc
