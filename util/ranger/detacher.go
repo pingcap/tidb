@@ -95,46 +95,6 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 	return accessConditions, hasResidualConditions
 }
 
-func getPotentialCmpColOffset(sctx sessionctx.Context, f *expression.ScalarFunction, cols []*expression.Column) int {
-	var column *expression.Column
-	var constant *expression.Constant
-	if f == nil {
-		return -1
-	}
-	if col, ok1 := f.GetArgs()[0].(*expression.Column); ok1 {
-		if con, ok2 := f.GetArgs()[1].(*expression.Constant); ok2 {
-			column, constant = col, con
-		}
-	} else if col, ok1 := f.GetArgs()[1].(*expression.Column); ok1 {
-		if con, ok2 := f.GetArgs()[0].(*expression.Constant); ok2 {
-			column, constant = col, con
-		}
-	} else {
-		return -1
-	}
-	_, collation := constant.CharsetAndCollation()
-	if column.RetType.EvalType() == types.ETString &&
-		// Allow binary collation constant to be compared with non-binary collation column,
-		// to allow index with non-binary collation to be used for searching for binary collation data
-		// as well as the same for partition pruning.
-		(!collate.CompatibleCollate(column.RetType.GetCollate(), collation) && !collate.IsBinCollation(collation)) {
-		return -1
-	}
-	val, err := constant.Eval(chunk.Row{})
-	if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
-		// treat col<=>null as range scan instead of point get to avoid incorrect results
-		// when nullable unique index has multiple matches for filter x is null
-		return -1
-	}
-	for i, col := range cols {
-		// When cols are a generated expression col, compare them in terms of virtual expr.
-		if col.EqualByExprAndID(nil, column) {
-			return i
-		}
-	}
-	return -1
-}
-
 // getPotentialEqOrInColOffset checks if the expression is a eq/le/ge/lt/gt function that one side is constant and another is column or an
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
@@ -144,6 +104,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 	if !ok {
 		return -1
 	}
+	_, collation := expr.CharsetAndCollation()
 	switch f.FuncName.L {
 	case ast.LogicOr:
 		dnfItems := expression.FlattenDNFConditions(f)
@@ -160,10 +121,50 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 		}
 		return offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
-		return getPotentialCmpColOffset(sctx, f, cols)
+		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+				return -1
+			}
+			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
+				val, err := constVal.Eval(chunk.Row{})
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
+					// treat col<=>null as range scan instead of point get to avoid incorrect results
+					// when nullable unique index has multiple matches for filter x is null
+					return -1
+				}
+				for i, col := range cols {
+					// When cols are a generated expression col, compare them in terms of virtual expr.
+					if col.EqualByExprAndID(nil, c) {
+						return i
+					}
+				}
+			}
+		}
+		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+				return -1
+			}
+			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
+				return -1
+			}
+			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
+				val, err := constVal.Eval(chunk.Row{})
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
+					return -1
+				}
+				for i, col := range cols {
+					if col.Equal(nil, c) {
+						return i
+					}
+				}
+			}
+		}
 	case ast.In:
-		_, ok := f.GetArgs()[0].(*expression.Column)
+		c, ok := f.GetArgs()[0].(*expression.Column)
 		if !ok {
+			return -1
+		}
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 			return -1
 		}
 		for _, arg := range f.GetArgs()[1:] {
@@ -171,7 +172,11 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 				return -1
 			}
 		}
-		return getPotentialCmpColOffset(sctx, f, cols)
+		for i, col := range cols {
+			if col.Equal(nil, c) {
+				return i
+			}
+		}
 	}
 	return -1
 }
