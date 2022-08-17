@@ -166,7 +166,6 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 	res := tk.MustQuery("show variables like 'transaction_isolation'")
 	require.Equal(t, "READ-COMMITTED", res.Rows()[0][1])
 
-	// prepare mode, all statements will disable AdviseWarmup
 	// union statements with two point-lock-read.
 	sqlSelectID1, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id1 = ? for update union select * from t2 where id1 = ? for update")
 	sqlSelectID2, _, _, _ := tk.Session().PrepareStmt("select id1*2 from t1 where id1 = ? for update union select id1*2 from t2 where id1 = ? for update")
@@ -174,6 +173,7 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 	resetAllTsoCounter(sctx)
 	for i := 0; i < 10; i++ {
 		tk.MustExec("begin pessimistic")
+
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID1, expression.Args2Expressions4Test(1, 2))
 		require.NoError(t, err)
 		require.NoError(t, stmt.Close())
@@ -189,9 +189,8 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle := getAllTsoCounter(sctx)
-	require.Equal(t, uint64(30), countTsoRequest)
-	require.Equal(t, uint64(20), countTsoUseConstant)
-	require.Equal(t, uint64(10), countWaitTsoOracle)
+	assertAllTsoCounter(t, []uint64{uint64(32), countTsoRequest.(uint64),
+		uint64(20), countTsoUseConstant.(uint64), uint64(10), countWaitTsoOracle.(uint64)})
 
 	// Join->SelectLock->PoinGet
 	sqlSelectID4, _, _, _ := tk.Session().PrepareStmt("SELECT * FROM t1 JOIN t2 ON t1.id1 = t2.id1 WHERE t1.id1 = ? FOR UPDATE")
@@ -243,33 +242,98 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		uint64(0), uint64(countTsoUseConstant.(int)), uint64(5), countWaitTsoOracle.(uint64)})
 
 	// Subquery has SelectLock + PointGet
-	resetAllTsoCounter(sctx)
 	sqlSelectID7, _, _, _ := tk.Session().PrepareStmt("SELECT * FROM t1 WHERE id1 IN (SELECT id1 FROM t2 WHERE id1 = ? FOR UPDATE)")
-	// sqlSelectID8, _, _, _ := tk.Session().PrepareStmt("SELECT * FROM t1 JOIN (SELECT * FROM t2 WHERE id1 = ? FOR UPDATE ) tt2 ON t1.id1 = tt2.id1")
-	// sqlSelectID9, _, _, _ := tk.Session().PrepareStmt("SELECT (SELECT id1 * 2 FROM t1 WHERE id1 = ? FOR UPDATE)+id1 FROM t2")
+	sqlSelectID8, _, _, _ := tk.Session().PrepareStmt("SELECT * FROM t1 JOIN (SELECT * FROM t2 WHERE id1 = ? FOR UPDATE ) tt2 ON t1.id1 = tt2.id1")
+	sqlSelectID9, _, _, _ := tk.Session().PrepareStmt("SELECT (SELECT id1 * 2 FROM t1 WHERE id1 = ? FOR UPDATE)+id1 FROM t2")
+	resetAllTsoCounter(sctx)
 	for i := 0; i < 5; i++ {
 		tk.MustExec("begin pessimistic")
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID7, expression.Args2Expressions4Test(10))
 		require.NoError(t, err)
 		require.NoError(t, stmt.Close())
-		/*
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlSelectID8, expression.Args2Expressions4Test(1))
-			require.NoError(t, err)
-			require.NoError(t, stmt.Close())
 
-			stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlSelectID9, expression.Args2Expressions4Test(1))
-			require.NoError(t, err)
-			require.NoError(t, stmt.Close())
-		*/
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlSelectID8, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
+
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlSelectID9, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
+
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	require.Equal(t, uint64(16), countTsoRequest)
-	require.Equal(t, int(0), countTsoUseConstant)
-	require.Equal(t, uint64(5), countWaitTsoOracle)
-	//assertAllTsoCounter(t, []uint64{uint64(10), countTsoRequest.(uint64),
-	//	uint64(0), uint64(countTsoUseConstant.(int)), uint64(5), countWaitTsoOracle.(uint64)})
+	assertAllTsoCounter(t, []uint64{uint64(25), countTsoRequest.(uint64),
+		uint64(0), uint64(countTsoUseConstant.(int)), uint64(15), countWaitTsoOracle.(uint64)})
 
+	// PointUpdate Index and Non-index
+	sqlUpdateID1, _, _, _ := tk.Session().PrepareStmt("UPDATE t1 set id2 = id2 + 100 WHERE id1 = ?")
+	sqlUpdateID2, _, _, _ := tk.Session().PrepareStmt("UPDATE t2 SET id1 = id1 + 100 WHERE id1 = ?")
+	resetAllTsoCounter(sctx)
+	for i := 0; i < 5; i++ {
+		tk.MustExec("begin pessimistic")
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID1, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		tk.MustExec("commit")
+	}
+	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
+	assertAllTsoCounter(t, []uint64{uint64(10), countTsoRequest.(uint64),
+		uint64(10), countTsoUseConstant.(uint64), uint64(0), uint64(countWaitTsoOracle.(int))})
+
+	// SelectLock has PointGet and other plans
+	sqlUpdateID3, _, _, _ := tk.Session().PrepareStmt("UPDATE t1 set id2 = id2 + 100 WHERE id1 IN (SELECT id1 FROM t2 WHERE id1 = ?)")
+	resetAllTsoCounter(sctx)
+	for i := 0; i < 5; i++ {
+		tk.MustExec("begin pessimistic")
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID3, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		tk.MustExec("commit")
+	}
+	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
+	assertAllTsoCounter(t, []uint64{uint64(15), countTsoRequest.(uint64),
+		uint64(0), uint64(countTsoUseConstant.(int)), uint64(5), countWaitTsoOracle.(uint64)})
+
+	// PointUpdate with singlerow subquery. singlerow subquery makes tso wait
+	// PointUpdate doesn't make tso request
+	sqlUpdateID4, _, _, _ := tk.Session().PrepareStmt("UPDATE t1 set id2 = id2 + 100 WHERE id1 =  (SELECT id1 FROM t2 WHERE id1 = ?)")
+	resetAllTsoCounter(sctx)
+	for i := 0; i < 20; i++ {
+		tk.MustExec("begin pessimistic")
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID4, expression.Args2Expressions4Test(11))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		tk.MustExec("commit")
+	}
+	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
+	assertAllTsoCounter(t, []uint64{uint64(60), countTsoRequest.(uint64),
+		uint64(20), countTsoUseConstant.(uint64), uint64(20), countWaitTsoOracle.(uint64)})
+
+	// insert with select
+	sqlDeleteID1, _, _, _ := tk.Session().PrepareStmt("DELETE FROM t1 WHERE id1 = ?")
+	sqlDeleteID2, _, _, _ := tk.Session().PrepareStmt("DELETE FROM t1 WHERE id1 > ?")
+	sqlDeleteID3, _, _, _ := tk.Session().PrepareStmt("DELETE FROM t1 WHERE id1 IN (SELECT id1 FROM t2 WHERE id1 = ?)")
+	resetAllTsoCounter(sctx)
+	for i := 0; i < 1; i++ {
+		tk.MustExec("begin pessimistic")
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID1, expression.Args2Expressions4Test(3))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID2, expression.Args2Expressions4Test(4))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID3, expression.Args2Expressions4Test(20))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		tk.MustExec("commit")
+	}
+	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
+	assertAllTsoCounter(t, []uint64{uint64(4), countTsoRequest.(uint64),
+		uint64(1), countTsoUseConstant.(uint64), uint64(2), countWaitTsoOracle.(uint64)})
 }
 
 func TestRcTSOCmdCountForTextSQLExecute(t *testing.T) {
