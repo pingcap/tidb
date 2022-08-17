@@ -117,7 +117,7 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
-			logutil.BgLogger().Warn("SyncWaitStatsLoad timeout", zap.String("digest", digest.String()))
+			logutil.BgLogger().Warn("SyncWaitStatsLoad timeout")
 			return false
 		}
 	}
