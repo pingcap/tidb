@@ -51,9 +51,9 @@ type StatsLoad struct {
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	TableItemResult stmtctx.StatsLoadResult
-	ToTimeout       time.Time
-	ResultCh        chan stmtctx.StatsLoadResult
+	TableItemID model.TableItemID
+	ToTimeout   time.Time
+	ResultCh    chan stmtctx.StatsLoadResult
 }
 
 // SendLoadRequests send neededColumns requests
@@ -67,11 +67,9 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
 	for _, item := range remainedItems {
 		task := &NeededItemTask{
-			TableItemResult: stmtctx.StatsLoadResult{
-				Item: item,
-			},
-			ToTimeout: time.Now().Local().Add(timeout),
-			ResultCh:  sc.StatsLoad.ResultCh,
+			TableItemID: item,
+			ToTimeout:   time.Now().Local().Add(timeout),
+			ResultCh:    sc.StatsLoad.ResultCh,
 		}
 		err := h.AppendNeededItem(task, timeout)
 		if err != nil {
@@ -108,8 +106,8 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 		select {
 		case result, ok := <-sc.StatsLoad.ResultCh:
 			if ok {
-				if result.HasErrorOrWarn() {
-					errorMsgs = append(errorMsgs, result.ErrorAndWarn())
+				if result.HasError() {
+					errorMsgs = append(errorMsgs, result.ErrorMsg())
 				}
 				delete(resultCheckMap, result.Item)
 				if len(resultCheckMap) == 0 {
@@ -218,7 +216,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 }
 
 func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
-	result := task.TableItemResult
+	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	item := result.Item
 	oldCache := h.statsCache.Load().(statsCache)
 	tbl, ok := oldCache.Get(item.TableID)
@@ -255,7 +253,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(item, wrapper, readerCtx.reader)
 	if err != nil {
-		task.TableItemResult.Error = err
+		result.Error = err
 		return task, err
 	}
 	if item.IsIndex {
@@ -396,7 +394,6 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
-				task.TableItemResult.Warn = "drainColTask timeout"
 				h.writeToTimeoutChan(h.StatsLoad.TimeoutItemsCh, task)
 				continue
 			}

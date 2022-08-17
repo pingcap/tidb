@@ -264,11 +264,9 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	resultCh := make(chan stmtctx.StatsLoadResult, 1)
 	timeout := time.Duration(1<<63 - 1)
 	task := &handle.NeededItemTask{
-		TableItemResult: stmtctx.StatsLoadResult{
-			Item: neededColumn,
-		},
-		ResultCh:  resultCh,
-		ToTimeout: time.Now().Local().Add(timeout),
+		TableItemID: neededColumn,
+		ResultCh:    resultCh,
+		ToTimeout:   time.Now().Local().Add(timeout),
 	}
 	dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
 	stmt, err := p.ParseOneStmt("select * from t where c>1", "", "")

@@ -311,6 +311,9 @@ type StatementContext struct {
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
+
+	// IsSyncStatsFailed indicates whether any failure happened during sync stats
+	IsSyncStatsFailed bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -1020,17 +1023,16 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 type StatsLoadResult struct {
 	Item  model.TableItemID
 	Error error
-	Warn  string
 }
 
-// HasErrorOrWarn returns whether result has error or warn
-func (r StatsLoadResult) HasErrorOrWarn() bool {
-	return r.Error != nil || len(r.Warn) > 0
+// HasError returns whether result has error
+func (r StatsLoadResult) HasError() bool {
+	return r.Error != nil
 }
 
-// ErrorAndWarn returns StatsLoadResult err msg
-func (r StatsLoadResult) ErrorAndWarn() string {
-	if r.Error == nil && len(r.Warn) < 1 {
+// ErrorMsg returns StatsLoadResult err msg
+func (r StatsLoadResult) ErrorMsg() string {
+	if r.Error == nil {
 		return ""
 	}
 	b := bytes.NewBufferString("tableID:")
@@ -1042,10 +1044,6 @@ func (r StatsLoadResult) ErrorAndWarn() string {
 	if r.Error != nil {
 		b.WriteString(", err:")
 		b.WriteString(r.Error.Error())
-	}
-	if len(r.Warn) > 0 {
-		b.WriteString(", warn:")
-		b.WriteString(r.Warn)
 	}
 	return b.String()
 }

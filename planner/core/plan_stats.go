@@ -93,6 +93,7 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 		_, digest := stmtCtx.SQLDigest()
 		logutil.BgLogger().Warn("SendLoadRequests failed",
 			zap.String("digest", digest.String()), zap.Error(err))
+		stmtCtx.IsSyncStatsFailed = true
 		return handleTimeout(stmtCtx)
 	}
 	return nil
@@ -111,6 +112,7 @@ func SyncWaitStatsLoad(plan LogicalPlan) (bool, error) {
 	_, digest := stmtCtx.SQLDigest()
 	logutil.BgLogger().Warn("SyncWaitStatsLoad failed",
 		zap.String("digest", digest.String()))
+	stmtCtx.IsSyncStatsFailed = true
 	err := handleTimeout(stmtCtx)
 	return false, err
 }
