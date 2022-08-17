@@ -167,9 +167,6 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 }
 
 func checkTableForeignKeyValidInOwner(d *ddlCtx, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) error {
-	if !config.ForeignKeyEnabled() {
-		return nil
-	}
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < 1 {
 			continue

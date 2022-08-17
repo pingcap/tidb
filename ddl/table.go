@@ -188,12 +188,7 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo 
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		tbInfo.State = model.StatePublic
-		// to make sure when load schema info, infoschema should drop the table info first and then apllyCreateTable,
-		// otherwise, is.TableByID return the old table info since the old table info doesn't been deleted.
-		originalJobType := job.Type
-		job.Type = model.ActionAddForeignKey
 		ver, err = updateVersionAndTableInfo(d, t, job, tbInfo, true)
-		job.Type = originalJobType
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
