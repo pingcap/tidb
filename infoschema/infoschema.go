@@ -483,6 +483,9 @@ func (is *infoSchema) buildTableReferredForeignKeys(schema model.CIStr, tbInfo *
 		}
 		referredFKList = append(referredFKList, referredFK)
 	}
+	if len(referredFKList) == 0 {
+		return
+	}
 	sort.Slice(referredFKList, func(i, j int) bool {
 		if referredFKList[i].ChildSchema.L != referredFKList[j].ChildSchema.L {
 			return referredFKList[i].ChildSchema.L < referredFKList[j].ChildSchema.L

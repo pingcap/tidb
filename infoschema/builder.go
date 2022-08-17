@@ -911,6 +911,18 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		info.setPolicy(policy)
 	}
 
+	// Maintain foreign key reference information.
+	for _, di := range dbInfos {
+		for _, t := range di.Tables {
+			b.is.addReferredForeignKeys(di.Name, t)
+		}
+	}
+	for _, di := range dbInfos {
+		for _, t := range di.Tables {
+			b.is.buildTableReferredForeignKeys(di.Name, t)
+		}
+	}
+
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, b.tableFromMeta)
 		if err != nil {
