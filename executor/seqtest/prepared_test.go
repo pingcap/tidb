@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -143,11 +142,10 @@ func TestPrepared(t *testing.T) {
 		prepStmt, err := tk.Session().GetSessionVars().GetPreparedStmtByID(stmtID)
 		require.NoError(t, err)
 		execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: expression.Args2Expressions4Test(1)}
-		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), execStmt,
-			tk.Session().GetInfoSchema().(infoschema.InfoSchema))
+		// Check that ast.Statement created by compiler.Compile has query text.
+		compiler := executor.Compiler{Ctx: tk.Session()}
+		stmt, err := compiler.Compile(context.TODO(), execStmt)
 		require.NoError(t, err)
-		require.Equal(t, query, stmt.OriginText())
 
 		// Check that rebuild plan works.
 		err = tk.Session().PrepareTxnCtx(ctx)
@@ -622,7 +620,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("drop table if exists prepare_test")
 	tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
 
-	require.Equal(t, 0, tk.Session().PreparedPlanCache().Size())
+	require.Equal(t, 0, tk.Session().GetPlanCache(false).Size())
 	tk.MustExec(`prepare stmt1 from 'select id from prepare_test'`)
 	tk.MustExec("execute stmt1")
 	tk.MustExec(`prepare stmt2 from 'select c1 from prepare_test'`)
@@ -631,20 +629,20 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("execute stmt3")
 	tk.MustExec(`prepare stmt4 from 'select * from prepare_test'`)
 	tk.MustExec("execute stmt4")
-	require.Equal(t, 3, tk.Session().PreparedPlanCache().Size())
+	require.Equal(t, 3, tk.Session().GetPlanCache(false).Size())
 
 	tk.MustExec("deallocate prepare stmt1")
-	require.Equal(t, 3, tk.Session().PreparedPlanCache().Size())
+	require.Equal(t, 3, tk.Session().GetPlanCache(false).Size())
 	tk.MustExec("deallocate prepare stmt2")
 	tk.MustExec("deallocate prepare stmt3")
 	tk.MustExec("deallocate prepare stmt4")
-	require.Equal(t, 0, tk.Session().PreparedPlanCache().Size())
+	require.Equal(t, 0, tk.Session().GetPlanCache(false).Size())
 
 	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
 	tk.MustExec(`execute stmt1`)
 	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
 	tk.MustExec(`execute stmt2`)
-	require.Equal(t, 1, tk.Session().PreparedPlanCache().Size()) // use the same cached plan since they have the same statement
+	require.Equal(t, 1, tk.Session().GetPlanCache(false).Size()) // use the same cached plan since they have the same statement
 
 	tk.MustExec(`drop database if exists plan_cache`)
 	tk.MustExec(`create database plan_cache`)
@@ -652,7 +650,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec(`create table prepare_test (id int PRIMARY KEY, c1 int)`)
 	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
 	tk.MustExec(`execute stmt3`)
-	require.Equal(t, 2, tk.Session().PreparedPlanCache().Size()) // stmt3 has different DB
+	require.Equal(t, 2, tk.Session().GetPlanCache(false).Size()) // stmt3 has different DB
 }
 
 func TestPreparedIssue8153(t *testing.T) {

@@ -430,6 +430,8 @@ type TableInfo struct {
 	MaxShardRowIDBits uint64 `json:"max_shard_row_id_bits"`
 	// AutoRandomBits is used to set the bit number to shard automatically when PKIsHandle.
 	AutoRandomBits uint64 `json:"auto_random_bits"`
+	// AutoRandomRangeBits represents the bit number of the int primary key that will be used by TiDB.
+	AutoRandomRangeBits uint64 `json:"auto_random_range_bits"`
 	// PreSplitRegions specify the pre-split region when create table.
 	// The pre-split region num is 2^(PreSplitRegions-1).
 	// And the PreSplitRegions should less than or equal to ShardRowIDBits.
@@ -1029,8 +1031,9 @@ func (v *ViewCheckOption) String() string {
 	}
 }
 
-//revive:disable:exported
 // ViewInfo provides meta data describing a DB view.
+//
+//revive:disable:exported
 type ViewInfo struct {
 	Algorithm   ViewAlgorithm      `json:"view_algorithm"`
 	Definer     *auth.UserIdentity `json:"view_definer"`
@@ -1260,7 +1263,7 @@ func (i *IndexColumn) Clone() *IndexColumn {
 }
 
 // PrimaryKeyType is the type of primary key.
-// Available values are 'clustered', 'nonclustered', and ''(default).
+// Available values are "clustered", "nonclustered", and ""(default).
 type PrimaryKeyType int8
 
 func (p PrimaryKeyType) String() string {

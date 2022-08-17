@@ -44,6 +44,10 @@ func TestBinaryJSONExtract(t *testing.T) {
 	bj4 := mustParseBinaryFromString(t, `{"properties": {"$type$type": {"$a$a" : "TiDB"}}}`)
 	bj5 := mustParseBinaryFromString(t, `{"properties": {"$type": {"$a" : {"$b" : "TiDB"}}}}`)
 	bj6 := mustParseBinaryFromString(t, `{"properties": {"$type": {"$a$a" : "TiDB"}},"hello": {"$b$b": "world","$c": "amazing"}}`)
+	bj7 := mustParseBinaryFromString(t, `{ "a": { "x" : { "b": { "y": { "b": { "z": { "c": 100 } } } } } } }`)
+	bj8 := mustParseBinaryFromString(t, `{ "a": { "b" : [ 1, 2, 3 ] } }`)
+	bj9 := mustParseBinaryFromString(t, `[[0,1],[2,3],[4,[5,6]]]`)
+	bj10 := mustParseBinaryFromString(t, `[1]`)
 
 	var tests = []struct {
 		bj              BinaryJSON
@@ -74,6 +78,10 @@ func TestBinaryJSONExtract(t *testing.T) {
 		{bj2, []string{"$.a", "$[0]"}, mustParseBinaryFromString(t, `[{"a": 1, "b": true}]`), true, nil},
 		{bj6, []string{"$.properties", "$[1]"}, mustParseBinaryFromString(t, `[{"$type": {"$a$a" : "TiDB"}}]`), true, nil},
 		{bj6, []string{"$.hello", "$[2]"}, mustParseBinaryFromString(t, `[{"$b$b": "world","$c": "amazing"}]`), true, nil},
+		{bj7, []string{"$.a**.b**.c"}, mustParseBinaryFromString(t, `[100]`), true, nil},
+		{bj8, []string{"$**[0]"}, mustParseBinaryFromString(t, `[{"a": {"b": [1, 2, 3]}}, {"b": [1, 2, 3]}, 1, 2, 3]`), true, nil},
+		{bj9, []string{"$**[0]"}, mustParseBinaryFromString(t, `[[0, 1], 0, 1, 2, 3, 4, 5, 6] `), true, nil},
+		{bj10, []string{"$**[0]"}, mustParseBinaryFromString(t, `[1]`), true, nil},
 	}
 
 	for _, test := range tests {

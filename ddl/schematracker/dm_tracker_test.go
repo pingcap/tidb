@@ -31,7 +31,10 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -422,4 +425,44 @@ func TestAtomicMultiSchemaChange(t *testing.T) {
 	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Len(t, tblInfo.Columns, 3)
+}
+
+var _ sqlexec.RestrictedSQLExecutor = (*mockRestrictedSQLExecutor)(nil)
+
+type mockRestrictedSQLExecutor struct {
+	sessionctx.Context
+}
+
+func (m mockRestrictedSQLExecutor) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+	return nil, nil
+}
+
+func (m mockRestrictedSQLExecutor) ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error) {
+	return nil, nil, nil
+}
+
+func (m mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	return nil, nil, nil
+}
+
+func TestModifyFromNullToNotNull(t *testing.T) {
+	sql := "create table test.t (a int, b int);"
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
+	execCreate(t, tracker, sql)
+
+	sql = "alter table test.t modify column a int not null;"
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	// converting from NULL to NOT NULL needs to check data, so caller should provide a RestrictedSQLExecutor
+	executorCtx := mockRestrictedSQLExecutor{sctx}
+	err = tracker.AlterTable(ctx, executorCtx, stmt.(*ast.AlterTableStmt))
+	require.NoError(t, err)
+
+	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Len(t, tblInfo.Columns, 2)
 }
