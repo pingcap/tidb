@@ -114,9 +114,9 @@ func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 // reffer to tidb_rc_read_check_ts and know more about RcReadCheckTS mode. But for some special scenes, it maybe not
 // necessary to get tso from PD such as bellow.
 // 1. RC isolation && not internal sqls && In transaction
-// 2. execute statement of prepare object || Insert without select || point update/delete/lock-read
+// 2. Insert without select || point update/delete/lock-read
 // It can't judge if node is a point-update/point-delete/point-lock-read here. To simplify the process, disable calling
-// `txnManager.AdviseWarmup()` in Optimize for all update/delete/select sqls which makes tso wait time a little more
+// `txnManager.AdviseWarmup()` in Optimize for all update/delete/select-for-update sqls which makes tso wait time a little more
 // for text protocol sql.
 func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
 	disableWarmup := false
@@ -305,7 +305,7 @@ func PlanSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 		return PlanSkipGetTsoFromPD(sctx, v.SelectPlan, true)
 	case *plannercore.Insert:
 		// RcInsertUseLastTso controls whether to make a tso request, but not to whether to wait tso requst.
-		// Insert sqls are alwasy optimized to use last tso here.
+		// Insert sqls are always optimized to use last tso here.
 		return v.SelectPlan == nil
 	}
 	return false
@@ -324,8 +324,8 @@ func PlanSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 // For update/delete/select statements, if tidb_rc_point_lock_read_use_last_tso is ON, we don't make tso requests,
 // we use the p.latestOracleTS.
 // (b) binary protocol request(prepare mode)
-// For insert statements without select,we don't make tso requests whatever tidb_rc_insert_use_last_tso is ON or OFF.
-// For update/delete/select statements, the behaviour is as text protocol request.
+// The behaviour is as text protocol request at most time, except that the it can get a plan from plan cache,
+// when optimizer doesn't call txnManger.AdviseWarmup forever.
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
