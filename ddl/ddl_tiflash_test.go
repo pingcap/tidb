@@ -1004,8 +1004,8 @@ func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
 	errMsg := "time out"
 	for time.Now().Before(timeout) {
 		time.Sleep(100 * time.Millisecond)
-		if s.tiflash.GroupIndex == 120 {
-			errMsg = ""
+		if s.tiflash.GroupIndex != 0 {
+			errMsg = "invalid group index"
 			break
 		}
 	}
