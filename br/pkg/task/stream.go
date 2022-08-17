@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
@@ -1002,7 +1003,7 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	recorder := restore.NewTiFlashRecorder()
+	recorder := tiflashrec.New()
 	cfg.tiflashRecorder = recorder
 	// restore full snapshot.
 	if len(cfg.FullBackupStorage) > 0 {
