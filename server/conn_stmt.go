@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -753,31 +752,4 @@ func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *planne
 		return nil, true
 	}
 	return preparedObj, false
-}
-
-// handleGeneralPlanCache tries to convert the general statement to an execute statement and then uses general plan cache to handle it.
-// e.g. "select * from t where a>23" --> "execute 'select * from t where a>?' using 23".
-// By using the general plan cache, it can skip the parse and optimization stage so to gain some performance benefits.
-func (cc *clientConn) handleGeneralPlanCache(ctx context.Context, sql string) (*ast.ExecuteStmt, bool, error) {
-	if !cc.ctx.GetSessionVars().EnableGeneralPlanCache {
-		return nil, false, nil
-	}
-	p := plannercore.GetParameterizer(&cc.ctx)
-	if p == nil {
-		return nil, false, nil
-	}
-	paramSQL, params, ok, err := p.Parameterize(sql)
-	if !ok || err != nil {
-		return nil, ok, err
-	}
-	stmt, err := (&cc.ctx).CacheGeneralStmt(paramSQL)
-	if err != nil {
-		return nil, false, err
-	}
-	execStmt := &ast.ExecuteStmt{
-		BinaryArgs:      params,
-		PrepStmt:        stmt,
-		FromGeneralStmt: true,
-	}
-	return execStmt, false, nil
 }
