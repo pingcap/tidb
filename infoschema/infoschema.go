@@ -109,7 +109,7 @@ type SchemaAndTableName struct {
 	table  string
 }
 
-// SchemaAndTableName contains the lower-case schema name, table name and foreign key name.
+// SchemaAndTableAndForeignKeyName contains the lower-case schema name, table name and foreign key name.
 type SchemaAndTableAndForeignKeyName struct {
 	schema string
 	table  string
