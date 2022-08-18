@@ -47,6 +47,10 @@ func TestTraceCE(t *testing.T) {
 		(2, 2, "aaa"),
 		(2, 3, "bbb")`)
 	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+	tk.MustExec("analyze table t4")
 	var (
 		in  []string
 		out []struct {
