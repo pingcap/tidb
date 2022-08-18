@@ -1134,6 +1134,7 @@ func restoreStream(
 			return
 		}
 		if tableInfo.TiFlashReplica == nil {
+			cfg.tiflashRecorder.DelTable(tableInfo.ID)
 			return
 		}
 		cfg.tiflashRecorder.AddTable(tableInfo.ID, *tableInfo.TiFlashReplica)

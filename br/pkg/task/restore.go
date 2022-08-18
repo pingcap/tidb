@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -582,28 +583,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if cfg.tiflashRecorder != nil {
-		obChan := make(chan restore.CreatedTable, 32)
-		ts := tableStream
-
-		go func() {
-			defer close(obChan)
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case t, ok := <-ts:
-					if !ok {
-						return
-					}
-					if cfg.tiflashRecorder != nil {
-						cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
-					}
-					obChan <- t
-				}
+		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+			if cfg.tiflashRecorder != nil {
+				cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
 			}
-		}()
-
-		tableStream = obChan
+			return t
+		})
 	}
 
 	tableFileMap := restore.MapTableToFiles(files)
