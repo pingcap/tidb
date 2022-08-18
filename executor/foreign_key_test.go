@@ -351,18 +351,23 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 	}{
 		{
 			refer:  "create table t1 (id int, a int, b int);",
-			create: "create table t2 (a int, b int, foreign key fk_b(b) references t_unknown(b));",
-			err:    "[schema:1146]Table 'test.t_unknown' doesn't exist",
+			create: "create table t2 (a int, b int, foreign key fk_b(b) references T_unknown(b));",
+			err:    "[schema:1824]Failed to open the referenced table 'T_unknown'",
 		},
 		{
 			refer:  "create table t1 (id int, a int, b int);",
 			create: "create table t2 (a int, b int, foreign key fk_b(b) references t1(c_unknown));",
+			err:    "[schema:3734]Failed to add the foreign key constraint. Missing column 'c_unknown' for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			refer:  "create table t1 (id int key, a int, b int);",
+			create: "create table t2 (a int, b int, foreign key fk(c_unknown) references t1(id));",
 			err:    "[ddl:1072]Key column 'c_unknown' doesn't exist in table",
 		},
 		{
 			refer:  "create table t1 (id int, a int, b int);",
 			create: "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
-			err:    "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 't2.fk_b' in the referenced table 't1'",
+			err:    "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
 		},
 		{
 			refer:  "create table t1 (id int, a int, b int not null, index(b));",
@@ -377,7 +382,7 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 		{
 			refer:  "create table t1 (id int key, a int, b int as (a) virtual, index(b));",
 			create: "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
-			err:    "[schema:3733]Foreign key 't2.fk_b' uses virtual column 'b' which is not supported.",
+			err:    "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
 		},
 		{
 			refer:  "create table t1 (id int key, a int, b int, index(b));",
@@ -387,42 +392,42 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 		{
 			refer:  "create table t1 (id int key, a int);",
 			create: "create table t2 (a int, b varchar(10), foreign key fk(b) references t1(id));",
-			err:    "[ddl:3780]Referencing column 'b' and referenced column 'id' in foreign key constraint 't2.fk' are incompatible.",
+			err:    "[ddl:3780]Referencing column 'b' and referenced column 'id' in foreign key constraint 'fk' are incompatible.",
 		},
 		{
 			refer:  "create table t1 (id int key, a int not null, index(a));",
 			create: "create table t2 (a int, b int unsigned, foreign key fk_b(b) references t1(a));",
-			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 't2.fk_b' are incompatible.",
+			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
 		},
 		{
 			refer:  "create table t1 (id int key, a bigint, index(a));",
 			create: "create table t2 (a int, b int, foreign key fk_b(b) references t1(a));",
-			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 't2.fk_b' are incompatible.",
+			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
 		},
 		{
 			refer:  "create table t1 (id int key, a varchar(10) charset utf8, index(a));",
 			create: "create table t2 (a int, b varchar(10) charset utf8mb4, foreign key fk_b(b) references t1(a));",
-			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 't2.fk_b' are incompatible.",
+			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
 		},
 		{
 			refer:  "create table t1 (id int key, a varchar(10) collate utf8_bin, index(a));",
 			create: "create table t2 (a int, b varchar(10) collate utf8mb4_bin, foreign key fk_b(b) references t1(a));",
-			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 't2.fk_b' are incompatible.",
+			err:    "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
 		},
 		{
 			refer:  "create table t1 (id int key, a varchar(10));",
 			create: "create table t2 (a int, b varchar(10), foreign key fk_b(b) references t1(a));",
-			err:    "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 't2.fk_b' in the referenced table 't1'",
+			err:    "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
 		},
 		{
 			refer:  "create table t1 (id int key, a varchar(10), index (a(5)));",
 			create: "create table t2 (a int, b varchar(10), foreign key fk_b(b) references t1(a));",
-			err:    "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 't2.fk_b' in the referenced table 't1'",
+			err:    "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
 		},
 		{
 			refer:  "create table t1 (id int key, a int, index(a));",
 			create: "create table t2 (a int, b int, foreign key fk_b(b) references t1(id, a));",
-			err:    "[schema:1239]Incorrect foreign key definition for 'foreign key without name': Key reference and table reference don't match",
+			err:    "[schema:1239]Incorrect foreign key definition for 'fk_b': Key reference and table reference don't match",
 		},
 		{
 			create: "create table t2 (a int key, foreign key (a) references t2(a));",
@@ -434,7 +439,7 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 		},
 		{
 			create: "create table t2 (a int, b int, index(a,b), foreign key (a,b) references t2(b,a));",
-			err:    "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 't2.fk_1' in the referenced table 't2'",
+			err:    "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_1' in the referenced table 't2'",
 		},
 		{
 			prepare: []string{
@@ -442,7 +447,7 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 				"create table t2 (a int, b int, index(a), foreign key (a) references t1(id));",
 			},
 			create: "create table t1 (id int, a int);",
-			err:    "[schema:1822]Failed to add the foreign key constaint. Missing index for constraint 't2.fk_1' in the referenced table 't1'",
+			err:    "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_1' in the referenced table 't1'",
 		},
 		{
 			prepare: []string{
@@ -450,7 +455,7 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 				"create table t2 (a int, b int, index(a), foreign key (a) references t1(id));",
 			},
 			create: "create table t1 (id bigint key, a int);",
-			err:    "[ddl:3780]Referencing column 'a' and referenced column 'id' in foreign key constraint 't2.fk_1' are incompatible.",
+			err:    "[ddl:3780]Referencing column 'a' and referenced column 'id' in foreign key constraint 'fk_1' are incompatible.",
 		},
 	}
 	for _, ca := range cases {

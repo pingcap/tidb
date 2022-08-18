@@ -174,7 +174,7 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 			if (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) && !fkCheck {
 				return nil
 			}
-			return err
+			return infoschema.ErrFkCannotOpenParent.GenWithStackByArgs(fk.RefTable.O)
 		}
 		referTblInfo = referTable.Meta()
 	}
@@ -229,20 +229,20 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	for i := range fkInfo.RefCols {
 		refCol := model.FindColumnInfo(referTblInfo.Columns, fkInfo.RefCols[i].L)
 		if refCol == nil {
-			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(fkInfo.RefCols[i].O)
+			return infoschema.ErrForeignKeyNoColumnInParent.GenWithStackByArgs(fkInfo.RefCols[i], fkInfo.Name, fkInfo.RefTable)
 		}
 		if refCol.IsGenerated() && !refCol.GeneratedStored {
-			return infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(tblInfo.Name.L+"."+fkInfo.Name.L, fkInfo.RefCols[i].O)
+			return infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name, fkInfo.RefCols[i])
 		}
 		col := model.FindColumnInfo(tblInfo.Columns, fkInfo.Cols[i].L)
 		if col == nil {
-			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(fkInfo.Cols[i].O)
+			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(fkInfo.Cols[i])
 		}
 		if col.GetType() != refCol.GetType() ||
 			mysql.HasUnsignedFlag(col.GetFlag()) != mysql.HasUnsignedFlag(refCol.GetFlag()) ||
 			col.GetCharset() != refCol.GetCharset() ||
 			col.GetCollate() != refCol.GetCollate() {
-			return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(col.Name, refCol.Name, tblInfo.Name.L+"."+fkInfo.Name.L)
+			return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(col.Name, refCol.Name, fkInfo.Name)
 		}
 		if len(fkInfo.RefCols) == 1 && mysql.HasPriKeyFlag(refCol.GetFlag()) && referTblInfo.PKIsHandle {
 			return nil
@@ -250,7 +250,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	}
 	// check refer columns should have index.
 	if model.FindIndexByColumns(referTblInfo, fkInfo.RefCols...) == nil {
-		return infoschema.ErrFkNoIndexParent.GenWithStackByArgs(tblInfo.Name.L+"."+fkInfo.Name.L, fkInfo.RefTable.O)
+		return infoschema.ErrFkNoIndexParent.GenWithStackByArgs(fkInfo.Name, fkInfo.RefTable)
 	}
 	return nil
 }

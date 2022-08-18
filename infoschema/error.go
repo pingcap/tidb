@@ -86,6 +86,10 @@ var (
 	ErrTableWithoutPrimaryKey = dbterror.ClassSchema.NewStd(mysql.ErrTableWithoutPrimaryKey)
 	// ErrForeignKeyCannotUseVirtualColumn returns when foreign key refer virtual generated column.
 	ErrForeignKeyCannotUseVirtualColumn = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyCannotUseVirtualColumn)
+	// ErrFkCannotOpenParent returns when foreign key refer table not exists.
+	ErrFkCannotOpenParent = dbterror.ClassSchema.NewStd(mysql.ErrFkCannotOpenParent)
+	// ErrForeignKeyNoColumnInParent returns when foreign key refer columns don't exist in parent table.
+	ErrForeignKeyNoColumnInParent = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyNoColumnInParent)
 	// ErrFkNoIndexParent returns when foreign key refer columns don't have related index in parent table.
 	ErrFkNoIndexParent = dbterror.ClassSchema.NewStd(mysql.ErrFkNoIndexParent)
 	// ErrFkColumnNotNull returns when foreign key with SET NULL constrain and the related column has not null.

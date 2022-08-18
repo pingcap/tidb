@@ -2253,7 +2253,12 @@ Changing schema from '%-.192s' to '%-.192s' is not allowed.
 
 ["schema:1822"]
 error = '''
-Failed to add the foreign key constaint. Missing index for constraint '%s' in the referenced table '%s'
+Failed to add the foreign key constraint. Missing index for constraint '%s' in the referenced table '%s'
+'''
+
+["schema:1824"]
+error = '''
+Failed to open the referenced table '%s'
 '''
 
 ["schema:1830"]
@@ -2279,6 +2284,11 @@ User %s already exists.
 ["schema:3733"]
 error = '''
 Foreign key '%s' uses virtual column '%s' which is not supported.
+'''
+
+["schema:3734"]
+error = '''
+Failed to add the foreign key constraint. Missing column '%s' for constraint '%s' in the referenced table '%s'
 '''
 
 ["schema:3750"]
