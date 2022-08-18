@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/exp/slices"
 )
 
 func (q *QueryBlock) findAndMarkColName(uid int64, useAndMarkProjected bool) (res string, ok bool) {
@@ -54,7 +55,15 @@ func (q *QueryBlock) String() string {
 	var builder strings.Builder
 	builder.WriteString("SELECT ")
 	first := true
-	for uid, asName := range q.outputCol {
+
+	// Make the order of the select list stable to make the tests easier.
+	uids := make([]int64, 0, len(q.outputCol))
+	for uid := range q.outputCol {
+		uids = append(uids, uid)
+	}
+	slices.Sort(uids)
+	for _, uid := range uids {
+		asName := q.outputCol[uid]
 		if !first {
 			builder.WriteString(", ")
 		}
@@ -66,7 +75,14 @@ func (q *QueryBlock) String() string {
 		builder.WriteString(" AS " + asName)
 		first = false
 	}
-	for uid, col := range q.projectedCols {
+
+	uids = uids[:0]
+	for uid := range q.projectedCols {
+		uids = append(uids, uid)
+	}
+	slices.Sort(uids)
+	for _, uid := range uids {
+		col := q.projectedCols[uid]
 		if !col.Needed {
 			continue
 		}
@@ -76,8 +92,10 @@ func (q *QueryBlock) String() string {
 		builder.WriteString(", ")
 		builder.WriteString(col.Expr + " AS " + col.AsName)
 	}
+
 	builder.WriteString(" FROM ")
 	builder.WriteString(q.joinList.String())
+
 	if len(q.WhereConds) > 0 {
 		builder.WriteString(" WHERE ")
 		first = true
