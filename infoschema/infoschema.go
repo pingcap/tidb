@@ -19,7 +19,6 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -421,9 +420,6 @@ func (is *infoSchema) deletePolicy(name string) {
 }
 
 func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
-	if !config.ForeignKeyEnabled() {
-		return
-	}
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < 1 {
 			continue
@@ -462,9 +458,6 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 }
 
 func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
-	if !config.ForeignKeyEnabled() {
-		return
-	}
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < 1 {
 			continue
@@ -499,12 +492,6 @@ func (is *infoSchema) buildTableReferredForeignKeys(schema model.CIStr, tbInfo *
 
 // GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
 func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
-	if !config.ForeignKeyEnabled() {
-		return nil
-	}
-	if len(is.referredForeignKeyMap) == 0 {
-		return nil
-	}
 	name := SchemaAndTableName{schema: schema, table: table}
 	return is.referredForeignKeyMap[name]
 }

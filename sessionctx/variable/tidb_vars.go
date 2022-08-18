@@ -727,6 +727,9 @@ const (
 	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
 	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
 	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
+	// TiDBEnableForeignKey indicates whether to enable foreign key feature.
+	// TODO(crazycs520): remove this after foreign key GA.
+	TiDBEnableForeignKey = "tidb_enable_foreign_key"
 )
 
 // TiDB vars that have only global scope

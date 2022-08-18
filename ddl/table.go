@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
@@ -147,7 +146,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	if config.ForeignKeyEnabled() && len(tbInfo.ForeignKeys) > 0 {
+	if len(tbInfo.ForeignKeys) > 0 {
 		return createTableWithForeignKeys(d, t, job, tbInfo, fkCheck)
 	}
 

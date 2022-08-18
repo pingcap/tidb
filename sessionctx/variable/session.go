@@ -1236,6 +1236,8 @@ type SessionVars struct {
 	// GeneralPlanCacheSize controls the size of general plan cache.
 	GeneralPlanCacheSize uint64
 
+	// EnableForeignKey indicates whether to enable foreign key feature.
+	EnableForeignKey bool
 	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
 	ForeignKeyChecks bool
 }

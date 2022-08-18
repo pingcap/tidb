@@ -447,7 +447,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		tbl, _ = b.is.TableByID(newTableID)
 	}
 	// update the table referred tables.
-	if config.ForeignKeyEnabled() && tbl != nil {
+	if tbl != nil {
 		referTblIDs, err := b.updateFKReferTables(m, dbInfo, tbl.Meta(), tableIDIsValid(newTableID))
 		if err != nil {
 			return nil, errors.Trace(err)

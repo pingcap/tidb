@@ -1300,11 +1300,6 @@ func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
 }
 
-// ForeignKeyEnabled uses to check whether enabled the foreign key feature.
-func ForeignKeyEnabled() bool {
-	return GetGlobalConfig().Experimental.EnableForeignKey
-}
-
 // TableLockDelayClean uses to get the time of delay clean table lock.
 var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock

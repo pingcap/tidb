@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -122,7 +121,7 @@ func allocateFKIndexID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
-	if !config.ForeignKeyEnabled() {
+	if !sctx.GetSessionVars().EnableForeignKey {
 		return nil
 	}
 	fkCheck := sctx.GetSessionVars().ForeignKeyChecks

@@ -17,7 +17,6 @@ package executor_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -28,9 +27,8 @@ import (
 func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableForeignKey = true
-	})
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@tidb_enable_foreign_key=1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, a int,b int as (a) virtual);")
 	tk.MustExec("create database test2")
@@ -125,37 +123,13 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
 	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
-
-	// Test after disable foreign key feature.
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableForeignKey = false
-	})
-	tk.MustExec("alter table test.t1 add column x int")
-	tk.MustExec("alter table test2.t2 add column x int")
-	tk.MustExec("alter table test2.t3 add column x int")
-	tk.MustExec("alter table test2.t5 add column x int")
-	tb1Info = getTableInfo(t, dom, "test", "t1")
-	tb2Info = getTableInfo(t, dom, "test2", "t2")
-	tb3Info = getTableInfo(t, dom, "test2", "t3")
-	tb5Info = getTableInfo(t, dom, "test2", "t5")
-	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test", "t1")))
-	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
-	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
-	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
-	tbls := []*model.TableInfo{tb1Info, tb2Info, tb3Info, tb5Info}
-	fkCnts := []int{0, 1, 1, 1}
-	for i, tbInfo := range tbls {
-		require.Equal(t, 0, len(tbInfo.ReferredForeignKeys))
-		require.Equal(t, fkCnts[i], len(tbInfo.ForeignKeys))
-	}
 }
 
 func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableForeignKey = true
-	})
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@tidb_enable_foreign_key=1")
 	tk.MustExec("create database test2")
 	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("use test2")
@@ -306,9 +280,8 @@ func TestCreateTableWithForeignKeyPrivilegeCheck(t *testing.T) {
 func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableForeignKey = true
-	})
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@tidb_enable_foreign_key=1")
 	tk.MustExec("create database test2")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, a int, b int as (a) virtual);")
@@ -347,10 +320,9 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 
 func TestCreateTableWithForeignKeyDML(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableForeignKey = true
-	})
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@tidb_enable_foreign_key=1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, a int);")
 	tk.MustExec("begin")
@@ -366,10 +338,9 @@ func TestCreateTableWithForeignKeyDML(t *testing.T) {
 
 func TestCreateTableWithForeignKeyError(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.EnableForeignKey = true
-	})
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@tidb_enable_foreign_key=1")
 	tk.MustExec("use test")
 
 	cases := []struct {
