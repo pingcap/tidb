@@ -205,7 +205,7 @@ func parseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	s := &stream{pathExpr: pathExpr, pos: 0}
 	s.skipWhiteSpace()
 	if s.exhausted() || s.read() != '$' {
-		return PathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(0)
+		return PathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(1)
 	}
 	s.skipWhiteSpace()
 

@@ -68,6 +68,7 @@ func TestValidatePathExpr(t *testing.T) {
 		{`$."performance."txn-entry-size-limit"`, false, 0},
 		{`$[`, false, 0},
 		{`$a.***[3]`, false, 0},
+		{`$1a`, false, 0},
 	}
 
 	for _, test := range tests {
