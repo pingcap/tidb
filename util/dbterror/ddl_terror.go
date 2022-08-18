@@ -298,6 +298,8 @@ var (
 	ErrUnsupportedExpressionIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "creating expression index containing unsafe functions without allow-expression-index in config"), nil))
 	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned.
 	ErrPartitionExchangePartTable = ClassDDL.NewStd(mysql.ErrPartitionExchangePartTable)
+	// ErrPartitionExchangeTempTable is returned when exchange table partition with a temporary table
+	ErrPartitionExchangeTempTable = ClassDDL.NewStd(mysql.ErrPartitionExchangeTempTable)
 	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible.
 	ErrTablesDifferentMetadata = ClassDDL.NewStd(mysql.ErrTablesDifferentMetadata)
 	// ErrRowDoesNotMatchPartition is returned when the row record of exchange table does not match the partition rule.

@@ -126,44 +126,39 @@ func TestGetPreInfoHasDefault(t *testing.T) {
 
 func TestGetPreInfoAutoRandomBits(t *testing.T) {
 	subCases := []struct {
-		ColDef               string
-		ExpectAutoRandomBits uint64
+		ColDef                    string
+		ExpectAutoRandomBits      uint64
+		ExpectAutoRandomRangeBits uint64
 	}{
 		{
-			ColDef:               "varchar(16)",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "varchar(16)",
+			ExpectAutoRandomBits:      0,
+			ExpectAutoRandomRangeBits: 0,
 		},
 		{
-			ColDef:               "varchar(16) AUTO_RANDOM",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM",
+			ExpectAutoRandomBits:      5,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "INTEGER PRIMARY KEY AUTO_RANDOM",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(3)",
+			ExpectAutoRandomBits:      3,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM AUTO_INCREMENT",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM",
+			ExpectAutoRandomBits:      5,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM(3)",
-			ExpectAutoRandomBits: 3,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(5, 64)",
+			ExpectAutoRandomBits:      5,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM",
-			ExpectAutoRandomBits: 5,
-		},
-		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM(20)",
-			ExpectAutoRandomBits: 0,
-		},
-		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM(0)",
-			ExpectAutoRandomBits: 0,
-		},
-		{
-			ColDef:               "BIGINT AUTO_RANDOM",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(2, 32)",
+			ExpectAutoRandomBits:      2,
+			ExpectAutoRandomRangeBits: 32,
 		},
 	}
 	for _, subCase := range subCases {
@@ -171,6 +166,7 @@ func TestGetPreInfoAutoRandomBits(t *testing.T) {
 		tblInfo, err := newTableInfo(createTblSQL, 1)
 		require.Nil(t, err)
 		require.Equal(t, subCase.ExpectAutoRandomBits, tblInfo.AutoRandomBits, subCase.ColDef)
+		require.Equal(t, subCase.ExpectAutoRandomRangeBits, tblInfo.AutoRandomRangeBits, subCase.ColDef)
 	}
 }
 
