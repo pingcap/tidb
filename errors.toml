@@ -956,6 +956,11 @@ error = '''
 Table to exchange with partition is partitioned: '%-.64s'
 '''
 
+["ddl:1733"]
+error = '''
+Table to exchange with partition is temporary: '%-.64s'
+'''
+
 ["ddl:1736"]
 error = '''
 Tables have different definitions
