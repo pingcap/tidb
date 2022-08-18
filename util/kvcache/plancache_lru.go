@@ -16,24 +16,18 @@ package kvcache
 
 import (
 	"container/list"
-
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 // PCLRUCache is a simple least recently used cache, not thread-safe, use for plan cache.
 type PCLRUCache struct {
 	capacity uint
 	size     uint
-	// 0 indicates no quota
-	quota uint64
-	guard float64
 
-	elements map[string]*list.Element
-	bucket   map[string][]*list.Element
+	buckets map[string][]*list.Element
 
 	// onGet set rules to get one element from multi element.It can not be nil!
-	choose func([]*list.Element) (*list.Element, bool)
+	choose func([]*list.Element, interface{}) (*list.Element, int, bool)
 
 	// onEvict function will be called if any eviction happened
 	onEvict func(Key, Value)
@@ -42,17 +36,14 @@ type PCLRUCache struct {
 
 // NewPCLRUCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewPCLRUCache(capacity uint, guard float64, quota uint64, choose func([]*list.Element) (*list.Element, bool)) *PCLRUCache {
+func NewPCLRUCache(capacity uint, choose func([]*list.Element, interface{}) (*list.Element, int, bool)) *PCLRUCache {
 	if capacity < 1 {
 		panic("capacity of LRU Cache should be at least 1.")
 	}
 	return &PCLRUCache{
 		capacity: capacity,
 		size:     0,
-		quota:    quota,
-		guard:    guard,
-		elements: make(map[string]*list.Element),
-		bucket:   make(map[string][]*list.Element),
+		buckets:  make(map[string][]*list.Element),
 		onEvict:  nil,
 		cache:    list.New(),
 		choose:   choose,
@@ -65,10 +56,10 @@ func (l *PCLRUCache) SetOnEvict(onEvict func(Key, Value)) {
 }
 
 // Get tries to find the corresponding value according to the given key.
-func (l *PCLRUCache) Get(key Key) (value Value, ok bool) {
-	//element, exists := l.elements[string(key.Hash())]
-	if elements, exist := l.bucket[string(key.Hash())]; exist {
-		if element, exist1 := l.choose(elements); exist1 {
+// 传入的应该是要比较的项， 不是一个函数
+func (l *PCLRUCache) Get(key Key, paramTypes interface{}) (value Value, ok bool) {
+	if bucket, exist := l.buckets[string(key.Hash())]; exist {
+		if element, _, exist1 := l.choose(bucket, paramTypes); exist1 {
 			l.cache.MoveToFront(element)
 			return element.Value.(*cacheEntry).value, true
 		}
@@ -77,21 +68,16 @@ func (l *PCLRUCache) Get(key Key) (value Value, ok bool) {
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
-func (l *PCLRUCache) Put(key Key, value Value) {
+func (l *PCLRUCache) Put(key Key, value Value, paramTypes interface{}) {
 	hash := string(key.Hash())
-	//element, exists := l.elements[hash]
-	if elements, exist := l.bucket[hash]; exist {
-		if element, exist1 := l.choose(elements); exist1 {
-			element.Value.(*cacheEntry).value = value
-			l.cache.MoveToFront(element)
+	bucket, bucketExist := l.buckets[hash]
+	if bucketExist {
+		if candidate, _, exist := l.choose(bucket, paramTypes); exist {
+			candidate.Value.(*cacheEntry).value = value
+			l.cache.MoveToFront(candidate)
 			return
 		}
 	}
-	//if exists {
-	//	element.Value.(*cacheEntry).value = value
-	//	l.cache.MoveToFront(element)
-	//	return
-	//}
 
 	newCacheEntry := &cacheEntry{
 		key:   key,
@@ -99,57 +85,36 @@ func (l *PCLRUCache) Put(key Key, value Value) {
 	}
 
 	element := l.cache.PushFront(newCacheEntry)
-	l.elements[hash] = element
+	bucket = append(bucket, element)
+	l.buckets[hash] = bucket
 	l.size++
-	// Getting used memory is expensive and can be avoided by setting quota to 0.
-	if l.quota == 0 {
-		if l.size > l.capacity {
-			lru := l.cache.Back()
-			l.cache.Remove(lru)
-			if l.onEvict != nil {
-				l.onEvict(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
-			}
-			delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
-			l.size--
-		}
-		return
-	}
-
-	for memUsed, _ := memory.InstanceMemUsed(); memUsed > uint64(float64(l.quota)*(1.0-l.guard)); memUsed, _ = memory.InstanceMemUsed() {
-		lru := l.cache.Back()
-		if lru == nil {
-			break
-		}
-
-		if l.onEvict != nil {
-			l.onEvict(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
-		}
-
-		l.cache.Remove(lru)
-		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
-		l.size--
+	if l.size > l.capacity {
+		l.RemoveOldest()
 	}
 }
 
 // Delete deletes the key-value pair from the LRU Cache.
-func (l *PCLRUCache) Delete(key Key) {
+func (l *PCLRUCache) Delete(key Key, paramTypes interface{}) {
 	k := string(key.Hash())
-	element := l.elements[k]
-	if element == nil {
+	bucket, ok := l.buckets[k]
+	if !ok {
 		return
 	}
-	l.cache.Remove(element)
-	delete(l.elements, k)
-	l.size--
+	// remove from bucket
+	if element, idx, exist1 := l.choose(bucket, paramTypes); exist1 {
+		bucket = append(bucket[:idx], bucket[idx+1:]...)
+		l.buckets[k] = bucket
+		l.cache.Remove(element)
+	}
 }
 
 // DeleteAll deletes all elements from the LRU Cache.
 func (l *PCLRUCache) DeleteAll() {
 	for lru := l.cache.Back(); lru != nil; lru = l.cache.Back() {
 		l.cache.Remove(lru)
-		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
 	}
+	l.buckets = nil
 }
 
 // Size gets the current cache size.
@@ -184,10 +149,7 @@ func (l *PCLRUCache) SetCapacity(capacity uint) error {
 	}
 	l.capacity = capacity
 	for l.size > l.capacity {
-		lru := l.cache.Back()
-		l.cache.Remove(lru)
-		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
-		l.size--
+		_, _, _ = l.RemoveOldest()
 	}
 	return nil
 }
@@ -195,11 +157,28 @@ func (l *PCLRUCache) SetCapacity(capacity uint) error {
 // RemoveOldest removes the oldest element from the cache.
 func (l *PCLRUCache) RemoveOldest() (key Key, value Value, ok bool) {
 	if l.size > 0 {
-		ele := l.cache.Back()
-		l.cache.Remove(ele)
-		delete(l.elements, string(ele.Value.(*cacheEntry).key.Hash()))
+		lru := l.cache.Back()
+		if l.onEvict != nil {
+			l.onEvict(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
+		}
+
+		l.cache.Remove(lru)
+		l.removeFromBucket(lru)
 		l.size--
-		return ele.Value.(*cacheEntry).key, ele.Value.(*cacheEntry).value, true
+		return lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value, true
 	}
 	return nil, nil, false
+}
+
+// removeFromBucket remove element from bucket
+func (l *PCLRUCache) removeFromBucket(element *list.Element) {
+	k := string(element.Value.(*cacheEntry).key.Hash())
+	bucket := l.buckets[k]
+	for i, ele := range bucket {
+		if ele == element {
+			bucket = append(bucket[:i], bucket[i+1:]...)
+			l.buckets[k] = bucket
+			break
+		}
+	}
 }
