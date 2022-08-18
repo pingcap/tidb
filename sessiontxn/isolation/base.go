@@ -258,8 +258,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if readReplicaType.IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, readReplicaType)
 	}
-
-	temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema)
+	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema))
 
 	if sessVars.StmtCtx.WeakConsistency {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
