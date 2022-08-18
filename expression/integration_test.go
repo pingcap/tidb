@@ -6951,6 +6951,18 @@ func TestIssue28739(t *testing.T) {
 		"<nil> <nil>"))
 }
 
+func TestIssue30081(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 2:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 3:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+	tk.MustQuery(`select convert_tz('2022-08-14 00:00:00', 'America/Santiago','Asia/Shanghai');`).
+		Check(testkit.Rows(`2022-08-14 12:00:00`))
+}
+
 func TestIssue30326(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
