@@ -228,3 +228,6 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 func (p *StalenessTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	return nil, errors.New("GetSnapshotWithStmtForUpdateTS not supported for stalenessTxnProvider")
 }
+
+// OnLocalTemporaryTableCreated will not be called for StalenessTxnContextProvider
+func (p *StalenessTxnContextProvider) OnLocalTemporaryTableCreated() {}
