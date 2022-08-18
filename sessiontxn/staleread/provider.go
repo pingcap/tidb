@@ -125,9 +125,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 		},
 	}
 
-	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, is); interceptor != nil {
-		txn.SetOption(kv.SnapInterceptor, interceptor)
-	}
+	temptable.SessionSnapshotInterceptor(p.sctx, is)
 
 	p.is = is
 	err = p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, "")

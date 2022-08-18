@@ -202,11 +202,6 @@ func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 func (p *baseTxnContextProvider) OnLocalTemporaryTableCreated() {
 	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, p.infoSchema)
 	p.sctx.GetSessionVars().TxnCtx.InfoSchema = p.infoSchema
-	if p.txn != nil && p.txn.Valid() {
-		if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
-			p.txn.GetSnapshot().SetOption(kv.SnapInterceptor, interceptor)
-		}
-	}
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -264,9 +259,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		txn.SetOption(kv.ReplicaRead, readReplicaType)
 	}
 
-	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
-		txn.SetOption(kv.SnapInterceptor, interceptor)
-	}
+	temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema)
 
 	if sessVars.StmtCtx.WeakConsistency {
 		txn.SetOption(kv.IsolationLevel, kv.RC)

@@ -41,14 +41,9 @@ type TemporaryTableSnapshotInterceptor struct {
 
 // SessionSnapshotInterceptor creates a new snapshot interceptor for temporary table data fetch
 func SessionSnapshotInterceptor(sctx sessionctx.Context, is infoschema.InfoSchema) kv.SnapshotInterceptor {
-	sessionData := getSessionData(sctx)
-	if sessionData == nil {
-		return nil
-	}
-
 	return NewTemporaryTableSnapshotInterceptor(
 		is,
-		sessionData,
+		getSessionData(sctx),
 	)
 }
 
