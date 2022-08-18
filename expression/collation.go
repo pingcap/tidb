@@ -198,7 +198,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[2])
 	case ast.Elt, ast.ExportSet, ast.MakeSet:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[1:]...)
-	case ast.FindInSet, ast.Regexp:
+	case ast.FindInSet, ast.Regexp, ast.RegexpLike:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args...)
 	case ast.Field:
 		if argTps[0] == types.ETString {

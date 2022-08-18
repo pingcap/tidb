@@ -1,0 +1,184 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package expression
+
+import (
+	"fmt"
+	"regexp"
+
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tipb/go-tipb"
+)
+
+type empty struct{}
+
+// Valid flags in mysql's match type
+const (
+	flag_i = "i"
+	flag_c = "c"
+	flag_m = "m"
+	flag_n = "n"
+)
+
+type InvalidMatchType struct{}
+
+func (i *InvalidMatchType) Error() string {
+	return "Invalid match type"
+}
+
+var validMatchType = map[string]empty{
+	flag_i: empty{}, // Case-insensitive matching
+	flag_c: empty{}, // Case-sensitive matching
+	flag_m: empty{}, // Multiple-line mode
+	flag_n: empty{}, // The . character matches line terminators
+}
+
+func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argTp := []types.EvalType{types.ETString, types.ETString}
+	if len(args) == 3 {
+		argTp = append(argTp, types.ETString)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.SetFlen(mysql.MaxIntWidth)
+	sig := regexpLikeFuncSig{baseBuiltinFunc: bf}
+	if bf.collation == charset.CollationBin {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeSig)
+	} else {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeUTF8Sig)
+	}
+
+	return &sig, nil
+}
+
+type regexpBaseFuncSig struct {
+	memorizedRegexp *regexp.Regexp
+	memorizedErr    error
+}
+
+func (re *regexpBaseFuncSig) cloneBase(from *regexpBaseFuncSig) {
+	if from.memorizedRegexp != nil {
+		re.memorizedRegexp = from.memorizedRegexp.Copy()
+	}
+	re.memorizedErr = from.memorizedErr
+}
+
+// Convert mysql match type format to re2 format
+//
+// If characters specifying contradictory options are specified
+// within match_type, the rightmost one takes precedence.
+func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchType string) (string, error) {
+	flag := ""
+	matchTypeSet := make(map[string]empty)
+
+	if bf.collation != charset.CollationBin && collate.IsCICollation(bf.collation) {
+		matchTypeSet[flag_i] = empty{}
+	}
+
+	for _, val := range userInputMatchType {
+		c := string(val)
+
+		// Check validation of the flag
+		_, err := validMatchType[c]
+		if err == false {
+			return "", &InvalidMatchType{}
+		}
+
+		if c == flag_c {
+			// re2 is case-sensitive by default, so we only need to delete 'i' flag
+			// to enable the case-sensitive for the regexp
+			delete(matchTypeSet, flag_i)
+			continue
+		}
+
+		if c == "n" {
+			matchTypeSet["s"] = empty{} // convert mysql's match type to the re2
+			continue
+		}
+
+		matchTypeSet[c] = empty{} // add this flag
+	}
+
+	// generate flag
+	for key := range matchTypeSet {
+		flag += key
+	}
+
+	return flag, nil
+}
+
+type regexpLikeFunctionClass struct {
+	baseFunctionClass
+}
+
+type regexpLikeFuncSig struct {
+	baseBuiltinFunc
+	regexpBaseFuncSig
+}
+
+func (re *regexpLikeFuncSig) clone(from *regexpLikeFuncSig) {
+	re.cloneFrom(&from.baseBuiltinFunc)
+	re.cloneBase(&from.regexpBaseFuncSig)
+}
+
+func (re *regexpLikeFuncSig) compile(pat string, matchType string) (*regexp.Regexp, error) {
+	matchType, err := re.getMatchType(&re.baseBuiltinFunc, matchType)
+	if err != nil {
+		return nil, err
+	}
+
+	return regexp.Compile(fmt.Sprintf("(?%s)%s", matchType, pat))
+}
+
+// Call this function when all args are constant
+func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
+	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+
+	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+
+	var reg *regexp.Regexp
+	matchType := ""
+	if len(re.args) == 3 {
+		matchType, isNull, err = re.args[2].EvalString(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+	}
+
+	reg, err = re.compile(pat, matchType)
+	if err != nil {
+		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+	return boolToInt64(reg.MatchString(expr)), false, nil
+}
