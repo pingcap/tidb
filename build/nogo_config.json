@@ -135,10 +135,35 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "filepermission": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_/testmain\\.go$": "ignore code"
+    }
+  },
   "findcall": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "forcetypeassert": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "types/json/binary_functions.go": "types/json/binary_functions.go",
+      "types/json/binary_test.go": "types/json/binary_test.go",
+      "ddl/backfilling.go": "ddl/backfilling.go",
+      "ddl/column.go": "ddl/column.go",
+      "ddl/index.go": "ddl/index.go",
+      "server/conn.go": "server/conn.go",
+      "server/conn_stmt.go": "server/conn_stmt.go",
+      "server/conn_test.go": "server/conn_test.go",
+      "planner/core/plan.go": "planner/core/plan.go",
+      "errno/": "only table code"
     }
   },
   "gofmt": {
@@ -220,7 +245,7 @@
   "makezero": {
     "exclude_files": {
       "/cgo/": "ignore cgo code",
-       ".*_test\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore generated code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
@@ -263,6 +288,15 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "types/json/binary_functions.go": "types/json/binary_functions.go",
+      "types/json/binary_test.go": "types/json/binary_test.go",
+      "ddl/backfilling.go": "ddl/backfilling.go",
+      "ddl/column.go": "ddl/column.go",
+      "ddl/index.go": "ddl/index.go",
+      "expression/builtin_cast.go": "expression/builtin_cast code",
+      "server/conn.go": "server/conn.go",
+      "server/conn_stmt.go": "server/conn_stmt.go",
+      "server/conn_test.go": "server/conn_test.go",
       "ddl/index.go": "ddl/index code",
       "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
       "distsql/": "ignore distsql code",
@@ -277,6 +311,7 @@
       "planner/implementation": "planner code",
       "planner/cascades": "planner code",
       "planner/core/plan_cache.go": "planner code",
+      "planner/core/plan.go": "planner/core/plan.go",
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code"
@@ -612,9 +647,19 @@
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     },
-     "only_files": {
-       "ddl/": "enable to ddl"
-     }
+    "only_files": {
+      "types/json/binary_functions.go": "types/json/binary_functions.go",
+      "types/json/binary_test.go": "types/json/binary_test.go",
+      "ddl/backfilling.go": "ddl/backfilling.go",
+      "ddl/column.go": "ddl/column.go",
+      "ddl/index.go": "ddl/index.go",
+      "expression/builtin_cast.go": "enable expression/builtin_cast.go",
+      "planner/core/plan.go": "planner/core/plan.go",
+      "server/conn.go": "server/conn.go",
+      "server/conn_stmt.go": "server/conn_stmt.go",
+      "server/conn_test.go": "server/conn_test.go",
+      "ddl/": "enable to ddl"
+    }
   },
   "SA2000": {
     "exclude_files": {

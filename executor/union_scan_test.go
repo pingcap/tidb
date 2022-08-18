@@ -223,9 +223,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 	tk.MustExec("create table t (a int,b int, unique index idx(b))")
 	tk.MustExec("insert t values (1,1),(2,2)")
 	tk.MustExec("begin")
-	_, err := tk.Exec("update t set b=b+1")
-	require.NotNil(t, err)
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '2' for key 'idx'")
+	tk.MustGetErrMsg("update t set b=b+1", "[kv:1062]Duplicate entry '2' for key 'idx'")
 	// update with unchange index column.
 	tk.MustExec("update t set a=a+1")
 	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
