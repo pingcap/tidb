@@ -1954,8 +1954,8 @@ func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
 func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
-	metaFilesCache MetaFilesCache,
 	schemasReplace *stream.SchemasReplace,
+	metaFilesCache MetaFilesCache,
 	updateStats func(kvCount uint64, size uint64),
 	progressInc func(),
 ) error {

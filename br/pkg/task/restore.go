@@ -174,6 +174,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
+
 	DefineRestoreCommonFlags(flags)
 }
 

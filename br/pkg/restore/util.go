@@ -664,10 +664,6 @@ func (m *MetaFilesCacheV2) Drain(ctx context.Context, path string, offset uint64
 	return buf, nil
 }
 
-type CostAnalyzer struct {
-	baselines map[string]uint64
-}
-
 type StreamFilesLoader interface {
 	// GetShiftTS get shift-ts from metadata
 	GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error)
