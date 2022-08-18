@@ -2330,6 +2330,20 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			"alter table pt32 exchange partition p0 with table nt32;",
 			dbterror.ErrTablesDifferentMetadata,
 		},
+		{
+			// global temporary table
+			"create table pt33 (id int) partition by hash(id) partitions 1;",
+			"create global temporary table nt33 (id int) on commit delete rows;",
+			"alter table pt33 exchange partition p0 with table nt33;",
+			dbterror.ErrPartitionExchangeTempTable,
+		},
+		{
+			// local temporary table
+			"create table pt34 (id int) partition by hash(id) partitions 1;",
+			"create temporary table nt34 (id int);",
+			"alter table pt34 exchange partition p0 with table nt34;",
+			dbterror.ErrPartitionExchangeTempTable,
+		},
 	}
 
 	tk := testkit.NewTestKit(t, store)
