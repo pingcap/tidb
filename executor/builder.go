@@ -4726,6 +4726,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 
+	if plan.IndexInfo != nil {
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, plan.TblInfo.Name.O+":"+plan.IndexInfo.Name.O)
+	}
+
 	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
 		if e.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != b.readReplicaScope {
