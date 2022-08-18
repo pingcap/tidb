@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,12 +60,17 @@ type PlanReplayerSingleExec struct {
 type tableNamePair struct {
 	DBName    string
 	TableName string
+	IsView    bool
 }
 
 type tableNameExtractor struct {
-	curDB    string
+	ctx      context.Context
+	executor sqlexec.RestrictedSQLExecutor
+	is       infoschema.InfoSchema
+	curDB    model.CIStr
 	names    map[tableNamePair]struct{}
 	cteNames map[string]struct{}
+	err      error
 }
 
 func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -75,10 +81,18 @@ func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
 }
 
 func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
+	if tne.err != nil {
+		return in, true
+	}
 	if t, ok := in.(*ast.TableName); ok {
-		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L}
+		isView, err := tne.handleIsView(t)
+		if err != nil {
+			tne.err = err
+			return in, isView
+		}
+		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
 		if tp.DBName == "" {
-			tp.DBName = tne.curDB
+			tp.DBName = tne.curDB.L
 		}
 		if _, ok := tne.names[tp]; !ok {
 			tne.names[tp] = struct{}{}
@@ -93,6 +107,29 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
+func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
+	schema := t.Schema
+	if schema.L == "" {
+		schema = tne.curDB
+	}
+	table := t.Name
+	isView := tne.is.TableIsView(schema, table)
+	if !isView {
+		return false, nil
+	}
+	viewTbl, err := tne.is.TableByName(schema, table)
+	if err != nil {
+		return false, err
+	}
+	sql := viewTbl.Meta().View.SelectStmt
+	node, err := tne.executor.ParseWithParams(tne.ctx, sql)
+	if err != nil {
+		return false, err
+	}
+	node.Accept(tne)
+	return true, nil
+}
+
 // Next implements the Executor Next interface.
 func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
@@ -102,7 +139,7 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
 	if e.ExecStmt == nil {
 		return errors.New("plan replayer: sql is empty")
 	}
-	res, err := e.dumpSingle(domain.GetPlanReplayerDirName())
+	res, err := e.dumpSingle(ctx, domain.GetPlanReplayerDirName())
 	if err != nil {
 		return err
 	}
@@ -127,7 +164,7 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
  |_explain
      |-explain.txt
 */
-func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err error) {
+func (e *PlanReplayerSingleExec) dumpSingle(ctx context.Context, path string) (fileName string, err error) {
 	// Create path
 	err = os.MkdirAll(path, os.ModePerm)
 	if err != nil {
@@ -178,7 +215,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err e
 	do := domain.GetDomain(e.ctx)
 
 	// Retrieve all tables
-	pairs, err := extractTableNames(e.ExecStmt, dbName.L)
+	pairs, err := e.extractTableNames(ctx, e.ExecStmt, dbName)
 	if err != nil {
 		return "", errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
 	}
@@ -261,6 +298,9 @@ func dumpSchemas(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair
 
 func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *domain.Domain) error {
 	for pair := range pairs {
+		if pair.IsView {
+			continue
+		}
 		jsonTbl, err := getStatsForTable(do, pair)
 		if err != nil {
 			return err
@@ -392,16 +432,28 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 	return nil
 }
 
-func extractTableNames(ExecStmt ast.StmtNode, curDB string) (map[tableNamePair]struct{}, error) {
+func (e *PlanReplayerSingleExec) extractTableNames(ctx context.Context,
+	ExecStmt ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
+
 	tableExtractor := &tableNameExtractor{
+		ctx:      ctx,
+		executor: e.ctx.(sqlexec.RestrictedSQLExecutor),
+		is:       domain.GetDomain(e.ctx).InfoSchema(),
 		curDB:    curDB,
 		names:    make(map[tableNamePair]struct{}),
 		cteNames: make(map[string]struct{}),
 	}
 	ExecStmt.Accept(tableExtractor)
+	if tableExtractor.err != nil {
+		return nil, tableExtractor.err
+	}
 	r := make(map[tableNamePair]struct{})
-	// remove cte in table names
 	for tablePair := range tableExtractor.names {
+		if tablePair.IsView {
+			r[tablePair] = struct{}{}
+			continue
+		}
+		// remove cte in table names
 		_, ok := tableExtractor.cteNames[tablePair.TableName]
 		if !ok {
 			r[tablePair] = struct{}{}
@@ -430,14 +482,25 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	if err != nil {
 		return err
 	}
-	fw, err := zw.Create(fmt.Sprintf("schema/%v.%v.schema.txt", pair.DBName, pair.TableName))
-	if err != nil {
-		return errors.AddStack(err)
+	var fw io.Writer
+	if pair.IsView {
+		fw, err = zw.Create(fmt.Sprintf("view/%v.%v.schema.txt", pair.DBName, pair.TableName))
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		if len(sRows) == 0 || len(sRows[0]) != 4 {
+			return fmt.Errorf("plan replayer: get create view %v.%v failed", pair.DBName, pair.TableName)
+		}
+	} else {
+		fw, err = zw.Create(fmt.Sprintf("schema/%v.%v.schema.txt", pair.DBName, pair.TableName))
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		if len(sRows) == 0 || len(sRows[0]) != 2 {
+			return fmt.Errorf("plan replayer: get create table %v.%v failed", pair.DBName, pair.TableName)
+		}
 	}
-	if len(sRows) == 0 || len(sRows[0]) != 2 {
-		return fmt.Errorf("plan replayer: get create table %v.%v failed", pair.DBName, pair.TableName)
-	}
-	fmt.Fprintf(fw, "create database `%v`; use `%v`;", pair.DBName, pair.DBName)
+	fmt.Fprintf(fw, "create database if not exists `%v`; use `%v`;", pair.DBName, pair.DBName)
 	fmt.Fprintf(fw, "%s", sRows[0][1])
 	if len(recordSets) > 0 {
 		if err := recordSets[0].Close(); err != nil {
@@ -641,10 +704,21 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 		return err
 	}
 
-	// build schema and table
+	// build schema and table first
 	for _, zipFile := range z.File {
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 {
+			err = createSchemaAndTables(e.Ctx, zipFile)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// build view next
+	for _, zipFile := range z.File {
+		path := strings.Split(zipFile.Name, "/")
+		if len(path) == 2 && strings.Compare(path[0], "view") == 0 {
 			err = createSchemaAndTables(e.Ctx, zipFile)
 			if err != nil {
 				return err
