@@ -444,7 +444,41 @@ func (ts *testSuite) TestCreatePartitionTableNotSupport(c *C) {
 	_, err = tk.Exec(`create table t7 (a int) partition by range (a + row(1, 2, 3)) (partition p1 values less than (1));`)
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
+<<<<<<< HEAD
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+=======
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
+}
+
+func TestRangePartitionUnderNoUnsigned(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists tu;")
+	defer tk.MustExec("drop table if exists t2;")
+	defer tk.MustExec("drop table if exists tu;")
+	tk.MustGetErrCode(`CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
+							PARTITION p0 VALUES LESS THAN (-5),
+							PARTITION p1 VALUES LESS THAN (0),
+							PARTITION p2 VALUES LESS THAN (5),
+							PARTITION p3 VALUES LESS THAN (10),
+							PARTITION p4 VALUES LESS THAN (MAXVALUE));`, mysql.ErrPartitionConstDomain)
+	tk.MustExec("SET @@sql_mode='NO_UNSIGNED_SUBTRACTION';")
+	tk.MustExec(`create table t2 (a bigint unsigned) partition by range (a) (
+  						  partition p1 values less than (0),
+  						  partition p2 values less than (1),
+  						  partition p3 values less than (18446744073709551614),
+  						  partition p4 values less than (18446744073709551615),
+  						  partition p5 values less than maxvalue);`)
+	tk.MustExec("insert into t2 values(10);")
+	tk.MustGetErrCode(`CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
+							PARTITION p0 VALUES LESS THAN (-5),
+							PARTITION p1 VALUES LESS THAN (0),
+							PARTITION p2 VALUES LESS THAN (5),
+							PARTITION p3 VALUES LESS THAN (10),
+							PARTITION p4 VALUES LESS THAN (MAXVALUE));`, mysql.ErrPartitionConstDomain)
+>>>>>>> a1d135607... ddl: Fix for unsigned partitioning expressions (#36830)
 }
 
 func (ts *testSuite) TestIntUint(c *C) {
