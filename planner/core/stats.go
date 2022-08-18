@@ -1397,6 +1397,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			joinConds = append(joinConds, cond)
 		}
 		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
+			// For SemiJoin and AntiSemiJoin, we convert it to a filter and put it into the WHERE clause.
 			left = left.GenQBNotAfter(sqlrestorer.StageWhere)
 
 			for _, col := range x.CorCols {
@@ -1407,6 +1408,8 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			left.WhereConds = append(left.WhereConds, expr)
 			p.Stats().SQLRestorer = left
 		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
+			// For LeftOuterSemiJoin and AntiLeftOuterSemiJoin, we convert it to an expression and
+			// register it as a projected column.
 			left = left.GenQBNotAfter(sqlrestorer.StageProjection)
 
 			for _, col := range x.CorCols {
@@ -1418,6 +1421,8 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			left.AddProjCol(schema[len(schema)-1].UniqueID, expr)
 			p.Stats().SQLRestorer = left
 		} else {
+			// For other kinds of join type in Apply, we convert each column from the inner side to an expression
+			// and register it as a projected column.
 			left = left.GenQBNotAfter(sqlrestorer.StageJoin)
 			right = right.GenQBNotAfter(sqlrestorer.StageWhere)
 
@@ -1484,6 +1489,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 
 		query.Stage = sqlrestorer.StageProjection
 		outputCols := x.Schema().Columns
+		// For each output column of the Projection, register it as a projected column.
 		for i := range x.Exprs {
 			s, err := query.ExprToString(x.Exprs[i], false)
 			if err != nil {
@@ -1502,7 +1508,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		query.Stage = sqlrestorer.StageAgg
 		groupBys := x.GroupByItems
 		for _, item := range groupBys {
-			// group by columns can use projected columns
+			// group by columns can use projected columns, so useProjectedCol is true.
 			s, err := query.ExprToString(item, true)
 			if err != nil {
 				return
@@ -1510,6 +1516,7 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			query.GroupByCols = append(query.GroupByCols, s)
 		}
 		outputCols := x.Schema().Columns
+		// For each output column of the Aggregation, register it as a projected column.
 		for i, agg := range x.AggFuncs {
 			s, err := query.AggFuncToString(agg)
 			if err != nil {

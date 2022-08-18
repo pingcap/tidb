@@ -439,9 +439,9 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 		reordered: true,
 	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-	join.names = make([]*types.FieldName, lChild.Schema().Len()+rChild.Schema().Len())
-	copy(join.names, lChild.OutputNames())
-	copy(join.names[lChild.Schema().Len():], rChild.OutputNames())
+	join.names = make([]*types.FieldName, 0, lChild.Schema().Len()+rChild.Schema().Len())
+	join.names = append(join.names, lChild.OutputNames()...)
+	join.names = append(join.names, rChild.OutputNames()...)
 	join.SetChildren(lChild, rChild)
 	return join
 }
