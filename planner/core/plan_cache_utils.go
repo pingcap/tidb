@@ -39,6 +39,42 @@ var (
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
 
+func getValidPlanFromCache(sctx sessionctx.Context, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
+	cache := sctx.PreparedPlanCache()
+	val, exist := cache.Get(key)
+	if !exist {
+		return nil, exist
+	}
+	candidates := val.([]*PlanCacheValue)
+	for _, candidate := range candidates {
+		if candidate.varTypesUnchanged(paramTypes) {
+			return candidate, true
+		}
+	}
+	return nil, false
+}
+
+func putPlanIntoCache(sctx sessionctx.Context, key kvcache.Key, plan *PlanCacheValue) {
+	cache := sctx.PreparedPlanCache()
+	val, exist := cache.Get(key)
+	if !exist {
+		cache.Put(key, []*PlanCacheValue{plan})
+		return
+	}
+	candidates := val.([]*PlanCacheValue)
+	for i, candidate := range candidates {
+		if candidate.varTypesUnchanged(plan.ParamTypes) {
+			// hit an existing cached plan
+			candidates[i] = plan
+			return
+		}
+	}
+	// add to current candidate list
+	// TODO: limit the candidate list length
+	candidates = append(candidates, plan)
+	cache.Put(key, candidates)
+}
+
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
 // Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
@@ -157,7 +193,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 }
 
 // FieldSlice is the slice of the types.FieldType
-type FieldSlice []types.FieldType
+type FieldSlice []*types.FieldType
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
 // Currently this is only used in plan cache to check whether the types of parameters are compatible.
@@ -193,29 +229,29 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	TxtVarTypes       FieldSlice
+	ParamTypes        FieldSlice
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
-	return v.TxtVarTypes.CheckTypesCompatibility4PC(txtVarTps)
+	return v.ParamTypes.CheckTypesCompatibility4PC(txtVarTps)
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	txtVarTps []*types.FieldType) *PlanCacheValue {
+	paramTypes []*types.FieldType) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userVarTypes := make([]types.FieldType, len(txtVarTps))
-	for i, tp := range txtVarTps {
-		userVarTypes[i] = *tp
+	userParamTypes := make([]*types.FieldType, len(paramTypes))
+	for i, tp := range paramTypes {
+		userParamTypes[i] = tp.Clone()
 	}
 	return &PlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
-		TxtVarTypes:       userVarTypes,
+		ParamTypes:        userParamTypes,
 	}
 }
 
