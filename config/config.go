@@ -268,6 +268,7 @@ type Config struct {
 	// OOMUseTmpStorage unused since bootstrap v93
 	OOMUseTmpStorage bool `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 
+	// These items are deprecated because they are turned into instance system variables.
 	CheckMb4ValueInUTF8        AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	EnableCollectExecutionInfo bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
