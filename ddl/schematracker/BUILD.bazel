@@ -51,7 +51,10 @@ go_test(
         "//parser",
         "//parser/ast",
         "//parser/model",
+        "//sessionctx",
+        "//util/chunk",
         "//util/mock",
+        "//util/sqlexec",
         "@com_github_stretchr_testify//require",
     ],
 )
