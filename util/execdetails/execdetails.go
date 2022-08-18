@@ -164,6 +164,9 @@ func (d ExecDetails) String() string {
 		if len(commitDetails.Mu.PrewriteBackoffTypes) > 0 {
 			parts = append(parts, "Prewrite_"+BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.PrewriteBackoffTypes))
 		}
+		if len(commitDetails.Mu.CommitBackoffTypes) > 0 {
+			parts = append(parts, "Commit_"+BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.CommitBackoffTypes))
+		}
 		if commitDetails.Mu.SlowestPrewrite.ReqTotalTime > 0 {
 			parts = append(parts, SlowestPrewriteRPCDetailStr+": {total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
 				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestPrewrite.Region, 10)+
@@ -273,6 +276,9 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 		}
 		if len(commitDetails.Mu.PrewriteBackoffTypes) > 0 {
 			fields = append(fields, zap.String("Prewrite_"+BackoffTypesStr, fmt.Sprintf("%v", commitDetails.Mu.PrewriteBackoffTypes)))
+		}
+		if len(commitDetails.Mu.CommitBackoffTypes) > 0 {
+			fields = append(fields, zap.String("Commit_"+BackoffTypesStr, fmt.Sprintf("%v", commitDetails.Mu.CommitBackoffTypes)))
 		}
 		if commitDetails.Mu.SlowestPrewrite.ReqTotalTime > 0 {
 			fields = append(fields, zap.String(SlowestPrewriteRPCDetailStr, "total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
