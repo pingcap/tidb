@@ -505,20 +505,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	return nil
 }
 
-func isPartExprUnsigned(ctx sessionctx.Context, tbInfo *model.TableInfo) bool {
-	expr, err := expression.ParseSimpleExprWithTableInfo(ctx, tbInfo.Partition.Expr, tbInfo)
-	if err != nil {
-		return false
-	}
-	pCols := expression.ExtractColumns(expr)
-	for _, col := range pCols {
-		if mysql.HasUnsignedFlag(col.GetType().GetFlag()) {
-			return true
-		}
-	}
-	return false
-}
-
 // getPartitionIntervalFromTable checks if a partitioned table matches a generated INTERVAL partitioned scheme
 // will return nil if error occurs, i.e. not an INTERVAL partitioned table
 func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableInfo) *ast.PartitionInterval {
@@ -555,7 +541,7 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 			return nil
 		}
 	} else {
-		if !isPartExprUnsigned(ctx, tbInfo) {
+		if !isPartExprUnsigned(tbInfo) {
 			minVal = "-9223372036854775808"
 		}
 	}
@@ -829,7 +815,7 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 			if partCol != nil {
 				min = getLowerBoundInt(partCol)
 			} else {
-				if !isPartExprUnsigned(ctx, tbInfo) {
+				if !isPartExprUnsigned(tbInfo) {
 					min = math.MinInt64
 				}
 			}
