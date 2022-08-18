@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
@@ -88,17 +89,21 @@ func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []s
 			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
 			return
 		}
-
+		altTableSpec, err := alterTableSpecOf(replica)
+		if err != nil {
+			log.Warn("Failed to generate the alter table spec", logutil.ShortError(err), zap.Any("replica", replica))
+			return
+		}
 		items = append(items, fmt.Sprintf(
 			"ALTER TABLE %s %s",
 			utils.EncloseDBAndTable(schema.Name.O, table.Meta().Name.O),
-			alterTableSpecOf(replica)),
+			altTableSpec),
 		)
 	})
 	return items
 }
 
-func alterTableSpecOf(replica model.TiFlashReplicaInfo) string {
+func alterTableSpecOf(replica model.TiFlashReplicaInfo) (string, error) {
 	spec := &ast.AlterTableSpec{
 		Tp: ast.AlterTableSetTiFlashReplica,
 		TiFlashReplica: &ast.TiFlashReplicaSpec{

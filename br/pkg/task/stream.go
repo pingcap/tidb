@@ -1129,11 +1129,9 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	schemasReplace.AfterTableRewritten = func(deleted bool, tableInfo *model.TableInfo) {
-		if deleted {
-			cfg.tiflashRecorder.DelTable(tableInfo.ID)
-			return
-		}
-		if tableInfo.TiFlashReplica == nil {
+		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
+		// We should remove the table if we meet.
+		if deleted || tableInfo.TiFlashReplica == nil {
 			cfg.tiflashRecorder.DelTable(tableInfo.ID)
 			return
 		}
