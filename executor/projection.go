@@ -293,6 +293,15 @@ func (e *ProjectionExec) drainOutputCh(ch chan *projectionOutput) {
 	}
 }
 
+// IsDrained implements the Executor interface, overriding the default implementation.
+func (e *ProjectionExec) IsDrained() bool {
+	if e.isUnparallelExec() {
+		return e.children[0].IsDrained()
+	}
+	// It's a bit hard to tell if it's drained in parallel mode. Just return false for uncertainty.
+	return false
+}
+
 // Close implements the Executor Close interface.
 func (e *ProjectionExec) Close() error {
 	// if e.baseExecutor.Open returns error, e.childResult will be nil, see https://github.com/pingcap/tidb/issues/24210

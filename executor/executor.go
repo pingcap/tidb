@@ -208,6 +208,12 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 	return nil
 }
 
+// IsDrained provides a default implementation.
+// Real executors can override this method if necessary.
+func (e *baseExecutor) IsDrained() bool {
+	return false
+}
+
 // Close closes all executors and release all resources.
 func (e *baseExecutor) Close() error {
 	var firstErr error
@@ -294,6 +300,9 @@ type Executor interface {
 	base() *baseExecutor
 	Open(context.Context) error
 	Next(ctx context.Context, req *chunk.Chunk) error
+	// IsDrained returns a hint about whether the executor has returned all the results,
+	// so no more Next() needs to be called. It returns false if unsure.
+	IsDrained() bool
 	Close() error
 	Schema() *expression.Schema
 }

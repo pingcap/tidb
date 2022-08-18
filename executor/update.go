@@ -320,6 +320,9 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			}
 		}
 		totalNumRows += chk.NumRows()
+		if e.children[0].IsDrained() {
+			break
+		}
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 	return totalNumRows, nil

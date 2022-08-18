@@ -197,6 +197,11 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// IsDrained implements the Executor interface, overriding the default implementation.
+func (e *BatchPointGetExec) IsDrained() bool {
+	return e.index >= len(e.values)
+}
+
 func datumsContainNull(vals []types.Datum) bool {
 	for _, val := range vals {
 		if val.IsNull() {

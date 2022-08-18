@@ -192,6 +192,11 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	return nil
 }
 
+// IsDrained implements the Executor interface, overriding the default implementation.
+func (e *PointGetExecutor) IsDrained() bool {
+	return e.done
+}
+
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {

@@ -671,18 +671,21 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 		err = a.next(ctx, e, req)
 		if err != nil {
 			// Handle 'write conflict' error.
-			break
+			return nil, err
 		}
 		if req.NumRows() == 0 {
-			return &chunkRowRecordSet{rows: rows, e: e, execStmt: a}, nil
+			break
 		}
 		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
+		if e.IsDrained() {
+			break
+		}
 		req = chunk.Renew(req, a.Ctx.GetSessionVars().MaxChunkSize)
 	}
-	return nil, err
+	return &chunkRowRecordSet{rows: rows, e: e, execStmt: a}, nil
 }
 
 func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
