@@ -119,6 +119,8 @@ func alterTableSpecOf(replica model.TiFlashReplicaInfo) (string, error) {
 			format.RestoreStringSingleQuotes|
 			format.RestoreStringEscapeBackslash,
 		buf)
-	spec.Restore(restoreCx)
+	if err := spec.Restore(restoreCx); err != nil {
+		return "", err
+	}
 	return buf.String(), nil
 }
