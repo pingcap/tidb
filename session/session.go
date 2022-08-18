@@ -1581,7 +1581,7 @@ func (s *session) Parameterize(ctx context.Context, originSQL string) (exec *ast
 	}
 	paramSQL, params, ok, err := plannercore.Parameterize(s, originSQL)
 	if !ok || err != nil {
-		return nil, ok
+		return nil, false
 	}
 	cachedStmt, err := s.CacheGeneralStmt(paramSQL)
 	if err != nil {
