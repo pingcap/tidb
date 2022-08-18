@@ -154,8 +154,6 @@ type backfillWorker struct {
 	table     table.Table
 	closed    bool
 	priority  int
-	// Mark if it use new backfill flow.
-	isNewBF bool
 }
 
 func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo) *backfillWorker {
@@ -698,14 +696,9 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 						go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 					}
 				} else {
-					var newBackfillFlow bool = false
-					if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && !bc.NeedRestore() {
-						newBackfillFlow = true
-					}
-					idxWorker := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc, newBackfillFlow)
+					idxWorker := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
 					idxWorker.priority = job.Priority
 					backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
-					idxWorker.isNewBF = newBackfillFlow
 					go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 				}
 			case typeUpdateColumnWorker:

@@ -1161,7 +1161,7 @@ type addIndexWorker struct {
 	distinctCheckFlags []bool
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext, newBF bool) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *addIndexWorker {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
 		logutil.BgLogger().Error("Element type for addIndexWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
 			zap.String("reorgInfo", reorgInfo.String()))
@@ -1174,7 +1174,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 			break
 		}
 	}
-	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo, newBF)
+	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
@@ -1467,10 +1467,11 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 				continue
 			}
 
-			// When backfill go new backfill path, but use original worker then no need to lock index key.
-			if !w.isNewBF {
+			// When the backfill-merge process is used, the writes from DML are redirected to a temp index.
+			// Thus, the lock is unnecessary.
+			if w.index.Meta().BackfillState == model.BackfillStateInapplicable {
 				// We need to add this lock to make sure pessimistic transaction can realize this operation.
-				// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
+				// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
 				err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
 				if err != nil {
 					return errors.Trace(err)
@@ -1478,7 +1479,8 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion)
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData,
+				table.WithIgnoreAssertion, table.FromBackfill)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.

@@ -15,7 +15,6 @@
 package tables
 
 import (
-	"bytes"
 	"context"
 	"sync"
 
@@ -42,8 +41,6 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
-	// Mark index is in backfill processing.
-	Isbackfill bool
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -58,7 +55,7 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 }
 
 // NewIndex builds a new Index object.
-func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, newBF ...bool) table.Index {
+func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
 	// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
 	var prefix kv.Key
 	if indexInfo.Global {
@@ -68,16 +65,11 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		// Otherwise, start with physicalID.
 		prefix = tablecodec.EncodeTableIndexPrefix(physicalID, indexInfo.ID)
 	}
-	var newBackfillFlow bool = false
-	if len(newBF) > 0 {
-		newBackfillFlow = newBF[0]
-	}
 	index := &index{
-		idxInfo:    indexInfo,
-		tblInfo:    tblInfo,
-		prefix:     prefix,
-		phyTblID:   physicalID,
-		Isbackfill: newBackfillFlow,
+		idxInfo:  indexInfo,
+		tblInfo:  tblInfo,
+		prefix:   prefix,
+		phyTblID: physicalID,
 	}
 	return index
 }
@@ -118,14 +110,13 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 
 	var (
 		tempKey []byte
-		// The keyVer means the temp index key/value version, it has below three values.
-		// Use 'i' to be initialize version.
+		// The keyVer means the temp index key/value version, it has below values.
 		// Use 'b' to be backfill version.
 		// Use 'm' to be merge version.
-		keyVer []byte = []byte("i")
+		keyVer []byte
 	)
-	// Isbackfill set to true, means this is a backfill worker should not write to temp index.
-	if c.idxInfo.State != model.StatePublic && !c.Isbackfill {
+	// Only the KVs from DML should be redirected to the temp index.
+	if c.idxInfo.State != model.StatePublic && !opt.FromBackFill {
 		switch c.idxInfo.BackfillState {
 		case model.BackfillStateInapplicable:
 			// Do nothing.
@@ -183,9 +174,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
 
 	if !distinct || skipCheck || opt.Untouched {
-		if !bytes.Equal(keyVer, []byte("i")) {
-			idxVal = append(idxVal, keyVer...)
-		}
+		idxVal = append(idxVal, keyVer...)
 		err = txn.GetMemBuffer().Set(key, idxVal)
 		if err != nil {
 			return nil, err
@@ -230,9 +219,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
-		if !bytes.Equal(keyVer, []byte("i")) {
-			idxVal = append(idxVal, keyVer...)
-		}
+		idxVal = append(idxVal, keyVer...)
 		if lazyCheck {
 			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
 		} else {
@@ -308,7 +295,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	}
 	var (
 		tempKey []byte
-		keyVer  []byte = []byte("i")
+		keyVer  []byte
 		val     []byte
 	)
 	if c.idxInfo.State != model.StatePublic {
