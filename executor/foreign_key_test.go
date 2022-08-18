@@ -123,6 +123,12 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
 	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
+
+	tk.MustExec("set @@tidb_enable_foreign_key=0")
+	tk.MustExec("drop database test2")
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
+	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
 }
 
 func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
