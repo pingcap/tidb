@@ -42,11 +42,10 @@ func TestPreparedNameResolver(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, KEY id (id))")
 	tk.MustExec("prepare stmt from 'select * from t limit ? offset ?'")
-	_, err := tk.Exec("prepare stmt from 'select b from t'")
-	require.EqualError(t, err, "[planner:1054]Unknown column 'b' in 'field list'")
-
-	_, err = tk.Exec("prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?'")
-	require.EqualError(t, err, "[planner:1054]Unknown column 'a' in 'order clause'")
+	tk.MustGetErrMsg("prepare stmt from 'select b from t'",
+		"[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErrMsg("prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?'",
+		"[planner:1054]Unknown column 'a' in 'order clause'")
 }
 
 // a 'create table' DDL statement should be accepted if it has no parameters.
@@ -1253,8 +1252,8 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	require.Equal(t, rows[len(rows)-1][2], "cop[tiflash]")
 
 	require.Equal(t, 1, len(tk.Session().GetSessionVars().PreparedStmts))
-	require.Equal(t, "select * from `t`", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL)
-	require.Equal(t, "", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedPlan)
+	require.Equal(t, "select * from `t`", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.PlanCacheStmt).NormalizedSQL)
+	require.Equal(t, "", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.PlanCacheStmt).NormalizedPlan)
 }
 
 func TestPreparePC4Binding(t *testing.T) {
@@ -1268,7 +1267,7 @@ func TestPreparePC4Binding(t *testing.T) {
 
 	tk.MustExec("prepare stmt from \"select * from t\"")
 	require.Equal(t, 1, len(tk.Session().GetSessionVars().PreparedStmts))
-	require.Equal(t, "select * from `test` . `t`", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL4PC)
+	require.Equal(t, "select * from `test` . `t`", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.PlanCacheStmt).NormalizedSQL4PC)
 
 	tk.MustQuery("execute stmt")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))

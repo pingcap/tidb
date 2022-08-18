@@ -481,7 +481,7 @@ func TestRequestBuilder5(t *testing.T) {
 	}
 
 	actual, err := (&RequestBuilder{}).SetKeyRanges(keyRanges).
-		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
+		SetAnalyzeRequest(&tipb.AnalyzeReq{}, kv.RC).
 		SetKeepOrder(true).
 		SetConcurrency(15).
 		Build()

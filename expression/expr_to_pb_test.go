@@ -853,6 +853,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.Equal(t, tipb.ScalarFuncSig_DayOfMonth, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
+	// Repeat
 	function, err = NewFunction(mock.NewContext(), ast.Repeat, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_Repeat, function.(*ScalarFunction).Function.PbCode())
@@ -1172,6 +1173,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// Elt
+	function, err = NewFunction(mock.NewContext(), ast.Elt, types.NewFieldType(mysql.TypeString), intColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
@@ -1179,6 +1185,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	pushed, remained = PushDownExprsWithExtraInfo(sc, exprs, client, kv.TiFlash, true)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
+
+	// CastTimeAsDuration
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), durationColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
 }
 
 func TestExprOnlyPushDownToFlash(t *testing.T) {
