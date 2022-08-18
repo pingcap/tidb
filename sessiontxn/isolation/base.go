@@ -198,6 +198,12 @@ func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	return nil
 }
 
+// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
+func (p *baseTxnContextProvider) OnLocalTemporaryTableCreated() {
+	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, p.infoSchema)
+	p.sctx.GetSessionVars().TxnCtx.InfoSchema = p.infoSchema
+}
+
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
