@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/stretchr/testify/require"
@@ -58,6 +58,7 @@ func createAsyncCommitTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 }
 
 // TODO: figure out a stable way to run Test1PCWithSchemaChange
+//
 //nolint:unused
 func create1PCTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
@@ -490,37 +491,6 @@ func TestLockUnchangedRowKey(t *testing.T) {
 
 	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
 	tk2.MustExec("rollback")
-}
-
-func TestLockUnchangedUniqueKey(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk2.MustExec("use test")
-
-	// ref https://github.com/pingcap/tidb/issues/36438
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (i varchar(10), unique key(i))")
-	tk.MustExec("insert into t values ('a')")
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("update t set i = 'a'")
-
-	errCh := make(chan error, 1)
-	go func() {
-		_, err := tk2.Exec("insert into t values ('a')")
-		errCh <- err
-	}()
-
-	select {
-	case <-errCh:
-		require.Fail(t, "insert is not blocked by update")
-	case <-time.After(500 * time.Millisecond):
-		tk.MustExec("rollback")
-	}
-
-	require.Error(t, <-errCh)
 }
 
 func TestOptimisticConflicts(t *testing.T) {
@@ -2740,8 +2710,7 @@ func TestIssue21498(t *testing.T) {
 func TestPlanCacheSchemaChange(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tmp := testkit.NewTestKit(t, store)
-	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
-	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
+	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -2767,7 +2736,7 @@ func TestPlanCacheSchemaChange(t *testing.T) {
 
 	stmtID, _, _, err := tk2.Session().PrepareStmt("update t set vv = vv + 1 where v = ?")
 	require.NoError(t, err)
-	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 
 	tk.MustExec("begin pessimistic")
@@ -2786,11 +2755,11 @@ func TestPlanCacheSchemaChange(t *testing.T) {
 	tk.CheckExecResult(1, 0)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(4)})
+	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(4))
 	require.NoError(t, err)
 	tk2.CheckExecResult(0, 0)
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(5)})
+	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(5))
 	require.NoError(t, err)
 	tk2.CheckExecResult(1, 0)
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))

@@ -359,10 +359,12 @@ func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 
 // GetSchemaVersionWithNonEmptyDiff gets current global schema version, if diff is nil, we should return version - 1.
 // Consider the following scenario:
+/*
 //             t1            		t2			      t3             t4
 //             |					|				   |
 //    update schema version         |              set diff
 //                             stale read ts
+*/
 // At the first time, t2 reads the schema version v10, but the v10's diff is not set yet, so it loads v9 infoSchema.
 // But at t4 moment, v10's diff has been set and been cached in the memory, so stale read on t2 will get v10 schema from cache,
 // and inconsistency happen.
@@ -1157,6 +1159,18 @@ type LastJobIterator interface {
 // GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
 func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
+	if err != nil {
+		return nil, err
+	}
+	return &HLastJobIterator{
+		iter: iter,
+	}, nil
+}
+
+// GetHistoryDDLJobsIterator gets the jobs iterator begin with startJobID.
+func (m *Meta) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, error) {
+	field := m.jobIDKey(startJobID)
+	iter, err := structure.NewHashReverseIterBeginWithField(m.txn, mDDLJobHistoryKey, field)
 	if err != nil {
 		return nil, err
 	}
