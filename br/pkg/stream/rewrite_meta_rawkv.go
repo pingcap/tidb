@@ -447,7 +447,6 @@ func (sr *SchemasReplace) rewriteValueV2(value []byte, cf string, rewrite func([
 	default:
 		panic(fmt.Sprintf("not support cf:%s", cf))
 	}
-
 }
 
 func (sr *SchemasReplace) rewriteValue(
