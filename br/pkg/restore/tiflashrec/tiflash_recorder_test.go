@@ -79,7 +79,7 @@ func TestRecorder(tCtx *testing.T) {
 			),
 			ts: []table{
 				t(42, 1),
-				t(43, 1),
+				t(43, 2),
 			},
 		},
 		{
@@ -119,7 +119,7 @@ func TestRecorder(tCtx *testing.T) {
 		rec.Iterate(func(tableID int64, replicaReal model.TiFlashReplicaInfo) {
 			replica, ok := tmap[tableID]
 			req.True(ok, "the key %d not recorded", tableID)
-			req.Equal(replica, replicaReal.Count, "the replica mismatch")
+			req.EqualValues(replica, replicaReal.Count, "the replica mismatch")
 			delete(tmap, tableID)
 		})
 		req.Empty(tmap, "not all required are recorded")
