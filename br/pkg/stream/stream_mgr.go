@@ -173,6 +173,9 @@ func FastUnmarshalMetaData(
 	eg, ectx := errgroup.WithContext(ctx)
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
+		if !strings.HasSuffix(path, ".meta") {
+			return nil
+		}
 		readPath := path
 		pool.ApplyOnErrorGroup(eg, func() error {
 			log.Info("fast read meta file from storage", zap.String("path", readPath))
@@ -184,9 +187,6 @@ func FastUnmarshalMetaData(
 			m := &backuppb.Metadata{}
 			err = m.Unmarshal(b)
 			if err != nil {
-				if !strings.HasSuffix(readPath, ".meta") {
-					return nil
-				}
 				return err
 			}
 			return fn(readPath, m)
@@ -215,6 +215,9 @@ func FastUnmarshalMetaDataV2(
 	eg, ectx := errgroup.WithContext(ctx)
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaV2Prefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
+		if !strings.HasSuffix(path, ".meta") {
+			return nil
+		}
 		readPath := path
 		pool.ApplyOnErrorGroup(eg, func() error {
 			log.Info("fast read meta file from storage", zap.String("path", readPath))
@@ -226,11 +229,7 @@ func FastUnmarshalMetaDataV2(
 			m := &backuppb.MetadataV2{}
 			err = m.Unmarshal(b)
 			if err != nil {
-				if !strings.HasSuffix(readPath, ".meta") {
-					return nil
-				} else {
-					return err
-				}
+				return err
 			}
 			return fn(readPath, m)
 		})

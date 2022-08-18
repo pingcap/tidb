@@ -78,13 +78,15 @@ func m2(files ...*backuppb.DataFileInfo) *backuppb.MetadataV2 {
 	fileGroups := &backuppb.DataFileGroup{}
 	for _, file := range files {
 		if meta.MaxTs < file.MaxTs {
-			meta.MaxTs = file.MaxTs
+			fileGroups.MaxTs = file.MaxTs
 		}
 		if meta.MinTs > file.MinTs {
-			meta.MinTs = file.MinTs
+			fileGroups.MinTs = file.MinTs
 		}
 		fileGroups.DataFilesInfo = append(fileGroups.DataFilesInfo, file)
 	}
+	meta.MaxTs = fileGroups.MaxTs
+	meta.MinTs = fileGroups.MinTs
 	meta.FileGroups = append(meta.FileGroups, fileGroups)
 	return meta
 }
@@ -128,7 +130,7 @@ func (b *mockMetaBuilder) build(temp string) (*storage.LocalStorage, error) {
 }
 
 func (b *mockMetaBuilder) buildV2(temp string) (*storage.LocalStorage, error) {
-	err := os.MkdirAll(path.Join(temp, stream.GetStreamBackupMetaPrefix()), 0o755)
+	err := os.MkdirAll(path.Join(temp, stream.GetStreamBackupMetaV2Prefix()), 0o755)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +146,7 @@ func (b *mockMetaBuilder) buildV2(temp string) (*storage.LocalStorage, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := local.WriteFile(context.TODO(), path.Join(stream.GetStreamBackupMetaPrefix(), fmt.Sprintf("%06d.meta", i)), data); err != nil {
+		if err := local.WriteFile(context.TODO(), path.Join(stream.GetStreamBackupMetaV2Prefix(), fmt.Sprintf("%06d.meta", i)), data); err != nil {
 			return nil, errors.Annotatef(err, "failed to write file")
 		}
 	}
@@ -158,9 +160,9 @@ func (b *mockMetaBuilder) b(useV2 bool) (*storage.LocalStorage, string) {
 	}
 	var s *storage.LocalStorage
 	if useV2 {
-		s, err = b.build(path)
-	} else {
 		s, err = b.buildV2(path)
+	} else {
+		s, err = b.build(path)
 	}
 	if err != nil {
 		panic(err)
@@ -239,7 +241,7 @@ func TestReadMetaBetweenTS(t *testing.T) {
 		cli := Client{
 			storage: loc,
 		}
-		streamFilesLoaderV1 := cli.GetStreamFilesLoader(false)
+		var streamFilesLoaderV1 StreamFilesLoader = &StreamFilesLoaderV1{storage: cli.storage}
 		shift, err := streamFilesLoaderV1.GetShiftTS(ctx, c.startTS, c.endTS)
 		req.Equal(shift, c.expectedShiftTS)
 		req.NoError(err)
@@ -324,7 +326,7 @@ func TestReadMetaBetweenTSV2(t *testing.T) {
 		ctx := context.Background()
 		loc, temp := (&mockMetaBuilder{
 			metasV2: c.items,
-		}).b(false)
+		}).b(true)
 		defer func() {
 			t.Log("temp dir", temp)
 			if !t.Failed() {
@@ -334,14 +336,14 @@ func TestReadMetaBetweenTSV2(t *testing.T) {
 		cli := Client{
 			storage: loc,
 		}
-		streamFilesLoaderV1 := cli.GetStreamFilesLoader(false)
-		shift, err := streamFilesLoaderV1.GetShiftTS(ctx, c.startTS, c.endTS)
+		var streamFilesLoaderV2 StreamFilesLoader = &StreamFilesLoaderV2{storage: cli.storage}
+		shift, err := streamFilesLoaderV2.GetShiftTS(ctx, c.startTS, c.endTS)
 		req.Equal(shift, c.expectedShiftTS)
 		req.NoError(err)
-		metaSize, err := streamFilesLoaderV1.LoadStreamMetaByTS(ctx, shift, c.endTS)
+		metaSize, err := streamFilesLoaderV2.LoadStreamMetaByTS(ctx, shift, c.endTS)
 		req.NoError(err)
 		actualStoreIDs := make([]int64, 0, metaSize)
-		for _, meta := range streamFilesLoaderV1.(*StreamFilesLoaderV1).metas {
+		for _, meta := range streamFilesLoaderV2.(*StreamFilesLoaderV2).metas {
 			actualStoreIDs = append(actualStoreIDs, meta.StoreId)
 		}
 		expectedStoreIDs := make([]int64, 0, len(c.expected))
@@ -391,71 +393,6 @@ func TestReadFromMetadata(t *testing.T) {
 		loc, temp := (&mockMetaBuilder{
 			metas: c.items,
 		}).b(false)
-		defer func() {
-			t.Log("temp dir", temp)
-			if !t.Failed() {
-				os.RemoveAll(temp)
-			}
-		}()
-
-		meta := new(StreamMetadataSet)
-		meta.LoadUntil(ctx, loc, c.untilTS)
-
-		var metas []*backuppb.Metadata
-		for _, m := range meta.metadata {
-			metas = append(metas, m)
-		}
-		actualStoreIDs := make([]int64, 0, len(metas))
-		for _, meta := range metas {
-			actualStoreIDs = append(actualStoreIDs, meta.StoreId)
-		}
-		expectedStoreIDs := make([]int64, 0, len(c.expected))
-		for _, meta := range c.expected {
-			expectedStoreIDs = append(expectedStoreIDs, c.items[meta].StoreId)
-		}
-		req.ElementsMatch(actualStoreIDs, expectedStoreIDs)
-	}
-
-	for i, c := range cases {
-		t.Run(fmt.Sprintf("case#%d", i), func(t *testing.T) {
-			run(t, c)
-		})
-	}
-}
-
-func TestReadFromMetadataV2(t *testing.T) {
-	type Case struct {
-		items    []*backuppb.MetadataV2
-		untilTS  uint64
-		expected []int
-	}
-
-	cases := []Case{
-		{
-			items: []*backuppb.MetadataV2{
-				m2(wd(4, 10, 3), wd(5, 13, 5)),
-				m2(dd(1, 3)),
-				m2(wd(10, 42, 9), dd(6, 9)),
-			},
-			untilTS:  10,
-			expected: []int{0, 1, 2},
-		},
-		{
-			items: []*backuppb.MetadataV2{
-				m2(wd(1, 100, 1), wd(5, 13, 5), dd(1, 101)),
-				m2(wd(100, 200, 98), dd(100, 200)),
-			},
-			untilTS:  99,
-			expected: []int{0},
-		},
-	}
-
-	run := func(t *testing.T, c Case) {
-		req := require.New(t)
-		ctx := context.Background()
-		loc, temp := (&mockMetaBuilder{
-			metasV2: c.items,
-		}).b(true)
 		defer func() {
 			t.Log("temp dir", temp)
 			if !t.Failed() {

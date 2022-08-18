@@ -1139,7 +1139,7 @@ func restoreStream(
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, metaFilesCache, schemasReplace, updateStats, p.Inc)
+		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, metaFilesCache, updateStats, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
