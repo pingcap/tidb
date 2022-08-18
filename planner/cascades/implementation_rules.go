@@ -249,6 +249,7 @@ func (*ImplShow) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty)
 	showPhys := plannercore.PhysicalShow{
 		ShowContents: show.ShowContents,
 		Extractor:    show.Extractor,
+		MemTablePlan: show.MemTablePlan,
 	}.Init(show.SCtx())
 	showPhys.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewShowImpl(showPhys)}, nil

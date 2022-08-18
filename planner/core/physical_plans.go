@@ -1565,6 +1565,8 @@ type PhysicalShow struct {
 	ShowContents
 
 	Extractor ShowPredicateExtractor
+	// Used for `show processlist`. It reads data from information_schema.cluster_processlist so we can reuse the code fetching processes from remote servers.
+	MemTablePlan Plan
 }
 
 // PhysicalShowDDLJobs is for showing DDL job list.
