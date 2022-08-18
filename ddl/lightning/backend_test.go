@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -61,24 +61,22 @@ func TestLightningBackend(t *testing.T) {
 
 	// Memory allocate failed
 	BackCtxMgr.MemRoot.SetMaxMemoryQuota(BackCtxMgr.MemRoot.CurrentUsage())
-	err = BackCtxMgr.MemRoot.TryConsume(StructSizeBackendCtx)
+	err = BackCtxMgr.MemRoot.TryConsume(1 * _gb)
 	require.Error(t, err)
 
 	// variable test
-	bc, isEnable := BackCtxMgr.Load(1)
-	needRestore := bc.NeedRestore()
+	bc, isEnable := BackCtxMgr.Load(100)
 	require.Equal(t, false, isEnable)
-	require.Equal(t, false, needRestore)
 
 	jobID = 2
 	BackCtxMgr.Store(jobID, newBackendContext(ctx, jobID, nil, cfg, sysVars, BackCtxMgr.MemRoot))
-	bc, isEnable = BackCtxMgr.Load(2)
-	needRestore = bc.NeedRestore()
-	require.Equal(t, false, isEnable)
+	bc, isEnable = BackCtxMgr.Load(jobID)
+	needRestore := bc.NeedRestore()
+	require.Equal(t, true, isEnable)
 	require.Equal(t, false, needRestore)
 
 	bc.SetNeedRestore(true)
-	bc, isEnable = BackCtxMgr.Load(2)
+	bc, isEnable = BackCtxMgr.Load(jobID)
 	needRestore = bc.NeedRestore()
 	require.Equal(t, true, isEnable)
 	require.Equal(t, true, needRestore)
