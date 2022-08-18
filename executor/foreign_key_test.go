@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -273,6 +274,33 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 		State:     model.StatePublic,
 		Version:   1,
 	}, *tb3Info.ForeignKeys[1])
+}
+
+func TestCreateTableWithForeignKeyPrivilegeCheck(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create user 'u1'@'%' identified by '';")
+	tk.MustExec("grant create on *.* to 'u1'@'%';")
+	tk.MustExec("create table t1 (id int key);")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	err := tk2.ExecToErr("create table t2 (a int, foreign key fk(a) references t1(id));")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]REFERENCES command denied to user 'u1'@'%' for table 't1'", err.Error())
+
+	tk.MustExec("grant references on test.t1 to 'u1'@'%';")
+	tk2.MustExec("create table t2 (a int, foreign key fk(a) references t1(id));")
+	tk2.MustExec("create table t3 (id int key)")
+	err = tk2.ExecToErr("create table t4 (a int, foreign key fk(a) references t1(id), foreign key (a) references t3(id));")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]REFERENCES command denied to user 'u1'@'%' for table 't3'", err.Error())
+
+	tk.MustExec("grant references on test.t3 to 'u1'@'%';")
+	tk2.MustExec("create table t4 (a int, foreign key fk(a) references t1(id), foreign key (a) references t3(id));")
 }
 
 func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
