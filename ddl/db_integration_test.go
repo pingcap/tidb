@@ -3801,8 +3801,15 @@ func TestCreateTempTableInTxn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("begin")
+	// new created temporary table should be visible
 	tk.MustExec("create temporary table t1(id int)")
-	tk.MustQuery("select * from t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	// new inserted data should be visible
+	tk.MustExec("insert into t1 values(123)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("123"))
+	// truncate table will clear data but table still visible
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
 	tk.MustExec("commit")
 
 	tk1 := testkit.NewTestKit(t, store)
