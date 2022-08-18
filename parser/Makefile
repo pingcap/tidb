@@ -5,7 +5,7 @@ all: fmt parser
 test: fmt parser
 	sh test.sh
 
-parser: parser.go hintparser.go
+parser: parser.go hintparser.go fastparser.go
 
 %arser.go: prefix = $(@:parser.go=)
 %arser.go: %arser.y bin/goyacc
@@ -27,4 +27,4 @@ fmt: bin/goyacc parser_golden.y hintparser_golden.y
 clean:
 	go clean -i ./...
 	rm -rf *.out
-	rm -f parser.go hintparser.go
+	rm -f parser.go hintparser.go fastparser.go
