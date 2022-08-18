@@ -425,7 +425,7 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	return nil
 }
 
-// RunStreamCommand run all kinds of `stream task``
+// RunStreamCommand run all kinds of `stream task`
 func RunStreamCommand(
 	ctx context.Context,
 	g glue.Glue,

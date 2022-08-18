@@ -20,6 +20,7 @@ go_library(
         "//br/pkg/streamhelper",
         "//config",
         "//ddl",
+        "//ddl/schematracker",
         "//ddl/util",
         "//domain/globalconfigsync",
         "//domain/infosync",

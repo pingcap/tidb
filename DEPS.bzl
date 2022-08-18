@@ -281,8 +281,8 @@ def go_deps():
         name = "com_github_blacktear23_go_proxyprotocol",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/blacktear23/go-proxyprotocol",
-        sum = "h1:WmMmtZanGEfIHnJN9N3A4Pl6mM69D+GxEph2eOaCf7g=",
-        version = "v1.0.0",
+        sum = "h1:zR7PZeoU0wAkElcIXenFiy3R56WB6A+UEVi4c6RH8wo=",
+        version = "v1.0.2",
     )
     go_repository(
         name = "com_github_blizzy78_varnamelen",
@@ -1568,6 +1568,13 @@ def go_deps():
         sum = "h1:ThE+hJP0fEp4zWLkWHWcRyI2Od0p7DlgYG3Uqrmrcpk=",
         version = "v0.1.1",
     )
+    go_repository(
+        name = "com_github_gostaticanalysis_testutil",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/gostaticanalysis/testutil",
+        sum = "h1:d2/eIbH9XjD1fFwD5SHv8x168fjbQ9PB8hvs8DSEC08=",
+        version = "v0.3.1-0.20210208050101-bfb5c8eec0e4",
+    )
 
     go_repository(
         name = "com_github_grpc_ecosystem_go_grpc_middleware",
@@ -2641,6 +2648,27 @@ def go_deps():
         sum = "h1:yXiysv1CSK7Q5yjGy1710zZGnsbMUIjluWBxtLXHPBo=",
         version = "v0.1.6",
     )
+    go_repository(
+        name = "com_github_otiai10_copy",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/otiai10/copy",
+        sum = "h1:HvG945u96iNadPoG2/Ja2+AUJeW5YuFQMixq9yirC+k=",
+        version = "v1.2.0",
+    )
+    go_repository(
+        name = "com_github_otiai10_curr",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/otiai10/curr",
+        sum = "h1:TJIWdbX0B+kpNagQrjgq8bCMrbhiuX73M2XwgtDMoOI=",
+        version = "v1.0.0",
+    )
+    go_repository(
+        name = "com_github_otiai10_mint",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/otiai10/mint",
+        sum = "h1:BCmzIS3n71sGfHB5NMNDB3lHYPz8fWSkCAErHed//qc=",
+        version = "v1.3.1",
+    )
 
     go_repository(
         name = "com_github_pascaldekloe_goe",
@@ -2718,8 +2746,8 @@ def go_deps():
         name = "com_github_pingcap_check",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/check",
-        sum = "h1:HVl5539r48eA+uDuX/ziBmQCxzT1pGrzWbKuXT46Bq0=",
-        version = "v0.0.0-20211026125417-57bd13f7b5f0",
+        sum = "h1:iRtOAQ6FXkY/BGvst3CDfTva4nTqh6CL8WXvanLdbu0=",
+        version = "v0.0.0-20191107115940-caf2b9e6ccf4",
     )
     go_repository(
         name = "com_github_pingcap_errors",
@@ -3121,8 +3149,8 @@ def go_deps():
         name = "com_github_shurcool_vfsgen",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/shurcooL/vfsgen",
-        sum = "h1:pXY9qYc/MP5zdvqWEUH6SjNiu7VhSjuVFTFiTcphaLU=",
-        version = "v0.0.0-20200824052919-0d455de96546",
+        sum = "h1:y0cMJ0qjii33BnD6tMGcF/+gHYsoKQ6tbwQpy233OII=",
+        version = "v0.0.0-20180711163814-62bca832be04",
     )
     go_repository(
         name = "com_github_sirupsen_logrus",
@@ -3304,6 +3332,20 @@ def go_deps():
         sum = "h1:PKzG7JUTUmVspQTDqtkX9eSiLGossXTybutHwTXuO0A=",
         version = "v0.1.1",
     )
+    go_repository(
+        name = "com_github_tenntenn_modver",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/tenntenn/modver",
+        sum = "h1:2klLppGhDgzJrScMpkj9Ujy3rXPUspSjAcev9tSEBgA=",
+        version = "v1.0.1",
+    )
+    go_repository(
+        name = "com_github_tenntenn_text_transform",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/tenntenn/text/transform",
+        sum = "h1:f+jULpRQGxTSkNYKJ51yaw6ChIqO+Je8UqsTKN/cDag=",
+        version = "v0.0.0-20200319021203-7eef512accb3",
+    )
 
     go_repository(
         name = "com_github_tetafro_godot",
@@ -3324,8 +3366,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:oCtRW/f0FZabdoLuvqxIewcmHR83RlsdN37dS0EBRTU=",
-        version = "v2.0.1-0.20220729034404-e10841f2d158",
+        sum = "h1:WFR3seA8YtBhDn47YJSW1P1/lwBIXsk0vALnRVuaL/M=",
+        version = "v2.0.1-0.20220815094724-025596b7a20a",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

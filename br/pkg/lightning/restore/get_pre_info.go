@@ -40,15 +40,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	_ "github.com/pingcap/tidb/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -272,6 +271,7 @@ func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtype
 // PreRestoreInfoGetterImpl implements the operations to get information used in importing preparation.
 type PreRestoreInfoGetterImpl struct {
 	cfg              *config.Config
+	getPreInfoCfg    *GetPreInfoConfig
 	srcStorage       storage.ExternalStorage
 	ioWorkers        *worker.Pool
 	encBuilder       backend.EncodingBuilder
@@ -290,6 +290,7 @@ func NewPreRestoreInfoGetter(
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
 	encBuilder backend.EncodingBuilder,
+	opts ...GetPreInfoOption,
 ) (*PreRestoreInfoGetterImpl, error) {
 	if ioWorkers == nil {
 		ioWorkers = worker.NewPool(context.Background(), cfg.App.IOConcurrency, "pre_info_getter_io")
@@ -305,8 +306,13 @@ func NewPreRestoreInfoGetter(
 		}
 	}
 
+	getPreInfoCfg := NewDefaultGetPreInfoConfig()
+	for _, o := range opts {
+		o.Apply(getPreInfoCfg)
+	}
 	result := &PreRestoreInfoGetterImpl{
 		cfg:              cfg,
+		getPreInfoCfg:    getPreInfoCfg,
 		dbMetas:          dbMetas,
 		srcStorage:       srcStorage,
 		ioWorkers:        ioWorkers,
@@ -368,8 +374,20 @@ func (p *PreRestoreInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Cont
 	dbName := dbSrcFileMeta.Name
 	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
 	if err != nil {
+		if p.getPreInfoCfg != nil && p.getPreInfoCfg.IgnoreDBNotExist {
+			dbNotExistErr := dbterror.ClassSchema.NewStd(errno.ErrBadDB).FastGenByArgs(dbName)
+			// The returned error is an error showing get info request error,
+			// and attaches the detailed error response as a string.
+			// So we cannot get the error chain and use error comparison,
+			// and instead, we use the string comparison on error messages.
+			if strings.Contains(err.Error(), dbNotExistErr.Error()) {
+				log.L().Warn("DB not exists.  But ignore it", zap.Error(err))
+				goto get_struct_from_src
+			}
+		}
 		return nil, errors.Trace(err)
 	}
+get_struct_from_src:
 	currentTableInfosMap := make(map[string]*model.TableInfo)
 	for _, tblInfo := range currentTableInfosFromDB {
 		currentTableInfosMap[tblInfo.Name.L] = tblInfo
@@ -412,47 +430,8 @@ func newTableInfo(createTblSQL string, tableID int64) (*model.TableInfo, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// set a auto_random bit if AUTO_RANDOM is set
-	setAutoRandomBits(info, createTableStmt.Cols)
 	info.State = model.StatePublic
 	return info, nil
-}
-
-func setAutoRandomBits(tblInfo *model.TableInfo, colDefs []*ast.ColumnDef) {
-	if !tblInfo.PKIsHandle {
-		return
-	}
-	pkColName := tblInfo.GetPkName()
-	for _, colDef := range colDefs {
-		if colDef.Name.Name.L != pkColName.L || colDef.Tp.GetType() != mysql.TypeLonglong {
-			continue
-		}
-		// potential AUTO_RANDOM candidate column, examine the options
-		hasAutoRandom := false
-		canSetAutoRandom := true
-		var autoRandomBits int
-		for _, option := range colDef.Options {
-			if option.Tp == ast.ColumnOptionAutoRandom {
-				hasAutoRandom = true
-				autoRandomBits = option.AutoRandomBitLength
-				switch {
-				case autoRandomBits == types.UnspecifiedLength:
-					autoRandomBits = autoid.DefaultAutoRandomBits
-				case autoRandomBits <= 0 || autoRandomBits > autoid.MaxAutoRandomBits:
-					canSetAutoRandom = false
-				}
-			}
-			if option.Tp == ast.ColumnOptionAutoIncrement {
-				canSetAutoRandom = false
-			}
-			if option.Tp == ast.ColumnOptionDefaultValue {
-				canSetAutoRandom = false
-			}
-		}
-		if hasAutoRandom && canSetAutoRandom {
-			tblInfo.AutoRandomBits = uint64(autoRandomBits)
-		}
-	}
 }
 
 // ReadFirstNRowsByTableName reads the first N rows of data of an importing source table.

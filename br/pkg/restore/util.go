@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -510,33 +509,48 @@ func findMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb
 	return rule
 }
 
-// RewriteFileKeys tries to choose and apply the rewrite rules to the file.
-// This method would try to detach whether the file key is encoded.
-// Note: Maybe add something like `GetEncodedStartKey` Or `GetRawStartkey` for `AppliedFile` for making it more determinable?
-func RewriteFileKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
+// GetRewriteRawKeys rewrites rules to the raw key.
+func GetRewriteRawKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	var rule *import_sstpb.RewriteRule
 	if startID == endID {
 		startKey, rule = rewriteRawKey(file.GetStartKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			// fall back to encoded key
-			log.Debug("cannot find rewrite rule with raw key format",
-				logutil.Key("startKey", file.GetStartKey()),
-				zap.Reflect("rewrite data", rewriteRules.Data))
-			startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
-			if rule == nil {
-				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key")
-				return
-			}
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find raw rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
+			return
 		}
 		endKey, rule = rewriteRawKey(file.GetEndKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			endKey, rule = rewriteEncodedKey(file.GetEndKey(), rewriteRules)
-			if rewriteRules != nil && rule == nil {
-				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for end key")
-				return
-			}
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find raw rewrite rule for end key, endKey: %s", redact.Key(file.GetEndKey()))
+			return
+		}
+	} else {
+		log.Error("table ids dont matched",
+			zap.Int64("startID", startID),
+			zap.Int64("endID", endID),
+			logutil.Key("startKey", startKey),
+			logutil.Key("endKey", endKey))
+		err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "invalid table id")
+	}
+	return
+}
+
+// GetRewriteRawKeys rewrites rules to the encoded key
+func GetRewriteEncodedKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
+	startID := tablecodec.DecodeTableID(file.GetStartKey())
+	endID := tablecodec.DecodeTableID(file.GetEndKey())
+	var rule *import_sstpb.RewriteRule
+	if startID == endID {
+		startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
+		if rewriteRules != nil && rule == nil {
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
+			return
+		}
+		endKey, rule = rewriteEncodedKey(file.GetEndKey(), rewriteRules)
+		if rewriteRules != nil && rule == nil {
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for end key, endKey: %s", redact.Key(file.GetEndKey()))
+			return
 		}
 	} else {
 		log.Error("table ids dont matched",
@@ -746,14 +760,6 @@ func (s *StreamFilesLoaderV1) LoadStreamDataFiles(
 		}
 	}
 
-	// sort files firstly.
-	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
-		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
-			return i.ResolvedTs < j.ResolvedTs
-		}
-		return i.MaxTs < j.MaxTs
-	})
-
 	return dFiles, mFiles, &MetaFilesCacheV1{}, nil
 }
 
@@ -854,14 +860,6 @@ func (s *StreamFilesLoaderV2) LoadStreamDataFiles(
 			placeholder[ds.Path] = holder
 		}
 	}
-
-	// sort files firstly.
-	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
-		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
-			return i.ResolvedTs < j.ResolvedTs
-		}
-		return i.MaxTs < j.MaxTs
-	})
 
 	return dFiles, mFiles, NewMetaFilesCacheV2(placeholder), nil
 }

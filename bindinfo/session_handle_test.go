@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -508,15 +507,8 @@ func TestDropSingleBindings(t *testing.T) {
 
 func TestPreparedStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(false) // requires plan cache disabled, or the IndexNames = 1 on first test.
-
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")

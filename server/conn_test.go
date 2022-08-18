@@ -238,20 +238,6 @@ func TestParseHandshakeResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "pam", p.User)
 	require.Equal(t, "test", p.DBName)
-
-	// Test for compatibility of Protocol::HandshakeResponse320
-	data = []byte{
-		0x00, 0x80, 0x00, 0x00, 0x01, 0x72, 0x6f, 0x6f, 0x74, 0x00, 0x00,
-	}
-	p = handshakeResponse41{}
-	offset, err = parseOldHandshakeResponseHeader(context.Background(), &p, data)
-	require.NoError(t, err)
-	capability = mysql.ClientProtocol41 |
-		mysql.ClientSecureConnection
-	require.Equal(t, capability, p.Capability&capability)
-	err = parseOldHandshakeResponseBody(context.Background(), &p, data, offset)
-	require.NoError(t, err)
-	require.Equal(t, "root", p.User)
 }
 
 func TestIssue1768(t *testing.T) {
@@ -820,6 +806,7 @@ func TestPrefetchPointKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, txn.Valid())
 	snap := txn.GetSnapshot()
+	//nolint:forcetypeassert
 	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
@@ -840,6 +827,7 @@ func TestPrefetchPointKeys(t *testing.T) {
 func TestTiFlashFallback(t *testing.T) {
 	store := testkit.CreateMockStore(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			//nolint:forcetypeassert
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
 			store := c.AllocID()
@@ -1307,6 +1295,7 @@ func TestAuthTokenPlugin(t *testing.T) {
 	cc.isUnixSocket = true
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
 	rows := tk1.MustQuery("show session_states").Rows()
+	//nolint:forcetypeassert
 	tokenBytes := []byte(rows[0][1].(string))
 
 	// auth with the token
@@ -1391,7 +1380,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	require.Equal(t, uint8(2), pkt.sequence)
 }
 
-func TestOk(t *testing.T) {
+func TestOkEof(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	var outBuffer bytes.Buffer
@@ -1420,27 +1409,16 @@ func TestOk(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	ctx := &TiDBContext{Session: tk.Session()}
 	cc.setCtx(ctx)
-	var status uint16 = 1
-	lastMessage := cc.ctx.LastMessage()
-	affectedRows := cc.ctx.AffectedRows()
-	lastInsertID := cc.ctx.LastInsertID()
-	warningCount := cc.ctx.WarningCount()
 
 	err = cc.writeOK(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []byte{0x7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0}, outBuffer.Bytes())
 
 	outBuffer.Reset()
-	err = cc.writeOkWith(context.Background(), lastMessage, affectedRows, lastInsertID, status, warningCount, mysql.OKHeader)
-	require.NoError(t, err)
-	require.Equal(t, []byte{0x7, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}, outBuffer.Bytes())
-	require.Equal(t, mysql.OKHeader, outBuffer.Bytes()[4])
-
-	outBuffer.Reset()
-	err = cc.writeOkWith(context.Background(), lastMessage, affectedRows, lastInsertID, status, warningCount, mysql.EOFHeader)
+	err = cc.writeEOF(context.Background(), cc.ctx.Status())
 	require.NoError(t, err)
 	err = cc.flush(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, mysql.EOFHeader, outBuffer.Bytes()[4])
-	require.Equal(t, []byte{0x7, 0x0, 0x0, 0x2, 0xfe, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}, outBuffer.Bytes())
+	require.Equal(t, []byte{0x7, 0x0, 0x0, 0x1, 0xfe, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0}, outBuffer.Bytes())
 }
