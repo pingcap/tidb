@@ -9,7 +9,7 @@ go_test(
         "seq_executor_test.go",
     ],
     flaky = True,
-    shard_count = 30,
+    shard_count = 39,
     deps = [
         "//config",
         "//ddl/testutil",
