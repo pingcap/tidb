@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -56,12 +55,7 @@ func (d *temporaryTableDDL) CreateLocalTemporaryTable(db *model.DBInfo, info *mo
 		return err
 	}
 
-	if err = ensureLocalTemporaryTables(d.sctx).AddTable(db, tbl); err != nil {
-		return err
-	}
-
-	sessiontxn.GetTxnManager(d.sctx).OnLocalTemporaryTableCreated()
-	return nil
+	return ensureLocalTemporaryTables(d.sctx).AddTable(db, tbl)
 }
 
 func (d *temporaryTableDDL) DropLocalTemporaryTable(schema model.CIStr, tblName model.CIStr) error {
