@@ -427,7 +427,7 @@ func (op AppendOp) name() string {
 }
 
 // appends item to MetaFile
-func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (sstFilesSize int, size int, itemCount int) {
+func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (dataFileSize int, size int, itemCount int) {
 	switch op {
 	case AppendMetaFile:
 		metaFile := b.(*backuppb.File)
@@ -441,7 +441,7 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (sstFilesSize
 		for _, f := range files {
 			itemCount++
 			size += f.Size()
-			sstFilesSize += int(f.Size_)
+			dataFileSize += int(f.Size_)
 		}
 	case AppendSchema:
 		a.Schemas = append(a.Schemas, b.(*backuppb.Schema))
@@ -452,13 +452,13 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (sstFilesSize
 		itemCount++
 		size += len(b.([]byte))
 	}
-	return sstFilesSize, size, itemCount
+	return dataFileSize, size, itemCount
 }
 
 type sizedMetaFile struct {
 	// A stack like array, we always append to the last node.
 	root         *backuppb.MetaFile
-	sstFilesSize int
+	dataFileSize int
 	size         int
 	itemNum      int
 	sizeLimit    int
@@ -479,10 +479,10 @@ func NewSizedMetaFile(sizeLimit int) *sizedMetaFile {
 func (f *sizedMetaFile) append(file interface{}, op AppendOp) bool {
 	// append to root
 	// 	TODO maybe use multi level index
-	sstFilesSize, size, itemCount := op.appendFile(f.root, file)
+	dataFileSize, size, itemCount := op.appendFile(f.root, file)
 	f.itemNum += itemCount
 	f.size += size
-	f.sstFilesSize += sstFilesSize
+	f.dataFileSize += dataFileSize
 	// f.size would reset outside
 	return f.size > f.sizeLimit
 }
@@ -719,7 +719,7 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 	}
 
 	name := op.name()
-	writer.metafileSizes[name] += writer.metafiles.sstFilesSize
+	writer.metafileSizes[name] += writer.metafiles.dataFileSize
 	// Flush metafiles to external storage.
 	writer.metafileSeqNum["metafiles"]++
 	fname := fmt.Sprintf("backupmeta.%s.%09d", name, writer.metafileSeqNum["metafiles"])
