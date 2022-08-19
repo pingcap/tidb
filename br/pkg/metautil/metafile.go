@@ -433,7 +433,6 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (sstFilesSize
 		metaFile := b.(*backuppb.File)
 		a.MetaFiles = append(a.MetaFiles, metaFile)
 		size += metaFile.Size()
-		sstFilesSize += int(metaFile.Size_)
 		itemCount++
 	case AppendDataFile:
 		// receive a batch of file because we need write and default sst are adjacent.
