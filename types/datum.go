@@ -183,6 +183,12 @@ func (d *Datum) SetFloat32(f float32) {
 	d.i = int64(math.Float64bits(float64(f)))
 }
 
+// SetFloat32FromF64 sets float32 values from f64
+func (d *Datum) SetFloat32FromF64(f float64) {
+	d.k = KindFloat32
+	d.i = int64(math.Float64bits(f))
+}
+
 // GetString gets string value.
 func (d *Datum) GetString() string {
 	return string(hack.String(d.b))
