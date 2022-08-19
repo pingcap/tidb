@@ -15,6 +15,7 @@ import (
 	"time"
 
 	gcs "cloud.google.com/go/storage"
+	"github.com/docker/go-units"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"

@@ -121,7 +121,7 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	mgr, err := NewMgr(ctx, h.g, h.cfg.PD, h.cfg.TLS, GetKeepalive(&h.cfg.Config), h.cfg.CheckRequirements, false)
+	mgr, err := NewMgr(ctx, h.g, h.cfg.PD, h.cfg.TLS, GetKeepalive(&h.cfg.Config), h.cfg.CheckRequirements, false, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
