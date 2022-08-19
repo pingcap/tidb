@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser"
@@ -269,12 +270,18 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		ToTimeout:   time.Now().Local().Add(timeout),
 	}
 	dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
-	stmt, err := p.ParseOneStmt("select * from t where c>1", "", "")
+	sql := "select * from t where c>1"
+	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")
 	_, _, err = planner.Optimize(context.TODO(), ctx, stmt, is)
 	require.Error(t, err) // fail sql for timeout when pseudo=false
+
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=true")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/executor/assertSyncStatsFailed", `return(true)`))
+	tk.MustExec(sql) // not fail sql for timeout when pseudo=true
+	failpoint.Disable("github.com/pingcap/executor/assertSyncStatsFailed")
+
 	plan, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 	require.NoError(t, err) // not fail sql for timeout when pseudo=true
 	switch pp := plan.(type) {
