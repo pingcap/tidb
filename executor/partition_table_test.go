@@ -899,12 +899,12 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 		partition p2 values less than (600),
 		partition p3 values less than (800),
 		partition p4 values less than (1001))`)
-	tk.MustExec(`create table tlist(a int, b int, key(a)) partition by list (a) (
+	tk.MustExec(`create table tlist (a int, b int, key(a)) partition by list (a) (
 		partition p0 values in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
-		partition p0 values in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
-		partition p0 values in (20, 21, 22, 23, 24, 25, 26, 27, 28, 29),
-		partition p0 values in (30, 31, 32, 33, 34, 35, 36, 37, 38, 39),
-		partition p0 values in (40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50))`)
+		partition p1 values in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
+		partition p2 values in (20, 21, 22, 23, 24, 25, 26, 27, 28, 29),
+		partition p3 values in (30, 31, 32, 33, 34, 35, 36, 37, 38, 39),
+		partition p4 values in (40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50))`)
 
 	// construct some special data distribution
 	vals := make([]string, 0, 1000)
@@ -3019,6 +3019,8 @@ func TestIssue21731(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p, t")
+	tk.MustExec("set @@tidb_enable_list_partition = OFF")
+	// Notice that this does not really test the issue #21731
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
 }
 

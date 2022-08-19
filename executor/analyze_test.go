@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"strconv"
 	"strings"
 	"sync"
@@ -3316,11 +3317,7 @@ PARTITION BY RANGE ( id ) (
 	tk.MustExec("analyze table t partition p0 index idxa")
 	tk.MustExec("analyze table t partition p1 index idxb")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("analyze table t partition p0")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 8244 Build table: `t` column: `id` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
-		"Warning 8244 Build table: `t` index: `idxa` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
-	))
+	tk.MustExec("analyze table t partition p0") // no panic
 }
 
 func TestIssue35056Related(t *testing.T) {
@@ -3356,9 +3353,60 @@ PARTITION BY RANGE ( id ) (
 	tk.MustExec("analyze table t partition p0 columns id,a")
 	tk.MustExec("analyze table t partition p1 columns id,b")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t partition p0") // no panic
+}
+
+func TestIssue35044(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	createTable := `CREATE TABLE t (a int)
+PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20)
+)`
+	tk.MustExec(createTable)
+	tk.MustExec("insert into t values (1),(2),(3)")
+	tk.MustExec("insert into t values (11),(12),(14)")
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	is := dom.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	tk.MustExec("analyze table t partition p0 columns a")
+	tk.MustExec("analyze table t partition p1 columns a")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t partition p0")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
-		"Warning 8244 Build table: `t` column: `a` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
-	))
+	tbl := h.GetTableStats(tableInfo)
+	require.Equal(t, int64(6), tbl.Columns[tableInfo.Columns[0].ID].Histogram.NDV)
+}
+
+func TestAnalyzePartitionTableForFloat(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( id bigint(20) unsigned NOT NULL AUTO_INCREMENT, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (id) PARTITIONS 128;")
+	// To reproduce the error we meet in https://github.com/pingcap/tidb/issues/35910, we should use the data provided in this issue
+	b, err := ioutil.ReadFile("testdata/analyze_test_data.sql")
+	require.NoError(t, err)
+	sqls := strings.Split(string(b), ";")
+	for _, sql := range sqls {
+		if len(sql) < 1 {
+			continue
+		}
+		tk.MustExec(sql)
+	}
+	tk.MustExec("analyze table t1")
 }
