@@ -302,7 +302,7 @@ func TestCreateTableWithNamedPrimaryKey(t *testing.T) {
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("alter table t add primary key `abc` (a);")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 8245 Primary key name 'abc' is ignored and converted to 'PRIMARY'"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 8247 Primary key name 'abc' is ignored and converted to 'PRIMARY'"))
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("alter table t add primary key `primary` (a);")
