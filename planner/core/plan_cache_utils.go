@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/stringutil"
 	atomic2 "go.uber.org/atomic"
 )
 
@@ -39,8 +41,8 @@ var (
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
 
-func getValidPlanFromCache(sctx sessionctx.Context, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
-	cache := sctx.PreparedPlanCache()
+func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
+	cache := sctx.GetPlanCache(isGeneralPlanCache)
 	val, exist := cache.Get(key)
 	if !exist {
 		return nil, exist
@@ -54,8 +56,8 @@ func getValidPlanFromCache(sctx sessionctx.Context, key kvcache.Key, paramTypes 
 	return nil, false
 }
 
-func putPlanIntoCache(sctx sessionctx.Context, key kvcache.Key, plan *PlanCacheValue) {
-	cache := sctx.PreparedPlanCache()
+func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue) {
+	cache := sctx.GetPlanCache(isGeneralPlanCache)
 	val, exist := cache.Get(key)
 	if !exist {
 		cache.Put(key, []*PlanCacheValue{plan})
@@ -293,4 +295,23 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, ErrStmtNotFound
+}
+
+// Parameterizer used to parameterize a general statement.
+// e.g. 'select * from t where a>23' --> 'select * from t where a>?' + 23
+type Parameterizer interface {
+	// Parameterize this specific sql, ok indicates whether this sql is supported.
+	Parameterize(originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error)
+}
+
+// ParameterizerKey is used to get a parameterizer from a ctx, only for test.
+const ParameterizerKey = stringutil.StringerStr("parameterizerKey")
+
+// Parameterize parameterizes this sql, used by general plan cache.
+func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error) {
+	if v := sctx.Value(ParameterizerKey); v != nil { // for test
+		return v.(Parameterizer).Parameterize(originSQL)
+	}
+	// TODO: implement it
+	return "", nil, false, nil
 }
