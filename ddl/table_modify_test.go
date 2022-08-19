@@ -294,7 +294,7 @@ func TestCreateTableWithNamedPrimaryKey(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, primary key clustered (a, b));")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 8245 Primary key name 'clustered' is ignored and converted to 'PRIMARY'"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 8247 Primary key name 'clustered' is ignored and converted to 'PRIMARY'"))
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, b int, primary key `primary` (a, b));")
 	tk.MustQuery("show warnings;").Check(testkit.Rows( /* no warnings */ ))
