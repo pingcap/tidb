@@ -1271,6 +1271,16 @@ func TestShowCreateTableAutoRandom(t *testing.T) {
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */",
 	))
+	// Test auto_random table with range bits can be shown correctly.
+	tk.MustExec("create table auto_random_tbl7 (a bigint primary key auto_random(4, 32), b varchar(255));")
+	tk.MustQuery("show create table auto_random_tbl7").Check(testkit.RowsWithSep("|",
+		""+
+			"auto_random_tbl7 CREATE TABLE `auto_random_tbl7` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(4, 32) */,\n"+
+			"  `b` varchar(255) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
 
 // TestAutoIdCache overrides testAutoRandomSuite to test auto id cache.

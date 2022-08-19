@@ -148,6 +148,10 @@ type Session interface {
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+	// Parameterize tries to convert the general statement to an execute statement and then uses general plan cache to handle it.
+	// e.g. "select * from t where a>23" --> "execute 'select * from t where a>?' using 23".
+	// By using the general plan cache, it can skip the parse and optimization stage so to gain some performance benefits.
+	Parameterize(ctx context.Context, originSQL string) (*ast.ExecuteStmt, bool)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
@@ -156,7 +160,7 @@ type Session interface {
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
-	CacheGeneralStmt(sql string) error
+	CacheGeneralStmt(sql string) (interface{}, error)
 	// ExecutePreparedStmt executes a prepared statement.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
 	// ExecuteGeneralStmt executes a general statement.
@@ -1570,6 +1574,26 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return []sqlexec.RecordSet{rs}, err
 }
 
+// Parameterize Parameterizes this sql.
+func (s *session) Parameterize(ctx context.Context, originSQL string) (exec *ast.ExecuteStmt, ok bool) {
+	if !s.GetSessionVars().EnableGeneralPlanCache {
+		return nil, false
+	}
+	paramSQL, params, ok, err := plannercore.Parameterize(s, originSQL)
+	if !ok || err != nil {
+		return nil, false
+	}
+	cachedStmt, err := s.CacheGeneralStmt(paramSQL)
+	if err != nil {
+		return nil, false
+	}
+	return &ast.ExecuteStmt{
+		BinaryArgs:      params,
+		PrepStmt:        cachedStmt,
+		FromGeneralStmt: true,
+	}, true
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	parseStartTime := time.Now()
@@ -2263,15 +2287,18 @@ func (s *session) rollbackOnError(ctx context.Context) {
 
 // CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
 // The sql have to be parameterized, e.g. select * from t where a>?.
-func (s *session) CacheGeneralStmt(sql string) error {
+func (s *session) CacheGeneralStmt(sql string) (interface{}, error) {
 	if stmt := s.sessionVars.GetGeneralPlanCacheStmt(sql); stmt != nil {
 		// skip this step if there is already a PlanCacheStmt for this ql
-		return nil
+		return stmt, nil
 	}
 
 	prepareExec := executor.NewPrepareExec(s, sql)
 	prepareExec.IsGeneralStmt = true
-	return prepareExec.Next(context.Background(), nil)
+	if err := prepareExec.Next(context.Background(), nil); err != nil {
+		return nil, err
+	}
+	return prepareExec.Stmt, nil
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol

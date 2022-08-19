@@ -612,6 +612,9 @@ type chunkRowRecordSet struct {
 }
 
 func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
+	if c.fields == nil {
+		c.fields = colNames2ResultFields(c.e.Schema(), c.execStmt.OutputNames, c.execStmt.Ctx.GetSessionVars().CurrentDB)
+	}
 	return c.fields
 }
 
@@ -671,8 +674,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 			break
 		}
 		if req.NumRows() == 0 {
-			fields := colNames2ResultFields(e.Schema(), a.OutputNames, a.Ctx.GetSessionVars().CurrentDB)
-			return &chunkRowRecordSet{rows: rows, fields: fields, e: e, execStmt: a}, nil
+			return &chunkRowRecordSet{rows: rows, e: e, execStmt: a}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
