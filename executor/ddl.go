@@ -169,6 +169,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeRecoverTable(x)
 	case *ast.FlashBackTableStmt:
 		err = e.executeFlashbackTable(x)
+	case *ast.FlashBackClusterStmt:
+		err = e.executeFlashBackCluster(x)
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
 	case *ast.TruncateTableStmt:
@@ -517,6 +519,10 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		return nil, nil, errUnsupportedFlashbackTmpTable
 	}
 	return jobInfo, tableInfo, nil
+}
+
+func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackClusterStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FLASHBACK CLUSTER")
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
