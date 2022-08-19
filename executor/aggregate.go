@@ -1163,7 +1163,7 @@ func (w *AggWorkerStat) Clone() *AggWorkerStat {
 	}
 }
 
-func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, concurrency int, wallTime int64, workerStats []*AggWorkerStat) {
+func (*HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, concurrency int, wallTime int64, workerStats []*AggWorkerStat) {
 	var totalTime, totalWait, totalExec, totalTaskNum int64
 	for _, w := range workerStats {
 		totalTime += w.WorkerTime
@@ -1224,7 +1224,7 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *HashAggRuntimeStats) Tp() int {
+func (*HashAggRuntimeStats) Tp() int {
 	return execdetails.TpHashAggRuntimeStat
 }
 
@@ -1943,9 +1943,9 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 }
 
 // GetPriority get the priority of the Action
-func (a *AggSpillDiskAction) GetPriority() int64 {
+func (*AggSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (a *AggSpillDiskAction) SetLogHook(_ func(uint64)) {}
+func (*AggSpillDiskAction) SetLogHook(_ func(uint64)) {}
