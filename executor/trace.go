@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -42,7 +41,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"sourcegraph.com/sourcegraph/appdash"
 	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )
@@ -91,6 +92,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.nextOptimizerPlanTrace(ctx, e.ctx, req)
 	}
 
+	ctx = util.ContextWithTraceExecDetails(ctx)
 	switch e.format {
 	case core.TraceFormatLog:
 		return e.nextTraceLog(ctx, se, req)
@@ -310,12 +312,12 @@ func dfsTree(t *appdash.Trace, prefix string, isLast bool, chk *chunk.Chunk) {
 	chk.AppendString(2, duration.String())
 
 	// Sort events by their start time
-	sort.Slice(t.Sub, func(i, j int) bool {
+	slices.SortFunc(t.Sub, func(i, j *appdash.Trace) bool {
 		var istart, jstart time.Time
-		if ievent, err := t.Sub[i].TimespanEvent(); err == nil {
+		if ievent, err := i.TimespanEvent(); err == nil {
 			istart = ievent.Start()
 		}
-		if jevent, err := t.Sub[j].TimespanEvent(); err == nil {
+		if jevent, err := j.TimespanEvent(); err == nil {
 			jstart = jevent.Start()
 		}
 		return istart.Before(jstart)
@@ -362,6 +364,7 @@ func generateOptimizerTraceFile() (*os.File, string, error) {
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
 	b := make([]byte, 16)
+	//nolint: gosec
 	_, err = rand.Read(b)
 	if err != nil {
 		return nil, "", errors.AddStack(err)

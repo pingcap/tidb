@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -95,13 +94,10 @@ func (txn *LazyTxn) updateState(state txninfo.TxnRunningState) {
 		txn.mu.TxnInfo.State = state
 		txn.mu.TxnInfo.LastStateChangeTime = time.Now()
 		if !lastStateChangeTime.IsZero() {
-			hasLockLbl := "false"
-			if !txn.mu.TxnInfo.BlockStartTime.IsZero() {
-				hasLockLbl = "true"
-			}
-			metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel(lastState), hasLockLbl).Observe(time.Since(lastStateChangeTime).Seconds())
+			hasLockLbl := !txn.mu.TxnInfo.BlockStartTime.IsZero()
+			txninfo.TxnDurationHistogram(lastState, hasLockLbl).Observe(time.Since(lastStateChangeTime).Seconds())
 		}
-		metrics.TxnStatusEnteringCounter.WithLabelValues(txninfo.StateLabel(state)).Inc()
+		txninfo.TxnStatusEnteringCounter(state).Inc()
 	}
 }
 
@@ -157,11 +153,8 @@ func (txn *LazyTxn) resetTxnInfo(
 ) {
 	if !txn.mu.LastStateChangeTime.IsZero() {
 		lastState := txn.mu.State
-		hasLockLbl := "false"
-		if !txn.mu.TxnInfo.BlockStartTime.IsZero() {
-			hasLockLbl = "true"
-		}
-		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel(lastState), hasLockLbl).Observe(time.Since(txn.mu.TxnInfo.LastStateChangeTime).Seconds())
+		hasLockLbl := !txn.mu.BlockStartTime.IsZero()
+		txninfo.TxnDurationHistogram(lastState, hasLockLbl).Observe(time.Since(txn.mu.TxnInfo.LastStateChangeTime).Seconds())
 	}
 	if txn.mu.TxnInfo.StartTS != 0 {
 		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
@@ -169,7 +162,7 @@ func (txn *LazyTxn) resetTxnInfo(
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.TxnInfo.StartTS = startTS
 	txn.mu.TxnInfo.State = state
-	metrics.TxnStatusEnteringCounter.WithLabelValues(txninfo.StateLabel(state)).Inc()
+	txninfo.TxnStatusEnteringCounter(state).Inc()
 	txn.mu.TxnInfo.LastStateChangeTime = time.Now()
 	txn.mu.TxnInfo.EntriesCount = entriesCount
 	txn.mu.TxnInfo.EntriesSize = entriesSize
@@ -240,22 +233,6 @@ func (txn *LazyTxn) GetOption(opt int) interface{} {
 	return txn.Transaction.GetOption(opt)
 }
 
-func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
-	txn.Transaction = kvTxn
-	txn.initStmtBuf()
-	txn.txnFuture = nil
-
-	txn.mu.Lock()
-	defer txn.mu.Unlock()
-	txn.resetTxnInfo(
-		kvTxn.StartTS(),
-		txninfo.TxnIdle,
-		uint64(txn.Transaction.Len()),
-		uint64(txn.Transaction.Size()),
-		"",
-		nil)
-}
-
 func (txn *LazyTxn) changeToPending(future *txnFuture) {
 	txn.Transaction = nil
 	txn.txnFuture = future
@@ -310,11 +287,7 @@ func (txn *LazyTxn) changeToInvalid() {
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.Unlock()
 	if !lastStateChangeTime.IsZero() {
-		hasLockLbl := "false"
-		if hasLock {
-			hasLockLbl = "true"
-		}
-		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel(lastState), hasLockLbl).Observe(time.Since(lastStateChangeTime).Seconds())
+		txninfo.TxnDurationHistogram(lastState, hasLock).Observe(time.Since(lastStateChangeTime).Seconds())
 	}
 }
 
@@ -522,9 +495,12 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}
-	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
-	// Put row key and unique index need to lock.
-	return !isNonUniqueIndex
+
+	if !tablecodec.IsIndexKey(k) {
+		return true
+	}
+
+	return tablecodec.IndexKVIsUnique(v)
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {

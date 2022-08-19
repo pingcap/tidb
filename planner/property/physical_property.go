@@ -329,13 +329,13 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 }
 
 // AllSameOrder checks if all the items have same order.
-func (p *PhysicalProperty) AllSameOrder() (bool, bool) {
+func (p *PhysicalProperty) AllSameOrder() (isSame bool, desc bool) {
 	if len(p.SortItems) == 0 {
 		return true, false
 	}
 	for i := 1; i < len(p.SortItems); i++ {
 		if p.SortItems[i].Desc != p.SortItems[i-1].Desc {
-			return false, false
+			return
 		}
 	}
 	return true, p.SortItems[0].Desc

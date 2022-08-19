@@ -247,12 +247,16 @@ func (item *btreeListColumnItem) Less(other btree.Item) bool {
 	return item.key < other.(*btreeListColumnItem).key
 }
 
+func lessBtreeListColumnItem(a, b *btreeListColumnItem) bool {
+	return a.key < b.key
+}
+
 // ForListColumnPruning is used for list columns partition pruning.
 type ForListColumnPruning struct {
 	ExprCol  *expression.Column
 	valueTp  *types.FieldType
 	valueMap map[string]ListPartitionLocation
-	sorted   *btree.BTree
+	sorted   *btree.BTreeG[*btreeListColumnItem]
 
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	// The following fields are used to delay building valueMap.
@@ -283,16 +287,17 @@ type ListPartitionGroup struct {
 // In partition p0, both value group0 (1,5) and group1 (1,6) are contain the column a which value is 1.
 // In partition p1, value group0 (1,7) contains the column a which value is 1.
 // So, the ListPartitionLocation of column a which value is 1 is:
-// []ListPartitionGroup{
-// 	{
-// 		PartIdx: 0,               // `0` is the partition p0 index in all partitions.
-// 		GroupIdxs: []int{0, 1}    // `0,1` is the index of the value group0, group1.
-// 	},
-// 	{
-// 		PartIdx: 1,               // `1` is the partition p1 index in all partitions.
-// 		GroupIdxs: []int{0}       // `0` is the index of the value group0.
-// 	},
-// }
+//
+//	[]ListPartitionGroup{
+//		{
+//			PartIdx: 0,               // `0` is the partition p0 index in all partitions.
+//			GroupIdxs: []int{0, 1}    // `0,1` is the index of the value group0, group1.
+//		},
+//		{
+//			PartIdx: 1,               // `1` is the partition p1 index in all partitions.
+//			GroupIdxs: []int{0}       // `0` is the index of the value group0.
+//		},
+//	}
 type ListPartitionLocation []ListPartitionGroup
 
 // IsEmpty returns true if the ListPartitionLocation is empty.
@@ -677,7 +682,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 			ExprCol:  columns[idx],
 			valueTp:  &colInfo.FieldType,
 			valueMap: make(map[string]ListPartitionLocation),
-			sorted:   btree.New(btreeDegree),
+			sorted:   btree.NewG[*btreeListColumnItem](btreeDegree, lessBtreeListColumnItem),
 		}
 		err := colPrune.buildPartitionValueMapAndSorted(p)
 		if err != nil {
@@ -891,8 +896,8 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	}
 
 	locations := make([]ListPartitionLocation, 0, lp.sorted.Len())
-	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(hack.String(lowKey))), newBtreeListColumnSearchItem(string(hack.String(highKey))), func(item btree.Item) bool {
-		locations = append(locations, item.(*btreeListColumnItem).location)
+	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(hack.String(lowKey))), newBtreeListColumnSearchItem(string(hack.String(highKey))), func(item *btreeListColumnItem) bool {
+		locations = append(locations, item.location)
 		return true
 	})
 	return locations, nil
@@ -962,6 +967,17 @@ func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
 func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
 	return tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(handle))
+}
+
+func (t *partitionedTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error {
+	defID, err := t.locatePartition(ctx, pi, r)
+	if err != nil {
+		return err
+	}
+	if defID != pid {
+		return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+	}
+	return nil
 }
 
 // locatePartition returns the partition ID of the input record.

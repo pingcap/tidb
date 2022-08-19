@@ -15,13 +15,13 @@ import (
 	"time"
 
 	gcs "cloud.google.com/go/storage"
-	"github.com/docker/go-units"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -77,7 +77,8 @@ const (
 	flagSkipCheckPath     = "skip-check-path"
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
-	flagSkipAWS = "skip-aws"
+	flagSkipAWS      = "skip-aws"
+	flagWithSysTable = "with-sys-table"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
@@ -214,6 +215,9 @@ type Config struct {
 	GRPCKeepaliveTimeout time.Duration `json:"grpc-keepalive-timeout" toml:"grpc-keepalive-timeout"`
 
 	CipherInfo backuppb.CipherInfo `json:"-" toml:"-"`
+
+	// whether there's explicit filter
+	ExplicitFilter bool `json:"-" toml:"-"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -473,6 +477,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.Tables = make(map[string]struct{})
 	var caseSensitive bool
 	if filterFlag := flags.Lookup(flagFilter); filterFlag != nil {
+		cfg.ExplicitFilter = flags.Changed(flagFilter)
 		cfg.FilterStr = filterFlag.Value.(pflag.SliceValue).GetSlice()
 		cfg.TableFilter, err = filter.Parse(cfg.FilterStr)
 		if err != nil {
@@ -568,6 +573,7 @@ func NewMgr(ctx context.Context,
 	keepalive keepalive.ClientParameters,
 	checkRequirements bool,
 	needDomain bool,
+	versionCheckerType conn.VersionCheckerType,
 ) (*conn.Mgr, error) {
 	var (
 		tlsConf *tls.Config
@@ -591,8 +597,8 @@ func NewMgr(ctx context.Context,
 
 	// Is it necessary to remove `StoreBehavior`?
 	return conn.NewMgr(
-		ctx, g, pdAddress, tlsConf, securityOption, keepalive, conn.SkipTiFlash,
-		checkRequirements, needDomain,
+		ctx, g, pdAddress, tlsConf, securityOption, keepalive, util.SkipTiFlash,
+		checkRequirements, needDomain, versionCheckerType,
 	)
 }
 

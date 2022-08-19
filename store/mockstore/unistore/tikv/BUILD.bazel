@@ -61,12 +61,14 @@ go_library(
 
 go_test(
     name = "tikv_test",
+    timeout = "short",
     srcs = [
         "detector_test.go",
         "main_test.go",
         "mvcc_test.go",
     ],
     embed = [":tikv"],
+    flaky = True,
     deps = [
         "//store/mockstore/unistore/config",
         "//store/mockstore/unistore/lockstore",

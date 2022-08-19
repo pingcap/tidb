@@ -368,24 +368,6 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			elemID := ea.allocForIndexID(tableID, indexID)
 			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID))
 		}
-	case model.ActionDropIndexes:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-		// Remove data in TiKV.
-		if len(indexIDs) == 0 {
-			return nil
-		}
-		if len(partitionIDs) == 0 {
-			return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now, ea)
-		}
-		for _, pID := range partitionIDs {
-			if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pID, indexIDs, now, ea); err != nil {
-				return errors.Trace(err)
-			}
-		}
 	case model.ActionDropColumn:
 		var colName model.CIStr
 		var ifExists bool

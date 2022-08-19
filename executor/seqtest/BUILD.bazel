@@ -2,17 +2,21 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "seqtest_test",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "prepared_test.go",
         "seq_executor_test.go",
     ],
+    flaky = True,
+    shard_count = 30,
     deps = [
         "//config",
         "//ddl/testutil",
         "//ddl/util",
         "//errno",
         "//executor",
+        "//expression",
         "//infoschema",
         "//kv",
         "//meta/autoid",
@@ -32,7 +36,6 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "//testkit/testutil",
-        "//types",
         "//util",
         "//util/gcutil",
         "//util/kvcache",

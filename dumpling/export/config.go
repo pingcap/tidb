@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"strconv"
 	"strings"
 	"text/template"
@@ -205,8 +206,9 @@ func (conf *Config) String() string {
 func (conf *Config) GetDSN(db string) string {
 	// maxAllowedPacket=0 can be used to automatically fetch the max_allowed_packet variable from server on every connection.
 	// https://github.com/go-sql-driver/mysql#maxallowedpacket
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_general_ci&readTimeout=%s&writeTimeout=30s&interpolateParams=true&maxAllowedPacket=0",
-		conf.User, conf.Password, conf.Host, conf.Port, db, conf.ReadTimeout)
+	hostPort := net.JoinHostPort(conf.Host, strconv.Itoa(conf.Port))
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?collation=utf8mb4_general_ci&readTimeout=%s&writeTimeout=30s&interpolateParams=true&maxAllowedPacket=0",
+		conf.User, conf.Password, hostPort, db, conf.ReadTimeout)
 	if len(conf.Security.CAPath) > 0 {
 		dsn += "&tls=dumpling-tls-target"
 	}
@@ -221,7 +223,7 @@ func timestampDirName() string {
 }
 
 // DefineFlags defines flags of dumpling's configuration
-func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
+func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	storage.DefineFlags(flags)
 	flags.StringSliceP(flagDatabase, "B", nil, "Databases to dump")
 	flags.StringSliceP(flagTablesList, "T", nil, "Comma delimited table list to dump; must be qualified table names")
@@ -488,7 +490,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	tmpl, err := ParseOutputFileTemplate(outputFilenameFormat)
 	if err != nil {
-		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')\n", outputFilenameFormat)
+		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')", outputFilenameFormat)
 	}
 	conf.OutputFileTemplate = tmpl
 
@@ -549,6 +551,7 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	return filter.NewTablesFilter(tableNames...), nil
 }
 
+// GetConfTables parses tables from tables-list and filter arguments
 func GetConfTables(tablesList []string) (DatabaseTables, error) {
 	dbTables := DatabaseTables{}
 	var (
@@ -607,7 +610,9 @@ const (
 	defaultDumpGCSafePointTTL = 5 * 60
 	defaultEtcdDialTimeOut    = 3 * time.Second
 
-	LooseCollationCompatible  = "loose"
+	// LooseCollationCompatible is used in DM, represents a collation setting for best compatibility.
+	LooseCollationCompatible = "loose"
+	// StrictCollationCompatible is used in DM, represents a collation setting for correctness.
 	StrictCollationCompatible = "strict"
 
 	dumplingServiceSafePointPrefix = "dumpling"

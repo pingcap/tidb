@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -302,7 +303,7 @@ func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.R
 				}
 			}
 		}
-		head += 1
+		head++
 	}
 	return ret
 }
@@ -1211,7 +1212,6 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION`, g, user, host)
 		} else {
 			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, user, host)
-
 		}
 		gs = append(gs, s)
 	}
@@ -1258,7 +1258,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			gs = append(gs, s)
 		}
 	}
-	sort.Strings(gs[sortFromIdx:])
+	slices.Sort(gs[sortFromIdx:])
 
 	// Show table scope grants.
 	sortFromIdx = len(gs)
@@ -1292,7 +1292,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			gs = append(gs, s)
 		}
 	}
-	sort.Strings(gs[sortFromIdx:])
+	slices.Sort(gs[sortFromIdx:])
 
 	// Show column scope grants, column and table are combined.
 	// A map of "DB.Table" => Priv(col1, col2 ...)
@@ -1311,7 +1311,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
-	sort.Strings(gs[sortFromIdx:])
+	slices.Sort(gs[sortFromIdx:])
 
 	// Show role grants.
 	graphKey := user + "@" + host
@@ -1325,7 +1325,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			tmp := fmt.Sprintf("'%s'@'%s'", roleName, roleHost)
 			sortedRes = append(sortedRes, tmp)
 		}
-		sort.Strings(sortedRes)
+		slices.Sort(sortedRes)
 		for i, r := range sortedRes {
 			g += r
 			if i != len(sortedRes)-1 {
@@ -1371,12 +1371,12 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 
 	// Merge the DYNAMIC privs into a line for non-grantable and then grantable.
 	if len(dynamicPrivs) > 0 {
-		sort.Strings(dynamicPrivs)
+		slices.Sort(dynamicPrivs)
 		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s'", strings.Join(dynamicPrivs, ","), user, host)
 		gs = append(gs, s)
 	}
 	if len(grantableDynamicPrivs) > 0 {
-		sort.Strings(grantableDynamicPrivs)
+		slices.Sort(grantableDynamicPrivs)
 		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), user, host)
 		gs = append(gs, s)
 	}

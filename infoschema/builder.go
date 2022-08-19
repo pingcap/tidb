@@ -15,8 +15,8 @@
 package infoschema
 
 import (
+	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -33,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type policyGetter struct {
@@ -287,6 +289,40 @@ func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
+func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
+		if err != nil {
+			return err
+		}
+
+		// non-partition table auto IDs.
+		ntAutoIDs, err := t.GetAutoIDAccessors(ntSchemaID, ntID).Get()
+		if err != nil {
+			return err
+		}
+
+		// Set both tables to the maximum auto IDs between normal table and partitioned table.
+		newAutoIDs := meta.AutoIDGroup{
+			RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+			IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+			RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+		}
+		err = t.GetAutoIDAccessors(ptSchemaID, ptID).Put(newAutoIDs)
+		if err != nil {
+			return err
+		}
+		err = t.GetAutoIDAccessors(ntSchemaID, ntID).Put(newAutoIDs)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	return err
+}
+
 func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
@@ -308,6 +344,14 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 			return nil, errors.Trace(err)
 		}
 		tblIDs = append(tblIDs, affectedIDs...)
+
+		if diff.Type == model.ActionExchangeTablePartition {
+			// handle partition table and table AutoID
+			err = updateAutoIDForExchangePartition(b.store, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.TableID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 	}
 
 	return tblIDs, nil
@@ -648,7 +692,9 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
 	sortedTbls = append(sortedTbls, tbl)
-	sort.Sort(sortedTbls)
+	slices.SortFunc(sortedTbls, func(i, j table.Table) bool {
+		return i.Meta().ID < j.Meta().ID
+	})
 	b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
 
 	newTbl, ok := b.is.TableByID(tableID)
@@ -803,7 +849,9 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	// Sort all tables by `ID`
 	for _, v := range info.sortedTablesBuckets {
-		sort.Sort(v)
+		slices.SortFunc(v, func(a, b table.Table) bool {
+			return a.Meta().ID < b.Meta().ID
+		})
 	}
 	return b, nil
 }

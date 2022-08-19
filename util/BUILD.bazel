@@ -49,6 +49,7 @@ go_library(
 
 go_test(
     name = "util_test",
+    timeout = "short",
     srcs = [
         "errors_test.go",
         "main_test.go",
@@ -62,6 +63,7 @@ go_test(
     data = glob(["tls_test/**"]),
     embed = [":util"],
     flaky = True,
+    shard_count = 50,
     deps = [
         "//config",
         "//kv",

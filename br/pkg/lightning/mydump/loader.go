@@ -38,6 +38,13 @@ type MDDatabaseMeta struct {
 	charSet    string
 }
 
+// NewMDDatabaseMeta creates an Mydumper database meta with specified character set.
+func NewMDDatabaseMeta(charSet string) *MDDatabaseMeta {
+	return &MDDatabaseMeta{
+		charSet: charSet,
+	}
+}
+
 func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
 	if m.SchemaFile.FileMeta.Path != "" {
 		schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
@@ -73,6 +80,13 @@ type SourceFileMeta struct {
 	FileSize    int64
 }
 
+// NewMDTableMeta creates an Mydumper table meta with specified character set.
+func NewMDTableMeta(charSet string) *MDTableMeta {
+	return &MDTableMeta{
+		charSet: charSet,
+	}
+}
+
 func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
@@ -86,7 +100,7 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 }
 
 /*
-	Mydumper File Loader
+Mydumper File Loader
 */
 type MDLoader struct {
 	store  storage.ExternalStorage
