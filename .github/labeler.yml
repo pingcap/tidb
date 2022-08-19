@@ -1,14 +1,16 @@
 sig/execution:
-  - distsql/*
-  - executor/*
-  - !executor/brie*
-  - util/chunk/*
-  - util/disk/*
-  - util/execdetails/*
-  - util/expensivequery/*
-  - util/filesort/*
-  - util/memory/*
-  - util/sqlexec/*
+  - any:
+      - distsql/*
+      - executor/*
+      - util/chunk/*
+      - util/disk/*
+      - util/execdetails/*
+      - util/expensivequery/*
+      - util/filesort/*
+      - util/memory/*
+      - util/sqlexec/*
+  - all:
+      - "!executor/brie*"
 
 component/expression:
   - expression/*
