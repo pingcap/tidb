@@ -44,8 +44,7 @@ func pickFromBucket(bucket []*list.Element, itB interface{}) (*list.Element, int
 	return nil, -1, false
 }
 
-func TestPutPlanCacheLRU(t *testing.T) {
-
+func TestPCLRUPut(t *testing.T) {
 	pcLRU := NewPCLRUCache(3, pickFromBucket)
 	require.Equal(t, uint(3), pcLRU.capacity)
 
@@ -111,4 +110,197 @@ func TestPutPlanCacheLRU(t *testing.T) {
 
 	// test for end of double-linked list
 	require.Nil(t, root)
+}
+
+func TestPCLRUGet(t *testing.T) {
+	lru := NewPCLRUCache(3, pickFromBucket)
+
+	keys := make([]*mockCacheKey, 5)
+	vals := make([]*fakePlan, 5)
+	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
+
+	// 5 bucket
+	for i := 0; i < 5; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		vals[i] = &fakePlan{
+			a: int64(i),
+			s: pTypes[i],
+		}
+		lru.Put(keys[i], vals[i], pTypes[i])
+	}
+
+	// test for non-existent elements
+	for i := 0; i < 2; i++ {
+		value, exists := lru.Get(keys[i], pTypes[i])
+		require.False(t, exists)
+		require.Nil(t, value)
+	}
+
+	for i := 2; i < 5; i++ {
+		value, exists := lru.Get(keys[i], pTypes[i])
+		require.True(t, exists)
+		require.NotNil(t, value)
+		require.Equal(t, vals[i], value)
+		require.Equal(t, uint(3), lru.size)
+		require.Equal(t, uint(3), lru.capacity)
+
+		root := lru.cache.Front()
+		require.NotNil(t, root)
+
+		entry, ok := root.Value.(*cacheEntry)
+		require.True(t, ok)
+		require.Equal(t, keys[i], entry.key)
+
+		value, ok = entry.value.(*fakePlan)
+		require.True(t, ok)
+		require.Equal(t, vals[i], value)
+	}
+}
+
+func TestPCLRUGet2(t *testing.T) {
+	lru := NewPCLRUCache(3, pickFromBucket)
+
+	keys := make([]*mockCacheKey, 5)
+	vals := make([]*fakePlan, 5)
+	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
+
+	// 5 bucket
+	for i := 0; i < 5; i++ {
+		keys[i] = newMockHashKey(int64(i % 3))
+		vals[i] = &fakePlan{
+			a: int64(i),
+			s: pTypes[i],
+		}
+		lru.Put(keys[i], vals[i], pTypes[i])
+	}
+
+	// test for non-existent elements
+	for i := 0; i < 2; i++ {
+		value, exists := lru.Get(keys[i], pTypes[i])
+		require.False(t, exists)
+		require.Nil(t, value)
+	}
+
+	for i := 2; i < 5; i++ {
+		value, exists := lru.Get(keys[i], pTypes[i])
+		require.True(t, exists)
+		require.NotNil(t, value)
+		require.Equal(t, vals[i], value)
+		require.Equal(t, uint(3), lru.size)
+		require.Equal(t, uint(3), lru.capacity)
+
+		root := lru.cache.Front()
+		require.NotNil(t, root)
+
+		entry, ok := root.Value.(*cacheEntry)
+		require.True(t, ok)
+		require.Equal(t, keys[i], entry.key)
+
+		value, ok = entry.value.(*fakePlan)
+		require.True(t, ok)
+		require.Equal(t, vals[i], value)
+	}
+}
+
+func TestPCLRUDelete(t *testing.T) {
+	lru := NewPCLRUCache(3, pickFromBucket)
+
+	keys := make([]*mockCacheKey, 3)
+	vals := make([]*fakePlan, 3)
+	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}}
+
+	for i := 0; i < 3; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		vals[i] = &fakePlan{
+			a: int64(i),
+			s: pTypes[i],
+		}
+		lru.Put(keys[i], vals[i], pTypes[i])
+	}
+	require.Equal(t, 3, int(lru.size))
+
+	lru.Delete(keys[1], pTypes[1])
+	value, exists := lru.Get(keys[1], pTypes[1])
+	require.False(t, exists)
+	require.Nil(t, value)
+	require.Equal(t, 2, int(lru.size))
+
+	_, exists = lru.Get(keys[0], pTypes[0])
+	require.True(t, exists)
+
+	_, exists = lru.Get(keys[2], pTypes[2])
+	require.True(t, exists)
+}
+
+func TestPCLRUDeleteAll(t *testing.T) {
+	lru := NewPCLRUCache(3, pickFromBucket)
+
+	keys := make([]*mockCacheKey, 3)
+	vals := make([]*fakePlan, 3)
+	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}}
+
+	for i := 0; i < 3; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		vals[i] = &fakePlan{
+			a: int64(i),
+			s: pTypes[i],
+		}
+		lru.Put(keys[i], vals[i], pTypes[i])
+	}
+	require.Equal(t, 3, int(lru.size))
+
+	lru.DeleteAll()
+
+	for i := 0; i < 3; i++ {
+		value, exists := lru.Get(keys[i], pTypes[i])
+		require.False(t, exists)
+		require.Nil(t, value)
+		require.Equal(t, 0, int(lru.size))
+	}
+}
+
+func TestPCLRUKeys(t *testing.T) {
+	lru := NewPCLRUCache(5, pickFromBucket)
+
+	keys := make([]*mockCacheKey, 5)
+	vals := make([]*fakePlan, 5)
+	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
+
+	for i := 0; i < 5; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		vals[i] = &fakePlan{
+			a: int64(i),
+			s: pTypes[i],
+		}
+		lru.Put(keys[i], vals[i], pTypes[i])
+	}
+
+	ks := lru.Keys()
+	require.Equal(t, 5, len(ks))
+	for i := 0; i < 5; i++ {
+		require.Equal(t, keys[4-i], ks[i])
+	}
+}
+
+func TestPCLRUValues(t *testing.T) {
+	lru := NewPCLRUCache(5, pickFromBucket)
+
+	keys := make([]*mockCacheKey, 5)
+	vals := make([]*fakePlan, 5)
+	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
+
+	for i := 0; i < 5; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		vals[i] = &fakePlan{
+			a: int64(i),
+			s: pTypes[i],
+		}
+		lru.Put(keys[i], vals[i], pTypes[i])
+	}
+
+	values := lru.Values()
+	require.Equal(t, 5, len(values))
+	for i := 0; i < 5; i++ {
+		require.Equal(t, vals[4-i], values[i])
+	}
 }

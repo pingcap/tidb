@@ -23,10 +23,10 @@ import (
 type PCLRUCache struct {
 	capacity uint
 	size     uint
-
+	// buckets replace the map in general LRU
 	buckets map[string][]*list.Element
 
-	// onGet set rules to get one element from multi element.It can not be nil!
+	// choose set rules to get one element from bucket.
 	choose func([]*list.Element, interface{}) (*list.Element, int, bool)
 
 	// onEvict function will be called if any eviction happened
@@ -56,7 +56,6 @@ func (l *PCLRUCache) SetOnEvict(onEvict func(Key, Value)) {
 }
 
 // Get tries to find the corresponding value according to the given key.
-// 传入的应该是要比较的项， 不是一个函数
 func (l *PCLRUCache) Get(key Key, paramTypes interface{}) (value Value, ok bool) {
 	if bucket, exist := l.buckets[string(key.Hash())]; exist {
 		if element, _, exist1 := l.choose(bucket, paramTypes); exist1 {
@@ -105,6 +104,7 @@ func (l *PCLRUCache) Delete(key Key, paramTypes interface{}) {
 		bucket = append(bucket[:idx], bucket[idx+1:]...)
 		l.buckets[k] = bucket
 		l.cache.Remove(element)
+		l.size--
 	}
 }
 
