@@ -77,8 +77,8 @@ func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 }
 
 type regexpBaseFuncSig struct {
-	memorizedRegexp *regexp.Regexp
-	memorizedErr    error
+	regexpMemorizedSig
+	compile func(string) (*regexp.Regexp, error)
 }
 
 func (re *regexpBaseFuncSig) cloneBase(from *regexpBaseFuncSig) {
@@ -146,13 +146,16 @@ func (re *regexpLikeFuncSig) clone(from *regexpLikeFuncSig) {
 	re.cloneBase(&from.regexpBaseFuncSig)
 }
 
-func (re *regexpLikeFuncSig) compile(pat string, matchType string) (*regexp.Regexp, error) {
+// To get a unified compile interface in initMemoizedRegexp, we need to process many things in genCompile
+func (re *regexpLikeFuncSig) genCompile(matchType string) (func(string) (*regexp.Regexp, error), error) {
 	matchType, err := re.getMatchType(&re.baseBuiltinFunc, matchType)
 	if err != nil {
 		return nil, err
 	}
 
-	return regexp.Compile(fmt.Sprintf("(?%s)%s", matchType, pat))
+	return func(pat string) (*regexp.Regexp, error) {
+		return regexp.Compile(fmt.Sprintf("(?%s)%s", matchType, pat))
+	}, nil
 }
 
 // Call this function when all args are constant
@@ -167,7 +170,6 @@ func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, err
 	}
 
-	var reg *regexp.Regexp
 	matchType := ""
 	if len(re.args) == 3 {
 		matchType, isNull, err = re.args[2].EvalString(re.ctx, row)
@@ -176,9 +178,93 @@ func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 	}
 
-	reg, err = re.compile(pat, matchType)
+	re.compile, err = re.genCompile(matchType)
 	if err != nil {
 		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
+
+	reg, err := re.compile(pat)
+	if err != nil {
+		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
 	return boolToInt64(reg.MatchString(expr)), false, nil
+}
+
+// we need to memorize the regexp when:
+//   1. pattern and match type are constant
+//   2. pattern is const and match type is null
+//
+// return true: need, false: needless
+func (re *regexpLikeFuncSig) needMemorization() bool {
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) == 2 || re.args[2].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+}
+
+// Call this function when at least one of the args is vector
+// REGEXP_LIKE(expr, pat[, match_type])
+func (re *regexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	params := make([]*regexpParam, 0, 3)
+
+	for i := 0; i < 2; i++ {
+		param, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
+		if err != nil {
+			return err
+		}
+		params = append(params, param)
+	}
+
+	// user may not add match type parameter
+	hasMatchType := (len(re.args) == 3)
+	param, err := buildStringParam(&re.baseBuiltinFunc, 2, input, !hasMatchType)
+	if err != nil {
+		return err
+	}
+
+	params = append(params, param)
+	defer releaseBuffers(&re.baseBuiltinFunc, params)
+
+	// Check memorization
+	if re.needMemorization() {
+		// matchType must be const or null
+		matchType := params[2].getStringVal(0)
+
+		re.compile, err = re.genCompile(matchType)
+		if err != nil {
+			return err
+		}
+
+		re.initMemoizedRegexp(re.compile, params[1].getCol(), n)
+	}
+
+	getRegexp := func(pat string, matchType string) (*regexp.Regexp, error) {
+		if re.isMemorizedRegexpInitialized() {
+			return re.memorizedRegexp, re.memorizedErr
+		}
+
+		// Generate compiler first
+		re.compile, err = re.genCompile(matchType)
+		if err != nil {
+			return nil, err
+		}
+
+		return re.compile(pat)
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(getBuffers(params)...)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		matchType := params[2].getStringVal(i)
+		re, err := getRegexp(params[1].getStringVal(i), matchType)
+		if err != nil {
+			return err
+		}
+		i64s[i] = boolToInt64(re.MatchString(params[0].getStringVal(i)))
+	}
+	return nil
 }

@@ -112,3 +112,7 @@ func TestRegexpLikeConst(t *testing.T) {
 		}
 	}
 }
+
+func TestRegexpLikeVec(t *testing.T) {
+
+}

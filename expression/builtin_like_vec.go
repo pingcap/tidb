@@ -17,7 +17,6 @@ package expression
 import (
 	"regexp"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -80,33 +79,6 @@ func (b *builtinRegexpUTF8Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRegexpSharedSig) isMemorizedRegexpInitialized() bool {
-	return !(b.memorizedRegexp == nil && b.memorizedErr == nil)
-}
-
-func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n int) {
-	// Precondition: patterns is generated from a constant expression
-	if n == 0 {
-		// If the input rownum is zero, the Regexp error shouldn't be generated.
-		return
-	}
-	for i := 0; i < n; i++ {
-		if patterns.IsNull(i) {
-			continue
-		}
-		re, err := b.compile(patterns.GetString(i))
-		b.memorizedRegexp = re
-		b.memorizedErr = err
-		break
-	}
-	if !b.isMemorizedRegexpInitialized() {
-		b.memorizedErr = errors.New("No valid regexp pattern found")
-	}
-	if b.memorizedErr != nil {
-		b.memorizedRegexp = nil
-	}
-}
-
 func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	bufExpr, err := b.bufAllocator.get()
@@ -128,7 +100,7 @@ func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	}
 
 	if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && !b.isMemorizedRegexpInitialized() {
-		b.initMemoizedRegexp(bufPat, n)
+		b.initMemoizedRegexp(b.compile, bufPat, n)
 	}
 	getRegexp := func(pat string) (*regexp.Regexp, error) {
 		if b.isMemorizedRegexpInitialized() {
