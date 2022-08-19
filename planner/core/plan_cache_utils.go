@@ -15,6 +15,7 @@
 package core
 
 import (
+	"container/list"
 	"math"
 	"strconv"
 	"time"
@@ -314,4 +315,21 @@ func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, p
 	}
 	// TODO: implement it
 	return "", nil, false, nil
+}
+
+func pickPlanByParamTypes(bucket []*list.Element, paramTypes interface{}) (*list.Element, int, bool) {
+	tps, ok := paramTypes.([]*types.FieldType)
+	if !ok {
+		return nil, -1, false
+	}
+	for idx, element := range bucket {
+		planVal := element.Value.(*kvcache.CacheEntry).PlanValue.(*PlanCacheValue)
+		if planVal == nil {
+			return nil, -1, false
+		}
+		if planVal.ParamTypes.CheckTypesCompatibility4PC(tps) {
+			return element, idx, true
+		}
+	}
+	return nil, -1, false
 }
