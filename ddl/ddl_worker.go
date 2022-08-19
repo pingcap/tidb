@@ -1325,7 +1325,7 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		logutil.Logger(w.logCtx).Warn("[ddl] get global version failed", zap.Error(err))
-		return nil
+		return err
 	}
 
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
