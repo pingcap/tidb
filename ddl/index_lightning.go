@@ -52,7 +52,7 @@ var (
 func IsEnableFastReorg() bool {
 	// Only when both TiDBDDLEnableFastReorg is set to on and Lightning env has been inited successful,
 	// the add index could choose lightning path to do backfill procedure.
-	if variable.EnableFastReorg.Load() && lit.GlobalEnv.IsInited {
+	if variable.EnableFastReorg.Load() {
 		// Increase telemetryAddIndexLightningUsage
 		telemetryAddIndexLightningUsage.Inc()
 		return true
@@ -75,9 +75,8 @@ func isPiTREnable(w *worker) bool {
 }
 
 func prepareLightningEngine(job *model.Job, indexID int64, workerCnt int) (wCnt int, err error) {
-	enginKey := lit.GenEngineInfoKey(job.ID, indexID)
 	bc, _ := lit.BackCtxMgr.Load(job.ID)
-	wCnt, err = bc.EngMgr.Register(bc, job, enginKey, indexID, workerCnt)
+	wCnt, err = bc.EngMgr.Register(bc, job, indexID, workerCnt)
 	if err != nil {
 		lit.BackCtxMgr.Unregister(job.ID)
 	}
@@ -85,7 +84,7 @@ func prepareLightningEngine(job *model.Job, indexID int64, workerCnt int) (wCnt 
 }
 
 // importIndexDataToStore import local index sst file into TiKV.
-func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexID int64, unique bool, tbl table.Table) error {
+func importIndexDataToStore(reorg *reorgInfo, indexID int64, unique bool, tbl table.Table) error {
 	if bc, ok := lit.BackCtxMgr.Load(reorg.Job.ID); ok && bc.NeedRestore() {
 		engineInfoKey := lit.GenEngineInfoKey(reorg.ID, indexID)
 		err := bc.FinishImport(engineInfoKey, unique, tbl)
@@ -138,7 +137,7 @@ type addIndexWorkerLit struct {
 	writerCtx *lit.WorkerContext
 }
 
-func newAddIndexWorkerLit(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext, jobID int64) (*addIndexWorkerLit, error) {
+func newAddIndexWorkerLit(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*addIndexWorkerLit, error) {
 	var index table.Index
 	for _, idx := range t.Indices() {
 		if idx.Meta().ID == reorgInfo.currElement.ID {
@@ -146,6 +145,7 @@ func newAddIndexWorkerLit(sessCtx sessionctx.Context, worker *worker, id int, t 
 			break
 		}
 	}
+	jobID := reorgInfo.Job.ID
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	engineInfoKey := lit.GenEngineInfoKey(jobID, index.Meta().ID)
 	bc, _ := lit.BackCtxMgr.Load(jobID)

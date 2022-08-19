@@ -20,10 +20,9 @@ import (
 	lit "github.com/pingcap/tidb/ddl/lightning"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/stretchr/testify/require"
 )
 
-func initTest(t *testing.T) (*suiteContext, error) {
+func initTest(t *testing.T) *suiteContext {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -33,9 +32,11 @@ func initTest(t *testing.T) (*suiteContext, error) {
 
 	ctx := newSuiteContext(t, tk)
 	// create table
-	err := createTable(ctx)
+	createTable(ctx)
+	insertRows(ctx)
+
 	lit.GlobalEnv.PdAddr = "127.0.0.1:2379"
-	return ctx, err
+	return ctx
 }
 
 func TestCreateNonUniqueIndex(t *testing.T) {
@@ -44,8 +45,7 @@ func TestCreateNonUniqueIndex(t *testing.T) {
 		{2, 5, 8, 11, 14, 17, 20, 23, 26},
 		{3, 6, 9, 12, 15, 18, 21, 24, 27},
 	}
-	ctx, err := initTest(t)
-	require.NoError(t, err)
+	ctx := initTest(t)
 	testOneColFrame(ctx, colIDs, addIndexLitNonUnique)
 }
 
@@ -55,20 +55,17 @@ func TestCreateUniqueIndex(t *testing.T) {
 		{2, 9, 11, 17},
 		{3, 12, 25},
 	}
-	ctx, err := initTest(t)
-	require.NoError(t, err)
+	ctx := initTest(t)
 	testOneColFrame(ctx, colIDs, addIndexLitUnique)
 }
 
 func TestCreatePK(t *testing.T) {
-	ctx, err := initTest(t)
-	require.NoError(t, err)
+	ctx := initTest(t)
 	testOneIndexFrame(ctx, 0, addIndexLitPK)
 }
 
 func TestCreateGenColIndex(t *testing.T) {
-	ctx, err := initTest(t)
-	require.NoError(t, err)
+	ctx := initTest(t)
 	testOneIndexFrame(ctx, 29, addIndexLitGenCol)
 }
 
@@ -83,7 +80,6 @@ func TestCreateMultiColsIndex(t *testing.T) {
 		{14, 17, 20, 23, 26},
 		{18, 21, 24, 27},
 	}
-	ctx, err := initTest(t)
-	require.NoError(t, err)
+	ctx := initTest(t)
 	testTwoColsFrame(ctx, coliIDs, coljIDs, addIndexLitMultiCols)
 }

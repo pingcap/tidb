@@ -613,24 +613,6 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
-	// Calculate worker count for lightning.
-	// if litWorkerCnt is 0 or err exist, means no resource for lightning execution,
-	// then go back use kernel way to backfill index.
-	var litWorkerCnt int
-	if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && !bc.NeedRestore() {
-		if !isPiTREnable(w) {
-			litWorkerCnt, err = prepareLightningEngine(job, reorgInfo.currElement.ID, int(workerCnt))
-			if err == nil && workerCnt >= int32(litWorkerCnt) {
-				workerCnt = int32(litWorkerCnt)
-				bc.SetNeedRestore(true)
-			} else {
-				logutil.BgLogger().Error("Lighting Create Engine failed.", zap.Error(err))
-			}
-		} else {
-			// If enabled PiTR, use txn way to do backfill with index.
-			logutil.BgLogger().Info("PiTR enabled, disabled lightning backfill.")
-		}
-	}
 	backfillWorkers := make([]*backfillWorker, 0, workerCnt)
 	defer func() {
 		closeBackfillWorkers(backfillWorkers)
@@ -652,16 +634,6 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		// If only have 1 range, we can only start 1 worker.
 		if len(kvRanges) < int(workerCnt) {
 			workerCnt = int32(len(kvRanges))
-		}
-
-		if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && bc.NeedRestore() && workerCnt > int32(litWorkerCnt) {
-			count, err := prepareLightningEngine(job, reorgInfo.currElement.ID, int(workerCnt-int32(litWorkerCnt)))
-			if err != nil {
-				errMsg := "Lightning engine lost, maybe cause data consistent problem, rollback job."
-				logutil.BgLogger().Error(errMsg, zap.String("Job ID:", strconv.FormatInt(job.ID, 10)))
-				return errors.New(errMsg)
-			}
-			workerCnt = int32(litWorkerCnt + count)
 		}
 
 		// Enlarge the worker size.
@@ -687,20 +659,11 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:
-				// Firstly, check and try lightning path.
-				if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && bc.NeedRestore() {
-					idxWorker, err := newAddIndexWorkerLit(sessCtx, w, i, t, decodeColMap, reorgInfo, jc, job.ID)
-					if err == nil {
-						idxWorker.priority = job.Priority
-						backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
-						go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
-					}
-				} else {
-					idxWorker := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
-					idxWorker.priority = job.Priority
-					backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
-					go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+				backfillWorker := spawnAddIndexWorker(sessCtx, i, job, t, decodeColMap, reorgInfo, jc)
+				if backfillWorker == nil {
+					break
 				}
+				backfillWorkers = append(backfillWorkers, backfillWorker)
 			case typeUpdateColumnWorker:
 				// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 				sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
@@ -768,6 +731,34 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		startKey = remains[0].StartKey
 	}
 	return nil
+}
+
+func spawnAddIndexWorker(sessCtx sessionctx.Context, seq int, job *model.Job, t table.PhysicalTable,
+	decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *backfillWorker {
+	// Firstly, check and try lightning path.
+	if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && bc.NeedRestore() {
+		_, err := bc.EngMgr.Register(bc, job, reorgInfo.currElement.ID, 1)
+		if err != nil {
+			if seq == 0 { // The first worker.
+				lightning.BackCtxMgr.Unregister(job.ID) // fallback to the general worker.
+				logutil.BgLogger().Warn(lightning.LitErrCreateEngineFail, zap.Error(err), zap.Bool("fallback", true))
+			} else {
+				// It may reach to a limit of the lightning workers.
+				logutil.BgLogger().Warn(lightning.LitWarnExtentWorker, zap.Error(err), zap.Bool("fallback", false))
+				return nil
+			}
+		} else {
+			idxWorker, err := newAddIndexWorkerLit(sessCtx, seq, t, decodeColMap, reorgInfo, jc)
+			if err == nil {
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+				return idxWorker.backfillWorker
+			}
+		}
+	}
+	// Fallback to the general add index worker.
+	idxWorker := newAddIndexWorker(sessCtx, seq, t, decodeColMap, reorgInfo, jc)
+	go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+	return idxWorker.backfillWorker
 }
 
 // recordIterFunc is used for low-level record iteration.

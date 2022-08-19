@@ -34,10 +34,11 @@ func (m *engineManager) init(memRoot MemRoot) {
 }
 
 // Register create a new engineInfo and register it to the engineManager.
-func (m *engineManager) Register(bc *BackendContext, job *model.Job, engineKey string, indexID int64, wCnt int) (int, error) {
+func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int64, wCnt int) (int, error) {
 	var err error
 	// Calculate lightning concurrency degree and set memory usage.
 	// and pre-allocate memory usage for worker
+	engineKey := GenEngineInfoKey(job.ID, indexID)
 	newWorkerCount := m.MemRoot.WorkerDegree(wCnt, engineKey, job.ID)
 	en, exist1 := m.Load(engineKey)
 	if !exist1 {

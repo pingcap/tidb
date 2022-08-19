@@ -36,6 +36,7 @@ const (
 	LitErrRemoteDupCheckrr  string = "lightning: Remote duplicate check error"
 	LitErrRemoteDupExistErr string = "lightning: Remote duplicate index key exist"
 	LitErrDiskQuotaLess     string = "lightning: Specified disk quota is less than 100 GB disable the lightning"
+	LitErrIncompatiblePiTR  string = "lightning: The storage config log-backup.enable should be false when the lightning backfill is enabled"
 	LitWarnEnvInitFail      string = "lightning: Initialize environment failed"
 	LitWarnBackendNOTExist  string = "lightning: Backend not exist"
 	LitWarnConfigError      string = "lightning: Build config for backend failed"

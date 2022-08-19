@@ -597,13 +597,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
-		// Determine whether the lightning backfill process will be used.
-		if IsEnableFastReorg() {
-			err = lightning.BackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
-			if err == nil {
-				indexInfo.BackfillState = model.BackfillStateRunning
-			}
-		}
+		checkAndInitLightningBackfillCtx(w.ctx, job, indexInfo)
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
 		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
@@ -687,6 +681,31 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	return ver, errors.Trace(err)
 }
 
+// checkAndInitLightningBackfillCtx determines which backfill process will be used. The following three processes are available:
+//  1. Txn backfill(original): all the index KVs are written through the transaction interface.
+//  2. Lightning backfill: the index KVs are encoded to SST files and imported to the storage directly.
+//     The incremental index KVs written by DML are redirected to a temporary index.
+//     After the backfill is finished, the temporary index records are merged back to the original index.
+//  3. Txn-merge backfill: the backfill index KVs are written through the transaction interface.
+//     The incremental index KVs written by DML are redirected to a temporary index.
+//     After the backfill is finished, the temporary index records are merged back to the original index.
+func checkAndInitLightningBackfillCtx(ctx context.Context, job *model.Job, indexInfo *model.IndexInfo) {
+	if IsEnableFastReorg() {
+		if lightning.GlobalEnv.IsInited {
+			err := lightning.BackCtxMgr.Register(ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
+			if err != nil {
+				return // Txn backfill
+			}
+			indexInfo.BackfillState = model.BackfillStateRunning
+			return // Lightning backfill
+		}
+		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
+		indexInfo.BackfillState = model.BackfillStateRunning
+		return // Txn-merge backfill
+	}
+	// Txn backfill
+}
+
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
@@ -712,16 +731,25 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		logutil.BgLogger().Info("Lightning backfill state running")
 		// Restore reorg task if it interrupts during backfill state and TiDB owner is not changed or restarted.
 		if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok {
-			if bc.NeedRestore() {
+			needRestore := bc.NeedRestore()
+			pitrEnabled := isPiTREnable(w)
+			switch {
+			case needRestore && pitrEnabled:
+				return false, ver, errors.Trace(errors.New(lightning.LitErrIncompatiblePiTR))
+			case needRestore && !pitrEnabled:
 				// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consistent.
 				// TODO：Should be changed after checkpoint.
 				if !canRestoreReorgTask(job, indexInfo.ID) {
 					job.SnapshotVer = 0
-					reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
-					if err != nil || reorgInfo.first {
-						return false, ver, errors.Trace(err)
-					}
+					_, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
+					return false, ver, errors.Trace(err)
 				}
+			case !needRestore && pitrEnabled:
+				// The lightning backfill process is incompatible with PiTR.
+				// Use the txn way to do backfill the index.
+				logutil.BgLogger().Info("PiTR enabled, disabled lightning backfill")
+			case !needRestore && !pitrEnabled:
+				bc.SetNeedRestore(true)
 			}
 		} else {
 			// Be here, means the DDL Owner changed or restarted, the reorg state is re-entered.
@@ -826,7 +854,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		return false, ver, errors.Trace(err)
 	}
 	// Ingest data to TiKV
-	err = importIndexDataToStore(w.ctx, reorgInfo, indexInfo.ID, indexInfo.Unique, tbl)
+	err = importIndexDataToStore(reorgInfo, indexInfo.ID, indexInfo.Unique, tbl)
 	if err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			logutil.BgLogger().Warn("Lightning: [DDL] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
