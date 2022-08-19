@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"strconv"
 	"strings"
 	"sync"
@@ -3281,4 +3282,131 @@ PARTITION BY RANGE ( a ) (
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.Indices[tableInfo.Indices[0].ID].Buckets))
+}
+
+func TestIssue35056(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	createTable := `CREATE TABLE t (id int, a int, b varchar(10))
+PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20)
+)`
+	tk.MustExec(createTable)
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(7,7,7),(9,9,9)")
+	tk.MustExec("insert into t values (11,11,11),(12,12,12),(14,14,14)")
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	is := dom.InfoSchema()
+	h.HandleAutoAnalyze(is)
+	tk.MustExec("create index idxa on t (a)")
+	tk.MustExec("create index idxb on t (b)")
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	tk.MustExec("analyze table t partition p0 index idxa")
+	tk.MustExec("analyze table t partition p1 index idxb")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t partition p0") // no panic
+}
+
+func TestIssue35056Related(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	createTable := `CREATE TABLE t (id int)
+PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20)
+)`
+	tk.MustExec(createTable)
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(7),(9)")
+	tk.MustExec("insert into t values (11),(12),(14)")
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	is := dom.InfoSchema()
+	h.HandleAutoAnalyze(is)
+	tk.MustExec("alter table t add column a int")
+	tk.MustExec("alter table t add column b int")
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	tk.MustExec("analyze table t partition p0 columns id,a")
+	tk.MustExec("analyze table t partition p1 columns id,b")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t partition p0") // no panic
+}
+
+func TestIssue35044(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	createTable := `CREATE TABLE t (a int)
+PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20)
+)`
+	tk.MustExec(createTable)
+	tk.MustExec("insert into t values (1),(2),(3)")
+	tk.MustExec("insert into t values (11),(12),(14)")
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	is := dom.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	tk.MustExec("analyze table t partition p0 columns a")
+	tk.MustExec("analyze table t partition p1 columns a")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t partition p0")
+	tbl := h.GetTableStats(tableInfo)
+	require.Equal(t, int64(6), tbl.Columns[tableInfo.Columns[0].ID].Histogram.NDV)
+}
+
+func TestAnalyzePartitionTableForFloat(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( id bigint(20) unsigned NOT NULL AUTO_INCREMENT, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (id) PARTITIONS 128;")
+	// To reproduce the error we meet in https://github.com/pingcap/tidb/issues/35910, we should use the data provided in this issue
+	b, err := ioutil.ReadFile("testdata/analyze_test_data.sql")
+	require.NoError(t, err)
+	sqls := strings.Split(string(b), ";")
+	for _, sql := range sqls {
+		if len(sql) < 1 {
+			continue
+		}
+		tk.MustExec(sql)
+	}
+	tk.MustExec("analyze table t1")
 }

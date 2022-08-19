@@ -175,7 +175,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 			}
 		}
-		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable() && needGlobalStats); err1 != nil {
+		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable()); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(e.ctx, results.Job, err)
