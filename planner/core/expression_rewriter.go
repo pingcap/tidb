@@ -264,9 +264,10 @@ func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *ty
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. Else constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( a0 NE b0, a0 op b0,
-// 		IF ( isNull(a0 NE b0), Null,
-// 			IF ( a1 NE b1, a1 op b1,
-// 				IF ( isNull(a1 NE b1), Null, a2 op b2))))`
+//
+//	IF ( isNull(a0 NE b0), Null,
+//		IF ( a1 NE b1, a1 op b1,
+//			IF ( isNull(a1 NE b1), Null, a2 op b2))))`
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
@@ -1202,21 +1203,31 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 				break
 			}
 			chs := arg.GetType().GetCharset()
+			// if the field is json, the charset is always utf8mb4.
+			if arg.GetType().GetType() == mysql.TypeJSON {
+				chs = mysql.UTF8MB4Charset
+			}
 			if chs != "" && collInfo.CharsetName != chs {
 				er.err = charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
 				break
 			}
 		}
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
-		if _, ok := arg.(*expression.Column); ok {
+		if _, ok := arg.(*expression.Column); ok || arg.GetType().GetType() == mysql.TypeJSON {
 			if arg.GetType().GetType() == mysql.TypeEnum || arg.GetType().GetType() == mysql.TypeSet {
 				er.err = ErrNotSupportedYet.GenWithStackByArgs("use collate clause for enum or set")
 				break
 			}
 			// Wrap a cast here to avoid changing the original FieldType of the column expression.
 			exprType := arg.GetType().Clone()
+			// if arg type is json, we should cast it to longtext if there is collate clause.
+			if arg.GetType().GetType() == mysql.TypeJSON {
+				exprType = types.NewFieldType(mysql.TypeLongBlob)
+				exprType.SetCharset(mysql.UTF8MB4Charset)
+			}
 			exprType.SetCollate(v.Collate)
 			casted := expression.BuildCastFunction(er.sctx, arg, exprType)
+			arg = casted
 			er.ctxStackPop(1)
 			er.ctxStackAppend(casted, types.EmptyName)
 		} else {
@@ -1279,14 +1290,10 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			// Store the field type of the variable into SessionVars.UserVarTypes.
 			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
 			// GetVar has not been executed to fill the SessionVars.Users.
-			sessionVars.UsersLock.Lock()
-			sessionVars.UserVarTypes[name] = tp
-			sessionVars.UsersLock.Unlock()
+			sessionVars.SetUserVarType(name, tp)
 			return
 		}
-		sessionVars.UsersLock.RLock()
-		tp, ok := sessionVars.UserVarTypes[name]
-		sessionVars.UsersLock.RUnlock()
+		tp, ok := sessionVars.GetUserVarType(name)
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			tp.SetFlen(mysql.MaxFieldVarCharLength)
