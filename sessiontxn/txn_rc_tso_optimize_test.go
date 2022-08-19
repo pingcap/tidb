@@ -312,7 +312,7 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 	assertAllTsoCounter(t, []uint64{uint64(60), countTsoRequest.(uint64),
 		uint64(20), countTsoUseConstant.(uint64), uint64(20), countWaitTsoOracle.(uint64)})
 
-	// insert with select
+	// delete
 	sqlDeleteID1, _, _, _ := tk.Session().PrepareStmt("DELETE FROM t1 WHERE id1 = ?")
 	sqlDeleteID2, _, _, _ := tk.Session().PrepareStmt("DELETE FROM t1 WHERE id1 > ?")
 	sqlDeleteID3, _, _, _ := tk.Session().PrepareStmt("DELETE FROM t1 WHERE id1 IN (SELECT id1 FROM t2 WHERE id1 = ?)")
@@ -333,6 +333,28 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
 	assertAllTsoCounter(t, []uint64{uint64(4), countTsoRequest.(uint64),
 		uint64(1), countTsoUseConstant.(uint64), uint64(2), countWaitTsoOracle.(uint64)})
+
+	// insert on duplicate
+	sqlInsertID2, _, _, _ := tk.Session().PrepareStmt("INSERT INTO t1 VALUES(10,5,5) ON DUPLICATE KEY UPDATE id3 = id3 + 100")
+	sqlInsertID3, _, _, _ := tk.Session().PrepareStmt("INSERT INTO t1 VALUES(10,5,5) ON DUPLICATE KEY UPDATE id2 = id2 + 100")
+	sqlInsertID4, _, _, _ := tk.Session().PrepareStmt("INSERT INTO t1 VALUES(8,10,5) ON DUPLICATE KEY UPDATE id3 = id3 + 100")
+	resetAllTsoCounter(sctx)
+	for i := 0; i < 5; i++ {
+		tk.MustExec("begin pessimistic")
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlInsertID2, expression.Args2Expressions4Test(3))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID3, expression.Args2Expressions4Test(4))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID4, expression.Args2Expressions4Test(20))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		tk.MustExec("commit")
+	}
+	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
+	assertAllTsoCounter(t, []uint64{uint64(10), countTsoRequest.(uint64),
+		uint64(15), countTsoUseConstant.(uint64), uint64(0), uint64(countWaitTsoOracle.(int))})
 }
 
 func TestRcTSOCmdCountForTextSQLExecute(t *testing.T) {
@@ -567,7 +589,7 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 	assertAllTsoCounter(t, []uint64{uint64(3), countTsoRequest.(uint64),
 		uint64(1), countTsoUseConstant.(uint64), uint64(1), countWaitTsoOracle.(uint64)})
 
-	// insert with select
+	// delete
 	resetAllTsoCounter(sctx)
 	for i := 0; i < 1; i++ {
 		tk.MustExec("begin pessimistic")
@@ -579,4 +601,17 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
 	assertAllTsoCounter(t, []uint64{uint64(4), countTsoRequest.(uint64),
 		uint64(1), countTsoUseConstant.(uint64), uint64(2), countWaitTsoOracle.(uint64)})
+
+	// insert on duplicate key
+	resetAllTsoCounter(sctx)
+	for i := 0; i < 5; i++ {
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("INSERT INTO t1 VALUES(10,5,5) ON DUPLICATE KEY UPDATE id3 = id3 + 100")
+		tk.MustExec("INSERT INTO t1 VALUES(10,5,5) ON DUPLICATE KEY UPDATE id2 = id2 + 100")
+		tk.MustExec("INSERT INTO t1 VALUES(8,10,5) ON DUPLICATE KEY UPDATE id3 = id3 + 100")
+		tk.MustExec("commit")
+	}
+	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
+	assertAllTsoCounter(t, []uint64{uint64(10), countTsoRequest.(uint64),
+		uint64(15), countTsoUseConstant.(uint64), uint64(0), uint64(countWaitTsoOracle.(int))})
 }
