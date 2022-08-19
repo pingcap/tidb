@@ -119,20 +119,19 @@ func (l *LRUPlanCache) Put(key Key, value Value, paramTypes interface{}) {
 	}
 }
 
-// Delete deletes the key-value pair from the LRU Cache.
-func (l *LRUPlanCache) Delete(key Key, paramTypes interface{}) {
+// Delete deletes the key-multivalues from the LRU Cache.
+func (l *LRUPlanCache) Delete(key Key) {
 	k := string(key.Hash())
 	bucket, ok := l.buckets[k]
 	if !ok {
 		return
 	}
 	// remove from bucket
-	if element, idx, exist1 := l.choose(bucket, paramTypes); exist1 {
-		bucket = append(bucket[:idx], bucket[idx+1:]...)
-		l.buckets[k] = bucket
+	for _, element := range bucket {
 		l.cache.Remove(element)
 		l.size--
 	}
+	l.buckets[k] = nil
 }
 
 // DeleteAll deletes all elements from the LRU Cache.

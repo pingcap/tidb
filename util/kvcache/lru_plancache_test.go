@@ -220,7 +220,7 @@ func TestLRUPCDelete(t *testing.T) {
 	}
 	require.Equal(t, 3, int(lru.size))
 
-	lru.Delete(keys[1], pTypes[1])
+	lru.Delete(keys[1])
 	value, exists := lru.Get(keys[1], pTypes[1])
 	require.False(t, exists)
 	require.Nil(t, value)
