@@ -235,6 +235,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 				d.once.Store(false)
 			} else {
 				logutil.BgLogger().Info("[ddl] wait ddl job sync failed", zap.Error(err), zap.String("job", job.String()))
+				return
 			}
 		}
 		if err := wk.HandleDDLJobTable(d.ddlCtx, job); err != nil {
