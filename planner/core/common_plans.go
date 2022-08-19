@@ -454,28 +454,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 
 	var bindSQL string
-<<<<<<< HEAD
-	if prepared.UseCache {
-		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
-		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
-=======
 	var ignorePlanCache = false
-
-	// In rc or for update read, we need the latest schema version to decide whether we need to
-	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
-	var latestSchemaVersion int64
 
 	if prepared.UseCache {
 		bindSQL, ignorePlanCache = GetBindSQL4PlanCache(sctx, preparedStmt)
-		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
-			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
-			// last time. If it changed, we should rebuild the plan. Here, we use a different and more
-			// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
-			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
-		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText,
-			preparedStmt.StmtDB, prepared.SchemaVersion, latestSchemaVersion); err != nil {
->>>>>>> 1923d3362... planner: fix bindings with ignore_plan_cache_hint cannot work (#36427)
+			preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
 			return err
 		}
 	}
