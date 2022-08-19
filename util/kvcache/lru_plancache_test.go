@@ -44,7 +44,7 @@ func pickFromBucket(bucket []*list.Element, itB interface{}) (*list.Element, int
 	return nil, -1, false
 }
 
-func TestPCLRUPut(t *testing.T) {
+func TestLRUPCPut(t *testing.T) {
 	pcLRU := NewPCLRUCache(3, pickFromBucket)
 	require.Equal(t, uint(3), pcLRU.capacity)
 
@@ -112,7 +112,7 @@ func TestPCLRUPut(t *testing.T) {
 	require.Nil(t, root)
 }
 
-func TestPCLRUGet(t *testing.T) {
+func TestLRUPCGet(t *testing.T) {
 	lru := NewPCLRUCache(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
@@ -157,7 +157,7 @@ func TestPCLRUGet(t *testing.T) {
 	}
 }
 
-func TestPCLRUGet2(t *testing.T) {
+func TestLRUPCGet2(t *testing.T) {
 	lru := NewPCLRUCache(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
@@ -202,7 +202,7 @@ func TestPCLRUGet2(t *testing.T) {
 	}
 }
 
-func TestPCLRUDelete(t *testing.T) {
+func TestLRUPCDelete(t *testing.T) {
 	lru := NewPCLRUCache(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 3)
@@ -232,7 +232,7 @@ func TestPCLRUDelete(t *testing.T) {
 	require.True(t, exists)
 }
 
-func TestPCLRUDeleteAll(t *testing.T) {
+func TestLRUPCDeleteAll(t *testing.T) {
 	lru := NewPCLRUCache(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 3)
@@ -259,7 +259,7 @@ func TestPCLRUDeleteAll(t *testing.T) {
 	}
 }
 
-func TestPCLRUKeys(t *testing.T) {
+func TestLRUPCKeys(t *testing.T) {
 	lru := NewPCLRUCache(5, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
@@ -282,7 +282,7 @@ func TestPCLRUKeys(t *testing.T) {
 	}
 }
 
-func TestPCLRUValues(t *testing.T) {
+func TestLRUPCValues(t *testing.T) {
 	lru := NewPCLRUCache(5, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
