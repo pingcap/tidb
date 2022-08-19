@@ -121,11 +121,11 @@ Projection	1.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.d
     └─Projection	0.00	root		test.st.id, test.st.aid, test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext, test.st.t, test.dd.id, test.dd.dic, test.dd.ip, test.dd.t
       └─HashJoin	0.00	root		inner join, equal:[eq(test.dd.aid, test.st.aid) eq(test.dd.ip, test.st.ip)], other cond:gt(test.dd.t, test.st.t)
         ├─IndexLookUp(Build)	0.00	root		
-        │ ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
+        │ ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf), keep order:false, stats:pseudo
         │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), not(isnull(test.dd.ip))
         │   └─TableRowIDScan	3333.33	cop[tikv]	table:dd	keep order:false, stats:pseudo
         └─IndexLookUp(Probe)	3.33	root		
-          ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
+          ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1478143908,+inf), keep order:false, stats:pseudo
           └─Selection(Probe)	3.33	cop[tikv]		eq(test.st.pt, "android"), not(isnull(test.st.ip))
             └─TableRowIDScan	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
 explain format = 'brief' select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
@@ -134,7 +134,7 @@ Projection	0.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.d
 └─Limit	0.00	root		offset:0, count:3000
   └─IndexJoin	0.00	root		inner join, inner:IndexLookUp, outer key:test.st.aid, inner key:test.dd.aid, equal cond:eq(test.st.aid, test.dd.aid), eq(test.st.dic, test.dd.mac), other cond:lt(test.st.t, test.dd.t)
     ├─IndexLookUp(Build)	0.00	root		
-    │ ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1477971479,+inf], keep order:false, stats:pseudo
+    │ ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1477971479,+inf), keep order:false, stats:pseudo
     │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), not(isnull(test.st.dic))
     │   └─TableRowIDScan	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
     └─IndexLookUp(Probe)	0.00	root		
