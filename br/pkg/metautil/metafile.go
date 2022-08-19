@@ -427,11 +427,13 @@ func (op AppendOp) name() string {
 }
 
 // appends item to MetaFile
-func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (size int, itemCount int) {
+func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (sstFilesSize int, size int, itemCount int) {
 	switch op {
 	case AppendMetaFile:
-		a.MetaFiles = append(a.MetaFiles, b.(*backuppb.File))
-		size += int(b.(*backuppb.File).Size_)
+		metaFile := b.(*backuppb.File)
+		a.MetaFiles = append(a.MetaFiles, metaFile)
+		size += metaFile.Size()
+		sstFilesSize += int(metaFile.Size_)
 		itemCount++
 	case AppendDataFile:
 		// receive a batch of file because we need write and default sst are adjacent.
@@ -439,7 +441,8 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (size int, it
 		a.DataFiles = append(a.DataFiles, files...)
 		for _, f := range files {
 			itemCount++
-			size += int(f.Size_)
+			size += f.Size()
+			sstFilesSize += int(f.Size_)
 		}
 	case AppendSchema:
 		a.Schemas = append(a.Schemas, b.(*backuppb.Schema))
@@ -450,15 +453,16 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (size int, it
 		itemCount++
 		size += len(b.([]byte))
 	}
-	return size, itemCount
+	return sstFilesSize, size, itemCount
 }
 
 type sizedMetaFile struct {
 	// A stack like array, we always append to the last node.
-	root      *backuppb.MetaFile
-	size      int
-	itemNum   int
-	sizeLimit int
+	root         *backuppb.MetaFile
+	sstFilesSize int
+	size         int
+	itemNum      int
+	sizeLimit    int
 }
 
 // NewSizedMetaFile represents the sizedMetaFile.
@@ -476,9 +480,10 @@ func NewSizedMetaFile(sizeLimit int) *sizedMetaFile {
 func (f *sizedMetaFile) append(file interface{}, op AppendOp) bool {
 	// append to root
 	// 	TODO maybe use multi level index
-	size, itemCount := op.appendFile(f.root, file)
+	sstFilesSize, size, itemCount := op.appendFile(f.root, file)
 	f.itemNum += itemCount
 	f.size += size
+	f.sstFilesSize += sstFilesSize
 	// f.size would reset outside
 	return f.size > f.sizeLimit
 }
@@ -715,7 +720,7 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 	}
 
 	name := op.name()
-	writer.metafileSizes[name] += writer.metafiles.size
+	writer.metafileSizes[name] += writer.metafiles.sstFilesSize
 	// Flush metafiles to external storage.
 	writer.metafileSeqNum["metafiles"]++
 	fname := fmt.Sprintf("backupmeta.%s.%09d", name, writer.metafileSeqNum["metafiles"])
