@@ -1181,7 +1181,7 @@ type SessionVars struct {
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
 	RcReadCheckTS bool
-	// RcPointLockReadUseLastTso indicates whether poin-lock-read doesn't get latest tso from PD at RC
+	// RcPointLockReadUseLastTso indicates whether point-lock-read doesn't get latest tso from PD at RC
 	RcPointLockReadUseLastTso bool
 	// RcInsertUseLastTso indicates wthether insert sqls doesn't get latest tso from PD at RC
 	RcInsertUseLastTso bool

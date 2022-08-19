@@ -111,8 +111,8 @@ func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 
 // NeedDisableWarmupInOptimizer checks whether optimizer calls `txnManger.AdviseWarmup()` to warmup in RC isolation.
 // txnManger.AdviseWarmup makes a tso request except that it's a readonly statement with RcReadCheckTS mode, please
-// reffer to tidb_rc_read_check_ts and know more about RcReadCheckTS mode. But for some special scenes, it maybe not
-// necessary to get tso from PD such as bellow.
+// refer to tidb_rc_read_check_ts and know more about RcReadCheckTS mode. But for some special scenes, it maybe not
+// necessary to get tso from PD such as below.
 // 1. RC isolation && not internal sqls && In transaction
 // 2. Insert without select || point update/delete/lock-read
 // It can't judge if node is a point-update/point-delete/point-lock-read here. To simplify the process, disable calling
