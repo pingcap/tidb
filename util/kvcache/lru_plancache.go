@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
+// CacheEntry wraps Key and Value. It's the value of list.Element.
 type CacheEntry struct {
 	PlanKey   Key
 	PlanValue Value
