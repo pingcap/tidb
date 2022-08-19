@@ -309,7 +309,7 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 
 // HasTemporaryTable returns whether information schema has temporary table
 func (is *infoSchema) HasTemporaryTable() bool {
-	return is.temporaryTableIDs != nil && len(is.temporaryTableIDs) > 0
+	return len(is.temporaryTableIDs) != 0
 }
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
