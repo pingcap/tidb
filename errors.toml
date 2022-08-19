@@ -366,9 +366,24 @@ error = '''
 create kv client error
 '''
 
+["Lightning:KV:ErrKVIngestFailed"]
+error = '''
+ingest tikv failed
+'''
+
+["Lightning:KV:ErrKVRaftProposalDropped"]
+error = '''
+raft proposal dropped
+'''
+
 ["Lightning:KV:NotLeader"]
 error = '''
 not leader
+'''
+
+["Lightning:KV:ReadIndexNotReady"]
+error = '''
+read index not ready
 '''
 
 ["Lightning:KV:RegionNotFound"]
