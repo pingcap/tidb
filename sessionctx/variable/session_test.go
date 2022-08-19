@@ -387,6 +387,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 
 func TestGeneralPlanCacheStmt(t *testing.T) {
 	sessVars := variable.NewSessionVars()
+	sessVars.GeneralPlanCacheSize = 100
 	sql1 := "select * from t where a>?"
 	sql2 := "select * from t where a<?"
 	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
