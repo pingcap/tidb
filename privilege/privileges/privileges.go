@@ -309,13 +309,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		}
 	}
 
-	// Login a locked account is not allowed.
-	locked := record.AccountLocked
-	if locked {
-		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
-		return errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
-	}
-
 	pwd := record.AuthenticationString
 	if !p.isValidHash(record) {
 		return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
@@ -363,6 +356,13 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	} else {
 		logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 		return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+	}
+
+	// Login a locked account is not allowed.
+	locked := record.AccountLocked
+	if locked {
+		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
+		return errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
 
 	p.user = authUser
