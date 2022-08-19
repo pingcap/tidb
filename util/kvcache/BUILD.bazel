@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "kvcache",
-    srcs = ["simple_lru.go"],
+    srcs = [
+        "simple_lru.go",
+        "lru_plancache.go",
+    ],
     importpath = "github.com/pingcap/tidb/util/kvcache",
     visibility = ["//visibility:public"],
     deps = [
@@ -17,6 +20,7 @@ go_test(
     srcs = [
         "main_test.go",
         "simple_lru_test.go",
+        "lru_plancache_test.go",
     ],
     embed = [":kvcache"],
     flaky = True,
