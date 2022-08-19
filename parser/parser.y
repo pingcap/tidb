@@ -2592,7 +2592,7 @@ FlashbackClusterStmt:
 	"FLASHBACK" "CLUSTER" AsOfClause
 	{
 		$$ = &ast.FlashBackClusterStmt{
-			AsOf: $3.(*ast.AsOfClause),
+			AsOf: *$3.(*ast.AsOfClause),
 		}
 	}
 

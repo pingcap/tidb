@@ -4042,16 +4042,14 @@ func (n *RecoverTableStmt) Accept(v Visitor) (Node, bool) {
 type FlashBackClusterStmt struct {
 	ddlNode
 
-	AsOf *AsOfClause
+	AsOf AsOfClause
 }
 
 // Restore implements Node interface
 func (n *FlashBackClusterStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("FLASHBACK CLUSTER ")
-	if n.AsOf != nil {
-		if err := n.AsOf.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while splicing FlashBackClusterStmt.Asof")
-		}
+	if err := n.AsOf.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while splicing FlashBackClusterStmt.Asof")
 	}
 	return nil
 }
@@ -4064,13 +4062,11 @@ func (n *FlashBackClusterStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*FlashBackClusterStmt)
-	if n.AsOf != nil {
-		node, ok := n.AsOf.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.AsOf = node.(*AsOfClause)
+	node, ok := n.AsOf.Accept(v)
+	if !ok {
+		return n, false
 	}
+	n.AsOf = *node.(*AsOfClause)
 	return v.Leave(n)
 }
 
