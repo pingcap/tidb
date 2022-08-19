@@ -73,8 +73,8 @@ func TestLRUPCPut(t *testing.T) {
 	// test for non-existent elements
 	require.Len(t, maxMemDroppedKv, 2)
 	for i := 0; i < 2; i++ {
-		bucket, _ := pcLRU.buckets[string(keys[i].Hash())]
-		//element, exist, _ := pcLRU.choose(elements)
+		bucket, exist := pcLRU.buckets[string(keys[i].Hash())]
+		require.True(t, exist)
 		for _, element := range bucket {
 			require.NotEqual(t, vals[i], element.Value.(*cacheEntry).value)
 		}
@@ -94,7 +94,8 @@ func TestLRUPCPut(t *testing.T) {
 		require.NotNil(t, key)
 		require.Equal(t, keys[i], key)
 
-		bucket, _ := pcLRU.buckets[string(keys[i].Hash())]
+		bucket, exist := pcLRU.buckets[string(keys[i].Hash())]
+		require.True(t, exist)
 		element, _, exist := pcLRU.choose(bucket, pTypes[i])
 		require.NotNil(t, element)
 		require.True(t, exist)
