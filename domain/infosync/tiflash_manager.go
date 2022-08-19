@@ -92,7 +92,7 @@ func (m *TiFlashPDPlacementManager) SetTiFlashGroupConfig(ctx context.Context) e
 			return errors.Trace(err)
 		}
 
-		if groupConfig.Index != placement.RuleIndexTiFlash {
+		if groupConfig.Index != placement.RuleIndexTiFlash || groupConfig.Override {
 			shouldUpdate = true
 		}
 	}
@@ -100,6 +100,7 @@ func (m *TiFlashPDPlacementManager) SetTiFlashGroupConfig(ctx context.Context) e
 	if shouldUpdate {
 		groupConfig.ID = placement.TiFlashRuleGroupID
 		groupConfig.Index = placement.RuleIndexTiFlash
+		groupConfig.Override = false
 
 		body, err := json.Marshal(&groupConfig)
 		if err != nil {
