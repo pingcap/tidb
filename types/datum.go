@@ -1069,7 +1069,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.GetFlen(), tp.GetCharset()
 	if flen >= 0 {
-		// overflowed stores the part of the string that is out of the length contraint, it is later checked to see if the
+		// overflowed stores the part of the string that is out of the length constraint, it is later checked to see if the
 		// overflowed part is all whitespaces
 		var overflowed string
 		var characterLen int
@@ -1126,8 +1126,8 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 					s = truncateStr(s, truncateLen)
 				}
 			}
-		} else if len(s) > flen {
-			characterLen = len(s)
+		} else if utf8.RuneCountInString(s) > flen {
+			characterLen = utf8.RuneCountInString(s)
 			overflowed = s[flen:]
 			s = truncateStr(s, flen)
 		}
