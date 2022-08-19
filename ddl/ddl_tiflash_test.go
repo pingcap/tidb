@@ -959,6 +959,8 @@ func TestTiFlashProgress(t *testing.T) {
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 
+	save := infosync.GetEtcdClient()
+	defer infosync.SetEtcdClient(save)
 	infosync.SetEtcdClient(cluster.Client(0))
 	tk.MustExec("create database tiflash_d")
 	tk.MustExec("create table tiflash_d.t(z int)")
