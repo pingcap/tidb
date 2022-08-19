@@ -28,7 +28,7 @@ type fakePlan struct {
 
 func pickFromBucket(bucket []*list.Element, itB interface{}) (*list.Element, int, bool) {
 	for i, element := range bucket {
-		itemsA := element.Value.(*cacheEntry).value.(*fakePlan).s
+		itemsA := element.Value.(*CacheEntry).PlanValue.(*fakePlan).s
 		itemsB := itB.([]string)
 		flag := true
 		for j := 0; j < len(itemsA); j++ {
@@ -45,7 +45,7 @@ func pickFromBucket(bucket []*list.Element, itB interface{}) (*list.Element, int
 }
 
 func TestLRUPCPut(t *testing.T) {
-	pcLRU := NewLRUPlanCache(3, pickFromBucket)
+	pcLRU := NewLRUPlanCacheOld(3, pickFromBucket)
 	require.Equal(t, uint(3), pcLRU.capacity)
 
 	keys := make([]*mockCacheKey, 5)
@@ -76,7 +76,7 @@ func TestLRUPCPut(t *testing.T) {
 		bucket, exist := pcLRU.buckets[string(keys[i].Hash())]
 		require.True(t, exist)
 		for _, element := range bucket {
-			require.NotEqual(t, vals[i], element.Value.(*cacheEntry).value)
+			require.NotEqual(t, vals[i], element.Value.(*CacheEntry).PlanValue)
 		}
 		require.Equal(t, vals[i], maxMemDroppedKv[keys[i]])
 	}
@@ -85,12 +85,12 @@ func TestLRUPCPut(t *testing.T) {
 	root := pcLRU.cache.Front()
 	require.NotNil(t, root)
 	for i := 4; i >= 2; i-- {
-		entry, ok := root.Value.(*cacheEntry)
+		entry, ok := root.Value.(*CacheEntry)
 		require.True(t, ok)
 		require.NotNil(t, entry)
 
 		// test key
-		key := entry.key
+		key := entry.PlanKey
 		require.NotNil(t, key)
 		require.Equal(t, keys[i], key)
 
@@ -102,7 +102,7 @@ func TestLRUPCPut(t *testing.T) {
 		require.Equal(t, root, element)
 
 		// test value
-		value, ok := entry.value.(*fakePlan)
+		value, ok := entry.PlanValue.(*fakePlan)
 		require.True(t, ok)
 		require.Equal(t, vals[i], value)
 
@@ -114,7 +114,7 @@ func TestLRUPCPut(t *testing.T) {
 }
 
 func TestLRUPCGet(t *testing.T) {
-	lru := NewLRUPlanCache(3, pickFromBucket)
+	lru := NewLRUPlanCacheOld(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -148,18 +148,18 @@ func TestLRUPCGet(t *testing.T) {
 		root := lru.cache.Front()
 		require.NotNil(t, root)
 
-		entry, ok := root.Value.(*cacheEntry)
+		entry, ok := root.Value.(*CacheEntry)
 		require.True(t, ok)
-		require.Equal(t, keys[i], entry.key)
+		require.Equal(t, keys[i], entry.PlanKey)
 
-		value, ok = entry.value.(*fakePlan)
+		value, ok = entry.PlanValue.(*fakePlan)
 		require.True(t, ok)
 		require.Equal(t, vals[i], value)
 	}
 }
 
 func TestLRUPCGet2(t *testing.T) {
-	lru := NewLRUPlanCache(3, pickFromBucket)
+	lru := NewLRUPlanCacheOld(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -193,18 +193,18 @@ func TestLRUPCGet2(t *testing.T) {
 		root := lru.cache.Front()
 		require.NotNil(t, root)
 
-		entry, ok := root.Value.(*cacheEntry)
+		entry, ok := root.Value.(*CacheEntry)
 		require.True(t, ok)
-		require.Equal(t, keys[i], entry.key)
+		require.Equal(t, keys[i], entry.PlanKey)
 
-		value, ok = entry.value.(*fakePlan)
+		value, ok = entry.PlanValue.(*fakePlan)
 		require.True(t, ok)
 		require.Equal(t, vals[i], value)
 	}
 }
 
 func TestLRUPCDelete(t *testing.T) {
-	lru := NewLRUPlanCache(3, pickFromBucket)
+	lru := NewLRUPlanCacheOld(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
@@ -234,7 +234,7 @@ func TestLRUPCDelete(t *testing.T) {
 }
 
 func TestLRUPCDeleteAll(t *testing.T) {
-	lru := NewLRUPlanCache(3, pickFromBucket)
+	lru := NewLRUPlanCacheOld(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
@@ -261,7 +261,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 }
 
 func TestLRUPCKeys(t *testing.T) {
-	lru := NewLRUPlanCache(5, pickFromBucket)
+	lru := NewLRUPlanCacheOld(5, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -284,7 +284,7 @@ func TestLRUPCKeys(t *testing.T) {
 }
 
 func TestLRUPCValues(t *testing.T) {
-	lru := NewLRUPlanCache(5, pickFromBucket)
+	lru := NewLRUPlanCacheOld(5, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
