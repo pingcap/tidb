@@ -434,7 +434,6 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 
 func (e *PlanReplayerSingleExec) extractTableNames(ctx context.Context,
 	ExecStmt ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
-
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
 		executor: e.ctx.(sqlexec.RestrictedSQLExecutor),
