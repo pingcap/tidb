@@ -300,6 +300,7 @@ func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, p
 	return "", nil, false, nil
 }
 
+// PickPlanByParamTypes pick one plan from bucket, cooperates with LRUPlanCache
 func PickPlanByParamTypes(bucket []*list.Element, paramTypes interface{}) (*list.Element, int, bool) {
 	tps, ok := paramTypes.([]*types.FieldType)
 	if !ok {
