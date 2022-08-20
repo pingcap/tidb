@@ -288,7 +288,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		putPlanIntoCache(sctx, isGeneralPlanCache, cacheKey, cached)
+		putPlanIntoCache(sctx, isGeneralPlanCache, cacheKey, cached, paramTypes)
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err

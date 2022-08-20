@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"math"
 	"testing"
 	"time"
 
@@ -346,8 +345,9 @@ func TestPrepareWithAggregation(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+			PreparedPlanCache: kvcache.NewLRUPlanCache(100),
 		})
+		se.GetPlanCache(false).SetChoose(plannercore.PickPlanByParamTypes)
 		require.NoError(t, err)
 		tk.SetSession(se)
 
@@ -610,8 +610,10 @@ func TestPrepareDealloc(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=true`)
 
+	lru := kvcache.NewLRUPlanCache(3)
+	lru.SetChoose(plannercore.PickPlanByParamTypes)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(3, 0.1, math.MaxUint64),
+		PreparedPlanCache: lru,
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
