@@ -2118,7 +2118,7 @@ func TestAlterTableExchangePartition(t *testing.T) {
 
 	tk.MustExec("create table e19 (a int) partition by hash(a) partitions 1")
 	tk.MustExec("create temporary table e20 (a int)")
-	tk.MustGetErrCode("alter table e19 exchange partition p0 with table e20", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("alter table e19 exchange partition p0 with table e20", errno.ErrPartitionExchangeTempTable)
 }
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
