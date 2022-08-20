@@ -490,6 +490,11 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	return col.hashcode
 }
 
+// CleanHashCode will clean the hashcode you may be cached before. It's used especially in schema-cloned & reallocated-uniqueID's cases.
+func (col *Column) CleanHashCode() {
+	col.hashcode = make([]byte, 0, 9)
+}
+
 // ResolveIndices implements Expression interface.
 func (col *Column) ResolveIndices(schema *Schema) (Expression, error) {
 	newCol := col.Clone()

@@ -479,3 +479,22 @@ CTE_1	8000.00	root		Non-Recursive CTE
 CTE_0	10000.00	root		Non-Recursive CTE
 └─TableReader(Seed Part)	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists tbl;
+create table tbl (id int);
+explain with t1 as (select id from tbl), t2 as (select a.id from t1 a join t1 b on a.id = b.id) select * from t2 where id in (select id from t2);
+id	estRows	task	access object	operator info
+HashJoin_33	8000.00	root		inner join, equal:[eq(test.tbl.id, test.tbl.id)]
+├─HashAgg_37(Build)	5120.00	root		group by:test.tbl.id, funcs:firstrow(test.tbl.id)->test.tbl.id
+│ └─Selection_38	8000.00	root		not(isnull(test.tbl.id))
+│   └─CTEFullScan_39	10000.00	root	CTE:t2	data:CTE_1
+└─Selection_35(Probe)	8000.00	root		not(isnull(test.tbl.id))
+  └─CTEFullScan_36	10000.00	root	CTE:t2	data:CTE_1
+CTE_1	10000.00	root		Non-Recursive CTE
+└─HashJoin_25(Seed Part)	10000.00	root		inner join, equal:[eq(test.tbl.id, test.tbl.id)]
+  ├─Selection_29(Build)	8000.00	root		not(isnull(test.tbl.id))
+  │ └─CTEFullScan_30	10000.00	root	CTE:b	data:CTE_0
+  └─Selection_27(Probe)	8000.00	root		not(isnull(test.tbl.id))
+    └─CTEFullScan_28	10000.00	root	CTE:a	data:CTE_0
+CTE_0	10000.00	root		Non-Recursive CTE
+└─TableReader_22(Seed Part)	10000.00	root		data:TableFullScan_21
+  └─TableFullScan_21	10000.00	cop[tikv]	table:tbl	keep order:false, stats:pseudo
