@@ -4527,3 +4527,18 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n','\\''\t\n'),` + "\n" +
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
 }
+
+func TestReorganizePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ReorgPartition")
+	tk.MustExec("use ReorgPartition")
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255)) partition by range (a) ` +
+		`(partition p0 values less than (1000000),` +
+		` partition p1 values less than (2000000),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (1, "1"), (1000001, "1000001"),(2000002,"2000002"),(3000003,"3000003"),(4000004,"4000004"),(5000005,"5000005")`)
+	tk.MustExec(`alter table t reorganize partition pMax into (partition p2 values less than (4000000), partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`alter table t reorganize partition p2,pMax into (partition p2 values less than (3000000),partition p3 values less than (4000000), partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`alter table t reorganize partition p0,p1 into (partition p1 values less than (2000000))`)
+}
