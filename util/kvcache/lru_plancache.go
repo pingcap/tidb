@@ -140,7 +140,7 @@ func (l *LRUPlanCache) DeleteAll() {
 		l.cache.Remove(lru)
 		l.size--
 	}
-	l.buckets = nil
+	l.buckets = make(map[string][]*list.Element)
 }
 
 // Size gets the current cache size.

@@ -344,10 +344,11 @@ func TestPrepareWithAggregation(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
+		lru := kvcache.NewLRUPlanCache(100)
+		lru.SetChoose(plannercore.PickPlanByParamTypes)
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-			PreparedPlanCache: kvcache.NewLRUPlanCache(100),
+			PreparedPlanCache: lru,
 		})
-		se.GetPlanCache(false).SetChoose(plannercore.PickPlanByParamTypes)
 		require.NoError(t, err)
 		tk.SetSession(se)
 

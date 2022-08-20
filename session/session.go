@@ -442,6 +442,7 @@ func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.LRUPlanCache {
 		}
 		if s.generalPlanCache == nil { // lazy construction
 			s.generalPlanCache = kvcache.NewLRUPlanCache(uint(s.GetSessionVars().GeneralPlanCacheSize))
+			s.generalPlanCache.SetChoose(plannercore.PickPlanByParamTypes)
 		}
 		return s.generalPlanCache
 	}
@@ -452,6 +453,7 @@ func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.LRUPlanCache {
 	}
 	if s.preparedPlanCache == nil { // lazy construction
 		s.preparedPlanCache = kvcache.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize))
+		s.preparedPlanCache.SetChoose(plannercore.PickPlanByParamTypes)
 	}
 	return s.preparedPlanCache
 }

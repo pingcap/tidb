@@ -44,7 +44,7 @@ var (
 
 func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
 	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	cache.SetChoose(PickPlanByParamTypes)
+	cache.SetChoose(PickPlanByParamTypes) // todo: remove this
 	val, exist := cache.Get(key, paramTypes)
 	if exist {
 		plan, ok := val.(*PlanCacheValue)
