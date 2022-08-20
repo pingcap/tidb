@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -231,6 +232,13 @@ type session struct {
 	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
+
+	// StmtStats is used to count various indicators of each SQL in this session
+	// at each point in time. These data will be periodically taken away by the
+	// background goroutine. The background goroutine will continue to aggregate
+	// all the local data in each session, and finally report them to the remote
+	// regularly.
+	stmtStats *stmtstats.StatementStats
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1134,6 +1142,8 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		// Internal session uses default format to prevent memory leak problem.
+		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
 }
@@ -1154,6 +1164,8 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		// Internal session uses default format to prevent memory leak problem.
+		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
 }
@@ -2071,6 +2083,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		is := s.GetInfoSchema().(infoschema.InfoSchema)
 		if prepared.SchemaVersion != is.SchemaMetaVersion() {
 			prepared.CachedPlan = nil
+			preparedStmt.ColumnInfos = nil
 			return false, nil
 		}
 	}
@@ -2366,9 +2379,9 @@ func (s *session) Close() {
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
-		if s.sessionVars.StmtStats != nil {
-			s.sessionVars.StmtStats.SetFinished()
-		}
+	}
+	if s.stmtStats != nil {
+		s.stmtStats.SetFinished()
 	}
 	s.ClearDiskFullOpt()
 }
@@ -2762,6 +2775,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
+		stmtStats:            stmtstats.CreateStatementStats(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
@@ -2795,6 +2809,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
+		stmtStats:            stmtstats.CreateStatementStats(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -3250,4 +3265,8 @@ func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
 
 func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
 	return temptable.SessionSnapshotInterceptor(s)
+}
+
+func (s *session) GetStmtStats() *stmtstats.StatementStats {
+	return s.stmtStats
 }

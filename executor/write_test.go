@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
@@ -215,7 +214,8 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
 	tk.MustExec("INSERT INTO t VALUES (1.000001);")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '1.000001'"))
+	// TODO: MySQL8.0 reports Note 1265 Data truncated for column 'a' at row 1
+	r.Check(testkit.Rows("Warning 1366 Incorrect decimal value: '1.000001' for column 'a' at row 1"))
 	tk.MustExec("INSERT INTO t VALUES (1.000000);")
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows())
@@ -252,15 +252,14 @@ func TestInsert(t *testing.T) {
 	require.True(t, types.ErrWarnDataOutOfRange.Equal(err))
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t value (-1);")
-	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t select -1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	tk.MustExec("insert into t select cast(-1 as unsigned);")
 	tk.MustExec("insert into t value (-1.111);")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t value ('-1.111');")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("update t set a = -1 limit 1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	r = tk.MustQuery("select * from t;")
@@ -283,8 +282,8 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("create table t(a float unsigned, b double unsigned)")
 	tk.MustExec("insert into t value(-1.1, -1.1), (-2.1, -2.1), (0, 0), (1.1, 1.1)")
 	tk.MustQuery("show warnings").
-		Check(testkit.Rows("Warning 1690 constant -1.1 overflows float", "Warning 1690 constant -1.1 overflows double",
-			"Warning 1690 constant -2.1 overflows float", "Warning 1690 constant -2.1 overflows double"))
+		Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1", "Warning 1264 Out of range value for column 'b' at row 1",
+			"Warning 1264 Out of range value for column 'a' at row 2", "Warning 1264 Out of range value for column 'b' at row 2"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("0 0", "0 0", "0 0", "1.1 1.1"))
 
 	// issue 7061
@@ -533,7 +532,8 @@ func TestInsertIgnore(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, tk.Session().LastMessage())
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '1a'"))
+	// TODO: MySQL8.0 reports Warning 1265 Data truncated for column 'a' at row 1
+	r.Check(testkit.Rows("Warning 1366 Incorrect bigint value: '1a' for column 'a' at row 1"))
 
 	// for duplicates with warning
 	testSQL = `drop table if exists t;
@@ -2118,31 +2118,12 @@ func TestLoadDataEscape(t *testing.T) {
 		{nil, []byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("9\ttab\\	tab\n"), []string{"9|tab	tab"}, nil, trivialMsg},
+		// data broken at escape character.
+		{[]byte("1\ta string\\"), []byte("\n1\n"), []string{"1|a string\n1"}, nil, trivialMsg},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-func TestLoadDataWithLongContent(t *testing.T) {
-	e := &executor.LoadDataInfo{
-		FieldsInfo: &ast.FieldsClause{Terminated: ",", Escaped: '\\', Enclosed: '"'},
-		LinesInfo:  &ast.LinesClause{Terminated: "\n"},
-	}
-	tests := []struct {
-		content       string
-		inQuoter      bool
-		expectedIndex int
-	}{
-		{"123,123\n123,123", false, 7},
-		{"123123\\n123123", false, -1},
-		{"123123\n123123", true, -1},
-		{"123123\n123123\"\n", true, 14},
-	}
-
-	for _, tt := range tests {
-		require.Equal(t, tt.expectedIndex, e.IndexOfTerminator([]byte(tt.content), tt.inQuoter))
-	}
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)

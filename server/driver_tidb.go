@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 )
 
 // TiDBDriver implements IDriver.
@@ -288,6 +289,11 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	}
 	tc.stmts[int(stmtID)] = stmt
 	return
+}
+
+// GetStmtStats implements the sessionctx.Context interface.
+func (tc *TiDBContext) GetStmtStats() *stmtstats.StatementStats {
+	return tc.Session.GetStmtStats()
 }
 
 type tidbResultSet struct {

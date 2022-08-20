@@ -263,15 +263,14 @@ func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID in
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
-		return nil
-	}
-
 	var err error
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
 	}
 	e.kvRanges = e.kvRanges[:0]
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
@@ -321,9 +320,6 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			return nil, err
 		}
 		var builder distsql.RequestBuilder
-		if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-			builder.SetIsolationLevel(kv.RC)
-		}
 		reqBuilder := builder.SetKeyRanges(kvRange)
 		kvReq, err := reqBuilder.
 			SetDAGRequest(e.dagPB).
@@ -356,9 +352,6 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		reqBuilder = builder.SetKeyRanges(kvRange)
 	} else {
 		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
-	}
-	if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-		reqBuilder.SetIsolationLevel(kv.RC)
 	}
 	reqBuilder.
 		SetDAGRequest(e.dagPB).

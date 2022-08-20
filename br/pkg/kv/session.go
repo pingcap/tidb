@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 )
 
 // Pair is a pair of key and value.
@@ -251,3 +252,8 @@ func (se *session) Value(key fmt.Stringer) interface{} {
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface.
 func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle) {}
+
+// GetStmtStats implements the sessionctx.Context interface.
+func (se *session) GetStmtStats() *stmtstats.StatementStats {
+	return nil
+}
