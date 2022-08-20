@@ -546,6 +546,12 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key clustered auto_random(1))")
 	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
 
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t6` (a bigint key clustered auto_random(2, 32))")
+	assertShardingInfo("t6", "PK_AUTO_RANDOM_BITS=2, RANGE BITS=32")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t7` (a bigint key clustered auto_random(5, 64))")
+	assertShardingInfo("t7", "PK_AUTO_RANDOM_BITS=5")
+
 	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
 }
 
