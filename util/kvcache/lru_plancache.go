@@ -84,8 +84,9 @@ func (l *LRUPlanCache) SetChoose(choose func([]*list.Element, interface{}) (*lis
 
 // Get tries to find the corresponding value according to the given key.
 func (l *LRUPlanCache) Get(key Key, paramTypes interface{}) (value Value, ok bool) {
-	if bucket, exist := l.buckets[string(key.Hash())]; exist {
-		if element, _, exist1 := l.choose(bucket, paramTypes); exist1 {
+	bucket, bucketExist := l.buckets[string(key.Hash())]
+	if bucketExist {
+		if element, _, exist := l.choose(bucket, paramTypes); exist {
 			l.cache.MoveToFront(element)
 			return element.Value.(*CacheEntry).PlanValue, true
 		}
@@ -97,19 +98,19 @@ func (l *LRUPlanCache) Get(key Key, paramTypes interface{}) (value Value, ok boo
 func (l *LRUPlanCache) Put(key Key, value Value, paramTypes interface{}) {
 	hash := string(key.Hash())
 	bucket, bucketExist := l.buckets[hash]
+	// in the cache
 	if bucketExist {
-		if candidate, _, exist := l.choose(bucket, paramTypes); exist {
-			candidate.Value.(*CacheEntry).PlanValue = value
-			l.cache.MoveToFront(candidate)
+		if element, _, exist := l.choose(bucket, paramTypes); exist {
+			element.Value.(*CacheEntry).PlanValue = value
+			l.cache.MoveToFront(element)
 			return
 		}
 	}
-
+	// not in the cache
 	newCacheEntry := &CacheEntry{
 		PlanKey:   key,
 		PlanValue: value,
 	}
-
 	element := l.cache.PushFront(newCacheEntry)
 	bucket = append(bucket, element)
 	l.buckets[hash] = bucket
@@ -119,19 +120,17 @@ func (l *LRUPlanCache) Put(key Key, value Value, paramTypes interface{}) {
 	}
 }
 
-// Delete deletes the key-multivalues from the LRU Cache.
+// Delete deletes the multi-values from the LRU Cache.
 func (l *LRUPlanCache) Delete(key Key) {
-	k := string(key.Hash())
-	bucket, ok := l.buckets[k]
-	if !ok {
-		return
+	hash := string(key.Hash())
+	bucket, bucketExist := l.buckets[hash]
+	if bucketExist {
+		for _, element := range bucket {
+			l.cache.Remove(element)
+			l.size--
+		}
+		l.buckets[hash] = nil
 	}
-	// remove from bucket
-	for _, element := range bucket {
-		l.cache.Remove(element)
-		l.size--
-	}
-	l.buckets[k] = nil
 }
 
 // DeleteAll deletes all elements from the LRU Cache.
@@ -160,10 +159,9 @@ func (l *LRUPlanCache) Values() []Value {
 
 // Keys return all keys in cache.
 func (l *LRUPlanCache) Keys() []Key {
-	keys := make([]Key, 0, l.cache.Len())
-	for ele := l.cache.Front(); ele != nil; ele = ele.Next() {
-		key := ele.Value.(*CacheEntry).PlanKey
-		keys = append(keys, key)
+	keys := make([]Key, 0, len(l.buckets))
+	for _, bucket := range l.buckets {
+		keys = append(keys, bucket[0].Value.(*CacheEntry).PlanKey)
 	}
 	return keys
 }
@@ -175,7 +173,7 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	}
 	l.capacity = capacity
 	for l.size > l.capacity {
-		_, _, _ = l.RemoveOldest()
+		l.RemoveOldest()
 	}
 	return nil
 }
@@ -198,13 +196,13 @@ func (l *LRUPlanCache) RemoveOldest() (key Key, value Value, ok bool) {
 
 // removeFromBucket remove element from bucket
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
-	k := string(element.Value.(*CacheEntry).PlanKey.Hash())
-	bucket := l.buckets[k]
+	hash := string(element.Value.(*CacheEntry).PlanKey.Hash())
+	bucket := l.buckets[hash]
 	for i, ele := range bucket {
 		if ele == element {
 			bucket = append(bucket[:i], bucket[i+1:]...)
-			l.buckets[k] = bucket
-			break
+			l.buckets[hash] = bucket
+			return
 		}
 	}
 }
