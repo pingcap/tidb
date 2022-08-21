@@ -722,8 +722,8 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo,
 	elements []*meta.Element, rh *reorgHandler) (reorg bool, ver int64, err error) {
-	// When sub state is StatePublic means not go fast ddl path.
 	if indexInfo.BackfillState == model.BackfillStateInapplicable {
+		// Use the original txn backfill process.
 		return false, 0, nil
 	}
 	switch indexInfo.BackfillState {

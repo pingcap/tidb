@@ -37,6 +37,7 @@ const (
 	LitErrRemoteDupExistErr string = "lightning: Remote duplicate index key exist"
 	LitErrDiskQuotaLess     string = "lightning: Specified disk quota is less than 100 GB disable the lightning"
 	LitErrIncompatiblePiTR  string = "lightning: The storage config log-backup.enable should be false when the lightning backfill is enabled"
+	LitErrExceedConcurrency string = "lightning: The concurrency is greater than lightning limit(tikv-importer.range-concurrency)"
 	LitWarnEnvInitFail      string = "lightning: Initialize environment failed"
 	LitWarnBackendNOTExist  string = "lightning: Backend not exist"
 	LitWarnConfigError      string = "lightning: Build config for backend failed"

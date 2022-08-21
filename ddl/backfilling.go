@@ -737,7 +737,7 @@ func spawnAddIndexWorker(sessCtx sessionctx.Context, seq int, job *model.Job, t 
 	decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *backfillWorker {
 	// Firstly, check and try lightning path.
 	if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && bc.NeedRestore() {
-		_, err := bc.EngMgr.Register(bc, job, reorgInfo.currElement.ID, 1)
+		err := bc.EngMgr.Register(bc, job, reorgInfo.currElement.ID)
 		if err != nil {
 			if seq == 0 { // The first worker.
 				lightning.BackCtxMgr.Unregister(job.ID) // fallback to the general worker.

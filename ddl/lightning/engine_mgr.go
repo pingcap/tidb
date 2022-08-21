@@ -34,57 +34,63 @@ func (m *engineManager) init(memRoot MemRoot) {
 }
 
 // Register create a new engineInfo and register it to the engineManager.
-func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int64, wCnt int) (int, error) {
-	var err error
-	// Calculate lightning concurrency degree and set memory usage.
-	// and pre-allocate memory usage for worker
+func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int64) error {
+	// Calculate lightning concurrency degree and set memory usage
+	// and pre-allocate memory usage for worker.
 	engineKey := GenEngineInfoKey(job.ID, indexID)
-	newWorkerCount := m.MemRoot.WorkerDegree(wCnt, engineKey, job.ID)
+
+	m.MemRoot.RefreshConsumption()
+	err := m.MemRoot.TryConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
+	if err != nil {
+		return logAllocMemFailed(bc.key, engineKey, m.MemRoot, err)
+	}
+
 	en, exist1 := m.Load(engineKey)
 	if !exist1 {
-		// When return workerCount is 0, means there is no memory available for lightning worker.
-		if newWorkerCount == int(allocFailed) {
-			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.String("Backend key", bc.key),
-				zap.String("Engine key", engineKey),
-				zap.String("Expected worker count:", strconv.Itoa(wCnt)),
-				zap.String("Current alloc worker count:", strconv.Itoa(newWorkerCount)))
-			return 0, errors.New(LitErrCreateEngineFail)
-		}
-		// Firstly, update and check the current memory usage.
-		m.MemRoot.RefreshConsumption()
-		err = m.MemRoot.TryConsume(StructSizeEngineInfo)
+		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
+		err := m.MemRoot.TryConsume(StructSizeEngineInfo + engineCacheSize)
 		if err != nil {
-			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.String("Backend key", bc.key),
-				zap.String("Engine key", engineKey),
-				zap.String("Current Memory Usage:", strconv.FormatInt(m.MemRoot.CurrentUsage(), 10)),
-				zap.String("Memory limitation:", strconv.FormatInt(m.MemRoot.MaxMemoryQuota(), 10)))
-			return 0, err
+			return logAllocMemFailed(bc.key, engineKey, m.MemRoot, err)
 		}
+
 		// Create one slice for one backend on one stmt, current we share one engine
 		// Open one engine under an existing backend.
 		cfg := generateLocalEngineConfig(job.ID, job.SchemaName, job.TableName)
-		en, err := bc.backend.OpenEngine(bc.ctx, cfg, job.TableName, int32(indexID))
+		openedEn, err := bc.backend.OpenEngine(bc.ctx, cfg, job.TableName, int32(indexID))
 		if err != nil {
-			return 0, errors.New(LitErrCreateEngineFail)
+			return errors.New(LitErrCreateEngineFail)
 		}
-		id := en.GetEngineUUID()
-		ei := NewEngineInfo(indexID, engineKey, cfg, bc, en, job.TableName, id, wCnt, m.MemRoot)
-		m.Store(engineKey, ei)
+		id := openedEn.GetEngineUUID()
+		en = NewEngineInfo(indexID, engineKey, cfg, bc, openedEn, job.TableName, id, 1, m.MemRoot)
+		m.Store(engineKey, en)
 		if err != nil {
-			return 0, errors.New(LitErrCreateEngineFail)
+			return errors.New(LitErrCreateEngineFail)
 		}
-		m.MemRoot.Consume(StructSizeEngineInfo)
+		m.MemRoot.Consume(StructSizeEngineInfo + engineCacheSize)
 	} else {
-		// If engine exist, then add newWorkerCount.
-		en.writerCount += newWorkerCount
+		if en.writerCount+1 > bc.cfg.TikvImporter.RangeConcurrency {
+			logutil.BgLogger().Warn(LitErrExceedConcurrency, zap.String("Backend key", bc.key),
+				zap.String("Engine key", engineKey),
+				zap.Int("Concurrency", bc.cfg.TikvImporter.RangeConcurrency))
+			return errors.New(LitErrExceedConcurrency)
+		}
+		en.writerCount += 1
 	}
+	m.MemRoot.ConsumeWithTag(engineKey, int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
 	logutil.BgLogger().Info(LitInfoOpenEngine, zap.String("backend key", bc.key),
 		zap.String("Engine key", engineKey),
 		zap.String("Current Memory Usage:", strconv.FormatInt(m.MemRoot.CurrentUsage(), 10)),
 		zap.String("Memory limitation:", strconv.FormatInt(m.MemRoot.MaxMemoryQuota(), 10)),
-		zap.String("Expected Worker Count", strconv.Itoa(wCnt)),
-		zap.String("Allocated worker count", strconv.Itoa(newWorkerCount)))
-	return newWorkerCount, nil
+		zap.String("Current Writer Count", strconv.Itoa(en.writerCount)))
+	return nil
+}
+
+func logAllocMemFailed(bcKey, engineKey string, memRoot MemRoot, err error) error {
+	logutil.BgLogger().Warn(LitErrAllocMemFail, zap.String("Backend key", bcKey),
+		zap.String("Engine key", engineKey),
+		zap.Int64("Current Memory Usage:", memRoot.CurrentUsage()),
+		zap.Int64("Memory limitation:", memRoot.MaxMemoryQuota()))
+	return err
 }
 
 // Unregister delete the engineInfo from the engineManager.

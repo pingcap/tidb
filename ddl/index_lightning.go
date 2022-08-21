@@ -74,15 +74,6 @@ func isPiTREnable(w *worker) bool {
 	return lit.CheckPiTR(ctx)
 }
 
-func prepareLightningEngine(job *model.Job, indexID int64, workerCnt int) (wCnt int, err error) {
-	bc, _ := lit.BackCtxMgr.Load(job.ID)
-	wCnt, err = bc.EngMgr.Register(bc, job, indexID, workerCnt)
-	if err != nil {
-		lit.BackCtxMgr.Unregister(job.ID)
-	}
-	return wCnt, err
-}
-
 // importIndexDataToStore import local index sst file into TiKV.
 func importIndexDataToStore(reorg *reorgInfo, indexID int64, unique bool, tbl table.Table) error {
 	if bc, ok := lit.BackCtxMgr.Load(reorg.Job.ID); ok && bc.NeedRestore() {

@@ -35,12 +35,6 @@ type MemRoot interface {
 	CurrentUsage() int64
 	CurrentUsageWithTag(tag string) int64
 	RefreshConsumption()
-	// WorkerDegree adjust worker count according the available memory.
-	// return 0 means there is no enough memory for one lightning worker.
-	// TODO: split this function into two functions:
-	// 1. Calculate the worker degree.
-	// 2. Update the MemRoot.
-	WorkerDegree(workerCnt int, engineKey string, jobID int64) int
 }
 
 const (
@@ -160,53 +154,4 @@ func (m *memRootImpl) ReleaseWithTag(tag string) {
 // RefreshConsumption implements MemRoot.
 func (m *memRootImpl) RefreshConsumption() {
 	m.backendCtxMgr.UpdateMemoryUsage()
-}
-
-// WorkerDegree implements MemRoot.
-func (m *memRootImpl) WorkerDegree(workerCnt int, engineKey string, jobID int64) int {
-	var enSize int64
-	var currWorkerNum int
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	bc, exist := m.backendCtxMgr.Load(jobID)
-	if !exist {
-		return 0
-	}
-
-	_, exist = m.structSize[engineKey]
-	if !exist {
-		enSize = int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-	} else {
-		en, exist1 := bc.EngMgr.Load(engineKey)
-		if !exist1 {
-			return 0
-		}
-		currWorkerNum = en.writerCount
-	}
-	if currWorkerNum+workerCnt > bc.cfg.TikvImporter.RangeConcurrency {
-		workerCnt = bc.cfg.TikvImporter.RangeConcurrency - currWorkerNum
-		if workerCnt == 0 {
-			return workerCnt
-		}
-	}
-
-	size := int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize)
-
-	// If only one worker's memory init requirement still bigger than mem limitation.
-	if enSize+size+m.currUsage > m.maxLimit {
-		return int(allocFailed)
-	}
-
-	for enSize+size*int64(workerCnt)+m.currUsage > m.maxLimit && workerCnt > 1 {
-		workerCnt /= 2
-	}
-
-	m.currUsage += size * int64(workerCnt)
-
-	if !exist {
-		m.structSize[engineKey] = size * int64(workerCnt)
-	} else {
-		m.structSize[engineKey] += size * int64(workerCnt)
-	}
-	return workerCnt
 }
