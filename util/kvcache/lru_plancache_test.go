@@ -279,7 +279,7 @@ func TestLRUPCKeys(t *testing.T) {
 	ks := lru.Keys()
 	require.Equal(t, 5, len(ks))
 	for i := 0; i < 5; i++ {
-		require.Equal(t, keys[4-i], ks[i])
+		require.Contains(t, ks, keys[i])
 	}
 }
 
