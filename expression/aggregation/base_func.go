@@ -420,38 +420,6 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if a.Args[i].GetType().GetType() == mysql.TypeNull {
 			continue
 		}
-		tpOld := a.Args[i].GetType().GetType()
 		a.Args[i] = castFunc(ctx, a.Args[i])
-		// refine each mysql integer type to the needed decimal precision for sum
-		if a.Name == ast.AggFuncSum {
-			adjustDecimalLenForSumInteger(a.Args[i].GetType(), tpOld)
-		}
-	}
-}
-
-func adjustDecimalLenForSumInteger(ft *types.FieldType, tpOld byte) {
-	if types.IsTypeInteger(tpOld) && ft.GetType() == mysql.TypeNewDecimal {
-		if flen, err := minimalDecimalLenForHoldingInteger(tpOld); err == nil {
-			ft.SetFlen(mathutil.Min(ft.GetFlen(), flen+ft.GetDecimal()))
-		}
-	}
-}
-
-func minimalDecimalLenForHoldingInteger(tp byte) (int, error) {
-	switch tp {
-	case mysql.TypeTiny:
-		return 3, nil
-	case mysql.TypeShort:
-		return 5, nil
-	case mysql.TypeInt24:
-		return 8, nil
-	case mysql.TypeLong:
-		return 10, nil
-	case mysql.TypeLonglong:
-		return 20, nil
-	case mysql.TypeYear:
-		return 4, nil
-	default:
-		return -1, errors.Errorf("Invalid type: %v", tp)
 	}
 }

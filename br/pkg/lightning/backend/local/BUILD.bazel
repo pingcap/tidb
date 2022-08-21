@@ -42,6 +42,7 @@ go_library(
         "//parser/mysql",
         "//table",
         "//tablecodec",
+        "//types",
         "//util/codec",
         "//util/engine",
         "//util/hack",
@@ -92,6 +93,7 @@ go_test(
     embed = [":local"],
     flaky = True,
     deps = [
+        "//br/pkg/errors",
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",

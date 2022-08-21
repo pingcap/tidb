@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -74,7 +75,7 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs ResultSet, err error) {
+func (ts *TiDBStatement) Execute(ctx context.Context, args []expression.Expression) (rs ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.ExecutePreparedStmt(ctx, ts.id, args)
 	if err != nil {
 		return nil, err
@@ -84,7 +85,7 @@ func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs Re
 	}
 	rs = &tidbResultSet{
 		recordSet:    tidbRecordset,
-		preparedStmt: ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*core.CachedPrepareStmt),
+		preparedStmt: ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*core.PlanCacheStmt),
 	}
 	return
 }
@@ -162,11 +163,11 @@ func (ts *TiDBStatement) Close() error {
 			return err
 		}
 	} else {
-		if core.PreparedPlanCacheEnabled() {
+		if ts.ctx.GetSessionVars().EnablePreparedPlanCache {
 			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
-			preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
+			preparedObj, ok := preparedPointer.(*core.PlanCacheStmt)
 			if !ok {
-				return errors.Errorf("invalid CachedPrepareStmt type")
+				return errors.Errorf("invalid PlanCacheStmt type")
 			}
 			bindSQL, _ := core.GetBindSQL4PlanCache(ts.ctx, preparedObj)
 			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
@@ -175,7 +176,7 @@ func (ts *TiDBStatement) Close() error {
 				return err
 			}
 			if !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				ts.ctx.PreparedPlanCache().Delete(cacheKey)
+				ts.ctx.GetPlanCache(false).Delete(cacheKey)
 			}
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
@@ -312,7 +313,7 @@ func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.
 	sessionVars := tc.Session.GetSessionVars()
 	sessionStates.PreparedStmts = make(map[uint32]*sessionstates.PreparedStmtInfo, len(sessionVars.PreparedStmts))
 	for preparedID, preparedObj := range sessionVars.PreparedStmts {
-		preparedStmt, ok := preparedObj.(*core.CachedPrepareStmt)
+		preparedStmt, ok := preparedObj.(*core.PlanCacheStmt)
 		if !ok {
 			return errors.Errorf("invalid CachedPreparedStmt type")
 		}
@@ -395,7 +396,7 @@ type tidbResultSet struct {
 	columns      []*ColumnInfo
 	rows         []chunk.Row
 	closed       int32
-	preparedStmt *core.CachedPrepareStmt
+	preparedStmt *core.PlanCacheStmt
 }
 
 func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {

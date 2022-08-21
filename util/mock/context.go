@@ -247,8 +247,8 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 	return nil
 }
 
-// PreparedPlanCache implements the sessionctx.Context interface.
-func (c *Context) PreparedPlanCache() *kvcache.SimpleLRUCache {
+// GetPlanCache implements the sessionctx.Context interface.
+func (c *Context) GetPlanCache(_ bool) *kvcache.SimpleLRUCache {
 	return c.pcache
 }
 
