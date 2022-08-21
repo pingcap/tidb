@@ -44,24 +44,17 @@ import (
 )
 
 type domainMap struct {
+	mu      sync.Mutex
 	domains map[string]*domain.Domain
-	mu      sync.RWMutex
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	dm.mu.RLock()
-
-	// If this is the only domain instance, and the caller doesn't provide store.
-	if len(dm.domains) == 1 && store == nil {
-		for _, r := range dm.domains {
-			dm.mu.RUnlock()
-			return r, nil
-		}
-	}
-
 	key := store.UUID()
+
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+
 	d = dm.domains[key]
-	dm.mu.RUnlock()
 	if d != nil {
 		return
 	}
@@ -94,7 +87,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if err != nil {
 		return nil, err
 	}
-	dm.Set(store, d)
+
+	dm.domains[key] = d
 
 	return
 }
@@ -102,12 +96,6 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 func (dm *domainMap) Delete(store kv.Storage) {
 	dm.mu.Lock()
 	delete(dm.domains, store.UUID())
-	dm.mu.Unlock()
-}
-
-func (dm *domainMap) Set(store kv.Storage, domain *domain.Domain) {
-	dm.mu.Lock()
-	dm.domains[store.UUID()] = domain
 	dm.mu.Unlock()
 }
 
