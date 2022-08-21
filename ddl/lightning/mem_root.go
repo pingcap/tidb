@@ -44,9 +44,6 @@ const (
 	_pb = 1024 * _tb
 )
 
-// Used to mark the object size did not store in map
-const allocFailed int64 = 0
-
 var (
 	// StructSizeBackendCtx is the size of BackendContext.
 	StructSizeBackendCtx int64
