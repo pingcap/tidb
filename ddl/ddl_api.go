@@ -5756,7 +5756,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(mysql.PrimaryKeyName)
 	}
 
-	if indexName.L != "" && strings.EqualFold(indexName.L, mysql.PrimaryKeyName) {
+	if indexName.L != "" && !strings.EqualFold(indexName.L, mysql.PrimaryKeyName) {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrPrimaryKeyNameIsIgnored.FastGenByArgs(indexName))
 	}
 	indexName = model.NewCIStr(mysql.PrimaryKeyName)
