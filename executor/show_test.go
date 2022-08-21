@@ -1831,55 +1831,6 @@ func TestShowBindingCacheStatus(t *testing.T) {
 	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
 		"1 1 198 Bytes 250 Bytes"))
 }
-<<<<<<< HEAD:executor/show_test.go
-=======
-
-func TestShowDatabasesLike(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "root", Hostname: "%"}, nil, nil))
-
-	tk.MustExec("DROP DATABASE IF EXISTS `TEST_$1`")
-	tk.MustExec("DROP DATABASE IF EXISTS `test_$2`")
-	tk.MustExec("CREATE DATABASE `TEST_$1`;")
-	tk.MustExec("CREATE DATABASE `test_$2`;")
-
-	tk.MustQuery("SHOW DATABASES LIKE 'TEST_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
-	tk.MustQuery("SHOW DATABASES LIKE 'test_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
-}
-
-func TestShowTableStatusLike(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("DROP table IF EXISTS `T1`")
-	tk.MustExec("CREATE table `T1` (a int);")
-	rows := tk.MustQuery("SHOW table status LIKE 't1'").Rows()
-	require.Equal(t, "T1", rows[0][0])
-
-	tk.MustExec("DROP table IF EXISTS `Li_1`")
-	tk.MustExec("DROP table IF EXISTS `li_2`")
-
-	tk.MustExec("CREATE table `Li_1` (a int);")
-	tk.MustExec("CREATE table `li_2` (a int);")
-
-	rows = tk.MustQuery("SHOW table status LIKE 'li%'").Rows()
-	require.Equal(t, "Li_1", rows[0][0])
-	require.Equal(t, "li_2", rows[1][0])
-}
-
-func TestShowCollationsLike(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "root", Hostname: "%"}, nil, nil))
-	tk.MustQuery("SHOW COLLATION LIKE 'UTF8MB4_BI%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
-	tk.MustQuery("SHOW COLLATION LIKE 'utf8mb4_bi%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
-}
 
 func TestShowViewWithWindowFunction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1890,4 +1841,3 @@ func TestShowViewWithWindowFunction(t *testing.T) {
 	tk.MustExec("create or replace view test1_v as(select id,row_number() over (partition by num) from test1);")
 	tk.MustQuery("desc test1_v;").Check(testkit.Rows("id int(0) NO  <nil> ", "row_number() over (partition by num) bigint(21) YES  <nil> "))
 }
->>>>>>> 3d9a47144... executor: enable TiDBEnableWindowFunction in SystemVar (#37077):executor/showtest/show_test.go
