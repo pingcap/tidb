@@ -26,7 +26,7 @@ type CacheEntry struct {
 	PlanValue Value
 }
 
-// LRUPlanCache is a simple least recently used cache for plan cache, not thread-safe, use for plan cache.
+// LRUPlanCache is a simple least recently used cache, not thread-safe, JUST use for plan cache.
 type LRUPlanCache struct {
 	capacity uint
 	size     uint
