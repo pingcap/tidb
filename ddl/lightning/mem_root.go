@@ -19,7 +19,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // MemRoot is used to track the memory usage for the lightning backfill process.
@@ -38,12 +37,11 @@ type MemRoot interface {
 }
 
 const (
-	_kb       = 1024
-	_mb       = 1024 * _kb
-	_gb       = 1024 * _mb
-	_tb       = 1024 * _gb
-	_pb       = 1024 * _tb
-	flushSize = 8 * _mb
+	_kb = 1024
+	_mb = 1024 * _kb
+	_gb = 1024 * _mb
+	_tb = 1024 * _gb
+	_pb = 1024 * _tb
 )
 
 // Used to mark the object size did not store in map
@@ -76,7 +74,7 @@ type memRootImpl struct {
 // NewMemRootImpl creates a new memRootImpl.
 func NewMemRootImpl(maxQuota int64, bcCtxMgr *backendCtxManager) *memRootImpl {
 	return &memRootImpl{
-		maxLimit:      mathutil.Max(maxQuota, flushSize),
+		maxLimit:      maxQuota,
 		currUsage:     0,
 		structSize:    make(map[string]int64, 10),
 		backendCtxMgr: bcCtxMgr,
@@ -87,7 +85,7 @@ func NewMemRootImpl(maxQuota int64, bcCtxMgr *backendCtxManager) *memRootImpl {
 func (m *memRootImpl) SetMaxMemoryQuota(maxQuota int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.maxLimit = mathutil.Max(maxQuota, flushSize)
+	m.maxLimit = maxQuota
 }
 
 // MaxMemoryQuota implements MemRoot.

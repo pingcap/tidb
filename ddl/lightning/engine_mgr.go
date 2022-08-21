@@ -74,7 +74,7 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 				zap.Int("Concurrency", bc.cfg.TikvImporter.RangeConcurrency))
 			return errors.New(LitErrExceedConcurrency)
 		}
-		en.writerCount += 1
+		en.writerCount++
 	}
 	m.MemRoot.ConsumeWithTag(engineKey, int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
 	logutil.BgLogger().Info(LitInfoOpenEngine, zap.String("backend key", bc.key),
