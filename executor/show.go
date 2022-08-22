@@ -111,6 +111,7 @@ type showTableRegionRowItem struct {
 	schedulingState       string
 }
 
+// Open implements the Executor Open interface.
 func (e *ShowExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
@@ -152,6 +153,7 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// Close implements the Executor Close interface.
 func (e *ShowExec) Close() (err error) {
 	defer func() {
 		if err == nil {
