@@ -505,7 +505,7 @@ id	estRows	task	access object	operator info
 Sort_12	1841.86	root		test.t1.c1
 └─Projection_14	1841.86	root		test.t1.c1, test.t1.c2, test.t1.c3
   └─Apply_16	1841.86	root		inner join, equal:[eq(Column#10, Column#9)]
-    ├─Projection_17(Build)	1841.86	root		test.t1.c1, test.t1.c2, test.t1.c3, cast(test.t1.c1, decimal(20,0) BINARY)->Column#10
+    ├─Projection_17(Build)	1841.86	root		test.t1.c1, test.t1.c2, test.t1.c3, cast(test.t1.c1, decimal(10,0) BINARY)->Column#10
     │ └─IndexMerge_22	1841.86	root		
     │   ├─IndexRangeScan_18(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
     │   ├─IndexRangeScan_19(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,-1), keep order:false, stats:pseudo
@@ -528,7 +528,7 @@ id	estRows	task	access object	operator info
 Sort_16	1841.86	root		test.t1.c1
 └─Projection_18	1841.86	root		test.t1.c1, test.t1.c2, test.t1.c3
   └─Apply_20	1841.86	root		inner join, equal:[eq(Column#11, Column#9)]
-    ├─Projection_21(Build)	1841.86	root		test.t1.c1, test.t1.c2, test.t1.c3, cast(test.t1.c1, decimal(20,0) BINARY)->Column#11
+    ├─Projection_21(Build)	1841.86	root		test.t1.c1, test.t1.c2, test.t1.c3, cast(test.t1.c1, decimal(10,0) BINARY)->Column#11
     │ └─IndexMerge_26	1841.86	root		
     │   ├─IndexRangeScan_22(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
     │   ├─IndexRangeScan_23(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,-1), keep order:false, stats:pseudo
@@ -536,7 +536,7 @@ Sort_16	1841.86	root		test.t1.c1
     │     └─TableRowIDScan_24	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─TopN_29(Probe)	1.00	root		test.t2.c1, offset:2, count:1
       └─HashAgg_36	2660.44	root		group by:Column#21, funcs:avg(Column#19)->Column#9, funcs:firstrow(Column#20)->test.t2.c1
-        └─Projection_48	3325.55	root		cast(test.t2.c1, decimal(20,0) BINARY)->Column#19, test.t2.c1, test.t2.c1
+        └─Projection_48	3325.55	root		cast(test.t2.c1, decimal(10,0) BINARY)->Column#19, test.t2.c1, test.t2.c1
           └─IndexMerge_41	3325.55	root		
             ├─Selection_38(Build)	3.32	cop[tikv]		eq(test.t1.c1, test.t2.c1)
             │ └─IndexRangeScan_37	3323.33	cop[tikv]	table:t2, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo

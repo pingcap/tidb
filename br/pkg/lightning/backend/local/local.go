@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -493,6 +494,18 @@ func NewLocalBackend(
 	}
 
 	return backend.MakeBackend(local), nil
+}
+
+func (local *local) TotalMemoryConsume() int64 {
+	var memConsume int64 = 0
+	local.engines.Range(func(k, v interface{}) bool {
+		e := v.(*Engine)
+		if e != nil {
+			memConsume += e.TotalMemorySize()
+		}
+		return true
+	})
+	return memConsume + local.bufferPool.TotalSize()
 }
 
 func (local *local) checkMultiIngestSupport(ctx context.Context) error {
@@ -1278,7 +1291,7 @@ WriteAndIngest:
 			err = local.writeAndIngestPairs(ctx, engine, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
-				if !common.IsRetryableError(err) {
+				if !local.isRetryableImportTiKVError(err) {
 					return err
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -1308,7 +1321,7 @@ const (
 	retryIngest
 )
 
-func (local *local) isRetryableTiKVWriteError(err error) bool {
+func (local *local) isRetryableImportTiKVError(err error) bool {
 	err = errors.Cause(err)
 	// io.EOF is not retryable in normal case
 	// but on TiKV restart, if we're writing to TiKV(through GRPC)
@@ -1338,7 +1351,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if !local.isRetryableTiKVWriteError(err) {
+			if !local.isRetryableImportTiKVError(err) {
 				return err
 			}
 
@@ -1481,7 +1494,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				if err == nil || common.IsContextCanceledError(err) {
 					return
 				}
-				if !common.IsRetryableError(err) {
+				if !local.isRetryableImportTiKVError(err) {
 					break
 				}
 				log.FromContext(ctx).Warn("write and ingest by range failed",
@@ -1680,6 +1693,10 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
 				if err == nil {
 					return nil
+				}
+				if types.ErrBadNumber.Equal(err) {
+					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+					return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
 				}
 				if log.IsContextCanceledError(err) {
 					return err
@@ -1930,12 +1947,11 @@ func (local *local) isIngestRetryable(
 		}
 		return retryTy, newRegion, common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
-		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
 		newRegion, err = getRegion()
 		if err != nil {
 			return retryNone, nil, errors.Trace(err)
 		}
-		return retryWrite, newRegion, errors.New(errPb.GetMessage())
+		return retryWrite, newRegion, common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
 	case errPb.ServerIsBusy != nil:
 		return retryNone, nil, common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
 	case errPb.RegionNotFound != nil:
@@ -1952,8 +1968,13 @@ func (local *local) isIngestRetryable(
 			return retryNone, nil, errors.Trace(err)
 		}
 		return retryWrite, newRegion, common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
+	case errPb.DiskFull != nil:
+		return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 	}
-	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
+	// all others ingest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
+	// here we use a single named-error ErrKVIngestFailed to represent them all
+	// we can separate them later if it's needed
+	return retryNone, nil, common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
 }
 
 // return the smallest []byte that is bigger than current bytes.
