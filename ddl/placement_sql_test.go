@@ -18,14 +18,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/domain/infosync"
-
-	"github.com/pingcap/tidb/infoschema"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
