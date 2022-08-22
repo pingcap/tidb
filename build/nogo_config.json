@@ -656,7 +656,7 @@
       "planner/core/plan.go": "planner/core/plan.go",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
-      "server/conn_test.go": "server/conn_test.go",
+      "server/conn_test.go": "server/conn_test.go"
     }
   },
   "SA2000": {
