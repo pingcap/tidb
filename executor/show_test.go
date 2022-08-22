@@ -1837,7 +1837,7 @@ func TestShowViewWithWindowFunction(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-  tk.MustExec("use test")
+	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
 	tk.MustExec("create or replace view test1_v as(select id,row_number() over (partition by num) from test1);")
 	tk.MustQuery("desc test1_v;").Check(testkit.Rows("id int(0) NO  <nil> ", "row_number() over (partition by num) bigint(21) YES  <nil> "))
