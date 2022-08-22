@@ -1041,9 +1041,7 @@ func (r StatsLoadResult) ErrorMsg() string {
 	b.WriteString(strconv.FormatInt(r.Item.ID, 10))
 	b.WriteString(", isIndex:")
 	b.WriteString(strconv.FormatBool(r.Item.IsIndex))
-	if r.Error != nil {
-		b.WriteString(", err:")
-		b.WriteString(r.Error.Error())
-	}
+	b.WriteString(", err:")
+	b.WriteString(r.Error.Error())
 	return b.String()
 }
