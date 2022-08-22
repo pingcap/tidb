@@ -156,10 +156,14 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	if e != nil {
 		return errors.Trace(err)
 	}
+	var scheduleRestored bool
 	defer func() {
 		if ctx.Err() != nil {
 			log.Warn("context canceled, doing clean work with background context")
 			ctx = context.Background()
+		}
+		if scheduleRestored {
+			return
 		}
 		if restoreE := restoreFunc(ctx); restoreE != nil {
 			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
@@ -201,6 +205,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 			// TODO maybe we should consider remove snapshots already exists in a failure
 			return errors.Trace(err)
 		}
+
+		log.Info("snapshot started, restore schedule")
+		if restoreE := restoreFunc(ctx); restoreE != nil {
+			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+		}
+		scheduleRestored = true
+
 		log.Info("wait async snapshots finish")
 		totalSize, err = ec2Session.WaitSnapshotsCreated(snapIDMap, progress)
 		if err != nil {
