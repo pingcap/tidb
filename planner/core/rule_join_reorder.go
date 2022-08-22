@@ -134,13 +134,11 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	tmpOtherConds = append(tmpOtherConds, join.LeftConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.RightConditions...)
 	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin {
-		for i := range join.EqualConditions {
+		for range join.EqualConditions {
 			abType := &abundantJoinType{JoinType: join.JoinType}
 			// outer join's other condition should be bound with the connecting edge.
-			// just bind the outer condition to a **anyone** of the EQ edges, it will be extracted to use when make new join.
-			if i == 0 {
-				abType.outerBindCondition = tmpOtherConds
-			}
+			// although we bind the outer condition to **anyone** of the join type, it will be extracted **only once** when make a new join.
+			abType.outerBindCondition = tmpOtherConds
 			joinTypes = append(joinTypes, abType)
 		}
 	} else {
