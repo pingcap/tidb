@@ -2526,6 +2526,8 @@ const (
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
 	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
+	// SlowLogIsSyncStatsFailed is used to indicate whether any failure happen during sync stats
+	SlowLogIsSyncStatsFailed = "IsSyncStatsFailed"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -2568,6 +2570,7 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
+	IsSyncStatsFailed bool
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2732,6 +2735,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))
+	writeSlowLogItem(&buf, SlowLogIsSyncStatsFailed, strconv.FormatBool(logItems.IsSyncStatsFailed))
 	if s.StmtCtx.WaitLockLeaseTime > 0 {
 		writeSlowLogItem(&buf, SlowLogIsWriteCacheTable, strconv.FormatBool(logItems.IsWriteCacheTable))
 	}
