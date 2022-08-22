@@ -131,14 +131,14 @@ func (ei *engineInfo) NewWorkerCtx(id int) (*WorkerContext, error) {
 	memRequire := StructSizeWorkerCtx
 	// First to check the memory usage.
 	ei.memRoot.RefreshConsumption()
-	err := ei.memRoot.TryConsume(memRequire)
-	if err != nil {
+	ok := ei.memRoot.TryConsume(memRequire)
+	if !ok {
 		logutil.BgLogger().Error(LitErrAllocMemFail, zap.String("Engine key", ei.key),
 			zap.String("worker Id:", strconv.Itoa(id)),
 			zap.String("Memory allocate:", strconv.FormatInt(memRequire, 10)),
 			zap.String("Current Memory Usage:", strconv.FormatInt(ei.memRoot.CurrentUsage(), 10)),
 			zap.String("Memory limitation:", strconv.FormatInt(ei.memRoot.MaxMemoryQuota(), 10)))
-		return nil, err
+		return nil, errors.New(LitErrOutMaxMem)
 	}
 
 	wCtx, err := ei.newWorkerContext(id)

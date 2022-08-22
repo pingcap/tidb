@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -51,12 +52,12 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 	// to continue the task.
 	if !exist {
 		m.MemRoot.RefreshConsumption()
-		err := m.MemRoot.TryConsume(StructSizeBackendCtx)
-		if err != nil {
+		ok := m.MemRoot.TryConsume(StructSizeBackendCtx)
+		if !ok {
 			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.Int64("backend key", jobID),
 				zap.String("Current Memory Usage:", strconv.FormatInt(m.MemRoot.CurrentUsage(), 10)),
 				zap.String("Memory limitation:", strconv.FormatInt(m.MemRoot.MaxMemoryQuota(), 10)))
-			return err
+			return errors.New(LitErrOutMaxMem)
 		}
 		cfg, err := generateLightningConfig(m.MemRoot, jobID, unique)
 		if err != nil {

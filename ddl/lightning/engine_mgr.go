@@ -40,17 +40,17 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 	engineKey := GenEngineInfoKey(job.ID, indexID)
 
 	m.MemRoot.RefreshConsumption()
-	err := m.MemRoot.TryConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
-	if err != nil {
-		return logAllocMemFailed(bc.key, engineKey, m.MemRoot, err)
+	ok := m.MemRoot.TryConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
+	if !ok {
+		return logAllocMemFailed(bc.key, engineKey, m.MemRoot)
 	}
 
 	en, exist1 := m.Load(engineKey)
 	if !exist1 {
 		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-		err := m.MemRoot.TryConsume(StructSizeEngineInfo + engineCacheSize)
-		if err != nil {
-			return logAllocMemFailed(bc.key, engineKey, m.MemRoot, err)
+		ok := m.MemRoot.TryConsume(StructSizeEngineInfo + engineCacheSize)
+		if !ok {
+			return logAllocMemFailed(bc.key, engineKey, m.MemRoot)
 		}
 
 		// Create one slice for one backend on one stmt, current we share one engine
@@ -85,12 +85,12 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 	return nil
 }
 
-func logAllocMemFailed(bcKey, engineKey string, memRoot MemRoot, err error) error {
+func logAllocMemFailed(bcKey, engineKey string, memRoot MemRoot) error {
 	logutil.BgLogger().Warn(LitErrAllocMemFail, zap.String("Backend key", bcKey),
 		zap.String("Engine key", engineKey),
 		zap.Int64("Current Memory Usage:", memRoot.CurrentUsage()),
 		zap.Int64("Memory limitation:", memRoot.MaxMemoryQuota()))
-	return err
+	return errors.New(LitErrOutMaxMem)
 }
 
 // Unregister delete the engineInfo from the engineManager.

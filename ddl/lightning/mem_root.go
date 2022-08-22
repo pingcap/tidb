@@ -17,15 +17,13 @@ package lightning
 import (
 	"sync"
 	"unsafe"
-
-	"github.com/pingcap/errors"
 )
 
 // MemRoot is used to track the memory usage for the lightning backfill process.
 type MemRoot interface {
 	Consume(size int64)
 	Release(size int64)
-	TryConsume(size int64) error
+	TryConsume(size int64) bool
 	ConsumeWithTag(tag string, size int64)
 	ReleaseWithTag(tag string)
 
@@ -129,13 +127,13 @@ func (m *memRootImpl) ConsumeWithTag(tag string, size int64) {
 }
 
 // TryConsume implements MemRoot.
-func (m *memRootImpl) TryConsume(size int64) error {
+func (m *memRootImpl) TryConsume(size int64) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.currUsage+size > m.maxLimit {
-		return errors.New(LitErrOutMaxMem)
+		return false
 	}
-	return nil
+	return true
 }
 
 // ReleaseWithTag implements MemRoot.

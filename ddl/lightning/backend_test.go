@@ -61,8 +61,8 @@ func TestLightningBackend(t *testing.T) {
 
 	// Memory allocate failed
 	BackCtxMgr.MemRoot.SetMaxMemoryQuota(BackCtxMgr.MemRoot.CurrentUsage())
-	err = BackCtxMgr.MemRoot.TryConsume(1 * _gb)
-	require.Error(t, err)
+	ok := BackCtxMgr.MemRoot.TryConsume(1 * _gb)
+	require.False(t, ok)
 
 	// variable test
 	_, isEnable := BackCtxMgr.Load(100)
