@@ -78,12 +78,14 @@ const (
 	flagSkipCheckPath     = "skip-check-path"
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
-	flagSkipAWS      = "skip-aws"
-	flagWithSysTable = "with-sys-table"
+	flagSkipAWS             = "skip-aws"
+	flagCloudAPIConcurrency = "cloud-api-concurrency"
+	flagWithSysTable        = "with-sys-table"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
+	defaultCloudAPIConcurrency  = 8
 
 	flagCipherType    = "crypter.method"
 	flagCipherKey     = "crypter.key"

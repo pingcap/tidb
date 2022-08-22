@@ -33,14 +33,19 @@ const (
 type BackupEBSConfig struct {
 	Config
 
-	VolumeFile string `json:"volume-file"`
-	SkipAWS    bool   `json:"skip-aws"`
+	VolumeFile          string `json:"volume-file"`
+	SkipAWS             bool   `json:"skip-aws"`
+	CloudAPIConcurrency uint   `json:"cloud-api-concurrency"`
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
 func (cfg *BackupEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -52,10 +57,18 @@ func (cfg *BackupEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	return cfg.Config.ParseFromFlags(flags)
 }
 
+func (cfg *BackupEBSConfig) adjust() {
+	if cfg.CloudAPIConcurrency == 0 {
+		cfg.CloudAPIConcurrency = defaultCloudAPIConcurrency
+	}
+	cfg.Config.adjust()
+}
+
 // DefineBackupEBSFlags defines common flags for the backup command.
 func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 	flags.String(flagBackupVolumeFile, "./backup.json", "the file path of volume infos of TiKV node")
 	flags.Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
+	flags.Uint(flagCloudAPIConcurrency, defaultCloudAPIConcurrency, "concurrency of calling cloud api")
 }
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
@@ -70,6 +83,9 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 			summary.Log("EBS backup failed, please check the log for details.")
 		}
 	}()
+
+	cfg.adjust()
+
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 
@@ -172,7 +188,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	progress := g.StartProgress(ctx, cmdName, int64(storeCount), !cfg.LogProgress)
 	go progressFileWriterRoutine(ctx, progress, int64(storeCount))
 
-	ec2Session, err := aws.NewEC2Session()
+	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
