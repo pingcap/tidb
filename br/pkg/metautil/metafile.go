@@ -514,6 +514,9 @@ type MetaWriter struct {
 	metaFileName string
 
 	cipher *backuppb.CipherInfo
+
+	// records the total datafile size
+	totalDataFileSize int
 }
 
 // NewMetaWriter creates MetaWriter.
@@ -719,7 +722,9 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 	}
 
 	name := op.name()
-	writer.metafileSizes[name] += writer.metafiles.dataFileSize
+	writer.metafileSizes[name] += writer.metafiles.size
+	writer.totalDataFileSize += writer.metafiles.dataFileSize
+
 	// Flush metafiles to external storage.
 	writer.metafileSeqNum["metafiles"]++
 	fname := fmt.Sprintf("backupmeta.%s.%09d", name, writer.metafileSeqNum["metafiles"])
@@ -752,7 +757,7 @@ func (writer *MetaWriter) ArchiveSize() uint64 {
 	for _, file := range writer.backupMeta.Files {
 		total += file.Size_
 	}
-	total += uint64(writer.metafileSizes["datafile"])
+	total += uint64(writer.totalDataFileSize)
 	return total
 }
 
