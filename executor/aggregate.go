@@ -420,6 +420,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		}
 		// There is a bucket in the empty partialResultsMap.
 		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<w.BInMap) + setSize)
+		groupSet.SetTracker(e.memTracker)
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, w.stats)
