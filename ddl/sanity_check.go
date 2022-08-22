@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -105,17 +106,24 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		hasDelRange := job.State == model.JobStateRollbackDone
-		if !hasDelRange {
-			return 0, nil
-		}
 		var indexID int64
 		var ifExists bool
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
+			var unique bool
+			if err := job.DecodeArgs(&unique); err == nil {
+				// The first argument is bool means nothing need to be added to delete-range table.
+				return 0, nil
+			}
 			return 0, errors.Trace(err)
 		}
-		return mathutil.Max(len(partitionIDs), 1), nil
+		idxIDNumFactor := 1
+		if (indexID&tablecodec.IndexIDMask) != indexID && job.State == model.JobStateRollbackDone {
+			// This is a temporary index and the job rollback.
+			// We need to add the temporary index & the original index to the delete-range table.
+			idxIDNumFactor = 2
+		}
+		return mathutil.Max(len(partitionIDs)*idxIDNumFactor, idxIDNumFactor), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		var indexName interface{}
 		var ifNotExists bool

@@ -322,54 +322,38 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		}
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		tableID := job.TableID
 		var indexID int64
 		var ifExists bool
 		var partitionIDs []int64
-		var isOldBackfill bool = true
 		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
-		tmpID := tablecodec.TempIndexPrefix | indexID
-		if tmpID == indexID {
-			isOldBackfill = false
-			indexID = tablecodec.IndexIDMask & indexID
-		}
+		// Determine the physicalIDs to be added.
+		physicalIDs := []int64{job.TableID}
 		if len(partitionIDs) > 0 {
-			for _, pid := range partitionIDs {
-				if !isOldBackfill {
-					startKey := tablecodec.EncodeTableIndexPrefix(pid, tmpID)
-					endKey := tablecodec.EncodeTableIndexPrefix(pid, tmpID+1)
-					elemID := ea.allocForIndexID(pid, tmpID)
-					if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
-						return errors.Trace(err)
-					}
-				}
-				// Clean temp index data to avoid Garbage data that generate from adding index with lightning backfill data
-				if job.State == model.JobStateRollbackDone {
-					startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
-					endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
-					elemID := ea.allocForIndexID(pid, indexID)
-					if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-		} else {
-			if !isOldBackfill {
-				startKey := tablecodec.EncodeTableIndexPrefix(tableID, tmpID)
-				endKey := tablecodec.EncodeTableIndexPrefix(tableID, tmpID+1)
-				elemID := ea.allocForIndexID(tableID, tmpID)
-				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID)); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			// Clean temp index data to avoid Garbage data that generate from adding index with lightning backfill data
-			if job.State == model.JobStateRollbackDone {
-				startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-				endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-				elemID := ea.allocForIndexID(tableID, indexID)
-				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID)); err != nil {
+			physicalIDs = partitionIDs
+		}
+		// Determine the index IDs to be added.
+		originID := tablecodec.IndexIDMask & indexID
+		hasTmpIdx := originID != indexID // Whether this job experiences the backfill-merge process.
+		isRollBackDone := job.State == model.JobStateRollbackDone
+		var indexIDs []int64
+		switch {
+		case hasTmpIdx && isRollBackDone:
+			indexIDs = []int64{originID, indexID}
+		case hasTmpIdx && !isRollBackDone:
+			indexIDs = []int64{indexID}
+		case !hasTmpIdx && isRollBackDone:
+			indexIDs = []int64{originID}
+		case !hasTmpIdx && !isRollBackDone:
+			indexIDs = nil
+		}
+		for _, pid := range physicalIDs {
+			for _, iid := range indexIDs {
+				startKey := tablecodec.EncodeTableIndexPrefix(pid, iid)
+				endKey := tablecodec.EncodeTableIndexPrefix(pid, iid+1)
+				elemID := ea.allocForIndexID(pid, iid)
+				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("physical ID is %d", pid)); err != nil {
 					return errors.Trace(err)
 				}
 			}

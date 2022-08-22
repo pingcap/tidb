@@ -221,8 +221,7 @@ func createIndexOneCol(ctx *suiteContext, tableID int, colID int) error {
 	_, err := ctx.tk.Exec(ddlStr)
 	if err != nil {
 		if ctx.IsUnique || ctx.IsPK {
-			pos := strings.Index(err.Error(), "Error 1062: Duplicate entry")
-			require.Greater(ctx.t, pos, 0)
+			require.Contains(ctx.t, err.Error(), "Duplicate entry")
 		} else {
 			require.NoError(ctx.t, err)
 		}
@@ -290,8 +289,7 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 			err := f(ctx, tableID, tableName, i)
 			if err != nil {
 				if ctx.IsUnique || ctx.IsPK {
-					pos := strings.Index(err.Error(), "Error 1062: Duplicate entry")
-					require.Greater(ctx.t, pos, 0)
+					require.Contains(ctx.t, err.Error(), "Duplicate entry")
 				} else {
 					fmt.Printf("create index failed, err: %q", err.Error())
 					require.NoError(ctx.t, err)
