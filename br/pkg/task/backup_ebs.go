@@ -149,10 +149,10 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	if normalizedVer == nil {
 		return errors.New("invalid cluster version")
 	}
-	allocID, err := mgr.GetBaseAllocID(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+
+	//TODO: alloc id shall removed since we restore allocate id from region meta
+	var allocID uint64 = 1000
+
 	log.Info("get pd cluster info", zap.Stringer("cluster version", normalizedVer),
 		zap.Uint64("alloc-id", allocID))
 
