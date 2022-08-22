@@ -141,6 +141,10 @@ type regexpLikeFuncSig struct {
 	regexpBaseFuncSig
 }
 
+func (re *regexpLikeFuncSig) vectorized() bool {
+	return true
+}
+
 func (re *regexpLikeFuncSig) clone(from *regexpLikeFuncSig) {
 	re.cloneFrom(&from.baseBuiltinFunc)
 	re.cloneBase(&from.regexpBaseFuncSig)
@@ -197,7 +201,7 @@ func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 //
 // return true: need, false: needless
 func (re *regexpLikeFuncSig) needMemorization() bool {
-	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) == 2 || re.args[2].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) >= 2 || re.args[2].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
@@ -214,7 +218,7 @@ func (re *regexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		params = append(params, param)
 	}
 
-	// user may not add match type parameter
+	// user may ignore match type parameter
 	hasMatchType := (len(re.args) == 3)
 	param, err := buildStringParam(&re.baseBuiltinFunc, 2, input, !hasMatchType)
 	if err != nil {

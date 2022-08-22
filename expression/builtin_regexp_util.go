@@ -74,7 +74,7 @@ func buildStringParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, isNull bo
 
 	pa.isNull = isNull
 	if pa.isNull {
-		return nil, nil
+		return &pa, nil
 	}
 
 	pa.col, err = bf.bufAllocator.get()
@@ -156,7 +156,7 @@ func releaseBuffers(bf *baseBuiltinFunc, params []*regexpParam) {
 }
 
 func getBuffers(params []*regexpParam) []*chunk.Column {
-	buffers := make([]*chunk.Column, 5)
+	buffers := make([]*chunk.Column, 0, 5)
 	for _, pa := range params {
 		if pa.col != nil {
 			buffers = append(buffers, pa.col)

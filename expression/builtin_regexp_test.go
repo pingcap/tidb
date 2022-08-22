@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
@@ -84,13 +85,14 @@ func TestRegexpLikeConst(t *testing.T) {
 		{".*", "abcd", "", 1, nil},
 		// Test case-insensitive
 		{"AbC", "abc", "", 0, nil},
-		{"AbC", "abc", "i", 1, nil}, // 10
+		{"AbC", "abc", "i", 1, nil},
 		// Test multiple-line mode
 		{"23$", "123\n321", "", 0, nil},
 		{"23$", "123\n321", "m", 1, nil},
+		{"^day", "good\nday", "m", 1, nil},
 		// Test n flag
 		{".", "\n", "", 0, nil},
-		{".", "\n", "n", 1, nil}, // 14
+		{".", "\n", "n", 1, nil},
 		// Test rightmost rule
 		{"aBc", "abc", "ic", 0, nil},
 		{"aBc", "abc", "ci", 1, nil},
@@ -113,6 +115,79 @@ func TestRegexpLikeConst(t *testing.T) {
 	}
 }
 
-func TestRegexpLikeVec(t *testing.T) {
+func getVecExprBenchCaseForRegexpLike(inputs ...[]string) vecExprBenchCase {
+	gens := make([]dataGenerator, 0, 3)
+	paramTypes := make([]types.EvalType, 0, 3)
+	for _, input := range inputs {
+		gens = append(gens, &selectStringGener{
+			candidates: input,
+			randGen:    newDefaultRandGen(),
+		})
+		paramTypes = append(paramTypes, types.ETString)
+	}
 
+	return vecExprBenchCase{
+		retEvalType:   types.ETInt,
+		childrenTypes: paramTypes,
+		geners:        gens,
+	}
+}
+
+func getStringConstant(value string) *Constant {
+	return &Constant{
+		Value:   types.NewStringDatum(value),
+		RetType: types.NewFieldType(mysql.TypeVarchar),
+	}
+}
+
+func TestRegexpLikeFunctionVec(t *testing.T) {
+	var expr []string = []string{"abc", "aBc", "Good\nday", "\n"}
+	var pattern []string = []string{"abc", "od$", "^day", "day$", "."}
+	var matchType []string = []string{"m", "i", "icc", "cii", "n", "mni"}
+
+	constants := make([]*Constant, 3)
+
+	// Prepare data: expr is constant
+	constants[0] = getStringConstant("abc")
+	constants[1] = nil
+	constants[2] = nil
+	exprConstCase := getVecExprBenchCaseForRegexpLike(expr, pattern, matchType)
+	exprConstCase.constants = constants
+
+	// Prepare data: pattern is constant
+	constants[0] = nil
+	constants[1] = getStringConstant("abc")
+	patConstCase := getVecExprBenchCaseForRegexpLike(expr, pattern)
+	patConstCase.constants = constants
+
+	// Prepare data: matchType is constant
+	constants[0] = nil
+	constants[1] = nil
+	constants[2] = getStringConstant("imn")
+	matchTypeConstCase := getVecExprBenchCaseForRegexpLike(expr, pattern, matchType)
+	matchTypeConstCase.constants = constants
+
+	// Prepare data: pattern and matchType are constant
+	constants[0] = nil
+	constants[1] = getStringConstant("abc")
+	constants[2] = getStringConstant("imn")
+	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexpLike(expr, pattern, matchType)
+	patAndMatchTypeConstCase.constants = constants
+
+	// Build vecBuiltinRegexpLikeCases
+	var vecBuiltinRegexpLikeCases = map[string][]vecExprBenchCase{
+		ast.RegexpLike: {
+			getVecExprBenchCaseForRegexpLike(expr, pattern),                         // without match type
+			getVecExprBenchCaseForRegexpLike(expr, pattern, matchType),              // with match type
+			getVecExprBenchCaseForRegexpLike(make([]string, 0), pattern, matchType), // Test expr == null
+			getVecExprBenchCaseForRegexpLike(expr, make([]string, 0), matchType),    // Test pattern == null
+			getVecExprBenchCaseForRegexpLike(expr, pattern, make([]string, 0)),      // Test matchType == null
+			exprConstCase,
+			patConstCase,
+			matchTypeConstCase,
+			patAndMatchTypeConstCase,
+		},
+	}
+
+	testVectorizedBuiltinFunc(t, vecBuiltinRegexpLikeCases)
 }
