@@ -37,12 +37,15 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			if j.ID == job.ID {
 				continue
 			}
+			// has ddl job in queue, return error
 			if !j.IsFinished() {
 				return true, errors.Errorf("Can't flashback cluster, other ddl jobs in ddl queue")
 			}
+			// job is finished in time range [flashbackTS, now], not support flashback now
 			if j.Type != model.ActionFlashbackCluster && j.BinlogInfo != nil && j.BinlogInfo.FinishedTS >= flashbackTS {
 				return true, errors.Errorf("Can't flashback cluster because of ddl history")
 			}
+			// all jobs are done before flashbackTS, stop the iterator
 			if j.BinlogInfo != nil && j.BinlogInfo.FinishedTS < flashbackTS {
 				return true, nil
 			}

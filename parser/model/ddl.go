@@ -678,7 +678,7 @@ func (job *Job) IsDependentOn(other *Job) (bool, error) {
 }
 
 // IsFinished returns whether job is finished or not.
-// If the job state is Done or Cancelled, it is finished.
+// If the job state is Done, Cancelled, RollbackDone or Synced, it is finished.
 func (job *Job) IsFinished() bool {
 	return job.State == JobStateDone || job.State == JobStateRollbackDone || job.State == JobStateCancelled || job.State == JobStateSynced
 }
