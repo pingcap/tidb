@@ -2440,6 +2440,33 @@ func TestExchangePartitionAutoID(t *testing.T) {
 	tk.MustQuery("select count(*) from pt where a >= 4000000").Check(testkit.Rows("1"))
 }
 
+func TestTiDBEnableExchangePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int primary key auto_increment) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 values less than (9)
+		);`)
+	// default
+	tk.MustExec(`create table nt(a int primary key auto_increment);`)
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+
+	// set tidb_enable_exchange_partition = 0
+	tk.MustExec("set @@tidb_enable_exchange_partition=0")
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+
+	// set tidb_enable_exchange_partition = 1
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+}
+
 func TestExchangePartitionExpressIndex(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
