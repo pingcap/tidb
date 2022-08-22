@@ -56,14 +56,15 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 
 	var mutex sync.Mutex
 	eg, _ := errgroup.WithContext(context.Background())
-	appendInfo := func(resp *ec2.Snapshot, volume *config.EBSVolume) {
+	fillResult := func(snap *ec2.Snapshot, volume *config.EBSVolume) {
 		mutex.Lock()
 		defer mutex.Unlock()
-		snapIDMap[volume.ID] = *resp.SnapshotId
+		snapIDMap[volume.ID] = *snap.SnapshotId
 	}
 
 	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshot")
-	for _, store := range backupInfo.TiKVComponent.Stores {
+	for i := range backupInfo.TiKVComponent.Stores {
+		store := backupInfo.TiKVComponent.Stores[i]
 		volumes := store.Volumes
 		if len(volumes) > 1 {
 			// if one store has multiple volume, we should respect the order
@@ -85,8 +86,8 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			})
 		}
 
-		for i := range volumes {
-			volume := volumes[i]
+		for j := range volumes {
+			volume := volumes[j]
 			volumeIDs = append(volumeIDs, &volume.ID)
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				log.Debug("starts snapshot", zap.Any("volume", volume))
@@ -106,7 +107,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 					return errors.Trace(err)
 				}
 				log.Info("snapshot creating", zap.Stringer("snap", resp))
-				appendInfo(resp, volume)
+				fillResult(resp, volume)
 				return nil
 			})
 		}
@@ -181,13 +182,14 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 
 	eg, _ := errgroup.WithContext(context.Background())
 	workerPool := utils.NewWorkerPool(e.concurrency, "delete snapshot")
-	for _, snapID := range pendingSnaps {
+	for i := range pendingSnaps {
+		snapID := pendingSnaps[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			_, err2 := e.ec2.DeleteSnapshot(&ec2.DeleteSnapshotInput{
 				SnapshotId: snapID,
 			})
 			if err2 != nil {
-				log.Error("failed to delete snapshot", zap.Error(err2))
+				log.Error("failed to delete snapshot", zap.Error(err2), zap.Stringp("snap-id", snapID))
 				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 				// we don't return error if it fails to make sure all snapshot got chance to delete.
 			}
@@ -222,26 +224,27 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	newVolumeIDMap := make(map[string]string)
 	var mutex sync.Mutex
 	eg, _ := errgroup.WithContext(context.Background())
-	appendInfo := func(resp *ec2.Volume, volume *config.EBSVolume) {
+	fillResult := func(newVol *ec2.Volume, oldVol *config.EBSVolume) {
 		mutex.Lock()
 		defer mutex.Unlock()
-		newVolumeIDMap[volume.ID] = *resp.VolumeId
+		newVolumeIDMap[oldVol.ID] = *newVol.VolumeId
 	}
 	workerPool := utils.NewWorkerPool(e.concurrency, "create volume")
-	for _, store := range meta.TiKVComponent.Stores {
-		for i := range store.Volumes {
-			oldVol := store.Volumes[i]
+	for i := range meta.TiKVComponent.Stores {
+		store := meta.TiKVComponent.Stores[i]
+		for j := range store.Volumes {
+			oldVol := store.Volumes[j]
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
 				req := template
 				req.SetSnapshotId(oldVol.SnapshotID)
 				req.SetAvailabilityZone(oldVol.VolumeAZ)
-				resp, err := e.ec2.CreateVolume(&req)
+				newVol, err := e.ec2.CreateVolume(&req)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				log.Info("new volume creating", zap.Stringer("snap", resp))
-				appendInfo(resp, oldVol)
+				log.Info("new volume creating", zap.Stringer("vol", newVol))
+				fillResult(newVol, oldVol)
 				return nil
 			})
 		}
@@ -295,15 +298,14 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 
 	eg, _ := errgroup.WithContext(context.Background())
 	workerPool := utils.NewWorkerPool(e.concurrency, "delete volume")
-	for _, volID := range pendingVolumes {
+	for i := range pendingVolumes {
+		volID := pendingVolumes[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {
-
-			// todo: concurrent delete
 			_, err2 := e.ec2.DeleteVolume(&ec2.DeleteVolumeInput{
 				VolumeId: volID,
 			})
 			if err2 != nil {
-				log.Error("failed to delete volume", zap.Error(err2))
+				log.Error("failed to delete volume", zap.Error(err2), zap.Stringp("volume-id", volID))
 				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 				// we don't return error if it fails to make sure all volume got chance to delete.
 			}
