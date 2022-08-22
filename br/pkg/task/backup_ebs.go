@@ -215,8 +215,9 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		log.Info("snapshot started, restore schedule")
 		if restoreE := restoreFunc(ctx); restoreE != nil {
 			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+		} else {
+			scheduleRestored = true
 		}
-		scheduleRestored = true
 
 		log.Info("wait async snapshots finish")
 		totalSize, err = ec2Session.WaitSnapshotsCreated(snapIDMap, progress)
