@@ -103,7 +103,6 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 					},
 				})
 				if err != nil {
-					// todo: consider remove the exists starts snapshots outside.
 					return errors.Trace(err)
 				}
 				log.Info("snapshot creating", zap.Stringer("snap", resp))

@@ -199,6 +199,12 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	snapIDMap := make(map[string]string)
 	var volAZs aws.VolumeAZs
 	if !cfg.SkipAWS {
+		defer func() {
+			if err != nil {
+				log.Error("failed to backup ebs, cleaning up created volumes", zap.Error(err))
+				ec2Session.DeleteSnapshots(snapIDMap)
+			}
+		}()
 		log.Info("start async snapshots")
 		snapIDMap, volAZs, err = ec2Session.CreateSnapshots(backupInfo)
 		if err != nil {
@@ -236,8 +242,9 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	backupInfo.SetResolvedTS(resolvedTs)
 	backupInfo.SetSnapshotIDs(snapIDMap)
 	backupInfo.SetVolumeAZs(volAZs)
-	if err2 := saveMetaFile(c, backupInfo, client.GetStorage()); err2 != nil {
-		return err2
+	err = saveMetaFile(c, backupInfo, client.GetStorage())
+	if err != nil {
+		return err
 	}
 	finished = true
 	return nil
