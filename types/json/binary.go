@@ -274,6 +274,13 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 		}
 		totalLen := uint32(lenLen) + uint32(strLen)
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
+	case TypeCodeOpaque:
+		strLen, lenLen := uint64(bj.Value[valOff+1]), 1
+		if strLen >= utf8.RuneSelf {
+			strLen, lenLen = binary.Uvarint(bj.Value[valOff+1:])
+		}
+		totalLen := 1 + uint32(lenLen) + uint32(strLen)
+		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
 	}
 	dataSize := endian.Uint32(bj.Value[valOff+dataSizeOff:])
 	return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+dataSize]}
