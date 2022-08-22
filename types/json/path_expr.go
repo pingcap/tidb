@@ -323,7 +323,6 @@ func parseMember(s *stream, p *PathExpression) bool {
 			dotKey, _ = s.readWhile(func(b byte) bool {
 				return !(unicode.IsSpace(rune(b)) || b == '.' || b == '[' || b == '*')
 			})
-
 		}
 		dotKey = "\"" + dotKey + "\""
 
