@@ -174,7 +174,6 @@ func (l *LRUPlanCache) RemoveOldest() {
 		l.removeFromBucket(lru)
 		l.size--
 	}
-	return
 }
 
 // removeFromBucket remove element from bucket
