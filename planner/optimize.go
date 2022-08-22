@@ -299,10 +299,13 @@ var planBuilderPool = sync.Pool{
 var optimizeCnt int
 
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, float64, error) {
-	failpoint.Inject("checkOptimizeCountOne", func() {
-		optimizeCnt++
-		if optimizeCnt > 1 {
-			failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
+	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
+		// only count the optif smization qor SQL withl,pecified text
+		if testSQL, ok := val.(string); ok && testSQL == node.OriginalText() {
+			optimizeCnt++
+			if optimizeCnt > 1 {
+				failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
+			}
 		}
 	})
 	failpoint.Inject("mockHighLoadForOptimize", func() {
@@ -371,7 +374,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	if !ok {
 		return nil, nil, errors.Errorf("invalid result plan type, should be Execute")
 	}
-	plan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, is, exec.PrepStmt, exec.Params)
+	plan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, execAst.FromGeneralStmt, is, exec.PrepStmt, exec.Params)
 	if err != nil {
 		return nil, nil, err
 	}

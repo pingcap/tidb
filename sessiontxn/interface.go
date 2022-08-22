@@ -138,6 +138,8 @@ type TxnContextProvider interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
+	// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
+	OnLocalTemporaryTableCreated()
 	// ActivateTxn activates the transaction.
 	ActivateTxn() (kv.Transaction, error)
 }
@@ -177,6 +179,8 @@ type TxnManager interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
+	// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
+	OnLocalTemporaryTableCreated()
 	// ActivateTxn activates the transaction.
 	ActivateTxn() (kv.Transaction, error)
 	// GetCurrentStmt returns the current statement node
