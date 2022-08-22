@@ -97,6 +97,8 @@ type InsertValues struct {
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
 	txnInUse   sync.Mutex
+
+	fkChecks []*FKCheckExec
 }
 
 type defaultVal struct {
@@ -1264,6 +1266,12 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	vars.StmtCtx.AddAffectedRows(1)
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
+	}
+	for _, fkc := range e.fkChecks {
+		err = fkc.addRowNeedToCheck(vars.StmtCtx, row)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

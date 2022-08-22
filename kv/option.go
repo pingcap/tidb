@@ -91,6 +91,8 @@ const (
 	RequestSourceType
 	// ReplicaReadAdjuster set the adjust function of cop requsts.
 	ReplicaReadAdjuster
+
+	ScanBatchSize
 )
 
 // ReplicaReadType is the type of replica to read data from
