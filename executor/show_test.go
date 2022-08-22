@@ -1833,7 +1833,8 @@ func TestShowBindingCacheStatus(t *testing.T) {
 }
 
 func TestShowViewWithWindowFunction(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
