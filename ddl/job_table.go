@@ -230,8 +230,14 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 		// we should wait 2 * d.lease time to guarantee all TiDB server have finished the schema change.
 		// see waitSchemaSynced for more details.
 		if !d.isSynced(job) || d.once.Load() {
-			wk.waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
-			d.once.Store(false)
+			err := wk.waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
+			if err == nil {
+				d.once.Store(false)
+			} else {
+				logutil.BgLogger().Warn("[ddl] wait ddl job sync failed", zap.Error(err), zap.String("job", job.String()))
+				time.Sleep(time.Second)
+				return
+			}
 		}
 		if err := wk.HandleDDLJobTable(d.ddlCtx, job); err != nil {
 			logutil.BgLogger().Info("[ddl] handle ddl job failed", zap.Error(err), zap.String("job", job.String()))
