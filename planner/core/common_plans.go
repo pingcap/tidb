@@ -300,7 +300,6 @@ type InsertGeneratedColumns struct {
 type Insert struct {
 	baseSchemaProducer
 
-	DBName        model.CIStr
 	Table         table.Table
 	tableSchema   *expression.Schema
 	tableColNames types.NameSlice

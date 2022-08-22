@@ -3448,7 +3448,6 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	insertPlan := Insert{
-		DBName:        tn.DBInfo.Name,
 		Table:         tableInPlan,
 		Columns:       insert.Columns,
 		tableSchema:   schema,
@@ -3555,7 +3554,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 
-	insertPlan.FKChecks, err = buildOnModifyChildForeignKeyChecks(b.ctx, b.is, insertPlan.DBName.L, insertPlan.Table.Meta())
+	insertPlan.FKChecks, err = buildOnModifyChildForeignKeyChecks(b.ctx, b.is, tn.DBInfo.Name.L, insertPlan.Table.Meta())
 	return insertPlan, err
 }
 
