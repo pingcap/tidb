@@ -35,6 +35,9 @@ const (
 func DefineRestoreDataFlags(command *cobra.Command) {
 	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
 	command.Flags().Bool(flagDumpRegionInfo, false, "dump all regions info")
+	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
+	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
+	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 }
 
 type RestoreDataConfig struct {
