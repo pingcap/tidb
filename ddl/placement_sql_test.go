@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
@@ -580,7 +579,7 @@ func TestPlacementMode(t *testing.T) {
 }
 
 func checkTiflashReplicaSet(t *testing.T, do *domain.Domain, db, tb string, cnt uint64) {
-	tbl, err := do.InfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr(db), model.NewCIStr(tb))
+	tbl, err := do.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tb))
 	require.NoError(t, err)
 
 	tiflashReplica := tbl.Meta().TiFlashReplica
