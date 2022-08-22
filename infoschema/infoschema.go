@@ -60,6 +60,8 @@ type InfoSchema interface {
 	AllPlacementBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
+	// HasTemporaryTable returns whether information schema has temporary table
+	HasTemporaryTable() bool
 	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
 	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 }
@@ -95,6 +97,9 @@ type infoSchema struct {
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
+
+	// temporaryTables stores the temporary table ids
+	temporaryTableIDs map[int64]struct{}
 
 	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
@@ -312,6 +317,11 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 		}
 	}
 	return nil, nil, nil
+}
+
+// HasTemporaryTable returns whether information schema has temporary table
+func (is *infoSchema) HasTemporaryTable() bool {
+	return len(is.temporaryTableIDs) != 0
 }
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
@@ -652,4 +662,9 @@ func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.Table
 	}
 
 	return ts.InfoSchema.SchemaByTable(tableInfo)
+}
+
+// HasTemporaryTable returns whether information schema has temporary table
+func (ts *TemporaryTableAttachedInfoSchema) HasTemporaryTable() bool {
+	return ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
 }
