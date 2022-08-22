@@ -266,7 +266,7 @@ func TestJoinOrderHint4DifferentJoinType(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
-	tk.MustExec("set @@TestJoinOrderHint4DifferentJoinType=true")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DifferentJoinType")
 }
