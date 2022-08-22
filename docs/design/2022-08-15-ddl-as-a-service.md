@@ -1,4 +1,4 @@
-# Proposal: DDL Service
+# Proposal: DDL as a Service
 
 - Author(s): [lcwangchao](https://github.com/lcwangchao)
 
