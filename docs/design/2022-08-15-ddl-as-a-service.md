@@ -188,3 +188,8 @@ Because DDL owners from multiple clusters will run together in DDL service, it's
 - tidb_ddl_running_job_count
 
 A new label "cluster_id" will be added to these metrics.
+
+## Future Works
+
+Some optimizations can be performed. For example, every domain will cache the latest information schema that contains all tables' definitions in the cluster. If one registered cluster has too many tables, it will hold a great memory. However, because ddl jobs is not so sensitive of the latency, we can get a table's meta from storage directly instead of caching it in ddl service. We can introduce a new implement for `infoschema.InfoSchema` that will fetch table's meta from storage at most times and only cache a small part of tables that are frequently used. Reusing the cache size of the information schema also means that the DDL owner's boosting will be faster making it lighter to be scheduled between worker nodes.
+
