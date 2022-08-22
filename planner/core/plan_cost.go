@@ -946,7 +946,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	if isMPP && p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
 		cpuFactor = sessVars.GetTiFlashCPUFactor() // use the dedicated TiFlash CPU Factor on modelVer2
 	}
-	diskFactor := sessVars.GetMemoryFactor()
+	diskFactor := sessVars.GetDiskFactor()
 	memoryFactor := sessVars.GetMemoryFactor()
 	concurrencyFactor := sessVars.GetConcurrencyFactor()
 
