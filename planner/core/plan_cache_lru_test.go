@@ -15,9 +15,9 @@ package core
 
 import (
 	"container/list"
-	"github.com/pingcap/tidb/util/kvcache"
 	"testing"
 
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 )
 
