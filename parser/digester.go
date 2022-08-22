@@ -98,6 +98,14 @@ func NormalizeDigest(sql string) (normalized string, digest *Digest) {
 	return
 }
 
+// Normalize4GeneralPlanCache combines Normalize and Params into one method.
+func Normalize4GeneralPlanCache(sql string) (normalized string, params []string, paramsType []int) {
+	d := digesterPool.Get().(*sqlDigester)
+	normalized, params, paramsType = d.doNormalize4GeneralPlanCache(sql)
+	digesterPool.Put(d)
+	return
+}
+
 var digesterPool = sync.Pool{
 	New: func() interface{} {
 		return &sqlDigester{
@@ -109,10 +117,12 @@ var digesterPool = sync.Pool{
 
 // sqlDigester is used to compute DigestHash or Normalize for sql.
 type sqlDigester struct {
-	buffer bytes.Buffer
-	lexer  *Scanner
-	hasher hash2.Hash
-	tokens tokenDeque
+	buffer     bytes.Buffer
+	params     []*bytes.Buffer
+	paramsType []int
+	lexer      *Scanner
+	hasher     hash2.Hash
+	tokens     tokenDeque
 }
 
 func (d *sqlDigester) doDigestNormalized(normalized string) (digest *Digest) {
@@ -151,6 +161,18 @@ func (d *sqlDigester) doNormalizeDigest(sql string) (normalized string, digest *
 	d.buffer.Reset()
 	digest = NewDigest(d.hasher.Sum(nil))
 	d.hasher.Reset()
+	return
+}
+
+func (d *sqlDigester) doNormalize4GeneralPlanCache(sql string) (normalized string, params []string, paramsType []int) {
+	d.normalize(sql)
+	normalized = d.buffer.String()
+	params = make([]string, len(d.params))
+	for _, param := range d.params {
+		params = append(params, param.String())
+	}
+	paramsType = d.paramsType
+	d.buffer.Reset()
 	return
 }
 
@@ -259,6 +281,7 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 		return
 	}
 	// count(*) => count(?)
+	// TODO: need to handle this for general plan cache
 	if currTok.lit == "*" {
 		if d.isStarParam() {
 			currTok.tok = genericSymbol
@@ -273,6 +296,7 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 	}
 
 	// "?, ?, ?, ?" => "..."
+	// TODO: need to handle this for general plan cache
 	last2 := d.tokens.back(2)
 	if d.isGenericList(last2) {
 		d.tokens.popBack(2)
@@ -289,6 +313,8 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 	}
 
 	// 2 => ?
+	d.paramsType = append(d.paramsType, currTok.tok)
+	d.params = append(d.params, bytes.NewBufferString(currTok.lit))
 	currTok.tok = genericSymbol
 	currTok.lit = "?"
 }
@@ -399,6 +425,20 @@ func (*sqlDigester) isNumLit(tok int) (beNum bool) {
 func (*sqlDigester) isComma(tok token) (isComma bool) {
 	isComma = tok.lit == ","
 	return
+}
+
+func IsIntLit(tok int) bool {
+	if tok == intLit {
+		return true
+	}
+	return false
+}
+
+func IsFloatLit(tok int) bool {
+	if tok == floatLit {
+		return true
+	}
+	return false
 }
 
 type token struct {

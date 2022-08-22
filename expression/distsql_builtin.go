@@ -1123,7 +1123,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_Null:
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, nil
 	case tipb.ExprType_Int64:
-		return convertInt(expr.Val)
+		return ConvertInt(expr.Val)
 	case tipb.ExprType_Uint64:
 		return convertUint(expr.Val)
 	case tipb.ExprType_String:
@@ -1133,9 +1133,9 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_MysqlBit:
 		return &Constant{Value: types.NewMysqlBitDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
 	case tipb.ExprType_Float32:
-		return convertFloat(expr.Val, true)
+		return ConvertFloat(expr.Val, true)
 	case tipb.ExprType_Float64:
-		return convertFloat(expr.Val, false)
+		return ConvertFloat(expr.Val, false)
 	case tipb.ExprType_MysqlDecimal:
 		return convertDecimal(expr.Val)
 	case tipb.ExprType_MysqlDuration:
@@ -1215,7 +1215,8 @@ func decodeValueList(data []byte) ([]Expression, error) {
 	return result, nil
 }
 
-func convertInt(val []byte) (*Constant, error) {
+// ConvertInt ...
+func ConvertInt(val []byte) (*Constant, error) {
 	var d types.Datum
 	_, i, err := codec.DecodeInt(val)
 	if err != nil {
@@ -1243,7 +1244,8 @@ func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
 }
 
-func convertFloat(val []byte, f32 bool) (*Constant, error) {
+// ConvertFloat ...
+func ConvertFloat(val []byte, f32 bool) (*Constant, error) {
 	var d types.Datum
 	_, f, err := codec.DecodeFloat(val)
 	if err != nil {
