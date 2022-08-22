@@ -1837,8 +1837,25 @@ func TestShowViewWithWindowFunction(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+  tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
 	tk.MustExec("create or replace view test1_v as(select id,row_number() over (partition by num) from test1);")
 	tk.MustQuery("desc test1_v;").Check(testkit.Rows("id int(0) NO  <nil> ", "row_number() over (partition by num) bigint(21) YES  <nil> "))
+}
+
+func TestShowDatabasesLike(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("DROP DATABASE IF EXISTS `TEST_$1`")
+	tk.MustExec("DROP DATABASE IF EXISTS `test_$2`")
+	tk.MustExec("CREATE DATABASE `TEST_$1`;")
+	tk.MustExec("CREATE DATABASE `test_$2`;")
+
+	tk.MustQuery("SHOW DATABASES LIKE 'TEST_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
+	tk.MustQuery("SHOW DATABASES LIKE 'test_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
 }
