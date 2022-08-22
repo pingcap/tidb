@@ -29,7 +29,7 @@ func TestAdjustMemory(t *testing.T) {
 		ensize int64
 	}
 	tests := []TestCase{
-		{"Mem1", 4 * _kb, 256 * _kb, 1 * _mb},
+		{"Mem1", 4 * _kb, 128, 512},
 		{"Mem2", 8 * _mb, 256 * _kb, 1 * _mb},
 		{"Mem3", 256 * _mb, 8 * _mb, 32 * _mb},
 		{"Mem4", 1 * _gb, 32 * _mb, 128 * _mb},
@@ -61,7 +61,7 @@ func TestLightningBackend(t *testing.T) {
 
 	// Memory allocate failed
 	BackCtxMgr.MemRoot.SetMaxMemoryQuota(BackCtxMgr.MemRoot.CurrentUsage())
-	ok := BackCtxMgr.MemRoot.TryConsume(1 * _gb)
+	ok := BackCtxMgr.MemRoot.TestConsume(1 * _gb)
 	require.False(t, ok)
 
 	// variable test

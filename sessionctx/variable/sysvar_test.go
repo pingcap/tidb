@@ -1084,15 +1084,15 @@ func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	require.Equal(t, val, "0")
 }
 
-func TestSetTIDBFastDDL(t *testing.T) {
+func TestSetTiDBEnableFastReorg(t *testing.T) {
 	vars := NewSessionVars()
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
 	fastDDL := GetSysVar(TiDBDDLEnableFastReorg)
 
-	// Default off
-	require.Equal(t, fastDDL.Value, Off)
+	// Test the default value.
+	require.Equal(t, fastDDL.Value, BoolToOnOff(DefTiDBDDLEnableFastReorg))
 
 	// Set to On
 	err := mock.SetGlobalSysVar(TiDBDDLEnableFastReorg, On)

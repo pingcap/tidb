@@ -52,7 +52,7 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 	// to continue the task.
 	if !exist {
 		m.MemRoot.RefreshConsumption()
-		ok := m.MemRoot.TryConsume(StructSizeBackendCtx)
+		ok := m.MemRoot.TestConsume(StructSizeBackendCtx)
 		if !ok {
 			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.Int64("backend key", jobID),
 				zap.String("Current Memory Usage:", strconv.FormatInt(m.MemRoot.CurrentUsage(), 10)),

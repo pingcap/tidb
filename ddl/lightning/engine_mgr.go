@@ -40,7 +40,7 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 	engineKey := GenEngineInfoKey(job.ID, indexID)
 
 	m.MemRoot.RefreshConsumption()
-	ok := m.MemRoot.TryConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
+	ok := m.MemRoot.TestConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
 	if !ok {
 		return logAllocMemFailed(bc.key, engineKey, m.MemRoot)
 	}
@@ -48,7 +48,7 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 	en, exist1 := m.Load(engineKey)
 	if !exist1 {
 		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-		ok := m.MemRoot.TryConsume(StructSizeEngineInfo + engineCacheSize)
+		ok := m.MemRoot.TestConsume(StructSizeEngineInfo + engineCacheSize)
 		if !ok {
 			return logAllocMemFailed(bc.key, engineKey, m.MemRoot)
 		}

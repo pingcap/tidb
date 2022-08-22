@@ -131,7 +131,7 @@ func (ei *engineInfo) NewWorkerCtx(id int) (*WorkerContext, error) {
 	memRequire := StructSizeWorkerCtx
 	// First to check the memory usage.
 	ei.memRoot.RefreshConsumption()
-	ok := ei.memRoot.TryConsume(memRequire)
+	ok := ei.memRoot.TestConsume(memRequire)
 	if !ok {
 		logutil.BgLogger().Error(LitErrAllocMemFail, zap.String("Engine key", ei.key),
 			zap.String("worker Id:", strconv.Itoa(id)),

@@ -473,6 +473,7 @@ func TestAddIndexLightning(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), usage.AddIndexLightning.AddIndexLightningUsed)
 
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off")
 	allow := ddl.IsEnableFastReorg()
 	require.Equal(t, false, allow)
 	tk.MustExec("use test")
