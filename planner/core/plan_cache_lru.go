@@ -82,7 +82,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes interface{}) (value kvcac
 func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes interface{}) {
 	hash := string(key.Hash())
 	bucket, bucketExist := l.buckets[hash]
-	// in the cache
+	// bucket exist
 	if bucketExist {
 		if element, _, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			element.Value.(*CacheEntry).PlanValue = value
@@ -90,7 +90,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes inte
 			return
 		}
 	}
-	// not in the cache
+	// bucket not exist
 	newCacheEntry := &CacheEntry{
 		PlanKey:   key,
 		PlanValue: value,
@@ -163,7 +163,7 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 }
 
 // RemoveOldest removes the oldest element from the cache.
-func (l *LRUPlanCache) RemoveOldest() (key kvcache.Key, value kvcache.Value, ok bool) {
+func (l *LRUPlanCache) RemoveOldest() {
 	if l.size > 0 {
 		lru := l.cache.Back()
 		if l.onEvict != nil {
@@ -173,9 +173,8 @@ func (l *LRUPlanCache) RemoveOldest() (key kvcache.Key, value kvcache.Value, ok 
 		l.cache.Remove(lru)
 		l.removeFromBucket(lru)
 		l.size--
-		return lru.Value.(*CacheEntry).PlanKey, lru.Value.(*CacheEntry).PlanValue, true
 	}
-	return nil, nil, false
+	return
 }
 
 // removeFromBucket remove element from bucket
