@@ -130,6 +130,11 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetRequestSourceType(val.(string))
 	case kv.ReplicaReadAdjuster:
 		s.KVSnapshot.SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
+	case kv.ScanBatchSize:
+		size := val.(int)
+		if size > 0 {
+			s.KVSnapshot.SetScanBatchSize(size)
+		}
 	}
 }
 

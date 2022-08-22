@@ -300,6 +300,7 @@ type InsertGeneratedColumns struct {
 type Insert struct {
 	baseSchemaProducer
 
+	DBName        model.CIStr
 	Table         table.Table
 	tableSchema   *expression.Schema
 	tableColNames types.NameSlice
@@ -323,6 +324,8 @@ type Insert struct {
 	AllAssignmentsAreConstant bool
 
 	RowLen int
+
+	FKChecks []*FKCheck
 }
 
 // Update represents Update plan.
