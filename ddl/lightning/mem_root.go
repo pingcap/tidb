@@ -22,7 +22,7 @@ import (
 type MemRoot interface {
 	Consume(size int64)
 	Release(size int64)
-	TryConsume(size int64) bool
+	TestConsume(size int64) bool
 	ConsumeWithTag(tag string, size int64)
 	ReleaseWithTag(tag string)
 
@@ -99,8 +99,8 @@ func (m *memRootImpl) ConsumeWithTag(tag string, size int64) {
 	m.structSize[tag] = size
 }
 
-// TryConsume implements MemRoot.
-func (m *memRootImpl) TryConsume(size int64) bool {
+// TestConsume implements MemRoot.
+func (m *memRootImpl) TestConsume(size int64) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.currUsage+size <= m.maxLimit
