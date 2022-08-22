@@ -791,6 +791,10 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
+	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
+	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
+	TiDBSysProcScanConcurrency = "tidb_sysproc_scan_concurrency"
 )
 
 // TiDB intentional limits
@@ -1007,6 +1011,8 @@ const (
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLEnableFastReorg                      = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
+	DefAutoBuildStatsConcurrency                   = 1
+	DefTiDBSysProcScanConcurrency                  = 1
 )
 
 // Process global variables.
