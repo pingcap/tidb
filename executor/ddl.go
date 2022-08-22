@@ -558,7 +558,7 @@ func (e *DDLExec) executeFlashBackCluster(ctx context.Context, s *ast.FlashBackC
 		return errors.Errorf("not support flash back cluster with TiFlash stores")
 	}
 
-	flashbackTS, err := staleread.CalculateAsOfTsExpr(e.ctx, s.AsOf)
+	flashbackTS, err := staleread.CalculateAsOfTsExpr(e.ctx, &s.AsOf)
 	if err != nil {
 		return err
 	}
