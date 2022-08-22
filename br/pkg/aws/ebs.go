@@ -179,6 +179,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 		pendingSnaps = append(pendingSnaps, &snapID)
 	}
 
+	var deletedCnt int
 	eg, _ := errgroup.WithContext(context.Background())
 	workerPool := utils.NewWorkerPool(e.concurrency, "delete snapshot")
 	for i := range pendingSnaps {
@@ -191,11 +192,14 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 				log.Error("failed to delete snapshot", zap.Error(err2), zap.Stringp("snap-id", snapID))
 				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 				// we don't return error if it fails to make sure all snapshot got chance to delete.
+			} else {
+				deletedCnt++
 			}
 			return nil
 		})
 	}
 	_ = eg.Wait()
+	log.Info("delete snapshot end", zap.Int("need-to-del", len(snapIDMap)), zap.Int("deleted", deletedCnt))
 }
 
 // CreateVolumes create volumes from snapshots
@@ -295,6 +299,7 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 		pendingVolumes = append(pendingVolumes, &volumeID)
 	}
 
+	var deletedCnt int
 	eg, _ := errgroup.WithContext(context.Background())
 	workerPool := utils.NewWorkerPool(e.concurrency, "delete volume")
 	for i := range pendingVolumes {
@@ -307,11 +312,14 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 				log.Error("failed to delete volume", zap.Error(err2), zap.Stringp("volume-id", volID))
 				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 				// we don't return error if it fails to make sure all volume got chance to delete.
+			} else {
+				deletedCnt++
 			}
 			return nil
 		})
 	}
 	_ = eg.Wait()
+	log.Info("delete volume end", zap.Int("need-to-del", len(volumeIDMap)), zap.Int("deleted", deletedCnt))
 }
 
 func ec2Tag(key, val string) *ec2.Tag {
