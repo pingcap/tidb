@@ -81,7 +81,7 @@ func TestForeignKeyError(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int, index(a))")
 	tk.MustExec("create table t1 (a int, FOREIGN KEY fk(a) REFERENCES t(a))")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
