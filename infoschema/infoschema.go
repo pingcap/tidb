@@ -448,22 +448,24 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 			continue
 		}
 
-		referredFKList = append(referredFKList, &model.ReferredFKInfo{
+		newReferredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKList)+1)
+		newReferredFKList = append(newReferredFKList, referredFKList...)
+		newReferredFKList = append(newReferredFKList, &model.ReferredFKInfo{
 			Cols:        fk.RefCols,
 			ChildSchema: schema,
 			ChildTable:  tbInfo.Name,
 			ChildFKName: fk.Name,
 		})
-		sort.Slice(referredFKList, func(i, j int) bool {
-			if referredFKList[i].ChildSchema.L != referredFKList[j].ChildSchema.L {
-				return referredFKList[i].ChildSchema.L < referredFKList[j].ChildSchema.L
+		sort.Slice(newReferredFKList, func(i, j int) bool {
+			if newReferredFKList[i].ChildSchema.L != newReferredFKList[j].ChildSchema.L {
+				return newReferredFKList[i].ChildSchema.L < newReferredFKList[j].ChildSchema.L
 			}
-			if referredFKList[i].ChildTable.L != referredFKList[j].ChildTable.L {
-				return referredFKList[i].ChildTable.L < referredFKList[j].ChildTable.L
+			if newReferredFKList[i].ChildTable.L != newReferredFKList[j].ChildTable.L {
+				return newReferredFKList[i].ChildTable.L < newReferredFKList[j].ChildTable.L
 			}
-			return referredFKList[i].ChildFKName.L != referredFKList[j].ChildFKName.L
+			return newReferredFKList[i].ChildFKName.L != newReferredFKList[j].ChildFKName.L
 		})
-		is.referredForeignKeyMap[refer] = referredFKList
+		is.referredForeignKeyMap[refer] = newReferredFKList
 	}
 }
 
@@ -477,12 +479,14 @@ func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *mode
 		if len(referredFKList) == 0 {
 			continue
 		}
-		for i, referredFK := range referredFKList {
+		newReferredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKList)-1)
+		for _, referredFK := range referredFKList {
 			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
-				is.referredForeignKeyMap[refer] = append(referredFKList[:i], referredFKList[i+1:]...)
-				break
+				continue
 			}
+			newReferredFKList = append(newReferredFKList, referredFK)
 		}
+		is.referredForeignKeyMap[refer] = newReferredFKList
 	}
 }
 

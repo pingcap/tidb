@@ -267,6 +267,26 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	}, *tb3Info.ForeignKeys[1])
 }
 
+func TestCreateTableWithForeignKeyMetaInfo3(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, a int, b int as (a) virtual);")
+	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
+	tk.MustExec("create table t3 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
+	tk.MustExec("create table t4 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
+	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	tk.MustExec("drop table t3")
+	tk.MustExec("create table t5 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
+	require.Equal(t, 3, len(tb1ReferredFKs))
+	require.Equal(t, "t2", tb1ReferredFKs[0].ChildTable.L)
+	require.Equal(t, "t3", tb1ReferredFKs[1].ChildTable.L)
+	require.Equal(t, "t4", tb1ReferredFKs[2].ChildTable.L)
+}
+
 func TestCreateTableWithForeignKeyPrivilegeCheck(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
