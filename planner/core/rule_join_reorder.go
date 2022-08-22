@@ -44,8 +44,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	}
 	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
-		// (A * B) left outer join C on (A.a = C.a && B.b = C.b) will generate two left outer join type edge, which is not accepted yet.
-		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && (join.EqualConditions == nil || len(join.EqualConditions) > 1)) {
+		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
 		if hintInfo != nil {
 			// The leading hint can not work for some reasons. So clear it in the join node.
 			join.hintInfo = nil
@@ -134,16 +133,24 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	tmpOtherConds = append(tmpOtherConds, join.OtherConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.LeftConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.RightConditions...)
-	for range join.EqualConditions {
-		abType := &abundantJoinType{JoinType: join.JoinType}
-		if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin {
+	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin {
+		for i := range join.EqualConditions {
+			abType := &abundantJoinType{JoinType: join.JoinType}
 			// outer join's other condition should be bound with the connecting edge.
-			abType.outerBindCondition = tmpOtherConds
-		} else {
-			otherConds = append(otherConds, tmpOtherConds...)
+			// just bind the outer condition to a **anyone** of the EQ edges, it will be extracted to use when make new join.
+			if i == 0 {
+				abType.outerBindCondition = tmpOtherConds
+			}
+			joinTypes = append(joinTypes, abType)
 		}
-		joinTypes = append(joinTypes, abType)
+	} else {
+		for range join.EqualConditions {
+			abType := &abundantJoinType{JoinType: join.JoinType}
+			joinTypes = append(joinTypes, abType)
+		}
+		otherConds = append(otherConds, tmpOtherConds...)
 	}
+
 	return group, eqEdges, otherConds, joinTypes, hintInfo, hasOuterJoin
 }
 
