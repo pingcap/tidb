@@ -169,9 +169,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
 	switch job.SchemaState {
 	case model.StateNone:
-		err = checkTableForeignKeyValidInOwner(d, job, tbInfo, fkCheck)
+		retryable, err := checkTableForeignKeyValidInOwner(d, t, job, tbInfo, fkCheck)
 		if err != nil {
-			job.State = model.JobStateCancelled
+			if !retryable {
+				job.State = model.JobStateCancelled
+			}
 			return ver, errors.Trace(err)
 		}
 		// create table in non-public state

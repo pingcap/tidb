@@ -181,8 +181,15 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 	return checkTableForeignKey(referTblInfo, tbInfo, fk)
 }
 
-func checkTableForeignKeyValidInOwner(d *ddlCtx, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) error {
+func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (retryable bool, _ error) {
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return true, err
+	}
 	is := d.infoCache.GetLatest()
+	if is.SchemaMetaVersion() != currVer {
+		return true, errors.New("need wait owner to load latest schema")
+	}
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < 1 {
 			continue
@@ -196,21 +203,21 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, job *model.Job, tbInfo *model.T
 				if !fkCheck && (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) {
 					continue
 				}
-				return err
+				return false, err
 			}
 			referTableInfo = referTable.Meta()
 		}
 
 		err := checkTableForeignKey(referTableInfo, tbInfo, fk)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
 	referredFKInfos := is.GetTableReferredForeignKeys(job.SchemaName, tbInfo.Name.L)
 	for _, referredFK := range referredFKInfos {
 		childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
-			return err
+			return false, err
 		}
 		fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
 		if fk == nil {
@@ -218,10 +225,10 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, job *model.Job, tbInfo *model.T
 		}
 		err = checkTableForeignKey(tbInfo, childTable.Meta(), fk)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.FKInfo) error {
