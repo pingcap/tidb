@@ -1589,3 +1589,43 @@ func TestRandomPanicAggConsume(t *testing.T) {
 		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}
 }
+
+func TestIssue35295(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t100")
+	// This bug only happens on partition prune mode = 'static'
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`CREATE TABLE t100 (
+ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+col1 int(10) NOT NULL DEFAULT '0' COMMENT 'test',
+money bigint(20) NOT NULL COMMENT 'test',
+logtime datetime NOT NULL COMMENT '记录时间',
+PRIMARY KEY (ID,logtime)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=1 COMMENT='test'
+PARTITION BY RANGE COLUMNS(logtime) (
+PARTITION p20220608 VALUES LESS THAN ("20220609"),
+PARTITION p20220609 VALUES LESS THAN ("20220610"),
+PARTITION p20220610 VALUES LESS THAN ("20220611"),
+PARTITION p20220611 VALUES LESS THAN ("20220612"),
+PARTITION p20220612 VALUES LESS THAN ("20220613"),
+PARTITION p20220613 VALUES LESS THAN ("20220614"),
+PARTITION p20220614 VALUES LESS THAN ("20220615"),
+PARTITION p20220615 VALUES LESS THAN ("20220616"),
+PARTITION p20220616 VALUES LESS THAN ("20220617"),
+PARTITION p20220617 VALUES LESS THAN ("20220618"),
+PARTITION p20220618 VALUES LESS THAN ("20220619"),
+PARTITION p20220619 VALUES LESS THAN ("20220620"),
+PARTITION p20220620 VALUES LESS THAN ("20220621"),
+PARTITION p20220621 VALUES LESS THAN ("20220622"),
+PARTITION p20220622 VALUES LESS THAN ("20220623"),
+PARTITION p20220623 VALUES LESS THAN ("20220624"),
+PARTITION p20220624 VALUES LESS THAN ("20220625")
+ );`)
+	tk.MustExec("insert into t100(col1,money,logtime) values (100,10,'2022-06-09 00:00:00');")
+	tk.MustExec("insert into t100(col1,money,logtime) values (100,10,'2022-06-10 00:00:00');")
+	tk.MustQuery("SELECT /*+STREAM_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
+	tk.MustQuery("SELECT /*+HASH_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
+}
