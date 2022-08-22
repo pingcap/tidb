@@ -522,9 +522,20 @@ func TestSortSpillDisk(t *testing.T) {
 		}
 	}
 	// Test only 1 partition but spill disk.
-	require.Len(t, exec.partitionList, 1)
-	require.Equal(t, true, exec.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exec.partitionList[0].NumRow())
+	// Now spilling is in parallel.
+	// Maybe the second add() will be called after spilling, depends on
+	// Golang goroutine scheduling. So the result has two possibilities.
+	if len(exec.partitionList) == 1 {
+		require.Len(t, exec.partitionList, 1)
+		require.Equal(t, true, exec.partitionList[0].AlreadySpilledSafeForTest())
+		require.Equal(t, 2048, exec.partitionList[0].NumRow())
+	} else {
+		require.Len(t, exec.partitionList, 2)
+		require.Equal(t, true, exec.partitionList[0].AlreadySpilledSafeForTest())
+		require.Equal(t, true, exec.partitionList[1].AlreadySpilledSafeForTest())
+		require.Equal(t, 1024, exec.partitionList[0].NumRow())
+		require.Equal(t, 1024, exec.partitionList[1].NumRow())
+	}
 	err = exec.Close()
 	require.NoError(t, err)
 
