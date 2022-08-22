@@ -2526,8 +2526,6 @@ const (
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
 	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
-	// SlowLogStatsLoadStatus is used to indicate the stats load status in memory
-	SlowLogStatsLoadStatus = "StatsLoadStatus"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -2570,7 +2568,7 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
-	StatsLoadStatus   string
+	StatsLoadStatus   map[bool]map[string]string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2666,6 +2664,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				firstComma = true
 			}
 		}
+		loadStatus := logItems.StatsLoadStatus
+		if len(loadStatus) > 0 {
+			indexStatus := loadStatus[true]
+			colStatus := loadStatus[false]
+			writeLoadStatusItems(&buf, indexStatus, true)
+			if len(indexStatus) > 0 && len(colStatus) > 0 {
+				buf.WriteString(",")
+			}
+			writeLoadStatusItems(&buf, colStatus, false)
+		}
 		buf.WriteString("\n")
 	}
 	if logItems.CopTasks != nil {
@@ -2747,10 +2755,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.BinaryPlan) != 0 {
 		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
-	if len(logItems.StatsLoadStatus) > 0 {
-		writeSlowLogItem(&buf, SlowLogStatsLoadStatus, logItems.StatsLoadStatus)
-	}
-
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
@@ -2766,6 +2770,26 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	return buf.String()
+}
+
+func writeLoadStatusItems(buf *bytes.Buffer, loadStatus map[string]string, isIndex bool) {
+	if len(loadStatus) > 0 {
+		if isIndex {
+			buf.WriteString("indices[")
+		} else {
+			buf.WriteString("cols[")
+		}
+		firstComma := false
+		for name, status := range loadStatus {
+			if firstComma {
+				buf.WriteString("," + name + ":" + status)
+			} else {
+				buf.WriteString(name + ":" + status)
+				firstComma = true
+			}
+		}
+		buf.WriteString("]")
+	}
 }
 
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"

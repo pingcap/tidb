@@ -210,7 +210,6 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		}
 
 		colHist := coll.Columns[c.UniqueID]
-		recordUsedItemStatsStatus(ctx, colHist, nil, coll.PhysicalID, c.UniqueID, false)
 		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
 			ret *= 1.0 / pseudoEqualRate
 			continue
@@ -261,7 +260,6 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	for id, idxInfo := range coll.Indices {
 		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxInfo.ID])
 		if len(idxCols) > 0 {
-			recordUsedItemStatsStatus(ctx, nil, idxInfo, coll.PhysicalID, id, true)
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxInfo.Info.Columns); i++ {
 				lengths = append(lengths, idxInfo.Info.Columns[i].Length)

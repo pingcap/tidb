@@ -1661,19 +1661,20 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 	return sqlDigest, planDigest
 }
 
-func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) string {
+func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) map[bool]map[string]string {
 	if len(statsLoadStatus) < 1 {
-		return ""
+		return nil
 	}
-	b := bytes.NewBufferString("[")
 	is := domain.GetDomain(sctx).InfoSchema()
-	i := 0
+	r := make(map[bool]map[string]string, 2)
 	for item, status := range statsLoadStatus {
-		if i > 0 {
-			b.WriteString(", ")
-		}
 		t, ok := is.TableByID(item.TableID)
 		if !ok {
+			t, _, _ = is.FindTableByPartitionID(item.TableID)
+		}
+		if t == nil {
+			logutil.BgLogger().Warn("record table item load status failed due to not finding table",
+				zap.Int64("tableID", item.TableID))
 			continue
 		}
 		itemName := ""
@@ -1682,16 +1683,16 @@ func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.
 		} else {
 			itemName = t.Meta().FindColumnNameByID(item.ID)
 		}
-		if len(itemName) < 1 {
+		if itemName == "" {
+			logutil.BgLogger().Warn("record table item load status failed due to not finding item",
+				zap.Int64("tableID", item.TableID),
+				zap.Int64("id", item.ID), zap.Bool("isIndex", item.IsIndex))
 			continue
 		}
-		b.WriteString(t.Meta().Name.L)
-		b.WriteString(".")
-		b.WriteString(itemName)
-		b.WriteString(":")
-		b.WriteString(status)
-		i++
+		if r[item.IsIndex] == nil {
+			r[item.IsIndex] = make(map[string]string)
+		}
+		r[item.IsIndex][itemName] = status
 	}
-	b.WriteString("]")
-	return b.String()
+	return r
 }
