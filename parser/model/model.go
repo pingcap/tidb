@@ -430,12 +430,11 @@ type TableInfo struct {
 	Charset string `json:"charset"`
 	Collate string `json:"collate"`
 	// Columns are listed in the order in which they appear in the schema.
-	Columns             []*ColumnInfo     `json:"cols"`
-	Indices             []*IndexInfo      `json:"index_info"`
-	Constraints         []*ConstraintInfo `json:"constraint_info"`
-	ForeignKeys         []*FKInfo         `json:"fk_info"`
-	ReferredForeignKeys []*ReferredFKInfo `json:"referred_fk_info"`
-	State               SchemaState       `json:"state"`
+	Columns     []*ColumnInfo     `json:"cols"`
+	Indices     []*IndexInfo      `json:"index_info"`
+	Constraints []*ConstraintInfo `json:"constraint_info"`
+	ForeignKeys []*FKInfo         `json:"fk_info"`
+	State       SchemaState       `json:"state"`
 	// PKIsHandle is true when primary key is a single integer column.
 	PKIsHandle bool `json:"pk_is_handle"`
 	// IsCommonHandle is true when clustered index feature is

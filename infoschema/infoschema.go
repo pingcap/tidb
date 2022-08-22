@@ -476,20 +476,6 @@ func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *mode
 	}
 }
 
-func (is *infoSchema) buildTableReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
-	referredFKList := is.GetTableReferredForeignKeys(schema.L, tbInfo.Name.L)
-	if len(referredFKList) == 0 {
-		return
-	}
-	tbInfo.ReferredForeignKeys = make([]*model.ReferredFKInfo, 0, len(referredFKList))
-	for _, referredFK := range referredFKList {
-		if !CheckReferredForeignKeyValid(tbInfo, referredFK) {
-			continue
-		}
-		tbInfo.ReferredForeignKeys = append(tbInfo.ReferredForeignKeys, referredFK)
-	}
-}
-
 // GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
 func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
 	name := SchemaAndTableName{schema: schema, table: table}

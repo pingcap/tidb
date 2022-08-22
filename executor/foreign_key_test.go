@@ -39,14 +39,16 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test", "t1")))
 	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
-	require.Equal(t, 1, len(tb1Info.ReferredForeignKeys))
+	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),
 		ChildTable:  model.NewCIStr("t2"),
 		ChildFKName: model.NewCIStr("fk_b"),
-	}, *tb1Info.ReferredForeignKeys[0])
-	require.Equal(t, 0, len(tb2Info.ReferredForeignKeys))
+	}, *tb1ReferredFKs[0])
+	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
+	require.Equal(t, 0, len(tb2ReferredFKs))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
@@ -71,14 +73,16 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
 	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
-	require.Equal(t, 1, len(tb2Info.ReferredForeignKeys))
+	tb2ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
+	require.Equal(t, 1, len(tb2ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),
 		ChildTable:  model.NewCIStr("t3"),
 		ChildFKName: model.NewCIStr("fk_b"),
-	}, *tb2Info.ReferredForeignKeys[0])
-	require.Equal(t, 0, len(tb3Info.ReferredForeignKeys))
+	}, *tb2ReferredFKs[0])
+	tb3ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t3")
+	require.Equal(t, 0, len(tb3ReferredFKs))
 	require.Equal(t, 1, len(tb3Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
@@ -100,13 +104,14 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	tb5Info := getTableInfo(t, dom, "test2", "t5")
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t5")))
 	require.Equal(t, 1, len(tb5Info.ForeignKeys))
-	require.Equal(t, 1, len(tb5Info.ReferredForeignKeys))
+	tb5ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t5")
+	require.Equal(t, 1, len(tb5ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),
 		ChildTable:  model.NewCIStr("t5"),
 		ChildFKName: model.NewCIStr("fk_1"),
-	}, *tb5Info.ReferredForeignKeys[0])
+	}, *tb5ReferredFKs[0])
 	require.Equal(t, model.FKInfo{
 		ID:        1,
 		Name:      model.NewCIStr("fk_1"),
@@ -145,14 +150,16 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	tb1Info := getTableInfo(t, dom, "test", "t1")
 	tb2Info := getTableInfo(t, dom, "test2", "t2")
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
-	require.Equal(t, 1, len(tb1Info.ReferredForeignKeys))
+	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),
 		ChildTable:  model.NewCIStr("t2"),
 		ChildFKName: model.NewCIStr("fk_b"),
-	}, *tb1Info.ReferredForeignKeys[0])
-	require.Equal(t, 0, len(tb2Info.ReferredForeignKeys))
+	}, *tb1ReferredFKs[0])
+	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
+	require.Equal(t, 0, len(tb2ReferredFKs))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
@@ -175,20 +182,22 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	tb1Info = getTableInfo(t, dom, "test", "t1")
 	tb3Info := getTableInfo(t, dom, "test", "t3")
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
-	require.Equal(t, 2, len(tb1Info.ReferredForeignKeys))
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 2, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test"),
 		ChildTable:  model.NewCIStr("t3"),
 		ChildFKName: model.NewCIStr("fk_a"),
-	}, *tb1Info.ReferredForeignKeys[0])
+	}, *tb1ReferredFKs[0])
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),
 		ChildTable:  model.NewCIStr("t2"),
 		ChildFKName: model.NewCIStr("fk_b"),
-	}, *tb1Info.ReferredForeignKeys[1])
-	require.Equal(t, 0, len(tb3Info.ReferredForeignKeys))
+	}, *tb1ReferredFKs[1])
+	tb3ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t3")
+	require.Equal(t, 0, len(tb3ReferredFKs))
 	require.Equal(t, 2, len(tb3Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
@@ -223,14 +232,16 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	tb1Info = getTableInfo(t, dom, "test", "t1")
 	tb3Info = getTableInfo(t, dom, "test", "t3")
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
-	require.Equal(t, 1, len(tb1Info.ReferredForeignKeys))
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test"),
 		ChildTable:  model.NewCIStr("t3"),
 		ChildFKName: model.NewCIStr("fk_a"),
-	}, *tb1Info.ReferredForeignKeys[0])
-	require.Equal(t, 0, len(tb3Info.ReferredForeignKeys))
+	}, *tb1ReferredFKs[0])
+	tb3ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t3")
+	require.Equal(t, 0, len(tb3ReferredFKs))
 	require.Equal(t, 2, len(tb3Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
@@ -297,14 +308,16 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tb1Info := getTableInfo(t, dom, "test", "t1")
 	tb2Info := getTableInfo(t, dom, "test2", "t2")
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
-	require.Equal(t, 1, len(tb1Info.ReferredForeignKeys))
+	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),
 		ChildTable:  model.NewCIStr("t2"),
 		ChildFKName: model.NewCIStr("fk_b"),
-	}, *tb1Info.ReferredForeignKeys[0])
-	require.Equal(t, 0, len(tb2Info.ReferredForeignKeys))
+	}, *tb1ReferredFKs[0])
+	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
+	require.Equal(t, 0, len(tb2ReferredFKs))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
@@ -523,8 +536,13 @@ func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableI
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb))
 	require.NoError(t, err)
-	tbl2, exist := is.TableByID(tbl.Meta().ID)
+	_, exist := is.TableByID(tbl.Meta().ID)
 	require.True(t, exist)
-	require.Equal(t, len(tbl2.Meta().ReferredForeignKeys), len(tbl.Meta().ReferredForeignKeys))
 	return tbl.Meta()
+}
+
+func getTableInfoReferredForeignKeys(t *testing.T, dom *domain.Domain, db, tb string) []*model.ReferredFKInfo {
+	err := dom.Reload()
+	require.NoError(t, err)
+	return dom.InfoSchema().GetTableReferredForeignKeys(db, tb)
 }
