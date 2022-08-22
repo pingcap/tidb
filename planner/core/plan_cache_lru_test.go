@@ -68,7 +68,7 @@ func pickFromBucket(bucket []*list.Element, itB interface{}) (*list.Element, int
 
 func TestLRUPCPut(t *testing.T) {
 	pcLRU := NewLRUPlanCache(3)
-	pcLRU.SetChoose(pickFromBucket)
+	pcLRU.SetPickFromBucket(pickFromBucket)
 	require.Equal(t, uint(3), pcLRU.capacity)
 
 	keys := make([]*mockCacheKey, 5)
@@ -138,7 +138,7 @@ func TestLRUPCPut(t *testing.T) {
 
 func TestLRUPCGet(t *testing.T) {
 	lru := NewLRUPlanCache(3)
-	lru.SetChoose(pickFromBucket)
+	lru.SetPickFromBucket(pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -184,7 +184,7 @@ func TestLRUPCGet(t *testing.T) {
 
 func TestLRUPCGet2(t *testing.T) {
 	lru := NewLRUPlanCache(3)
-	lru.SetChoose(pickFromBucket)
+	lru.SetPickFromBucket(pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -230,7 +230,7 @@ func TestLRUPCGet2(t *testing.T) {
 
 func TestLRUPCDelete(t *testing.T) {
 	lru := NewLRUPlanCache(3)
-	lru.SetChoose(pickFromBucket)
+	lru.SetPickFromBucket(pickFromBucket)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
@@ -261,7 +261,7 @@ func TestLRUPCDelete(t *testing.T) {
 
 func TestLRUPCDeleteAll(t *testing.T) {
 	lru := NewLRUPlanCache(3)
-	lru.SetChoose(pickFromBucket)
+	lru.SetPickFromBucket(pickFromBucket)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
@@ -289,7 +289,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 
 func TestLRUPCKeys(t *testing.T) {
 	lru := NewLRUPlanCache(5)
-	lru.SetChoose(pickFromBucket)
+	lru.SetPickFromBucket(pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -313,7 +313,7 @@ func TestLRUPCKeys(t *testing.T) {
 
 func TestLRUPCValues(t *testing.T) {
 	lru := NewLRUPlanCache(5)
-	lru.SetChoose(pickFromBucket)
+	lru.SetPickFromBucket(pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)

@@ -61,8 +61,8 @@ func (l *LRUPlanCache) SetOnEvict(onEvict func(kvcache.Key, kvcache.Value)) {
 	l.onEvict = onEvict
 }
 
-// SetChoose set the function called on each eviction.
-func (l *LRUPlanCache) SetChoose(pick func([]*list.Element, interface{}) (*list.Element, int, bool)) {
+// SetPickFromBucket set the function called on each eviction.
+func (l *LRUPlanCache) SetPickFromBucket(pick func([]*list.Element, interface{}) (*list.Element, int, bool)) {
 	l.pickFromBucket = pick
 }
 
