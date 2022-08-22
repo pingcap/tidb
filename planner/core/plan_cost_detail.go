@@ -222,6 +222,7 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
 		HashJoinConcurrency: p.Concurrency,
 		Spill:               spill,
 		Cost:                cpuCost,
+		UseOuterToBuild:     p.UseOuterToBuild,
 	}
 
 	// record cpu cost detail
