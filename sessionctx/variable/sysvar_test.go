@@ -722,8 +722,11 @@ func TestSkipInitIsUsed(t *testing.T) {
 				TiDBBatchCommit,
 				TiDBEnableChunkRPC,
 				TxnIsolationOneShot,
+<<<<<<< HEAD
 				TiDBOptimizerSelectivityLevel,
 				TiDBOptimizerEnableOuterJoinReorder,
+=======
+>>>>>>> 21847fe58... planner: set EnableOuterJoinReorder to false by default (#37264)
 				TiDBDDLReorgPriority,
 				TiDBSlowQueryFile,
 				TiDBWaitSplitRegionFinish,

@@ -233,6 +233,7 @@ func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
 	tk.MustExec(`create table t6(a int, b int) partition by hash(b) partitions 3`)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode="static"`)
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4StaticPartitionTable")
 }
 
@@ -252,6 +253,7 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 	tk.MustExec(`create table t6(a int, b int) partition by hash(b) partitions 3`)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DynamicPartitionTable")
 }
 
@@ -271,6 +273,7 @@ func TestJoinOrderHint4DifferentJoinType(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DifferentJoinType")
 }
@@ -288,6 +291,7 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 	tk.MustExec("create table t4(a int, b int, key(a));")
 	tk.MustExec("create table t5(a int, b int, key(a));")
 	tk.MustExec("create table t6(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -346,6 +350,7 @@ func TestLeadingJoinHint4OuterJoin(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestLeadingJoinHint4OuterJoin")
 }
 
