@@ -1134,7 +1134,6 @@ func ProduceStrWithSpecifiedTp(s string, rawCharset string, tp *FieldType, sc *s
 					s = truncateStr(s, flen)
 				}
 			} else {
-				// TODO
 				switch rawCharset {
 				case charset.CharsetUTF8, charset.CharsetUTF8MB4:
 					if utf8.RuneCountInString(s) > flen {
@@ -1149,7 +1148,6 @@ func ProduceStrWithSpecifiedTp(s string, rawCharset string, tp *FieldType, sc *s
 						s = truncateStr(s, flen)
 					}
 				case charset.CharsetGBK:
-					// TODO
 					if gbklen(s) > flen {
 						characterLen = gbklen(s)
 						overflowed = s[flen:]
