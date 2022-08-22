@@ -239,6 +239,7 @@ func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
 	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode="static"`)
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4StaticPartitionTable")
 }
 
@@ -255,6 +256,7 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DynamicPartitionTable")
 }
 
@@ -274,6 +276,7 @@ func TestJoinOrderHint4DifferentJoinType(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DifferentJoinType")
 }
@@ -288,6 +291,13 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 	tk.MustExec("create table t1(a int, b int, key(a));")
 	tk.MustExec("create table t2(a int, b int, key(a));")
 	tk.MustExec("create table t3(a int, b int, key(a));")
+<<<<<<< HEAD
+=======
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	tk.MustExec("create table t5(a int, b int, key(a));")
+	tk.MustExec("create table t6(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
+>>>>>>> 21847fe58... planner: set EnableOuterJoinReorder to false by default (#37264)
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -330,6 +340,28 @@ func TestJoinOrderHint4Subquery(t *testing.T) {
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4Subquery")
 }
 
+<<<<<<< HEAD
+=======
+func TestLeadingJoinHint4OuterJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	tk.MustExec("create table t5(a int, b int, key(a));")
+	tk.MustExec("create table t6(a int, b int, key(a));")
+	tk.MustExec("create table t7(a int, b int, key(a));")
+	tk.MustExec("create table t8(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
+	runJoinReorderTestData(t, tk, "TestLeadingJoinHint4OuterJoin")
+}
+
+>>>>>>> 21847fe58... planner: set EnableOuterJoinReorder to false by default (#37264)
 func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

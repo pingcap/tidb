@@ -677,6 +677,68 @@ func TestSettersandGetters(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+// TestSkipInitIsUsed ensures that no new variables are added with skipInit: true.
+// This feature is deprecated, and if you need to run code to differentiate between init and "SET" (rare),
+// you can instead check if s.StmtCtx.StmtType == "Set".
+// The reason it is deprecated is that the behavior is typically wrong:
+// it means session settings won't inherit from global and don't apply until you first set
+// them in each session. This is a very weird behavior.
+// See: https://github.com/pingcap/tidb/issues/35051
+func TestSkipInitIsUsed(t *testing.T) {
+	for _, sv := range GetSysVars() {
+		if sv.skipInit {
+			// skipInit only ever applied to session scope, so if anyone is setting it on
+			// a variable without session, that doesn't make sense.
+			require.True(t, sv.HasSessionScope(), fmt.Sprintf("skipInit has no effect on a variable without session scope: %s", sv.Name))
+			// Since SetSession is the "init function" there is no init function to skip.
+			require.NotNil(t, sv.SetSession, fmt.Sprintf("skipInit has no effect on variables without an init (setsession) func: %s", sv.Name))
+			// Skipinit has no use on noop funcs, since noop funcs always skipinit.
+			require.False(t, sv.IsNoop, fmt.Sprintf("skipInit has no effect on noop variables: %s", sv.Name))
+
+			// Test for variables that have a default of "0" or "OFF"
+			// If it is session-only scoped there is likely no bug now.
+			// If it is also global-scoped, then there is a bug as soon as the global changes.
+			if !(sv.Name == RandSeed1 || sv.Name == RandSeed2) {
+				// The bug is because the tests might not realize the SetSession func was not called on init,
+				// because it would initialize some session field to the empty value anyway.
+				require.NotEqual(t, "0", sv.Value, fmt.Sprintf("default value is zero: %s", sv.Name))
+				require.NotEqual(t, "OFF", sv.Value, fmt.Sprintf("default value is OFF: %s", sv.Name))
+			}
+
+			// Many of these variables might allow skipInit to be removed,
+			// they need to be checked first. The purpose of this test is to make
+			// sure we don't introduce any new variables with skipInit, which seems
+			// to be a problem.
+			switch sv.Name {
+			case TiDBTxnScope,
+				TiDBSnapshot,
+				TiDBEnableChunkRPC,
+				TxnIsolationOneShot,
+				TiDBDDLReorgPriority,
+				TiDBSlowQueryFile,
+				TiDBWaitSplitRegionFinish,
+				TiDBWaitSplitRegionTimeout,
+				TiDBMetricSchemaStep,
+				TiDBMetricSchemaRangeDuration,
+				RandSeed1,
+				RandSeed2,
+				CollationDatabase,
+				CollationConnection,
+				CharsetDatabase,
+				CharacterSetConnection,
+				CharacterSetServer,
+				TiDBOptTiFlashConcurrencyFactor,
+				TiDBOptSeekFactor:
+				continue
+			}
+			require.Equal(t, false, sv.skipInit, fmt.Sprintf("skipInit should not be set on new system variables. variable %s is in violation", sv.Name))
+		}
+	}
+}
+
+>>>>>>> 21847fe58... planner: set EnableOuterJoinReorder to false by default (#37264)
 func TestSecureAuth(t *testing.T) {
 	sv := GetSysVar(SecureAuth)
 	vars := NewSessionVars()
