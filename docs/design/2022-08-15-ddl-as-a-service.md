@@ -4,7 +4,7 @@
 
 ## Introduction
 
-The proposal of this design is to allow DDL jobs from multiple clusters to share the tidb-server nodes from one cluster. The DDL capability can be exposed as a service.
+The proposal of this design is to allow DDL jobs from multiple clusters to share the tidb-server nodes in one cluster. The DDL can be exposed as a service.
 
 ## Background
 
