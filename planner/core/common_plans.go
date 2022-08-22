@@ -413,34 +413,37 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 }
 
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
-func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
+func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) (string, bool) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	ignore := false
 	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
-		return ""
+		return "", ignore
 	}
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
-		return ""
+		return "", ignore
 	}
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
-			return enabledBinding.BindSQL
+			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
+			return enabledBinding.BindSQL, ignore
 		}
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	if globalHandle == nil {
-		return ""
+		return "", ignore
 	}
 	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
-			return enabledBinding.BindSQL
+			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
+			return enabledBinding.BindSQL, ignore
 		}
 	}
-	return ""
+	return "", ignore
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) (err error) {
@@ -451,9 +454,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 
 	var bindSQL string
+	var ignorePlanCache = false
+
 	if prepared.UseCache {
-		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
-		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+		bindSQL, ignorePlanCache = GetBindSQL4PlanCache(sctx, preparedStmt)
+		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText,
+			preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
 			return err
 		}
 	}
@@ -479,7 +485,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		}
 	}
 
-	if prepared.UseCache && prepared.CachedPlan != nil { // short path for point-get plans
+	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // short path for point-get plans
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
 		// the expression in the where condition will not be evaluated,
@@ -505,7 +511,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.PointExec = true
 		return nil
 	}
-	if prepared.UseCache { // for general plans
+	if prepared.UseCache && !ignorePlanCache { // for general plans
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
@@ -582,7 +588,7 @@ REBUILD:
 	if containTableDual(p) && varsNum > 0 {
 		stmtCtx.SkipPlanCache = true
 	}
-	if prepared.UseCache && !stmtCtx.SkipPlanCache {
+	if prepared.UseCache && !stmtCtx.SkipPlanCache && !ignorePlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
