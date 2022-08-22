@@ -980,18 +980,18 @@ func TestStaleReadFutureTime(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
-	_, err := tk.Exec("start transaction read only as of timestamp '2038-01-18 03:14:07'")
-	require.Regexp(t, "cannot set read timestamp to a future time", err.Error())
+	tk.MustMatchErrMsg("start transaction read only as of timestamp '2038-01-18 03:14:07'",
+		"cannot set read timestamp to a future time")
 	// Transaction should not be started and read ts should not be set if check fails
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
 
-	_, err = tk.Exec("set transaction read only as of timestamp '2038-01-18 03:14:07'")
-	require.Regexp(t, "cannot set read timestamp to a future time", err.Error())
+	tk.MustMatchErrMsg("set transaction read only as of timestamp '2038-01-18 03:14:07'",
+		"cannot set read timestamp to a future time")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
 
-	_, err = tk.Exec("select * from t as of timestamp '2038-01-18 03:14:07'")
-	require.Regexp(t, "cannot set read timestamp to a future time", err.Error())
+	tk.MustMatchErrMsg("select * from t as of timestamp '2038-01-18 03:14:07'",
+		"cannot set read timestamp to a future time")
 }
 
 func TestStaleReadPrepare(t *testing.T) {
@@ -1029,13 +1029,13 @@ func TestStaleReadPrepare(t *testing.T) {
 
 	// test prepared stale select in stale txn
 	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	_, err := tk.Exec("execute p1")
+	err := tk.ExecToErr("execute p1")
 	require.Error(t, err)
 	tk.MustExec("commit")
 
 	// assert execute prepared statement should be error after set transaction read only as of
 	tk.MustExec(fmt.Sprintf(`set transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	_, err = tk.Exec("execute p1")
+	err = tk.ExecToErr("execute p1")
 	require.Error(t, err)
 	tk.MustExec("execute p2")
 
