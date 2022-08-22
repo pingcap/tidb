@@ -23,6 +23,10 @@ With providing a dedicated cluster to provide DDL service, we can delegate all D
 
 - Not for distribute jobs from a same cluster to multiple tidb-server nodes. There is still only one DDL owner for one cluster at one time and the jobs can only be running with DDL owner.
 
+### Enable DDL Service in a TiDB Cluster
+
+A global scoped variable `tidb_enable_ddl_service` with scope `instance` will be added. If this instance is set to `ON`, the current cluster will be served as a "DDL service cluster" which will allow other clusters to delegate their DDL jobs to it.
+
 ### Metadata
 
 The DDL service cluster has its own PD, and we can store the metadata to it. Some new keys can be added:
@@ -182,3 +186,5 @@ Because DDL owners from multiple clusters will run together in DDL service, it's
 - tidb_ddl_backfill_percentage_progress
 - tidb_ddl_job_table_duration_seconds
 - tidb_ddl_running_job_count
+
+A new label "cluster_id" will be added to these metrics.
