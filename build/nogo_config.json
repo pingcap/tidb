@@ -292,7 +292,6 @@
       "types/json/binary_functions.go": "types/json/binary_functions.go",
       "types/json/binary_test.go": "types/json/binary_test.go",
       "ddl/backfilling.go": "ddl/backfilling.go",
-      "ddl/lightning": "ddl/lightning",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
       "ddl/lightning/": "ddl/lightning/",
