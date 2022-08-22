@@ -152,7 +152,14 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
 // The files will be organized into the following format:
 /*
  |-meta.txt
- |-schema.sql
+ |-schema
+ |	 |-db1.table1.schema.txt
+ |	 |-db2.table2.schema.txt
+ |	 |-....
+ |-view
+ | 	 |-db1.view1.view.txt
+ |	 |-db2.view2.view.txt
+ |	 |-....
  |-stats
  |   |-stats1.json
  |   |-stats2.json
@@ -220,7 +227,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(ctx context.Context, path string) (f
 		return "", errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
 	}
 
-	// Dump Schema
+	// Dump Schema and View
 	if err = dumpSchemas(e.ctx, zw, pairs); err != nil {
 		return "", err
 	}
@@ -483,7 +490,7 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	}
 	var fw io.Writer
 	if pair.IsView {
-		fw, err = zw.Create(fmt.Sprintf("view/%v.%v.schema.txt", pair.DBName, pair.TableName))
+		fw, err = zw.Create(fmt.Sprintf("view/%v.%v.view.txt", pair.DBName, pair.TableName))
 		if err != nil {
 			return errors.AddStack(err)
 		}
@@ -632,7 +639,8 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
-func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
+// createSchemaAndItems creates schema and tables or views
+func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	r, err := f.Open()
 	if err != nil {
 		return errors.AddStack(err)
@@ -649,7 +657,7 @@ func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
 		return errors.New("plan replayer: create schema and tables failed")
 	}
 	c := context.Background()
-	// create database
+	// create database if not exists
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[0])
 	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 	// use database
@@ -657,7 +665,7 @@ func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
 	if err != nil {
 		return err
 	}
-	// create table
+	// create table or view
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[2])
 	if err != nil {
 		return err
@@ -707,7 +715,7 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	for _, zipFile := range z.File {
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 {
-			err = createSchemaAndTables(e.Ctx, zipFile)
+			err = createSchemaAndItems(e.Ctx, zipFile)
 			if err != nil {
 				return err
 			}
@@ -718,7 +726,7 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	for _, zipFile := range z.File {
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "view") == 0 {
-			err = createSchemaAndTables(e.Ctx, zipFile)
+			err = createSchemaAndItems(e.Ctx, zipFile)
 			if err != nil {
 				return err
 			}
