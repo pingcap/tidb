@@ -33,8 +33,8 @@ type LRUPlanCache struct {
 	// buckets replace the map in general LRU
 	buckets map[string][]*list.Element
 
-	// choose set rules to get one element from bucket.
-	choose func([]*list.Element, interface{}) (*list.Element, int, bool)
+	// pickFromBucket set rules to get one element from bucket.
+	pickFromBucket func([]*list.Element, interface{}) (*list.Element, int, bool)
 
 	// onEvict function will be called if any eviction happened
 	onEvict func(kvcache.Key, kvcache.Value)
@@ -62,15 +62,15 @@ func (l *LRUPlanCache) SetOnEvict(onEvict func(kvcache.Key, kvcache.Value)) {
 }
 
 // SetChoose set the function called on each eviction.
-func (l *LRUPlanCache) SetChoose(choose func([]*list.Element, interface{}) (*list.Element, int, bool)) {
-	l.choose = choose
+func (l *LRUPlanCache) SetChoose(pick func([]*list.Element, interface{}) (*list.Element, int, bool)) {
+	l.pickFromBucket = pick
 }
 
 // Get tries to find the corresponding value according to the given key.
 func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes interface{}) (value kvcache.Value, ok bool) {
 	bucket, bucketExist := l.buckets[string(key.Hash())]
 	if bucketExist {
-		if element, _, exist := l.choose(bucket, paramTypes); exist {
+		if element, _, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.cache.MoveToFront(element)
 			return element.Value.(*CacheEntry).PlanValue, true
 		}
@@ -84,7 +84,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes inte
 	bucket, bucketExist := l.buckets[hash]
 	// in the cache
 	if bucketExist {
-		if element, _, exist := l.choose(bucket, paramTypes); exist {
+		if element, _, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			element.Value.(*CacheEntry).PlanValue = value
 			l.cache.MoveToFront(element)
 			return

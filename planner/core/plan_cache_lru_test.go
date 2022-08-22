@@ -119,7 +119,7 @@ func TestLRUPCPut(t *testing.T) {
 
 		bucket, exist := pcLRU.buckets[string(keys[i].Hash())]
 		require.True(t, exist)
-		element, _, exist := pcLRU.choose(bucket, pTypes[i])
+		element, _, exist := pcLRU.pickFromBucket(bucket, pTypes[i])
 		require.NotNil(t, element)
 		require.True(t, exist)
 		require.Equal(t, root, element)
