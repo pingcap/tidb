@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -51,17 +52,21 @@ func TestEnableLightning(t *testing.T) {
 	tk.MustExec("use test")
 	// Check default value, Current is off
 	allow := ddl.IsEnableFastReorg()
-	require.Equal(t, false, allow)
+	require.Equal(t, variable.DefTiDBDDLEnableFastReorg, allow)
 	// Set an illegal value.
 	err := tk.ExecToErr("set @@global.tidb_ddl_enable_fast_reorg = abc")
 	require.Error(t, err)
 	allow = ddl.IsEnableFastReorg()
-	require.Equal(t, false, allow)
+	require.Equal(t, variable.DefTiDBDDLEnableFastReorg, allow)
 
-	// set to on
+	// Set the variable to on.
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
 	allow = ddl.IsEnableFastReorg()
 	require.Equal(t, true, allow)
+	// Set the variable to off.
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off")
+	allow = ddl.IsEnableFastReorg()
+	require.Equal(t, false, allow)
 }
 
 func TestAddIndexLit(t *testing.T) {

@@ -502,6 +502,9 @@ func jobNeedGC(job *model.Job) bool {
 			if job.State == model.JobStateRollbackDone {
 				return true
 			}
+			if len(job.RawArgs) == 0 {
+				return false
+			}
 			// The first argument is not bool means the job arguments is reconstructed for GC delete ranges.
 			var uniqueFlag bool
 			err := job.DecodeArgs(&uniqueFlag)

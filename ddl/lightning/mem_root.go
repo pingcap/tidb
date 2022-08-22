@@ -127,13 +127,10 @@ func (m *memRootImpl) ConsumeWithTag(tag string, size int64) {
 }
 
 // TryConsume implements MemRoot.
-func (m *memRootImpl) TryConsume(size int64) bool {
+func (m *memRootImpl) TryConsume(size int64) (ok bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m.currUsage+size > m.maxLimit {
-		return false
-	}
-	return true
+	return m.currUsage+size <= m.maxLimit
 }
 
 // ReleaseWithTag implements MemRoot.
