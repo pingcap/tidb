@@ -28,7 +28,7 @@ func TestStructSize(t *testing.T) {
 }
 
 func TestMemoryRoot(t *testing.T) {
-	memRoot := lightning.MemRoot(lightning.NewMemRootImpl(1024))
+	memRoot := lightning.MemRoot(lightning.NewMemRootImpl(1024, nil))
 	require.Equal(t, int64(1024), memRoot.MaxMemoryQuota())
 	require.Equal(t, int64(0), memRoot.CurrentUsage())
 
