@@ -1,3 +1,4 @@
+set @@tidb_enable_outer_join_reorder=true;
 DROP TABLE IF EXISTS t;
 CREATE TABLE t (
 c1 int,
@@ -654,3 +655,4 @@ create table t3(a char(10), primary key (a));
 insert into t3 values ('a');
 select * from t3 where a > 0x80;
 Error 1105: Cannot convert string '\x80' from binary to utf8mb4
+set @@tidb_enable_outer_join_reorder=false;
