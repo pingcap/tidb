@@ -34,7 +34,7 @@ import (
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
 func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
-	otherConds []expression.Expression, joinTypes []*abundantJoinType, hintInfo []*tableHintInfo, hasOuterJoin bool) {
+	otherConds []expression.Expression, joinTypes []*joinTypeWithExtMsg, hintInfo []*tableHintInfo, hasOuterJoin bool) {
 	join, isJoin := p.(*LogicalJoin)
 	if isJoin && join.preferJoinOrder {
 		// When there is a leading hint, the hint may not take effect for other reasons.
@@ -135,7 +135,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	tmpOtherConds = append(tmpOtherConds, join.RightConditions...)
 	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin {
 		for range join.EqualConditions {
-			abType := &abundantJoinType{JoinType: join.JoinType}
+			abType := &joinTypeWithExtMsg{JoinType: join.JoinType}
 			// outer join's other condition should be bound with the connecting edge.
 			// although we bind the outer condition to **anyone** of the join type, it will be extracted **only once** when make a new join.
 			abType.outerBindCondition = tmpOtherConds
@@ -143,7 +143,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		}
 	} else {
 		for range join.EqualConditions {
-			abType := &abundantJoinType{JoinType: join.JoinType}
+			abType := &joinTypeWithExtMsg{JoinType: join.JoinType}
 			joinTypes = append(joinTypes, abType)
 		}
 		otherConds = append(otherConds, tmpOtherConds...)
@@ -160,7 +160,7 @@ type jrNode struct {
 	cumCost float64
 }
 
-type abundantJoinType struct {
+type joinTypeWithExtMsg struct {
 	JoinType
 	outerBindCondition []expression.Expression
 }
@@ -309,7 +309,7 @@ type baseSingleGroupJoinOrderSolver struct {
 	curJoinGroup     []*jrNode
 	otherConds       []expression.Expression
 	eqEdges          []*expression.ScalarFunction
-	joinTypes        []*abundantJoinType
+	joinTypes        []*joinTypeWithExtMsg
 	leadingJoinGroup LogicalPlan
 }
 
@@ -337,7 +337,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	leadingJoinGroup = leadingJoinGroup[1:]
 	for len(leadingJoinGroup) > 0 {
 		var usedEdges []*expression.ScalarFunction
-		var joinType *abundantJoinType
+		var joinType *joinTypeWithExtMsg
 		leadingJoin, leadingJoinGroup[0], usedEdges, joinType = s.checkConnection(leadingJoin, leadingJoinGroup[0])
 		if hasOuterJoin && usedEdges == nil {
 			// If the joinGroups contain the outer join, we disable the cartesian product.
@@ -378,8 +378,8 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) 
 }
 
 // checkConnection used to check whether two nodes have equal conditions or not.
-func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan LogicalPlan) (leftNode, rightNode LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *abundantJoinType) {
-	joinType = &abundantJoinType{JoinType: InnerJoin}
+func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan LogicalPlan) (leftNode, rightNode LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) {
+	joinType = &joinTypeWithExtMsg{JoinType: InnerJoin}
 	leftNode, rightNode = leftPlan, rightPlan
 	for idx, edge := range s.eqEdges {
 		lCol := edge.GetArgs()[0].(*expression.Column)
@@ -402,7 +402,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
-func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *abundantJoinType) (LogicalPlan, []expression.Expression) {
+func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) (LogicalPlan, []expression.Expression) {
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
 	var (
