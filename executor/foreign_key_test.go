@@ -476,6 +476,30 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			create: "create table t1 (id bigint key, a int);",
 			err:    "[ddl:3780]Referencing column 'a' and referenced column 'id' in foreign key constraint 'fk_1' are incompatible.",
 		},
+		{
+			// foreign key is not support in temporary table.
+			refer:  "create temporary table t1 (id int key, b int, index(b))",
+			create: "create table t2 (a int, b int, foreign key fk(b) references t1(b))",
+			err:    "[schema:1824]Failed to open the referenced table 't1'",
+		},
+		{
+			// foreign key is not support in temporary table.
+			refer:  "create global temporary table t1 (id int key, b int, index(b)) on commit delete rows",
+			create: "create table t2 (a int, b int, foreign key fk(b) references t1(b))",
+			err:    "[schema:1215]Cannot add foreign key constraint",
+		},
+		{
+			// foreign key is not support in temporary table.
+			refer:  "create table t1 (id int key, b int, index(b))",
+			create: "create temporary table t2 (a int, b int, foreign key fk(b) references t1(b))",
+			err:    "[schema:1215]Cannot add foreign key constraint",
+		},
+		{
+			// foreign key is not support in temporary table.
+			refer:  "create table t1 (id int key, b int, index(b))",
+			create: "create global temporary table t2 (a int, b int, foreign key fk(b) references t1(b)) on commit delete rows",
+			err:    "[schema:1215]Cannot add foreign key constraint",
+		},
 	}
 	for _, ca := range cases {
 		tk.MustExec("drop table if exists t2")

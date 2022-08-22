@@ -225,6 +225,10 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, job *model.Job, tbInfo *model.T
 }
 
 func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.FKInfo) error {
+	if referTblInfo.TempTableType != model.TempTableNone || tblInfo.TempTableType != model.TempTableNone {
+		return infoschema.ErrCannotAddForeign
+	}
+
 	// check refer columns in paren table.
 	for i := range fkInfo.RefCols {
 		refCol := model.FindColumnInfo(referTblInfo.Columns, fkInfo.RefCols[i].L)
