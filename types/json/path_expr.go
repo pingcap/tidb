@@ -201,6 +201,16 @@ func (s *stream) incAsLongAs(f func(byte) bool) bool {
 	return false
 }
 
+func (s *stream) readWhile(f func(byte) bool) (str string, metEnd bool) {
+	start := s.pos
+	for ; !s.exhausted(); s.skip(1) {
+		if !f(s.peek()) {
+			return s.pathExpr[start:s.pos], false
+		}
+	}
+	return s.pathExpr[start:s.pos], true
+}
+
 func parseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	s := &stream{pathExpr: pathExpr, pos: 0}
 	s.skipWhiteSpace()
@@ -267,13 +277,13 @@ func parseArray(s *stream, p *PathExpression) bool {
 		p.legs = append(p.legs, pathLeg{typ: pathLegIndex, arrayIndex: arrayIndexAsterisk})
 	} else {
 		// FIXME: only support an integer index for now. Need to support [last], [1 to 2]... in the future.
-		start := s.pos
-		if !s.incAsLongAs(func(b byte) bool {
+		str, meetEnd := s.readWhile(func(b byte) bool {
 			return b >= '0' && b <= '9'
-		}) {
+		})
+		if meetEnd {
 			return false
 		}
-		index, err := strconv.Atoi(s.pathExpr[start:s.pos])
+		index, err := strconv.Atoi(str)
 		if err != nil || index > math.MaxUint32 {
 			return false
 		}
@@ -301,29 +311,30 @@ func parseMember(s *stream, p *PathExpression) bool {
 		p.flags |= pathExpressionContainsAsterisk
 		p.legs = append(p.legs, pathLeg{typ: pathLegKey, dotKey: "*"})
 	} else {
-		start := s.pos
 		var dotKey string
 		var wasQuoted bool
 		if s.peek() == '"' {
 			s.skip(1)
-			if !s.incAsLongAs(func(b byte) bool {
+			str, meetEnd := s.readWhile(func(b byte) bool {
 				if b == '\\' {
 					s.skip(1)
 					return true
 				}
 				return b != '"'
-			}) {
+			})
+			if meetEnd {
 				return false
 			}
 			s.skip(1)
-			dotKey = s.pathExpr[start:s.pos]
+			dotKey = str
 			wasQuoted = true
 		} else {
-			s.incAsLongAs(func(b byte) bool {
+			dotKey, _ = s.readWhile(func(b byte) bool {
 				return !(unicode.IsSpace(rune(b)) || b == '.' || b == '[' || b == '*')
 			})
-			dotKey = "\"" + s.pathExpr[start:s.pos] + "\""
+
 		}
+		dotKey = "\"" + dotKey + "\""
 
 		if !json.Valid(hack.Slice(dotKey)) {
 			return false
