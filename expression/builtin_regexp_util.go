@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// Parameters may be const or not input by the user, so different situations should be considered
+// Parameters may be const or ignored by the user, so different situations should be considered
 // We can handle parameters more easily with this struct.
 //
-// isNull field showd if user adds this param in sql
+// isNull field shows if user ignores this param in sql
 // for example:
 //   select regexp_like("123", "123", "m"), here isNull field is false for the third parameter
 //   select regexp_like("123", "123"), here isNull field is true for the third parameter
