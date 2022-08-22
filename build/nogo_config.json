@@ -651,16 +651,12 @@
     "only_files": {
       "types/json/binary_functions.go": "types/json/binary_functions.go",
       "types/json/binary_test.go": "types/json/binary_test.go",
-      "ddl/backfilling.go": "ddl/backfilling.go",
-      "ddl/column.go": "ddl/column.go",
-      "ddl/index.go": "ddl/index.go",
-      "ddl/lightning/": "ddl/lightning/",
+      "ddl/": "enable to ddl",
       "expression/builtin_cast.go": "enable expression/builtin_cast.go",
       "planner/core/plan.go": "planner/core/plan.go",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
-      "ddl/": "enable to ddl"
     }
   },
   "SA2000": {
