@@ -547,7 +547,7 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	if tzCheck {
 		tzIdx, _, _, _, _ := types.GetTimezone(ts)
 		if tzIdx < 0 {
-			return 0, errors.Errorf("must set timezone when using datetime format ts")
+			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
 		}
 	}
 	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
