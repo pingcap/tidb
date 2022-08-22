@@ -916,7 +916,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		if v.Not || asScalar {
 			// If both input columns of `in` expression are not null, we can treat the expression
 			// as normal column equal condition instead. Otherwise, mark the left and right side.
-			// eg: for some optimal, the column substitute in right side in projection elimination
+			// eg: for some optimization, the column substitute in right side in projection elimination
 			// will cause case  like <lcol EQ rcol(inOperand)> as <lcol EQ constant> which is not
 			// a valid null-aware EQ. (null in lcol still need to be null-aware)
 			if !expression.ExprNotNull(lexpr) || !expression.ExprNotNull(rCol) {

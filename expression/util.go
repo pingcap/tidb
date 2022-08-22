@@ -395,16 +395,16 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 //	1: substitute them all once find col in schema.
 //	2: nothing in expr can be substituted.
 func ColumnSubstituteAll(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
-	_, hasFallBack, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, true)
-	return hasFallBack, resExpr
+	_, hasFail, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, true)
+	return hasFail, resExpr
 }
 
 // ColumnSubstituteImpl tries to substitute column expr using newExprs,
 // the newFunctionInternal is only called if its child is substituted
-// 1@bool means whether the expr has changed.
-// 2@bool means whether the expr should change (has the dependency in schema, while the corresponding expr has some compatibility), but finally fallback.
-// 3@Expression, the original expr or the changed expr, it depends on 1@bool
-func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression, fallback1Return bool) (bool, bool, Expression) {
+// @return bool means whether the expr has changed.
+// @return bool means whether the expr should change (has the dependency in schema, while the corresponding expr has some compatibility), but finally fallback.
+// @return Expression, the original expr or the changed expr, it depends on the first @return bool.
+func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
@@ -419,12 +419,12 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		return true, false, newExpr
 	case *ScalarFunction:
 		substituted := false
-		isFallBack := false
+		hasFail := false
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
-			substituted, isFallBack, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs, fallback1Return)
-			if fallback1Return && isFallBack {
-				return substituted, isFallBack, newFunc
+			substituted, hasFail, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs, fail1Return)
+			if fail1Return && hasFail {
+				return substituted, hasFail, newFunc
 			}
 			if substituted {
 				// Workaround for issue https://github.com/pingcap/tidb/issues/28804
@@ -439,9 +439,9 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
-			changed, isFallBack, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs, fallback1Return)
-			if fallback1Return && isFallBack {
-				return changed, isFallBack, v
+			changed, hasFail, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs, fail1Return)
+			if fail1Return && hasFail {
+				return changed, hasFail, v
 			}
 			oldChanged := changed
 			if collate.NewCollationEnabled() {
@@ -456,7 +456,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					}
 				}
 			}
-			if fallback1Return && oldChanged != changed {
+			if fail1Return && oldChanged != changed {
 				// Only when the oldChanged is true and changed is false, we will get here.
 				// And this means there some dependency in this arg can be substituted with
 				// given expressions, while it has some collation compatibility, finally we

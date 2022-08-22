@@ -376,18 +376,8 @@ func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*proper
 }
 
 // columnSubstituteAll is used in projection elimination in apply de-correlation.
-// once partial args in the condition can't be substituted by new exprs, the old projection must be remained.
-// eg: projection: constant("guo") --> column8, once upper layer substitution failed here, the lower layer behind
-// projection can't supply column8 anymore.
-//
-//	upper OP (depend on column8)   --> projection(constant "guo" --> column8)  --> lower layer OP
-//	          |                                                       ^
-//	          +-------------------------------------------------------+
-//
-//	upper OP (depend on column8)   --> lower layer OP
-//	          |                             ^
-//	          +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
-func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []expression.Expression) (hasFallback bool) {
+// Substitutions for all conditions should be successful, otherwise, we should keep all conditions unchanged.
+func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []expression.Expression) (hasFail bool) {
 	// make a copy of exprs for convenience of substitution (may change/partially change the expr tree)
 	cpLeftConditions := make(expression.CNFExprs, len(p.LeftConditions))
 	cpRightConditions := make(expression.CNFExprs, len(p.RightConditions))
@@ -400,26 +390,26 @@ func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []exp
 
 	// try to substitute columns in these condition.
 	for i, cond := range cpLeftConditions {
-		if hasFallback, cpLeftConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFallback {
+		if hasFail, cpLeftConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpRightConditions {
-		if hasFallback, cpRightConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFallback {
+		if hasFail, cpRightConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpOtherConditions {
-		if hasFallback, cpOtherConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFallback {
+		if hasFail, cpOtherConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpEqualConditions {
 		var tmp expression.Expression
-		if hasFallback, tmp = expression.ColumnSubstituteAll(cond, schema, exprs); hasFallback {
+		if hasFail, tmp = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
 			return
 		}
 		cpEqualConditions[i] = tmp.(*expression.ScalarFunction)
