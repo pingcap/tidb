@@ -44,14 +44,15 @@ func newMockHashKey(key int64) *mockCacheKey {
 }
 
 type fakePlan struct {
-	a int64
-	s []string
+	plan int64
+	tps  []string
 }
 
 func pickFromBucket(bucket []*list.Element, itB interface{}) (*list.Element, int, bool) {
+	itemsB := itB.([]string)
+
 	for i, element := range bucket {
-		itemsA := element.Value.(*CacheEntry).PlanValue.(*fakePlan).s
-		itemsB := itB.([]string)
+		itemsA := element.Value.(*CacheEntry).PlanValue.(*fakePlan).tps
 		flag := true
 		for j := 0; j < len(itemsA); j++ {
 			if itemsA[j] != itemsB[j] {
@@ -67,9 +68,9 @@ func pickFromBucket(bucket []*list.Element, itB interface{}) (*list.Element, int
 }
 
 func TestLRUPCPut(t *testing.T) {
-	pcLRU := NewLRUPlanCache(3)
-	pcLRU.SetPickFromBucket(pickFromBucket)
-	require.Equal(t, uint(3), pcLRU.capacity)
+	lru := NewLRUPlanCache(3)
+	lru.SetPickFromBucket(pickFromBucket)
+	require.Equal(t, uint(3), lru.capacity)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -77,26 +78,26 @@ func TestLRUPCPut(t *testing.T) {
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
 
 	// test onEvict function
-	pcLRU.SetOnEvict(func(key kvcache.Key, value kvcache.Value) {
+	lru.SetOnEvict(func(key kvcache.Key, value kvcache.Value) {
 		maxMemDroppedKv[key] = value
 	})
 
-	// one key multi value
+	// one key corresponding to multi values
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(1)
 		vals[i] = &fakePlan{
-			a: int64(i),
-			s: pTypes[i],
+			plan: int64(i),
+			tps:  pTypes[i],
 		}
-		pcLRU.Put(keys[i], vals[i], pTypes[i])
+		lru.Put(keys[i], vals[i], pTypes[i])
 	}
-	require.Equal(t, pcLRU.size, pcLRU.capacity)
-	require.Equal(t, uint(3), pcLRU.size)
+	require.Equal(t, lru.size, lru.capacity)
+	require.Equal(t, uint(3), lru.size)
 
 	// test for non-existent elements
 	require.Len(t, maxMemDroppedKv, 2)
 	for i := 0; i < 2; i++ {
-		bucket, exist := pcLRU.buckets[string(keys[i].Hash())]
+		bucket, exist := lru.buckets[string(keys[i].Hash())]
 		require.True(t, exist)
 		for _, element := range bucket {
 			require.NotEqual(t, vals[i], element.Value.(*CacheEntry).PlanValue)
@@ -105,7 +106,7 @@ func TestLRUPCPut(t *testing.T) {
 	}
 
 	// test for existent elements
-	root := pcLRU.cache.Front()
+	root := lru.cache.Front()
 	require.NotNil(t, root)
 	for i := 4; i >= 2; i-- {
 		entry, ok := root.Value.(*CacheEntry)
@@ -117,9 +118,9 @@ func TestLRUPCPut(t *testing.T) {
 		require.NotNil(t, key)
 		require.Equal(t, keys[i], key)
 
-		bucket, exist := pcLRU.buckets[string(keys[i].Hash())]
+		bucket, exist := lru.buckets[string(keys[i].Hash())]
 		require.True(t, exist)
-		element, _, exist := pcLRU.pickFromBucket(bucket, pTypes[i])
+		element, _, exist := lru.pickFromBucket(bucket, pTypes[i])
 		require.NotNil(t, element)
 		require.True(t, exist)
 		require.Equal(t, root, element)
@@ -148,8 +149,8 @@ func TestLRUPCGet(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = &fakePlan{
-			a: int64(i),
-			s: pTypes[i],
+			plan: int64(i),
+			tps:  pTypes[i],
 		}
 		lru.Put(keys[i], vals[i], pTypes[i])
 	}
@@ -194,8 +195,8 @@ func TestLRUPCGet2(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i % 3))
 		vals[i] = &fakePlan{
-			a: int64(i),
-			s: pTypes[i],
+			plan: int64(i),
+			tps:  pTypes[i],
 		}
 		lru.Put(keys[i], vals[i], pTypes[i])
 	}
@@ -239,8 +240,8 @@ func TestLRUPCDelete(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = &fakePlan{
-			a: int64(i),
-			s: pTypes[i],
+			plan: int64(i),
+			tps:  pTypes[i],
 		}
 		lru.Put(keys[i], vals[i], pTypes[i])
 	}
@@ -270,8 +271,8 @@ func TestLRUPCDeleteAll(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = &fakePlan{
-			a: int64(i),
-			s: pTypes[i],
+			plan: int64(i),
+			tps:  pTypes[i],
 		}
 		lru.Put(keys[i], vals[i], pTypes[i])
 	}
@@ -298,8 +299,8 @@ func TestLRUPCKeys(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = &fakePlan{
-			a: int64(i),
-			s: pTypes[i],
+			plan: int64(i),
+			tps:  pTypes[i],
 		}
 		lru.Put(keys[i], vals[i], pTypes[i])
 	}
@@ -322,8 +323,8 @@ func TestLRUPCValues(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = &fakePlan{
-			a: int64(i),
-			s: pTypes[i],
+			plan: int64(i),
+			tps:  pTypes[i],
 		}
 		lru.Put(keys[i], vals[i], pTypes[i])
 	}
