@@ -454,10 +454,10 @@
           "      └─Sort_20 10000.00 mpp[tiflash]  test.employee.deptid",
           "        └─ExchangeReceiver_19 10000.00 mpp[tiflash]  ",
           "          └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "            └─Window_13 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
-          "              └─Sort_17 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
-          "                └─ExchangeReceiver_16 10000.00 mpp[tiflash]  stream_count: 8",
-          "                  └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
+          "            └─Window_13 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row)",
+          "              └─Sort_17 10000.00 mpp[tiflash]  test.employee.deptid",
+          "                └─ExchangeReceiver_16 10000.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "                    └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
