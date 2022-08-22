@@ -170,3 +170,15 @@ The variables with scope "none" and "instance" store their values in static fiel
 The variables with scope "session" store their values in a session context, so different DDL owners will get the value from the different `sessionctx.Context` objects. Notice that a new created `sessionctx.Context` should inherit the domain's global value if a variable also has "global" scope, so we need to keep sync with global value changes like what `LoadSysVarCacheLoop` do.
 
 Some variables which are defined with only one scope "global" store the values in static fields. This may cause a problem that when the DDL owner of registered cluster want to read these variables, they may get the values from other domain by mistake. For these variables, we should avoid storing the value in static fields by moving them to `variable.SessionVars` in `sessionctx.Context`.
+
+#### Metrics
+
+Because DDL owners from multiple clusters will run together in DDL service, it's better to separate the metrics from different clusters. Some of these metrics are listed below:
+
+- tidb_ddl_owner_handle_syncer_duration_seconds
+- tidb_ddl_worker_operation_duration_seconds
+- tidb_ddl_worker_operation_total
+- tidb_ddl_add_index_total
+- tidb_ddl_backfill_percentage_progress
+- tidb_ddl_job_table_duration_seconds
+- tidb_ddl_running_job_count
