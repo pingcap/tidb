@@ -192,15 +192,6 @@ func (s *stream) exhausted() bool {
 	return s.pos >= len(s.pathExpr)
 }
 
-func (s *stream) incAsLongAs(f func(byte) bool) bool {
-	for ; !s.exhausted(); s.skip(1) {
-		if !f(s.peek()) {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *stream) readWhile(f func(byte) bool) (str string, metEnd bool) {
 	start := s.pos
 	for ; !s.exhausted(); s.skip(1) {
