@@ -1150,8 +1150,8 @@ func ProduceStrWithSpecifiedTp(s string, rawCharset string, tp *FieldType, sc *s
 					}
 				case charset.CharsetGBK:
 					// TODO
-					if GBKLen(s) > flen {
-						characterLen = GBKLen(s)
+					if gbklen(s) > flen {
+						characterLen = gbklen(s)
 						overflowed = s[flen:]
 						s = truncateStr(s, flen)
 					}
@@ -2526,7 +2526,7 @@ func (d Datum) EstimatedMemUsage() int64 {
 	return int64(bytesConsumed)
 }
 
-func GBKLen(bs string) int {
+func gbklen(bs string) int {
 	if len(bs) < 2 {
 		return 0
 	}
