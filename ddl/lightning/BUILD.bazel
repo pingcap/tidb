@@ -13,6 +13,7 @@ go_library(
         "message.go",
         "res_mgr.go",
     ],
+    flaky = True,
     importpath = "github.com/pingcap/tidb/ddl/lightning",
     visibility = ["//visibility:public"],
     deps = [
@@ -50,7 +51,6 @@ go_test(
         "mem_root_test.go",
     ],
     embed = [":lightning"],
-    flaky = True,
     deps = [
         "//sessionctx/variable",
         "@com_github_stretchr_testify//require",

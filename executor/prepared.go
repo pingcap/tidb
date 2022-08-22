@@ -71,6 +71,7 @@ type PrepareExec struct {
 	ID         uint32
 	ParamCount int
 	Fields     []*ast.ResultField
+	Stmt       interface{}
 
 	IsGeneralStmt bool
 
@@ -243,6 +244,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err = plannercore.CheckPreparedPriv(e.ctx, preparedObj, ret.InfoSchema); err != nil {
 		return err
 	}
+	e.Stmt = preparedObj
 	if e.IsGeneralStmt {
 		vars.AddGeneralPlanCacheStmt(e.sqlText, preparedObj)
 		return nil
