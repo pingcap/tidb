@@ -559,7 +559,7 @@ func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNul
 	if tp.GetType() == mysql.TypeYear && res == "0" {
 		res = "0000"
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+	res, err = types.ProduceStrWithSpecifiedTp(res, "", b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -858,7 +858,7 @@ func (b *builtinCastRealAsStringSig) evalString(row chunk.Row) (res string, isNu
 		// If we strconv.FormatFloat the value with 64bits, the result is incorrect!
 		bits = 32
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), "", b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1004,7 +1004,7 @@ func (b *builtinCastDecimalAsStringSig) evalString(row chunk.Row) (res string, i
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.tp, sc, false)
+	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), "", b.tp, sc, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1115,7 +1115,7 @@ func (b *builtinCastStringAsStringSig) evalString(row chunk.Row) (res string, is
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc, false)
+	res, err = types.ProduceStrWithSpecifiedTp(res, "", b.tp, sc, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1429,7 +1429,7 @@ func (b *builtinCastTimeAsStringSig) evalString(row chunk.Row) (res string, isNu
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc, false)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), "", b.tp, sc, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1562,7 +1562,7 @@ func (b *builtinCastDurationAsStringSig) evalString(row chunk.Row) (res string, 
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc, false)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), "", b.tp, sc, false)
 	if err != nil {
 		return res, false, err
 	}

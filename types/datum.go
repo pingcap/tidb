@@ -1055,7 +1055,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		return invalidConv(d, target.GetType())
 	}
 	if err == nil {
-		s, err = ProduceStrWithSpecifiedTp(s, target, sc, true)
+		s, err = ProduceStrWithSpecifiedTp(s, "", target, sc, true)
 	}
 	ret.SetString(s, target.GetCollate())
 	if target.GetCharset() == charset.CharsetBin {
@@ -1066,7 +1066,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 
 // ProduceStrWithSpecifiedTp produces a new string according to `flen` and `chs`. Param `padZero` indicates
 // whether we should pad `\0` for `binary(flen)` type.
-func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
+func ProduceStrWithSpecifiedTp(s string, rawCharset string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.GetFlen(), tp.GetCharset()
 	if flen >= 0 {
 		// overflowed stores the part of the string that is out of the length constraint, it is later checked to see if the
@@ -1126,10 +1126,37 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 					s = truncateStr(s, truncateLen)
 				}
 			}
-		} else if utf8.RuneCountInString(s) > flen {
-			characterLen = utf8.RuneCountInString(s)
-			overflowed = s[flen:]
-			s = truncateStr(s, flen)
+		} else {
+			if len(rawCharset) == 0 {
+				if len(s) > flen {
+					characterLen = len(s)
+					overflowed = s[flen:]
+					s = truncateStr(s, flen)
+				}
+			} else {
+				// TODO
+				switch rawCharset {
+				case charset.CharsetUTF8, charset.CharsetUTF8MB4:
+					if utf8.RuneCountInString(s) > flen {
+						characterLen = utf8.RuneCountInString(s)
+						overflowed = s[flen:]
+						s = truncateStr(s, flen)
+					}
+				case charset.CharsetASCII, charset.CharsetBin, charset.CharsetLatin1:
+					if len(s) > flen {
+						characterLen = len(s)
+						overflowed = s[flen:]
+						s = truncateStr(s, flen)
+					}
+				case charset.CharsetGBK:
+					// TODO
+					if GBKLen(s) > flen {
+						characterLen = GBKLen(s)
+						overflowed = s[flen:]
+						s = truncateStr(s, flen)
+					}
+				}
+			}
 		}
 
 		if len(overflowed) != 0 {
@@ -2497,4 +2524,18 @@ func (d Datum) EstimatedMemUsage() int64 {
 		bytesConsumed += len(d.b)
 	}
 	return int64(bytesConsumed)
+}
+
+func GBKLen(bs string) int {
+	if len(bs) < 2 {
+		return 0
+	}
+
+	if 0x81 <= bs[0] && bs[0] <= 0xfe {
+		if (0x40 <= bs[1] && bs[1] <= 0x7e) || (0x80 <= bs[1] && bs[1] <= 0xfe) {
+			return 2
+		}
+	}
+
+	return 0
 }
