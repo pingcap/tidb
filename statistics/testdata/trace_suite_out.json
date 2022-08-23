@@ -289,13 +289,13 @@
           {
             "table_name": "",
             "type": "Join",
-            "expr": "SELECT tbl_4.col_1 AS col_13, tbl_4.col_2 AS col_14, tbl_4.col_3 AS col_15, tbl_6.col_4 AS col_18, tbl_6.col_5 AS col_19, tbl_5.col_6 AS col_16, tbl_5.col_7 AS col_17 FROM (SELECT tbl_1.a AS col_1, tbl_1.b AS col_2, tbl_1.c AS col_3 FROM t1 AS tbl_1 WHERE `not`(`isnull`(tbl_1.a))) AS tbl_4 right outer join (SELECT tbl_3.a AS col_6, tbl_3.b AS col_7 FROM t3 AS tbl_3 WHERE `not`(`isnull`(tbl_3.a))) AS tbl_5 ON `eq`(tbl_4.col_1, tbl_5.col_7) inner join (SELECT tbl_2.a AS col_4, tbl_2.b AS col_5 FROM t2 AS tbl_2 WHERE `not`(`isnull`(tbl_2.b))) AS tbl_6 ON `eq`(tbl_5.col_6, tbl_6.col_5)",
+            "expr": "SELECT tbl_6.col_9 AS col_12, tbl_6.col_10 AS col_13, tbl_6.col_11 AS col_14, tbl_3.col_1 AS col_15, tbl_4.col_4 AS col_16 FROM (SELECT tbl_5.a AS col_9, tbl_5.b AS col_10, tbl_5.c AS col_11 FROM t1 AS tbl_5 WHERE `not`(`isnull`(tbl_5.a))) AS tbl_6 right outer join ((SELECT tbl_1.a AS col_1, tbl_1.b AS col_2 FROM t2 AS tbl_1 WHERE `not`(`isnull`(tbl_1.b))) AS tbl_3 inner join (SELECT tbl_2.a AS col_3, tbl_2.b AS col_4 FROM t3 AS tbl_2 WHERE `not`(`isnull`(tbl_2.a))) AS tbl_4 ON `eq`(tbl_3.col_2, tbl_4.col_3)) ON `eq`(tbl_6.col_9, tbl_4.col_4)",
             "row_count": 15609
           },
           {
             "table_name": "",
             "type": "Join",
-            "expr": "SELECT tbl_4.col_1 AS col_8, tbl_4.col_2 AS col_9, tbl_4.col_3 AS col_10, tbl_5.col_6 AS col_11, tbl_5.col_7 AS col_12 FROM (SELECT tbl_1.a AS col_1, tbl_1.b AS col_2, tbl_1.c AS col_3 FROM t1 AS tbl_1 WHERE `not`(`isnull`(tbl_1.a))) AS tbl_4 right outer join (SELECT tbl_3.a AS col_6, tbl_3.b AS col_7 FROM t3 AS tbl_3 WHERE `not`(`isnull`(tbl_3.a))) AS tbl_5 ON `eq`(tbl_4.col_1, tbl_5.col_7)",
+            "expr": "SELECT tbl_3.col_1 AS col_5, tbl_3.col_2 AS col_6, tbl_4.col_3 AS col_7, tbl_4.col_4 AS col_8 FROM (SELECT tbl_1.a AS col_1, tbl_1.b AS col_2 FROM t2 AS tbl_1 WHERE `not`(`isnull`(tbl_1.b))) AS tbl_3 inner join (SELECT tbl_2.a AS col_3, tbl_2.b AS col_4 FROM t3 AS tbl_2 WHERE `not`(`isnull`(tbl_2.a))) AS tbl_4 ON `eq`(tbl_3.col_2, tbl_4.col_3)",
             "row_count": 12487
           },
           {
