@@ -77,7 +77,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},
 
 	/* The system variables below have SESSION scope  */
-	{Scope: ScopeSession, Name: Timestamp, Value: DefTimestamp, MinValue: 0, MaxValue: 2147483647, Type: TypeFloat, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: Timestamp, Value: DefTimestamp, MinValue: 0, MaxValue: math.MaxInt32, Type: TypeFloat, GetSession: func(s *SessionVars) (string, error) {
 		if timestamp, ok := s.systems[Timestamp]; ok && timestamp != DefTimestamp {
 			return timestamp, nil
 		}
@@ -86,6 +86,12 @@ var defaultSysVars = []*SysVar{
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
 		timestamp, ok := s.systems[Timestamp]
 		return timestamp, ok && timestamp != DefTimestamp, nil
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		val := tidbOptFloat64(originalValue, DefTimestampFloat)
+		if val > math.MaxInt32 {
+			return originalValue, ErrWrongValueForVar.GenWithStackByArgs(Timestamp, originalValue)
+		}
+		return normalizedValue, nil
 	}},
 	{Scope: ScopeSession, Name: WarningCount, Value: "0", ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.Itoa(s.SysWarningCount), nil
