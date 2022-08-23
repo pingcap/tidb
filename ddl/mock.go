@@ -91,11 +91,6 @@ func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version
 	return nil
 }
 
-// MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
-func (s *MockSchemaSyncer) MustGetGlobalVersion(ctx context.Context) (int64, error) {
-	return 0, nil
-}
-
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
 func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer int64) error {
 	ticker := time.NewTicker(mockCheckVersInterval)
