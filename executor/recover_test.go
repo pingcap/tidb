@@ -319,7 +319,7 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	// Flashback failed because of ddl history.
 	tk.MustExec("use test;")
 	tk.MustExec("create table t(a int);")
-	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-30*time.Second)), "schema version not same, done ddl during [flashbackTS, now)")
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-30*time.Second)), "schema version not same, have done ddl during [flashbackTS, now)")
 }
 
 func TestRecoverClusterWithTiFlash(t *testing.T) {

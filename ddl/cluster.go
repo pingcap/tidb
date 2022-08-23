@@ -43,7 +43,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	// If flashbackSchemaVersion not same as nowSchemaVersion, we've done ddl during [flashbackTs, now).
 	if flashbackSchemaVersion != nowSchemaVersion {
 		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("schema version not same, done ddl during [flashbackTS, now)")
+		return ver, errors.Errorf("schema version not same, have done ddl during [flashbackTS, now)")
 	}
 
 	sess, err := w.sessPool.get()
@@ -62,7 +62,14 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	// Other non-flashback ddl jobs in queue, return error.
 	if len(jobs) != 1 {
 		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("have other ddl jobs in queue, can't do flashback")
+		var otherJob *model.Job
+		for _, j := range jobs {
+			if j.ID != job.ID {
+				otherJob = j
+				break
+			}
+		}
+		return ver, errors.Errorf("have other ddl jobs(jobID: %d) in queue, can't do flashback", otherJob.ID)
 	}
 
 	job.State = model.JobStateDone
