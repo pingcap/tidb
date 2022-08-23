@@ -23,10 +23,9 @@ type FKCheckExec struct {
 	*FKValueHelper
 	ctx sessionctx.Context
 
-	toBeCheckedHandleKeys []kv.Handle
-	toBeCheckedUniqueKeys []kv.Key
-	toBeCheckedIndexKeys  []kv.Key
-	toBeLockedKeys        []kv.Key
+	toBeCheckedKeys      []kv.Key
+	toBeCheckedIndexKeys []kv.Key
+	toBeLockedKeys       []kv.Key
 }
 
 type FKValueHelper struct {
@@ -93,10 +92,10 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 		if err != nil {
 			return err
 		}
+		key := tablecodec.EncodeRecordKey(fkc.Tbl.RecordPrefix(), handleKey)
 		if fkc.IdxIsExclusive {
-			fkc.toBeCheckedHandleKeys = append(fkc.toBeCheckedHandleKeys, handleKey)
+			fkc.toBeCheckedKeys = append(fkc.toBeCheckedKeys, key)
 		} else {
-			key := tablecodec.EncodeRecordKey(fkc.Tbl.RecordPrefix(), handleKey)
 			fkc.toBeCheckedIndexKeys = append(fkc.toBeCheckedIndexKeys, key)
 		}
 		return nil
@@ -106,7 +105,7 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 		return err
 	}
 	if distinct && fkc.IdxIsExclusive {
-		fkc.toBeCheckedUniqueKeys = append(fkc.toBeCheckedUniqueKeys, key)
+		fkc.toBeCheckedKeys = append(fkc.toBeCheckedKeys, key)
 	} else {
 		fkc.toBeCheckedIndexKeys = append(fkc.toBeCheckedIndexKeys, key)
 	}
@@ -191,11 +190,7 @@ func (fkc FKCheckExec) doCheck(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = fkc.checkHandleKeys(ctx, txn)
-	if err != nil {
-		return err
-	}
-	err = fkc.checkUniqueKeys(ctx, txn)
+	err = fkc.checkKeys(ctx, txn)
 	if err != nil {
 		return err
 	}
@@ -214,56 +209,22 @@ func (fkc FKCheckExec) doCheck(ctx context.Context) error {
 	return doLockKeys(ctx, fkc.ctx, lockCtx, fkc.toBeLockedKeys...)
 }
 
-func (fkc *FKCheckExec) checkHandleKeys(ctx context.Context, txn kv.Transaction) error {
-	if len(fkc.toBeCheckedHandleKeys) == 0 {
+func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction) error {
+	if len(fkc.toBeCheckedKeys) == 0 {
 		return nil
 	}
 	// Fill cache using BatchGet
-	keys := make([]kv.Key, len(fkc.toBeCheckedHandleKeys))
-	for i, handle := range fkc.toBeCheckedHandleKeys {
-		keys[i] = tablecodec.EncodeRecordKey(fkc.Tbl.RecordPrefix(), handle)
-	}
-
-	_, err := txn.BatchGet(ctx, keys)
+	_, err := txn.BatchGet(ctx, fkc.toBeCheckedKeys)
 	if err != nil {
 		return err
 	}
-	for _, k := range keys {
+	for _, k := range fkc.toBeCheckedKeys {
 		_, err := txn.Get(ctx, k)
 		if err == nil {
 			if !fkc.CheckExist {
 				return fkc.FailedErr
 			}
 			fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, k)
-			continue
-		}
-		if kv.IsErrNotFound(err) {
-			if fkc.CheckExist {
-				return fkc.FailedErr
-			}
-			continue
-		}
-		return err
-	}
-	return nil
-}
-
-func (fkc *FKCheckExec) checkUniqueKeys(ctx context.Context, txn kv.Transaction) error {
-	if len(fkc.toBeCheckedUniqueKeys) == 0 {
-		return nil
-	}
-	// Fill cache using BatchGet
-	_, err := txn.BatchGet(ctx, fkc.toBeCheckedUniqueKeys)
-	if err != nil {
-		return err
-	}
-	for _, uk := range fkc.toBeCheckedUniqueKeys {
-		_, err := txn.Get(ctx, uk)
-		if err == nil {
-			if !fkc.CheckExist {
-				return fkc.FailedErr
-			}
-			fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, uk)
 			continue
 		}
 		if kv.IsErrNotFound(err) {
