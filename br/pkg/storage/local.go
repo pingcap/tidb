@@ -55,13 +55,16 @@ func (l *LocalStorage) ReadFile(_ context.Context, name string) ([]byte, error) 
 
 // ReadFile reads the file from the storage and returns contents.
 func (l *LocalStorage) ReadRangeFile(_ context.Context, name string, offset int64, length int64) ([]byte, error) {
-	path := filepath.Join(l.base, name)
-	f, err := os.Open(path)
+	//nolint: gosec
+	f, err := os.Open(filepath.Join(l.base, name))
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	f.Seek(offset, 0)
+	_, err = f.Seek(offset, 0)
+	if err != nil {
+		return nil, err
+	}
 
 	data := make([]byte, length)
 	_, err = io.ReadFull(f, data)
