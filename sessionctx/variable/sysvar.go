@@ -28,15 +28,17 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/paging"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
@@ -48,7 +50,9 @@ import (
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
-// 		[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
+//
+//	[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
+//
 // If you are adding a new system variable, please put it in the corresponding area.
 var defaultSysVars = []*SysVar{
 	/* The system variables below have NONE scope  */
@@ -89,12 +93,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: ErrorCount, Value: "0", ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.Itoa(int(s.SysErrorCount)), nil
 	}},
-	{Scope: ScopeSession, Name: LastInsertID, Value: "", Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: LastInsertID, Value: "0", Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
 		return "", false, nil
 	}},
-	{Scope: ScopeSession, Name: Identity, Value: "", Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: Identity, Value: "0", Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
 		return "", false, nil
@@ -157,41 +161,45 @@ var defaultSysVars = []*SysVar{
 		s.AllowAggPushDown = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBOptDistinctAggPushDown, Value: BoolToOnOff(config.GetGlobalConfig().Performance.DistinctAggPushDown), skipInit: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBOptDistinctAggPushDown, Value: BoolToOnOff(config.GetGlobalConfig().Performance.DistinctAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBOptWriteRowID, Value: BoolToOnOff(DefOptWriteRowID), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptSkewDistinctAgg, Value: BoolToOnOff(DefTiDBSkewDistinctAgg), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSkewDistinctAgg = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeSession, Name: TiDBOptWriteRowID, Value: BoolToOnOff(DefOptWriteRowID), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowWriteRowID = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBChecksumTableConcurrency, Value: strconv.Itoa(DefChecksumTableConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency},
-	{Scope: ScopeSession, Name: TiDBBatchInsert, Value: BoolToOnOff(DefBatchInsert), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBBatchInsert, Value: BoolToOnOff(DefBatchInsert), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.BatchInsert = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBBatchDelete, Value: BoolToOnOff(DefBatchDelete), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBBatchDelete, Value: BoolToOnOff(DefBatchDelete), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.BatchDelete = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBBatchCommit, Value: BoolToOnOff(DefBatchCommit), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBBatchCommit, Value: BoolToOnOff(DefBatchCommit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.BatchCommit = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBCurrentTS, Value: strconv.Itoa(DefCurretTS), Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.TxnCtx.StartTS, 10), nil
 	}},
-	{Scope: ScopeSession, Name: TiDBLastTxnInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: TiDBLastTxnInfo, Value: "", ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return s.LastTxnInfo, nil
 	}},
-	{Scope: ScopeSession, Name: TiDBLastQueryInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: TiDBLastQueryInfo, Value: "", ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		info, err := json.Marshal(s.LastQueryInfo)
 		if err != nil {
 			return "", err
 		}
 		return string(info), nil
 	}},
-	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: On, Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: BoolToOnOff(config.GetGlobalConfig().TiKVClient.EnableChunkRPC), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableChunkRPC = TiDBOptOn(val)
 		return nil
 	}},
@@ -207,11 +215,11 @@ var defaultSysVars = []*SysVar{
 		}
 		return "", false, nil
 	}},
-	{Scope: ScopeSession, Name: TiDBOptimizerSelectivityLevel, Value: strconv.Itoa(DefTiDBOptimizerSelectivityLevel), skipInit: true, Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBOptimizerSelectivityLevel, Value: strconv.Itoa(DefTiDBOptimizerSelectivityLevel), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptimizerEnableOuterJoinReorder, Value: BoolToOnOff(DefTiDBEnableOuterJoinReorder), skipInit: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptimizerEnableOuterJoinReorder, Value: BoolToOnOff(DefTiDBEnableOuterJoinReorder), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableOuterJoinReorder = TiDBOptOn(val)
 		return nil
 	}},
@@ -231,11 +239,11 @@ var defaultSysVars = []*SysVar{
 		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: Off, Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.LowResolutionTSO = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), skipInit: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 		return nil
 	}},
@@ -312,7 +320,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeSession, Name: TiDBLastDDLInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: TiDBLastDDLInfo, Value: "", ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		info, err := json.Marshal(s.LastDDLInfo)
 		if err != nil {
 			return "", err
@@ -429,10 +437,34 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), nil
 	}},
+	{Scope: ScopeInstance, Name: TiDBEnableDDL, Value: BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), Type: TypeBool,
+		SetGlobal: func(s *SessionVars, val string) error {
+			oldVal, newVal := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load(), TiDBOptOn(val)
+			if oldVal != newVal {
+				err := switchDDL(newVal)
+				config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(newVal)
+				return err
+			}
+			return nil
+		},
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), nil
+		},
+	},
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
-	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
+	{Scope: ScopeGlobal, Name: InitConnect, Value: "", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		p := parser.New()
+		p.SetSQLMode(vars.SQLMode)
+		p.SetParserConfig(vars.BuildParserConfig())
+		_, _, err := p.ParseSQL(normalizedValue)
+		if err != nil {
+			return normalizedValue, ErrWrongTypeForVar.GenWithStackByArgs(InitConnect)
+		}
+		return normalizedValue, nil
+	}},
+
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
 		GetGlobal: func(sv *SessionVars) (string, error) {
@@ -470,16 +502,6 @@ var defaultSysVars = []*SysVar{
 		MemQuotaBindingCache.Store(TidbOptInt64(val, DefTiDBMemQuotaBindingCache))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1), Type: TypeUnsigned, MinValue: 1, MaxValue: 2, SetSession: func(s *SessionVars, val string) error {
-		formatVersion := int(TidbOptInt64(val, DefTiDBRowFormatV1))
-		if formatVersion == DefTiDBRowFormatV1 {
-			s.RowEncoder.Enable = false
-		} else if formatVersion == DefTiDBRowFormatV2 {
-			s.RowEncoder.Enable = true
-		}
-		SetDDLReorgRowFormat(TidbOptInt64(val, DefTiDBRowFormatV2))
-		return nil
-	}},
 	{Scope: ScopeGlobal, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(s *SessionVars, val string) error {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 		return nil
@@ -496,12 +518,6 @@ var defaultSysVars = []*SysVar{
 		// It's a global variable, but it also wants to be cached in server.
 		SetMaxDeltaSchemaCount(TidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBEnablePointGetCache, Value: BoolToOnOff(DefTiDBPointGetCache), Hidden: true, Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
-		EnablePointGetCache.Store(TiDBOptOn(val))
-		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(EnablePointGetCache.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBScatterRegion, Value: BoolToOnOff(DefTiDBScatterRegion), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,
@@ -708,7 +724,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal, Name: TiDBStatsLoadPseudoTimeout, Value: BoolToOnOff(DefTiDBStatsLoadPseudoTimeout), Type: TypeBool,
 		GetGlobal: func(s *SessionVars) (string, error) {
-			return strconv.FormatBool(StatsLoadPseudoTimeout.Load()), nil
+			return BoolToOnOff(StatsLoadPseudoTimeout.Load()), nil
 		},
 		SetGlobal: func(s *SessionVars, val string) error {
 			StatsLoadPseudoTimeout.Store(TiDBOptOn(val))
@@ -758,20 +774,16 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBEnablePrepPlanCache, Value: BoolToOnOff(DefTiDBEnablePrepPlanCache), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
-		EnablePreparedPlanCache.Store(TiDBOptOn(val))
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePrepPlanCache, Value: BoolToOnOff(DefTiDBEnablePrepPlanCache), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePreparedPlanCache = TiDBOptOn(val)
 		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(EnablePreparedPlanCache.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBPrepPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBPrepPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPrepPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBPrepPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
-			PreparedPlanCacheSize.Store(uVal)
+			s.PreparedPlanCacheSize = uVal
 		}
 		return err
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return strconv.FormatUint(PreparedPlanCacheSize.Load(), 10), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBPrepPlanCacheMemoryGuardRatio, Value: strconv.FormatFloat(DefTiDBPrepPlanCacheMemoryGuardRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(s *SessionVars, val string) error {
 		f, err := strconv.ParseFloat(val, 64)
@@ -781,6 +793,17 @@ var defaultSysVars = []*SysVar{
 		return err
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatFloat(PreparedPlanCacheMemoryGuardRatio.Load(), 'f', -1, 64), nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGeneralPlanCache, Value: BoolToOnOff(DefTiDBEnableGeneralPlanCache), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableGeneralPlanCache = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBGeneralPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBGeneralPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
+		uVal, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			s.GeneralPlanCacheSize = uVal
+		}
+		return err
 	}},
 	{Scope: ScopeGlobal, Name: TiDBMemOOMAction, Value: DefTiDBMemOOMAction, PossibleValues: []string{"CANCEL", "LOG"}, Type: TypeEnum,
 		GetGlobal: func(s *SessionVars) (string, error) {
@@ -803,12 +826,18 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBEnableConcurrentDDL, Value: BoolToOnOff(DefTiDBEnableConcurrentDDL), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
-		EnableConcurrentDDL.Store(TiDBOptOn(val))
+		if EnableConcurrentDDL.Load() != TiDBOptOn(val) {
+			err := SwitchConcurrentDDL(TiDBOptOn(val))
+			if err != nil {
+				return err
+			}
+			EnableConcurrentDDL.Store(TiDBOptOn(val))
+		}
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableConcurrentDDL.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On, Warn}, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On}, SetGlobal: func(s *SessionVars, val string) error {
 		EnableNoopVariables.Store(TiDBOptOn(val))
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
@@ -822,8 +851,32 @@ var defaultSysVars = []*SysVar{
 		sessionstates.SetKeyPath(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableGCAwareMemoryTrack, Value: BoolToOnOff(DefEnableTiDBGCAwareMemoryTrack), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		memory.EnableGCAwareMemoryTrack.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(memory.EnableGCAwareMemoryTrack.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableTmpStorageOnOOM, Value: BoolToOnOff(DefTiDBEnableTmpStorageOnOOM), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		EnableTmpStorageOnOOM.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(EnableTmpStorageOnOOM.Load()), nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1), Type: TypeUnsigned, MinValue: 1, MaxValue: 2, SetGlobal: func(s *SessionVars, val string) error {
+		SetDDLReorgRowFormat(TidbOptInt64(val, DefTiDBRowFormatV2))
+		return nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		formatVersion := TidbOptInt64(val, DefTiDBRowFormatV1)
+		if formatVersion == DefTiDBRowFormatV1 {
+			s.RowEncoder.Enable = false
+		} else if formatVersion == DefTiDBRowFormatV2 {
+			s.RowEncoder.Enable = true
+		}
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		result, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {
@@ -937,10 +990,11 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: AutoCommit, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		isAutocommit := TiDBOptOn(val)
-		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
-		if isAutocommit {
+		// Implicitly commit the possible ongoing transaction if mode is changed from off to on.
+		if !s.IsAutocommit() && isAutocommit {
 			s.SetInTxn(false)
 		}
+		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharsetDatabase, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -1372,8 +1426,7 @@ var defaultSysVars = []*SysVar{
 	}, SetSession: func(s *SessionVars, val string) error {
 		s.AllowFallbackToTiKV = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
-			switch engine {
-			case kv.TiFlash.Name():
+			if engine == kv.TiFlash.Name() {
 				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
 			}
 		}
@@ -1387,16 +1440,14 @@ var defaultSysVars = []*SysVar{
 		s.PlacementMode = val
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThreshold, Value: strconv.Itoa(DefTiDBOptJoinReorderThreshold), skipInit: true, Type: TypeUnsigned, MinValue: 0, MaxValue: 63, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThreshold, Value: strconv.Itoa(DefTiDBOptJoinReorderThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: 63, SetSession: func(s *SessionVars, val string) error {
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNoopFuncs, Value: DefTiDBEnableNoopFuncs, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-
 		// The behavior is very weird if someone can turn TiDBEnableNoopFuncs OFF, but keep any of the following on:
 		// TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly, SQLAutoIsNull
 		// To prevent this strange position, prevent setting to OFF when any of these sysVars are ON of the same scope.
-
 		if normalizedValue == Off {
 			for _, potentialIncompatibleSysVar := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, ReadOnly, SQLAutoIsNull} {
 				val, _ := vars.GetSystemVar(potentialIncompatibleSysVar) // session scope
@@ -1417,7 +1468,7 @@ var defaultSysVars = []*SysVar{
 		s.NoopFuncsMode = TiDBOptOnOffWarn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower", "closest-replicas"}, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower", "closest-replicas", "closest-adaptive"}, SetSession: func(s *SessionVars, val string) error {
 		if strings.EqualFold(val, "follower") {
 			s.SetReplicaRead(kv.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader-and-follower") {
@@ -1426,7 +1477,13 @@ var defaultSysVars = []*SysVar{
 			s.SetReplicaRead(kv.ReplicaReadLeader)
 		} else if strings.EqualFold(val, "closest-replicas") {
 			s.SetReplicaRead(kv.ReplicaReadClosest)
+		} else if strings.EqualFold(val, "closest-adaptive") {
+			s.SetReplicaRead(kv.ReplicaReadClosestAdaptive)
 		}
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAdaptiveClosestReadThreshold, Value: strconv.Itoa(DefAdaptiveClosestReadThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.ReplicaClosestReadThreshold = TidbOptInt64(val, DefAdaptiveClosestReadThreshold)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBUsePlanBaselines, Value: BoolToOnOff(DefTiDBUsePlanBaselines), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -1575,7 +1632,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableLegacyInstanceScope = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStatsLoadSyncWait, Value: strconv.Itoa(DefTiDBStatsLoadSyncWait), skipInit: true, Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStatsLoadSyncWait, Value: strconv.Itoa(DefTiDBStatsLoadSyncWait), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		SetSession: func(s *SessionVars, val string) error {
 			s.StatsLoadSyncWait = TidbOptInt64(val, DefTiDBStatsLoadSyncWait)
 			return nil
@@ -1619,13 +1676,13 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNewCostInterface, Value: BoolToOnOff(false), Hidden: true, Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNewCostInterface, Value: BoolToOnOff(true), Hidden: false, Type: TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.EnableNewCostInterface = TiDBOptOn(s)
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCostModelVersion, Value: strconv.Itoa(1), Hidden: true, Type: TypeInt, MinValue: 1, MaxValue: 2,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCostModelVersion, Value: strconv.Itoa(1), Hidden: false, Type: TypeInt, MinValue: 1, MaxValue: 2,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.CostModelVersion = int(TidbOptInt64(s, 1))
 			return nil
@@ -1671,8 +1728,12 @@ var defaultSysVars = []*SysVar{
 			metrics.ToggleSimplifiedMode(TiDBOptOn(s))
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMinPagingSize, Value: strconv.Itoa(DefMinPagingSize), Type: TypeUnsigned, MinValue: 1, MaxValue: paging.MaxPagingSize, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMinPagingSize, Value: strconv.Itoa(DefMinPagingSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MinPagingSize = tidbOptPositiveInt32(val, DefMinPagingSize)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxPagingSize, Value: strconv.Itoa(DefMaxPagingSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.MaxPagingSize = tidbOptPositiveInt32(val, DefMaxPagingSize)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBMemoryDebugModeMinHeapInUse, Value: strconv.Itoa(0), Type: TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
@@ -1681,6 +1742,36 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeSession, Name: TiDBMemoryDebugModeAlarmRatio, Value: strconv.Itoa(0), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MemoryDebugModeAlarmRatio = TidbOptInt64(val, 0)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLRequirePrimaryKey, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PrimaryKeyRequired = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAnalyzeSnapshot, Value: BoolToOnOff(DefTiDBEnableAnalyzeSnapshot), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAnalyzeSnapshot = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBGenerateBinaryPlan, Value: BoolToOnOff(DefTiDBGenerateBinaryPlan), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		GenerateBinaryPlan.Store(TiDBOptOn(val))
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDefaultStrMatchSelectivity, Value: strconv.FormatFloat(DefTiDBDefaultStrMatchSelectivity, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1,
+		SetSession: func(s *SessionVars, val string) error {
+			s.DefaultStrMatchSelectivity = tidbOptFloat64(val, DefTiDBDefaultStrMatchSelectivity)
+			return nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBDDLEnableFastReorg, Value: BoolToOnOff(DefTiDBEnableFastReorg), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableFastReorg.Load()), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		EnableFastReorg.Store(TiDBOptOn(val))
+		return nil
+	}},
+	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.
+	{Scope: ScopeGlobal, Name: TiDBDDLDiskQuota, Value: strconv.Itoa(DefTiDBDDLDiskQuota), Type: TypeInt, MinValue: DefTiDBDDLDiskQuota, MaxValue: 1024 * 1024 * DefTiDBDDLDiskQuota / 100, GetGlobal: func(sv *SessionVars) (string, error) {
+		return strconv.FormatInt(DDLDiskQuota.Load(), 10), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		DDLDiskQuota.Store(TidbOptInt64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
 }
@@ -1811,6 +1902,8 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
+	// TiDBEnableDDL indicates whether the tidb-server runs DDL statements,
+	TiDBEnableDDL = "tidb_enable_ddl"
 	// Port is the name for 'port' system variable.
 	Port = "port"
 	// DataDir is the name for 'datadir' system variable.
@@ -1989,4 +2082,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
+	//SQLRequirePrimaryKey is the name of `sql_require_primary_key` system variable.
+	SQLRequirePrimaryKey = "sql_require_primary_key"
 )

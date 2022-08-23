@@ -3,6 +3,7 @@
 package streamhelper
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -12,8 +13,10 @@ import (
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap/zapcore"
 )
 
 // CheckpointsCache is the heap-like cache for checkpoints.
@@ -27,11 +30,12 @@ import (
 //   - is based on range (it only promises there won't be new committed txns in the range).
 //   - the checkpoint of union of ranges is the minimal checkpoint of all ranges.
 // As an example:
-// +----------------------------------+
-// ^-----------^ (Checkpoint = 42)
-//         ^---------------^ (Checkpoint = 76)
-// ^-----------------------^ (Checkpoint = min(42, 76) = 42)
-//
+/*
+ +----------------------------------+
+ ^-----------^ (Checkpoint = 42)
+         ^---------------^ (Checkpoint = 76)
+ ^-----------------------^ (Checkpoint = min(42, 76) = 42)
+*/
 // For calculating the global checkpoint, we can make a heap-like structure:
 // Checkpoint    Ranges
 // 42         -> {[0, 8], [16, 100]}
@@ -86,6 +90,26 @@ func (NoOPCheckpointCache) ConsistencyCheck() error {
 type RangesSharesTS struct {
 	TS     uint64
 	Ranges []kv.KeyRange
+}
+
+func (rst *RangesSharesTS) Zap() zapcore.ObjectMarshaler {
+	return zapcore.ObjectMarshalerFunc(func(oe zapcore.ObjectEncoder) error {
+		rngs := rst.Ranges
+		if len(rst.Ranges) > 3 {
+			rngs = rst.Ranges[:3]
+		}
+
+		oe.AddUint64("checkpoint", rst.TS)
+		return oe.AddArray("items", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+			return ae.AppendObject(zapcore.ObjectMarshalerFunc(func(oe1 zapcore.ObjectEncoder) error {
+				for _, rng := range rngs {
+					oe1.AddString("start-key", redact.String(hex.EncodeToString(rng.StartKey)))
+					oe1.AddString("end-key", redact.String(hex.EncodeToString(rng.EndKey)))
+				}
+				return nil
+			}))
+		}))
+	})
 }
 
 func (rst *RangesSharesTS) String() string {

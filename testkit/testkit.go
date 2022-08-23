@@ -25,12 +25,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,17 +48,20 @@ type TestKit struct {
 	t       testing.TB
 	store   kv.Storage
 	session session.Session
+
+	useGeneralPlanCache bool
 }
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
-	return &TestKit{
+	tk := &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
 		t:       t,
 		store:   store,
-		session: newSession(t, store),
 	}
+	tk.RefreshSession()
+	return tk
 }
 
 // NewTestKitWithSession returns a new *TestKit.
@@ -72,14 +75,25 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 	}
 }
 
+// NewTestKitWithGeneralPlanCache returns a new *TestKit.
+func NewTestKitWithGeneralPlanCache(t testing.TB, store kv.Storage) *TestKit {
+	tk := NewTestKit(t, store)
+	tk.useGeneralPlanCache = true
+	return tk
+}
+
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = newSession(tk.t, tk.store)
+	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
+	tk.MustExec("select 3")
 }
 
 // SetSession set the session of testkit
 func (tk *TestKit) SetSession(session session.Session) {
 	tk.session = session
+	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
+	tk.MustExec("select 3")
 }
 
 // Session return the session associated with the testkit
@@ -143,7 +157,6 @@ func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...
 				partitions = append(partitions[:index], partitions[index+1:]...)
 			}
 		}
-
 	}
 	if !ok {
 		tk.require.Len(partitions, 0)
@@ -224,9 +237,18 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
-		stmts, err := tk.session.Parse(ctx, sql)
-		if err != nil {
-			return nil, errors.Trace(err)
+		var stmts []ast.StmtNode
+		if tk.useGeneralPlanCache {
+			if execStmt, ok := tk.session.Parameterize(ctx, sql); ok {
+				stmts = append(stmts, execStmt)
+			}
+		}
+		if len(stmts) == 0 {
+			var err error
+			stmts, err = tk.session.Parse(ctx, sql)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		warns := sc.GetWarnings()
 		parserWarns := warns[len(prevWarns):]
@@ -257,10 +279,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	params := make([]types.Datum, len(args))
-	for i := 0; i < len(params); i++ {
-		params[i] = types.NewDatum(args[i])
-	}
+	params := expression.Args2Expressions4Test(args...)
 	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return rs, errors.Trace(err)

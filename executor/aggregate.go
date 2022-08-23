@@ -24,13 +24,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -118,43 +118,44 @@ type AfFinalResult struct {
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
 // and updates all the items in PartialAggFuncs.
 // The parallel execution flow is as the following graph shows:
-//
-//                            +-------------+
-//                            | Main Thread |
-//                            +------+------+
-//                                   ^
-//                                   |
-//                                   +
-//                              +-+-            +-+
-//                              | |    ......   | |  finalOutputCh
-//                              +++-            +-+
-//                               ^
-//                               |
-//                               +---------------+
-//                               |               |
-//                 +--------------+             +--------------+
-//                 | final worker |     ......  | final worker |
-//                 +------------+-+             +-+------------+
-//                              ^                 ^
-//                              |                 |
-//                             +-+  +-+  ......  +-+
-//                             | |  | |          | |
-//                             ...  ...          ...    partialOutputChs
-//                             | |  | |          | |
-//                             +++  +++          +++
-//                              ^    ^            ^
-//          +-+                 |    |            |
-//          | |        +--------o----+            |
-// inputCh  +-+        |        +-----------------+---+
-//          | |        |                              |
-//          ...    +---+------------+            +----+-----------+
-//          | |    | partial worker |   ......   | partial worker |
-//          +++    +--------------+-+            +-+--------------+
-//           |                     ^                ^
-//           |                     |                |
-//      +----v---------+          +++ +-+          +++
-//      | data fetcher | +------> | | | |  ......  | |   partialInputChs
-//      +--------------+          +-+ +-+          +-+
+/*
+                            +-------------+
+                            | Main Thread |
+                            +------+------+
+                                   ^
+                                   |
+                                   +
+                              +-+-            +-+
+                              | |    ......   | |  finalOutputCh
+                              +++-            +-+
+                               ^
+                               |
+                               +---------------+
+                               |               |
+                 +--------------+             +--------------+
+                 | final worker |     ......  | final worker |
+                 +------------+-+             +-+------------+
+                              ^                 ^
+                              |                 |
+                             +-+  +-+  ......  +-+
+                             | |  | |          | |
+                             ...  ...          ...    partialOutputChs
+                             | |  | |          | |
+                             +++  +++          +++
+                              ^    ^            ^
+          +-+                 |    |            |
+          | |        +--------o----+            |
+ inputCh  +-+        |        +-----------------+---+
+          | |        |                              |
+          ...    +---+------------+            +----+-----------+
+          | |    | partial worker |   ......   | partial worker |
+          +++    +--------------+-+            +-+--------------+
+           |                     ^                ^
+           |                     |                |
+      +----v---------+          +++ +-+          +++
+      | data fetcher | +------> | | | |  ......  | |   partialInputChs
+      +--------------+          +-+ +-+          +-+
+*/
 type HashAggExec struct {
 	baseExecutor
 
@@ -334,7 +335,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.executed, e.isChildDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
 	e.tmpChkForSpill = newFirstChunk(e.children[0])
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && config.GetGlobalConfig().OOMUseTmpStorage {
+	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
@@ -565,9 +566,22 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 
 	for _, item := range groupByItems {
 		tp := item.GetType()
+
 		buf, err := expression.GetColumn(tp.EvalType(), numRows)
 		if err != nil {
 			return nil, err
+		}
+
+		// In strict sql mode like ‘STRICT_TRANS_TABLES’，can not insert an invalid enum value like 0.
+		// While in sql mode like '', can insert an invalid enum value like 0,
+		// then the enum value 0 will have the enum name '', which maybe conflict with user defined enum ''.
+		// Ref to issue #26885.
+		// This check is used to handle invalid enum name same with user defined enum name.
+		// Use enum value as groupKey instead of enum name.
+		if item.GetType().GetType() == mysql.TypeEnum {
+			newTp := *tp
+			newTp.AddFlag(mysql.EnumSetAsIntFlag)
+			tp = &newTp
 		}
 
 		if err := expression.EvalExpr(ctx, item, tp.EvalType(), input, buf); err != nil {
@@ -580,6 +594,7 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			newTp.SetFlen(0)
 			tp = &newTp
 		}
+
 		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
 		if err != nil {
 			expression.PutColumn(buf)
@@ -594,27 +609,38 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 	n := len(groupKey)
 	partialResults := make([][]aggfuncs.PartialResult, n)
 	allMemDelta := int64(0)
+	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
 	for i := 0; i < n; i++ {
 		var ok bool
 		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
-		for _, af := range w.aggFuncs {
+		partialResults[i] = make([]aggfuncs.PartialResult, partialResultSize)
+		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
-			partialResults[i] = append(partialResults[i], partialResult)
-			allMemDelta += memDelta + 8 // the memory usage of PartialResult
+			partialResults[i][j] = partialResult
+			allMemDelta += memDelta // the memory usage of PartialResult
 		}
-		mapper[string(groupKey[i])] = partialResults[i]
-		allMemDelta += int64(len(groupKey[i]))
+		allMemDelta += int64(partialResultSize * 8)
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		if len(mapper)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 			w.BInMap++
 		}
+		mapper[string(groupKey[i])] = partialResults[i]
+		allMemDelta += int64(len(groupKey[i]))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(allMemDelta)
 	return partialResults
+}
+
+func (w *baseHashAggWorker) getPartialResultSliceLenConsiderByteAlign() int {
+	length := len(w.aggFuncs)
+	if len(w.aggFuncs) == 1 {
+		return 1
+	}
+	return length + length&1
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
@@ -685,7 +711,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 	}
 }
 
-func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
+func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	waitStart := time.Now()
 	result, finished := w.receiveFinalResultHolder()
 	if w.stats != nil {
@@ -749,7 +775,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	if err := w.consumeIntermData(ctx); err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
 	}
-	w.getFinalResult(ctx)
+	w.loadFinalResult(ctx)
 }
 
 // Next implements the Executor Next interface.
@@ -1084,13 +1110,13 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 			partialResults = append(partialResults, partialResult)
 			allMemDelta += memDelta
 		}
-		e.partialResultMap[groupKey] = partialResults
-		allMemDelta += int64(len(groupKey))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(e.partialResultMap) > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		if len(e.partialResultMap)+1 > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.bInMap))
 			e.bInMap++
 		}
+		e.partialResultMap[groupKey] = partialResults
+		allMemDelta += int64(len(groupKey))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(allMemDelta)
@@ -1689,7 +1715,7 @@ func (e *vecGroupChecker) getFirstAndLastRowDatum(item expression.Expression, ch
 			lastRowDatum.SetNull()
 		}
 	default:
-		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
+		err = fmt.Errorf("invalid eval type %v", eType)
 		return err
 	}
 
@@ -1839,7 +1865,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousIsNull = isNull
 		}
 	default:
-		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
+		err = fmt.Errorf("invalid eval type %v", eType)
 	}
 	if err != nil {
 		return err

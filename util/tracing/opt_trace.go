@@ -157,6 +157,7 @@ func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
+	PhysicalPlanCostDetails map[int]*PhysicalPlanCostDetail `json:"costs"`
 	// final indicates the final physical plan trace
 	Final      []*PlanTrace                `json:"final"`
 	Candidates map[int]*CandidatePlanTrace `json:"candidates"`
@@ -227,4 +228,52 @@ func (tracer *OptimizeTracer) SetFastPlan(final *PlanTrace) {
 // RecordFinalPlan records plan after post optimize
 func (tracer *OptimizeTracer) RecordFinalPlan(final *PlanTrace) {
 	tracer.FinalPlan = toFlattenPlanTrace(final)
+}
+
+// PhysicalPlanCostDetail indicates cost detail
+type PhysicalPlanCostDetail struct {
+	ID     int                    `json:"id"`
+	TP     string                 `json:"type"`
+	Params map[string]interface{} `json:"params"`
+	Desc   string                 `json:"desc"`
+}
+
+// NewPhysicalPlanCostDetail creates a cost detail
+func NewPhysicalPlanCostDetail(id int, tp string) *PhysicalPlanCostDetail {
+	return &PhysicalPlanCostDetail{
+		ID:     id,
+		TP:     tp,
+		Params: make(map[string]interface{}),
+	}
+}
+
+// AddParam adds param
+func (d *PhysicalPlanCostDetail) AddParam(k string, v interface{}) *PhysicalPlanCostDetail {
+	// discard empty param value
+	if s, ok := v.(string); ok && len(s) < 1 {
+		return d
+	}
+	d.Params[k] = v
+	return d
+}
+
+// SetDesc sets desc
+func (d *PhysicalPlanCostDetail) SetDesc(desc string) {
+	d.Desc = desc
+}
+
+// GetPlanID gets plan id
+func (d *PhysicalPlanCostDetail) GetPlanID() int {
+	return d.ID
+}
+
+// GetPlanType gets plan type
+func (d *PhysicalPlanCostDetail) GetPlanType() string {
+	return d.TP
+}
+
+// Exists checks whether key exists in params
+func (d *PhysicalPlanCostDetail) Exists(k string) bool {
+	_, ok := d.Params[k]
+	return ok
 }

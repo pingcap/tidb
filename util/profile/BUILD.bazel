@@ -28,6 +28,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     embed = [":profile"],
+    flaky = True,
     deps = [
         "//domain",
         "//kv",

@@ -23,12 +23,40 @@ type ConsoleOperations struct {
 	ConsoleGlue
 }
 
-// StartTask prints a task start information, and mark as finished when the returned function called.
-func (ops ConsoleOperations) StartTask(message string) func() {
+// An extra field appending to the task.
+// return type is a {key: string, value: string} tuple.
+type ExtraField func() [2]string
+
+// NOTE:
+// Perhaps we'd better move these modifiers and terminal function to another package
+// like `glue/termutil?`
+
+// WithTimeCost adds the task information of time costing for `ShowTask`.
+func WithTimeCost() ExtraField {
 	start := time.Now()
+	return func() [2]string {
+		return [2]string{"take", time.Since(start).String()}
+	}
+}
+
+// WithConstExtraField adds an extra field with constant values.
+func WithConstExtraField(key string, value interface{}) ExtraField {
+	return func() [2]string {
+		return [2]string{key, fmt.Sprint(value)}
+	}
+}
+
+// ShowTask prints a task start information, and mark as finished when the returned function called.
+// This is for TUI presenting.
+func (ops ConsoleOperations) ShowTask(message string, extraFields ...ExtraField) func() {
 	ops.Print(message)
 	return func() {
-		ops.Printf("%s; take = %s\n", color.HiGreenString("DONE"), time.Since(start))
+		fields := make([]string, 0, len(extraFields))
+		for _, fieldFunc := range extraFields {
+			field := fieldFunc()
+			fields = append(fields, fmt.Sprintf("%s = %s", field[0], color.New(color.Bold).Sprint(field[1])))
+		}
+		ops.Printf("%s; %s\n", color.HiGreenString("DONE"), strings.Join(fields, ", "))
 	}
 }
 
@@ -101,8 +129,10 @@ func (t *Table) maxKeyLen() int {
 
 // Print prints the table.
 // The format would be like:
-//    Key1: <Value>
-//   Other: <Value>
+//
+//	 Key1: <Value>
+//	Other: <Value>
+//
 // LongKey: <Value>
 // The format may change if the terminal size is small.
 func (t *Table) Print() {
@@ -277,7 +307,9 @@ func (ps PrettyString) slicePointOf(s int) (realSlicePoint, endAt int) {
 // It is the abstraction of some subarea of the terminal,
 // you might imagine it as a panel in the tmux, but with infinity height.
 // For example, printing a frame with the width of 10 chars, and 4 chars offset left, would be like:
-//    v~~~~~~~~~~v Here is the "width of a frame".
+//
+//	v~~~~~~~~~~v Here is the "width of a frame".
+//
 // +--+----------+--+
 // |   Hello, wor   |
 // |   ld.          |

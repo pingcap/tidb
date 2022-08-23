@@ -158,12 +158,12 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 }
 
 // SetAnalyzeRequest sets the request type to "ReqTypeAnalyze" and construct request data.
-func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestBuilder {
+func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq, isoLevel kv.IsoLevel) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeAnalyze
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
-		builder.Request.IsolationLevel = kv.RC
+		builder.Request.IsolationLevel = isoLevel
 		builder.Request.Priority = kv.PriorityLow
 	}
 
@@ -218,20 +218,19 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 }
 
 // SetPartitionIDAndRanges sets `PartitionIDAndRanges` property.
-func (builder *RequestBuilder) SetPartitionIDAndRanges(PartitionIDAndRanges []kv.PartitionIDAndRanges) *RequestBuilder {
-	builder.PartitionIDAndRanges = PartitionIDAndRanges
+func (builder *RequestBuilder) SetPartitionIDAndRanges(partitionIDAndRanges []kv.PartitionIDAndRanges) *RequestBuilder {
+	builder.PartitionIDAndRanges = partitionIDAndRanges
 	return builder
 }
 
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
-	switch builder.Tp {
-	case kv.ReqTypeAnalyze:
+	if builder.Tp == kv.ReqTypeAnalyze {
 		return kv.RC
 	}
 	return kv.SI
 }
 
-func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
+func (*RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 	switch sv.StmtCtx.Priority {
 	case mysql.NoPriority, mysql.DelayedPriority:
 		return kv.PriorityNormal
@@ -264,9 +263,10 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = replicaReadType
 	builder.SetResourceGroupTagger(sv.StmtCtx.GetResourceGroupTagger())
-	if sv.EnablePaging {
-		builder.SetPaging(true)
-		builder.Request.MinPagingSize = uint64(sv.MinPagingSize)
+	{
+		builder.SetPaging(sv.EnablePaging)
+		builder.Request.Paging.MinPagingSize = uint64(sv.MinPagingSize)
+		builder.Request.Paging.MaxPagingSize = uint64(sv.MaxPagingSize)
 	}
 	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
@@ -275,7 +275,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 
 // SetPaging sets "Paging" flag for "kv.Request".
 func (builder *RequestBuilder) SetPaging(paging bool) *RequestBuilder {
-	builder.Request.Paging = paging
+	builder.Request.Paging.Enable = paging
 	return builder
 }
 
@@ -286,8 +286,9 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 }
 
 // SetTiDBServerID sets "TiDBServerID" for "kv.Request"
-//   ServerID is a unique id of TiDB instance among the cluster.
-//   See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
+//
+//	ServerID is a unique id of TiDB instance among the cluster.
+//	See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
 func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder {
 	builder.Request.TiDBServerID = serverID
 	return builder
@@ -365,6 +366,12 @@ func (builder *RequestBuilder) SetReadReplicaScope(scope string) *RequestBuilder
 // SetIsStaleness sets request IsStaleness
 func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
 	builder.IsStaleness = is
+	return builder
+}
+
+// SetClosestReplicaReadAdjuster sets request CoprRequestAdjuster
+func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprRequestAdjuster) *RequestBuilder {
+	builder.ClosestReplicaReadAdjuster = chkFn
 	return builder
 }
 
@@ -449,9 +456,9 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 // interpreted as an int64 variable.
 //
 // This function does the following:
-// 1. split ranges into two groups as described above.
-// 2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
-//    one greater than MaxInt64.
+//  1. split ranges into two groups as described above.
+//  2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
+//     one greater than MaxInt64.
 //
 // if `KeepOrder` is false, we merge the two groups of ranges into one group, to save an rpc call later
 // if `desc` is false, return signed ranges first, vice versa.
@@ -683,7 +690,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 
 func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
-	const CheckSignalStep = 8
+	const checkSignalStep = 8
 	var estimatedMemUsage int64
 	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
 	// check the interrupt signal periodically.
@@ -703,7 +710,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 			}
 			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 		}
-		if i%CheckSignalStep == 0 {
+		if i%checkSignalStep == 0 {
 			if i == 0 && memTracker != nil {
 				estimatedMemUsage *= int64(len(ranges))
 				memTracker.Consume(estimatedMemUsage)

@@ -18,10 +18,12 @@ go_library(
 
 go_test(
     name = "auth_test",
+    timeout = "short",
     srcs = [
         "caching_sha2_test.go",
         "mysql_native_password_test.go",
     ],
     embed = [":auth"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

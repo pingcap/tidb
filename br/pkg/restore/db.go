@@ -171,7 +171,6 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	return errors.Trace(err)
 }
 
-//
 func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error {
 	var restoreMetaSQL string
 	var err error
@@ -230,7 +229,6 @@ func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error 
 }
 
 func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
-
 	var restoreMetaSQL string
 	var err error
 	switch {
@@ -461,6 +459,8 @@ func GetExistedUserDBs(dom *domain.Domain) []*model.DBInfo {
 		if tidbutil.IsMemOrSysDB(dbName) {
 			continue
 		} else if dbName == "test" && len(db.Tables) == 0 {
+			// tidb create test db on fresh cluster
+			// if it's empty we don't take it as user db
 			continue
 		} else {
 			existedDatabases = append(existedDatabases, db)

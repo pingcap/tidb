@@ -60,6 +60,7 @@ const (
 	flagDecorrelate
 	flagSemiJoinRewrite
 	flagEliminateAgg
+	flagSkewDistinctAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagPredicatePushDown
@@ -81,6 +82,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&semiJoinRewriter{},
 	&aggregationEliminator{},
+	&skewDistinctAggRewriter{},
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},
@@ -383,15 +385,15 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 
 // Only for MPP(Window<-[Sort]<-ExchangeReceiver<-ExchangeSender).
 // TiFlashFineGrainedShuffleStreamCount:
-// == 0: fine grained shuffle is disabled.
+// < 0: fine grained shuffle is disabled.
 // > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.
-// < 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefStreamCountWhenMaxThreadsNotSet.
+// == 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefStreamCountWhenMaxThreadsNotSet.
 func handleFineGrainedShuffle(sctx sessionctx.Context, plan PhysicalPlan) {
 	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
-	if streamCount == 0 {
+	if streamCount < 0 {
 		return
 	}
-	if streamCount < 0 {
+	if streamCount == 0 {
 		if sctx.GetSessionVars().TiFlashMaxThreads > 0 {
 			streamCount = sctx.GetSessionVars().TiFlashMaxThreads
 		} else {
@@ -627,7 +629,10 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	opt := defaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.PhysicalOptimizeTracer{Candidates: make(map[int]*tracing.CandidatePlanTrace)}
+		tracer := &tracing.PhysicalOptimizeTracer{
+			PhysicalPlanCostDetails: make(map[int]*tracing.PhysicalPlanCostDetail),
+			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
+		}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
 			if err == nil {

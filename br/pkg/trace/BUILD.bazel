@@ -18,11 +18,13 @@ go_library(
 
 go_test(
     name = "trace_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "tracing_serial_test.go",
     ],
     embed = [":trace"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_opentracing_opentracing_go//:opentracing-go",

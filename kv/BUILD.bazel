@@ -54,6 +54,7 @@ go_library(
 
 go_test(
     name = "kv_test",
+    timeout = "short",
     srcs = [
         "checker_test.go",
         "error_test.go",
@@ -67,6 +68,7 @@ go_test(
         "version_test.go",
     ],
     embed = [":kv"],
+    flaky = True,
     deps = [
         "//parser/model",
         "//parser/mysql",

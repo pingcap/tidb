@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/redact"
@@ -376,6 +378,9 @@ func BuildBackupRangeAndSchema(
 				tableInfo.ClearPlacement()
 			}
 
+			// Treat cached table as normal table.
+			tableInfo.TableCacheStatusType = model.TableCacheStatusDisable
+
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
@@ -472,21 +477,39 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 }
 
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
-func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
+func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.Storage, lastBackupTS, backupTS uint64, needDomain bool) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
 	lastSnapMeta := meta.NewSnapshotMeta(lastSnapshot)
-	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersion()
+	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allJobs, err := ddl.GetAllDDLJobs(snapMeta)
+	backupSchemaVersion, err := snapMeta.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
-	historyJobs, err := ddl.GetAllHistoryDDLJobs(snapMeta)
+
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
+	allJobs := make([]*model.Job, 0)
+	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
+		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx(), newestMeta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	historyJobs, err := ddl.GetAllHistoryDDLJobs(newestMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -500,7 +523,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 		}
 
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
-			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
+			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
 			if job.BinlogInfo.DBInfo != nil {
 				// ignore all placement policy info during incremental backup for now.
 				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
@@ -561,9 +584,8 @@ func (bc *Client) BackupRanges(
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
 					return errors.SuspendStack(err)
-				} else {
-					return errors.Trace(err)
 				}
+				return errors.Trace(err)
 			}
 			return nil
 		})
@@ -596,7 +618,7 @@ func (bc *Client) BackupRange(
 		zap.Uint32("concurrency", req.Concurrency))
 
 	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), conn.SkipTiFlash)
+	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), connutil.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -657,9 +679,7 @@ func (bc *Client) BackupRange(
 func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
-	if !isRawKv {
-		key = codec.EncodeBytes([]byte{}, key)
-	}
+	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
 	for i := 0; i < 5; i++ {
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
@@ -1054,10 +1074,9 @@ func SendBackup(
 			}
 			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID), zap.Int("retry", retry))
 			return berrors.ErrFailedToConnect.Wrap(errBackup).GenWithStack("failed to create backup stream to store %d", storeID)
-		} else {
-			// finish backup
-			break
 		}
+		// finish backup
+		break
 	}
 	return nil
 }
