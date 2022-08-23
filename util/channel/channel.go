@@ -14,6 +14,7 @@
 
 package channel
 
+// Clear is to clear the channel
 func Clear[T any](ch chan T) {
 	for range ch {
 	}
