@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 )
@@ -27,45 +28,43 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Trace(err)
 	}
 
-	txn, err := d.store.Begin()
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	fn := func(jobs []*model.Job) (bool, error) {
-		for _, j := range jobs {
-			if j.ID == job.ID {
-				continue
-			}
-			// has ddl job in queue, return error
-			if !j.IsFinished() {
-				return true, errors.Errorf("Can't flashback cluster, other ddl jobs in ddl queue")
-			}
-			// job is finished in time range [flashbackTS, now], not support flashback now
-			if j.Type != model.ActionFlashbackCluster && j.BinlogInfo != nil && j.BinlogInfo.FinishedTS >= flashbackTS {
-				return true, errors.Errorf("Can't flashback cluster because of ddl history")
-			}
-			// all jobs are done before flashbackTS, stop the iterator
-			if j.BinlogInfo != nil && j.BinlogInfo.FinishedTS < flashbackTS {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-
-	ctx, err := w.sessPool.get()
+	nowSchemaVersion, err := t.GetSchemaVersion()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	defer w.sessPool.put(ctx)
 
-	if err = IterAllDDLJobs(ctx, txn, fn); err != nil {
+	flashbackSchemaVersion, err := meta.NewSnapshotMeta(d.store.GetSnapshot(kv.NewVersion(flashbackTS))).GetSchemaVersion()
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+
+	// If flashbackSchemaVersion not same as nowSchemaVersion, we've done ddl during [flashbackTs, now).
+	if flashbackSchemaVersion != nowSchemaVersion {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("schema version not same, done ddl during [flashbackTS, now)")
+	}
+
+	sess, err := w.sessPool.get()
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	defer w.sessPool.put(sess)
+
+	jobs, err := GetAllDDLJobs(sess, t)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// Other non-flashback ddl jobs in queue, return error.
+	if len(jobs) != 1 {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("have other ddl jobs in queue, can't do flashback")
 	}
 
 	job.State = model.JobStateDone
-
 	return ver, errors.Trace(err)
 }

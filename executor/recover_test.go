@@ -296,31 +296,30 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	// Get GC safe point error
+	// Get GC safe point error.
 	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(30*time.Second)), "cannot set flashback timestamp to future time")
 	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-30*time.Second)), "can not get 'tikv_gc_safe_point'")
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
 
-	//set GC safe point
+	//set GC safe point.
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	// out of GC safe point range
+	// out of GC safe point range.
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-60*60*60*time.Second)), int(variable.ErrSnapshotTooOld.Code()))
 
-	// Flashback with ddl history
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-30*time.Second)), "Can't flashback cluster because of ddl history")
-
-	// Flashback without super privilege
-	tk.MustExec(`CREATE USER 'testflashback'@'localhost';`)
+	// Flashback without super privilege.
+	tk.MustExec("CREATE USER 'testflashback'@'localhost';")
 	newTk := testkit.NewTestKit(t, store)
 	require.True(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashback", Hostname: "localhost"}, nil, nil))
 	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-30*time.Second)), int(core.ErrSpecificAccessDenied.Code()))
 	tk.MustExec("drop user 'testflashback'@'localhost';")
+
+	// Flashback failed because of ddl history.
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int);")
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-30*time.Second)), "schema version not same, done ddl during [flashbackTS, now)")
 }
 
 func TestRecoverClusterWithTiFlash(t *testing.T) {
