@@ -392,7 +392,7 @@ func TestSessionCtx(t *testing.T) {
 				require.True(t, ok)
 				v, ok := (param.(*sync.Map)).Load("store1")
 				require.True(t, ok)
-				require.Equal(t, tm, v)
+				require.True(t, tm.(time.Time).Equal(v.(time.Time)))
 			},
 		},
 		{
