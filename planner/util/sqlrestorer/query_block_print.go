@@ -300,7 +300,7 @@ func (q *QueryBlock) AggFuncToString(agg *aggregation.AggFuncDesc) (string, erro
 // SemiJoinToExprString convert a [Anti] [LeftOuter] SemiJoin to an expression.
 func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expression.Expression,
 	leftChildSchema, rightChildSchema *expression.Schema, right *QueryBlock) (string, error) {
-	var inCondsLeftCols, inCondsRightCOls []*expression.Column
+	var inCondsLeftCols, inCondsRightCols []*expression.Column
 	var otherConds []expression.Expression
 	// 1. Split into null-aware conds and non null-aware conditions.
 	// (Currently, only eq conds could be null-aware)
