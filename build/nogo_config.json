@@ -159,6 +159,7 @@
       "ddl/backfilling.go": "ddl/backfilling.go",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
+      "ddl/lightning/": "ddl/lightning/",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
@@ -293,11 +294,11 @@
       "ddl/backfilling.go": "ddl/backfilling.go",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
+      "ddl/lightning/": "ddl/lightning/",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
-      "ddl/index.go": "ddl/index code",
       "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
       "distsql/": "ignore distsql code",
       "dumpling/export": "dumpling/export code",
@@ -650,15 +651,12 @@
     "only_files": {
       "types/json/binary_functions.go": "types/json/binary_functions.go",
       "types/json/binary_test.go": "types/json/binary_test.go",
-      "ddl/backfilling.go": "ddl/backfilling.go",
-      "ddl/column.go": "ddl/column.go",
-      "ddl/index.go": "ddl/index.go",
+      "ddl/": "enable to ddl",
       "expression/builtin_cast.go": "enable expression/builtin_cast.go",
       "planner/core/plan.go": "planner/core/plan.go",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
-      "server/conn_test.go": "server/conn_test.go",
-      "ddl/": "enable to ddl"
+      "server/conn_test.go": "server/conn_test.go"
     }
   },
   "SA2000": {
