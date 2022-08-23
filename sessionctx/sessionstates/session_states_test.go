@@ -381,7 +381,9 @@ func TestSessionCtx(t *testing.T) {
 		{
 			// check MPPStoreLastFailTime
 			setFunc: func(tk *testkit.TestKit) any {
-				tk.Session().GetSessionVars().MPPStoreLastFailTime = map[string]time.Time{"store1": time.Now()}
+				m := sync.Map{}
+				m.Store("store1", time.Now())
+				tk.Session().GetSessionVars().MPPStoreLastFailTime = &m
 				return tk.Session().GetSessionVars().MPPStoreLastFailTime
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
