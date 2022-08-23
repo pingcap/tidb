@@ -293,8 +293,10 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	var pointRanges []*Range
 	if hasPrefix(d.lengths) && fixPrefixColRange(ranges, d.lengths, tpSlice) {
 		if d.mergeConsecutive {
-			pointRanges = make([]*Range, len(ranges))
-			copy(pointRanges, ranges)
+			pointRanges = make([]*Range, 0, len(ranges))
+			for _, ran := range ranges {
+				pointRanges = append(pointRanges, ran.Clone())
+			}
 			ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
 			if err != nil {
 				return nil, errors.Trace(err)
