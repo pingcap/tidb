@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unsafe"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/set"
@@ -89,9 +91,26 @@ func (k Key) String() string {
 }
 
 // KeyRange represents a range where StartKey <= key < EndKey.
+// Hack: make the layout exactly the same with github.com/pingcap/kvproto/pkg/coprocessor.KeyRange
+// So we can avoid allocation of converting kv.KeyRange to coprocessor.KeyRange
+// Not defined as "type KeyRange = coprocessor.KeyRange" because their field name are different.
+// kv.KeyRange use StartKey,EndKey while coprocessor.KeyRange use Start,End
 type KeyRange struct {
 	StartKey Key
 	EndKey   Key
+
+	XXX_NoUnkeyedLiteral struct{}
+	XXX_unrecognized     []byte
+	XXX_sizecache        int32
+}
+
+func init() {
+	// kv.KeyRange and coprocessor.KeyRange should be the same layout, so we can exchange them.
+	var r1 KeyRange
+	var r2 coprocessor.KeyRange
+	if unsafe.Sizeof(r1) != unsafe.Sizeof(r2) {
+		panic("coprocessor protocol change?")
+	}
 }
 
 // IsPoint checks if the key range represents a point.
