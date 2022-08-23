@@ -66,7 +66,8 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 		if err != nil {
 			return errors.New(LitErrCreateEngineFail)
 		}
-		m.MemRoot.Consume(StructSizeEngineInfo + engineCacheSize)
+		m.MemRoot.Consume(StructSizeEngineInfo)
+		m.MemRoot.ConsumeWithTag(engineKey, engineCacheSize)
 	} else {
 		if en.writerCount+1 > bc.cfg.TikvImporter.RangeConcurrency {
 			logutil.BgLogger().Warn(LitErrExceedConcurrency, zap.String("Backend key", bc.key),
@@ -104,6 +105,8 @@ func (m *engineManager) Unregister(engineKey string) {
 	m.MemRoot.ReleaseWithTag(engineKey)
 	m.MemRoot.Release(StructSizeWorkerCtx * int64(ei.writerCount))
 	m.MemRoot.Release(StructSizeEngineInfo)
+	engineCacheSize := int64(ei.backCtx.cfg.TikvImporter.EngineMemCacheSize)
+	m.MemRoot.Release(engineCacheSize)
 }
 
 // UnregisterAll delete all engineInfo from the engineManager.

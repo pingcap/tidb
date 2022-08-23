@@ -138,7 +138,9 @@ func (m *backendCtxManager) Unregister(jobID int64) {
 	}
 	bc.EngMgr.UnregisterAll()
 	bc.backend.Close()
+	m.MemRoot.Release(StructSizeBackendCtx)
 	m.Drop(jobID)
+	m.MemRoot.ReleaseWithTag(bc.key)
 	logutil.BgLogger().Info(LitInfoCloseBackend, zap.Int64("backend key", jobID),
 		zap.String("Current Memory Usage:", strconv.FormatInt(m.MemRoot.CurrentUsage(), 10)),
 		zap.String("Memory limitation:", strconv.FormatInt(m.MemRoot.MaxMemoryQuota(), 10)))

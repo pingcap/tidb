@@ -123,6 +123,10 @@ func (m *memRootImpl) ConsumeWithTag(tag string, size int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.currUsage += size
+	if s, ok := m.structSize[tag]; ok {
+		m.structSize[tag] = s + size
+		return
+	}
 	m.structSize[tag] = size
 }
 
