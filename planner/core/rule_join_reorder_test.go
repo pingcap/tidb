@@ -77,6 +77,7 @@ func TestLeadingJoinHint(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestLeadingJoinHint")
 
 	// test cases for outer join
@@ -116,6 +117,8 @@ func TestJoinOrderHint(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
 	// test cases for using the leading hint and straight_join hint at the same time
 	tk.MustExec("select /*+ leading(t1) straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
@@ -239,6 +242,7 @@ func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
 	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode="static"`)
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4StaticPartitionTable")
 }
 
@@ -255,6 +259,7 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DynamicPartitionTable")
 }
 
@@ -274,6 +279,7 @@ func TestJoinOrderHint4DifferentJoinType(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DifferentJoinType")
 }
@@ -288,6 +294,7 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 	tk.MustExec("create table t1(a int, b int, key(a));")
 	tk.MustExec("create table t2(a int, b int, key(a));")
 	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
