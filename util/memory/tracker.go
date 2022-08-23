@@ -224,10 +224,8 @@ func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	}
 	if a.GetPriority() < b.GetPriority() {
 		a, b = b, a
-		a.SetFallback(b)
-	} else {
-		a.SetFallback(reArrangeFallback(a.GetFallback(), b))
 	}
+	a.SetFallback(reArrangeFallback(a.GetFallback(), b))
 	return a
 }
 
