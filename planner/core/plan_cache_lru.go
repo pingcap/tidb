@@ -15,6 +15,7 @@ package core
 
 import (
 	"container/list"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
@@ -28,13 +29,15 @@ type CacheEntry struct {
 	PlanValue kvcache.Value
 }
 
-// LRUPlanCache is a simple least recently used cache, not thread-safe, JUST use for plan cache.
+// LRUPlanCache is a dedicated least recently used cache, JUST use for plan cache.
 type LRUPlanCache struct {
 	capacity uint
 	size     uint
 	// buckets replace the map in general LRU
 	buckets map[hack.MutableString]map[*list.Element]struct{}
 	cache   *list.List
+	// lock make cache thread safe
+	lock sync.Mutex
 
 	// pickFromBucket get one element from bucket according to the incoming function.The LRUPlanCache can not work if this is nil
 	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)
@@ -61,6 +64,9 @@ func NewLRUPlanCache(capacity uint, pickFromBucket func(map[*list.Element]struct
 
 // Get tries to find the corresponding value according to the given key.
 func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool) {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
 	bucket, bucketExist := l.buckets[hack.String(key.Hash())]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
@@ -73,6 +79,9 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 
 // Put puts the (key, value) pair into the LRU Cache.
 func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType) {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
 	hash := hack.String(key.Hash())
 	bucket, bucketExist := l.buckets[hash]
 	// bucket exist
@@ -100,6 +109,9 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 
 // Delete deletes the multi-values from the LRU Cache.
 func (l *LRUPlanCache) Delete(key kvcache.Key) {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
 	hash := hack.String(key.Hash())
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
@@ -113,6 +125,9 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 
 // DeleteAll deletes all elements from the LRU Cache.
 func (l *LRUPlanCache) DeleteAll() {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
 	for lru := l.cache.Back(); lru != nil; lru = l.cache.Back() {
 		l.cache.Remove(lru)
 		l.size--
@@ -122,11 +137,17 @@ func (l *LRUPlanCache) DeleteAll() {
 
 // Size gets the current cache size.
 func (l *LRUPlanCache) Size() int {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
 	return int(l.size)
 }
 
 // Values return all values in cache.
 func (l *LRUPlanCache) Values() []kvcache.Value {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
 	values := make([]kvcache.Value, 0, l.cache.Len())
 	for element := l.cache.Front(); element != nil; element = element.Next() {
 		value := element.Value.(*CacheEntry).PlanValue
@@ -137,6 +158,9 @@ func (l *LRUPlanCache) Values() []kvcache.Value {
 
 // Keys return all keys in cache.
 func (l *LRUPlanCache) Keys() []kvcache.Key {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
 	keys := make([]kvcache.Key, 0, len(l.buckets))
 	for _, bucket := range l.buckets {
 		for element := range bucket {
@@ -149,6 +173,9 @@ func (l *LRUPlanCache) Keys() []kvcache.Key {
 
 // SetCapacity sets capacity of the cache.
 func (l *LRUPlanCache) SetCapacity(capacity uint) error {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
 	if capacity < 1 {
 		return errors.New("capacity of lru cache should be at least 1")
 	}
@@ -161,6 +188,9 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 
 // RemoveOldest removes the oldest element from the cache.
 func (l *LRUPlanCache) RemoveOldest() {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
 	if l.size > 0 {
 		lru := l.cache.Back()
 		if l.onEvict != nil {
