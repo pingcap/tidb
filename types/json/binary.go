@@ -194,10 +194,7 @@ func (bj BinaryJSON) GetFloat64() float64 {
 
 // GetString gets the string value.
 func (bj BinaryJSON) GetString() []byte {
-	strLen, lenLen := uint64(bj.Value[0]), 1
-	if strLen >= utf8.RuneSelf {
-		strLen, lenLen = binary.Uvarint(bj.Value)
-	}
+	strLen, lenLen := binary.Uvarint(bj.Value)
 	return bj.Value[lenLen : lenLen+int(strLen)]
 }
 
@@ -213,10 +210,7 @@ type Opaque struct {
 func (bj BinaryJSON) GetOpaque() Opaque {
 	typ := bj.Value[0]
 
-	strLen, lenLen := uint64(bj.Value[1]), 1
-	if strLen >= utf8.RuneSelf {
-		strLen, lenLen = binary.Uvarint(bj.Value[1:])
-	}
+	strLen, lenLen := binary.Uvarint(bj.Value[1:])
 	bufStart := lenLen + 1
 	return Opaque{
 		TypeCode: typ,
@@ -268,17 +262,11 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 	case TypeCodeUint64, TypeCodeInt64, TypeCodeFloat64:
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+8]}
 	case TypeCodeString:
-		strLen, lenLen := uint64(bj.Value[valOff]), 1
-		if strLen >= utf8.RuneSelf {
-			strLen, lenLen = binary.Uvarint(bj.Value[valOff:])
-		}
+		strLen, lenLen := binary.Uvarint(bj.Value[valOff:])
 		totalLen := uint32(lenLen) + uint32(strLen)
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
 	case TypeCodeOpaque:
-		strLen, lenLen := uint64(bj.Value[valOff+1]), 1
-		if strLen >= utf8.RuneSelf {
-			strLen, lenLen = binary.Uvarint(bj.Value[valOff+1:])
-		}
+		strLen, lenLen := binary.Uvarint(bj.Value[valOff+1:])
 		totalLen := 1 + uint32(lenLen) + uint32(strLen)
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
 	}
