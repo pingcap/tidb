@@ -644,3 +644,45 @@ func TestBinaryJSONWalk(t *testing.T) {
 		require.Equal(t, len(test.expected), count)
 	}
 }
+
+func TestBinaryJSONOpaque(t *testing.T) {
+	var tests = []struct {
+		bj             BinaryJSON
+		expectedOpaque Opaque
+		expectedOutput string
+	}{
+		{
+			BinaryJSON{
+				TypeCode: TypeCodeOpaque,
+				Value:    []byte{233, 1, '9'},
+			},
+			Opaque{
+				TypeCode: 233,
+				Buf:      []byte{'9'},
+			},
+			`"base64:type233:OQ=="`,
+		},
+		{
+			BinaryJSON{
+				TypeCode: TypeCodeOpaque,
+				Value:    append([]byte{233, 0x80, 0x01}, make([]byte, 128)...),
+			},
+			Opaque{
+				TypeCode: 233,
+				Buf:      make([]byte, 128),
+			},
+			`"base64:type233:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="`,
+		},
+	}
+
+	for _, test := range tests {
+		buf := []byte{}
+
+		require.Equal(t, test.expectedOpaque.TypeCode, test.bj.GetOpaqueFieldType())
+		require.Equal(t, test.expectedOpaque, test.bj.GetOpaque())
+
+		buf, err := test.bj.marshalTo(buf)
+		require.NoError(t, err)
+		require.Equal(t, string(buf), test.expectedOutput)
+	}
+}
