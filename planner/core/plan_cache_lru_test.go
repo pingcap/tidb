@@ -81,7 +81,6 @@ func TestLRUPCPut(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
 	}
-	//pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
 
 	// test onEvict function
