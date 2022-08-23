@@ -287,6 +287,9 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	if err != nil {
 		return nil, err
 	}
+	// If index has prefix column and d.mergeConsecutive is true, ranges may not be point ranges anymore after UnionRanges.
+	// Therefore, we need to calculate pointRanges separately so that it can be used to append tail ranges in considerDNF branch.
+	// See https://github.com/pingcap/tidb/issues/26029 for details.
 	var pointRanges []*Range
 	if hasPrefix(d.lengths) {
 		if fixPrefixColRange(ranges, d.lengths, tpSlice) {
@@ -309,6 +312,8 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				pointRanges = ranges
 			}
 		}
+	} else {
+		pointRanges = ranges
 	}
 
 	res.Ranges = ranges
