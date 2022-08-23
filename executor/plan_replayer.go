@@ -88,7 +88,7 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 		isView, err := tne.handleIsView(t)
 		if err != nil {
 			tne.err = err
-			return in, isView
+			return in, true
 		}
 		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
 		if tp.DBName == "" {
