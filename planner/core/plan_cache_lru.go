@@ -33,19 +33,18 @@ type LRUPlanCache struct {
 	capacity uint
 	size     uint
 	// buckets replace the map in general LRU
-	buckets map[hack.MutableString][]*list.Element
-
-	// pickFromBucket set rules to get one element from bucket.
-	pickFromBucket func([]*list.Element, []*types.FieldType) (*list.Element, int, bool)
-
-	// onEvict function will be called if any eviction happened
-	onEvict func(kvcache.Key, kvcache.Value)
+	buckets map[hack.MutableString]map[*list.Element]struct{}
 	cache   *list.List
+
+	// pickFromBucket get one element from bucket according to the incoming function.The LRUPlanCache can not work if this is nil
+	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)
+	// onEvict will be called if any eviction happened
+	onEvict func(kvcache.Key, kvcache.Value)
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(capacity uint, pickFromBucket func([]*list.Element, []*types.FieldType) (*list.Element, int, bool),
+func NewLRUPlanCache(capacity uint, pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool),
 	onEvict func(kvcache.Key, kvcache.Value)) *LRUPlanCache {
 	if capacity < 1 {
 		panic("capacity of LRU Cache should be at least 1.")
@@ -53,7 +52,7 @@ func NewLRUPlanCache(capacity uint, pickFromBucket func([]*list.Element, []*type
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
-		buckets:        make(map[hack.MutableString][]*list.Element),
+		buckets:        make(map[hack.MutableString]map[*list.Element]struct{}),
 		cache:          list.New(),
 		pickFromBucket: pickFromBucket,
 		onEvict:        onEvict,
@@ -64,7 +63,7 @@ func NewLRUPlanCache(capacity uint, pickFromBucket func([]*list.Element, []*type
 func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool) {
 	bucket, bucketExist := l.buckets[hack.String(key.Hash())]
 	if bucketExist {
-		if element, _, exist := l.pickFromBucket(bucket, paramTypes); exist {
+		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.cache.MoveToFront(element)
 			return element.Value.(*CacheEntry).PlanValue, true
 		}
@@ -78,20 +77,21 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	bucket, bucketExist := l.buckets[hash]
 	// bucket exist
 	if bucketExist {
-		if element, _, exist := l.pickFromBucket(bucket, paramTypes); exist {
+		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			element.Value.(*CacheEntry).PlanValue = value
 			l.cache.MoveToFront(element)
 			return
 		}
+	} else {
+		l.buckets[hash] = make(map[*list.Element]struct{})
 	}
-	// bucket not exist
+
 	newCacheEntry := &CacheEntry{
 		PlanKey:   key,
 		PlanValue: value,
 	}
 	element := l.cache.PushFront(newCacheEntry)
-	bucket = append(bucket, element)
-	l.buckets[hash] = bucket
+	l.buckets[hash][element] = struct{}{}
 	l.size++
 	if l.size > l.capacity {
 		l.RemoveOldest()
@@ -103,11 +103,11 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	hash := hack.String(key.Hash())
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
-		for _, element := range bucket {
+		for element := range bucket {
 			l.cache.Remove(element)
 			l.size--
 		}
-		l.buckets[hash] = nil
+		l.buckets[hash] = make(map[*list.Element]struct{})
 	}
 }
 
@@ -117,7 +117,7 @@ func (l *LRUPlanCache) DeleteAll() {
 		l.cache.Remove(lru)
 		l.size--
 	}
-	l.buckets = make(map[hack.MutableString][]*list.Element)
+	l.buckets = make(map[hack.MutableString]map[*list.Element]struct{})
 }
 
 // Size gets the current cache size.
@@ -128,8 +128,8 @@ func (l *LRUPlanCache) Size() int {
 // Values return all values in cache.
 func (l *LRUPlanCache) Values() []kvcache.Value {
 	values := make([]kvcache.Value, 0, l.cache.Len())
-	for ele := l.cache.Front(); ele != nil; ele = ele.Next() {
-		value := ele.Value.(*CacheEntry).PlanValue
+	for element := l.cache.Front(); element != nil; element = element.Next() {
+		value := element.Value.(*CacheEntry).PlanValue
 		values = append(values, value)
 	}
 	return values
@@ -139,7 +139,10 @@ func (l *LRUPlanCache) Values() []kvcache.Value {
 func (l *LRUPlanCache) Keys() []kvcache.Key {
 	keys := make([]kvcache.Key, 0, len(l.buckets))
 	for _, bucket := range l.buckets {
-		keys = append(keys, bucket[0].Value.(*CacheEntry).PlanKey)
+		for element := range bucket {
+			keys = append(keys, element.Value.(*CacheEntry).PlanKey)
+			break
+		}
 	}
 	return keys
 }
@@ -172,13 +175,6 @@ func (l *LRUPlanCache) RemoveOldest() {
 
 // removeFromBucket remove element from bucket
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
-	hash := hack.String(element.Value.(*CacheEntry).PlanKey.Hash())
-	bucket := l.buckets[hash]
-	for i, ele := range bucket {
-		if ele == element {
-			bucket = append(bucket[:i], bucket[i+1:]...)
-			l.buckets[hash] = bucket
-			return
-		}
-	}
+	bucket := l.buckets[hack.String(element.Value.(*CacheEntry).PlanKey.Hash())]
+	delete(bucket, element)
 }
