@@ -30,11 +30,28 @@ func TestTemporaryTableNoNetwork(t *testing.T) {
 	t.Run("global", func(t *testing.T) {
 		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
 			tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
+			tk.MustExec("begin")
+		})
+	})
+
+	t.Run("global create and then truncate", func(t *testing.T) {
+		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
+			tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
+			tk.MustExec("truncate table tmp_t")
+			tk.MustExec("begin")
 		})
 	})
 
 	t.Run("local", func(t *testing.T) {
 		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
+			tk.MustExec("create temporary table tmp_t (id int primary key, a int, b int, index(a))")
+			tk.MustExec("begin")
+		})
+	})
+
+	t.Run("local and create table inside txn", func(t *testing.T) {
+		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
+			tk.MustExec("begin")
 			tk.MustExec("create temporary table tmp_t (id int primary key, a int, b int, index(a))")
 		})
 	})
@@ -61,7 +78,6 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"))
 	}()
 
-	tk.MustExec("begin")
 	tk.MustExec("insert into tmp_t values (1, 1, 1)")
 	tk.MustExec("insert into tmp_t values (2, 2, 2)")
 

@@ -97,6 +97,7 @@ const (
 	ActionCreateTables                  ActionType = 60
 	ActionMultiSchemaChange             ActionType = 61
 	ActionSetTiFlashMode                ActionType = 62
+	ActionFlashbackCluster              ActionType = 63
 )
 
 var actionMap = map[ActionType]string{
@@ -158,6 +159,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 	ActionMultiSchemaChange:             "alter table multi-schema change",
 	ActionSetTiFlashMode:                "set tiflash mode",
+	ActionFlashbackCluster:              "flashback cluster",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
