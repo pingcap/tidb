@@ -512,7 +512,6 @@ func adjustTableCollation(tctx *tcontext.Context, collationCompatible string, pa
 	}
 
 	if collation == "" && charset != "" {
-		// get db collation
 		collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
 		if !ok {
 			tctx.L().Warn("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
@@ -541,11 +540,12 @@ func adjustTableCollation(tctx *tcontext.Context, collationCompatible string, pa
 
 // adjustColumnsCollation adds column's collation.
 func adjustColumnsCollation(tctx *tcontext.Context, createStmt *ast.CreateTableStmt, charsetAndDefaultCollationMap map[string]string) {
+ColumnLoop:
 	for _, col := range createStmt.Cols {
 		for _, options := range col.Options {
 			// already have 'Collation'
 			if options.Tp == ast.ColumnOptionCollate {
-				continue
+				continue ColumnLoop
 			}
 		}
 		fieldType := col.Tp
