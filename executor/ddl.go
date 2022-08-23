@@ -269,7 +269,12 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return err
 	}
 
-	return e.tempTableDDL.CreateLocalTemporaryTable(dbInfo, tbInfo)
+	if err = e.tempTableDDL.CreateLocalTemporaryTable(dbInfo, tbInfo); err != nil {
+		return err
+	}
+
+	sessiontxn.GetTxnManager(e.ctx).OnLocalTemporaryTableCreated()
+	return nil
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {

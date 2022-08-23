@@ -3883,6 +3883,11 @@ func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *mod
 }
 
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
+	// check temp table
+	if target.TempTableType != model.TempTableNone {
+		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(target.Name))
+	}
+
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits ||
 		source.AutoRandomRangeBits != target.AutoRandomRangeBits ||
@@ -3988,6 +3993,13 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	ptMeta := pt.Meta()
 
 	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+
+	// We should check local temporary here using session's info schema because the local temporary tables are only stored in session.
+	ntLocalTempTable, err := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().TableByName(ntIdent.Schema, ntIdent.Name)
+	if err == nil && ntLocalTempTable.Meta().TempTableType == model.TempTableLocal {
+		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(ntLocalTempTable.Meta().Name))
+	}
+
 	ntSchema, nt, err := d.getSchemaAndTableByIdent(ctx, ntIdent)
 	if err != nil {
 		return errors.Trace(err)

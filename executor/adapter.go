@@ -612,6 +612,9 @@ type chunkRowRecordSet struct {
 }
 
 func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
+	if c.fields == nil {
+		c.fields = colNames2ResultFields(c.e.Schema(), c.execStmt.OutputNames, c.execStmt.Ctx.GetSessionVars().CurrentDB)
+	}
 	return c.fields
 }
 
@@ -671,8 +674,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 			break
 		}
 		if req.NumRows() == 0 {
-			fields := colNames2ResultFields(e.Schema(), a.OutputNames, a.Ctx.GetSessionVars().CurrentDB)
-			return &chunkRowRecordSet{rows: rows, fields: fields, e: e, execStmt: a}, nil
+			return &chunkRowRecordSet{rows: rows, e: e, execStmt: a}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
@@ -1294,7 +1296,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
+		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 	}
+	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			if !slowItems.IsSyncStatsFailed {
+				panic("isSyncStatsFailed should be true")
+			}
+		}
+	})
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
