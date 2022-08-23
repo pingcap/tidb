@@ -25,19 +25,24 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -59,8 +64,8 @@ func (e *DDLExec) toErr(err error) error {
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	txn, err1 := e.ctx.Txn(true)
 	if err1 != nil {
-		logutil.BgLogger().Error("active txn failed", zap.Error(err))
-		return err1
+		logutil.BgLogger().Error("active txn failed", zap.Error(err1))
+		return err
 	}
 	_, schemaInfoErr := checker.Check(txn.StartTS())
 	if schemaInfoErr != nil {
@@ -170,7 +175,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.FlashBackTableStmt:
 		err = e.executeFlashbackTable(x)
 	case *ast.FlashBackClusterStmt:
-		err = e.executeFlashBackCluster(x)
+		err = e.executeFlashBackCluster(ctx, x)
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
 	case *ast.TruncateTableStmt:
@@ -521,8 +526,52 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	return jobInfo, tableInfo, nil
 }
 
-func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackClusterStmt) error {
-	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FLASHBACK CLUSTER")
+// ValidateFlashBackTS validates that flashBackTS in range [gcSafePoint, currentTS).
+func ValidateFlashBackTS(ctx context.Context, sctx sessionctx.Context, flashBackTS uint64) error {
+	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD.
+	if err != nil {
+		metrics.ValidateReadTSFromPDCount.Inc()
+		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
+		if err != nil {
+			return errors.Errorf("fail to validate flashback timestamp: %v", err)
+		}
+		currentTS = currentVer.Ver
+	}
+	if oracle.GetTimeFromTS(flashBackTS).After(oracle.GetTimeFromTS(currentTS)) {
+		return errors.Errorf("cannot set flashback timestamp to future time")
+	}
+	gcSafePoint, err := gcutil.GetGCSafePoint(sctx)
+	if err != nil {
+		return err
+	}
+
+	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
+}
+
+func (e *DDLExec) executeFlashBackCluster(ctx context.Context, s *ast.FlashBackClusterStmt) error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if !checker.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv) {
+		return core.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+	}
+
+	tiFlashInfo, err := getTiFlashStores(e.ctx)
+	if err != nil {
+		return err
+	}
+	if len(tiFlashInfo) != 0 {
+		return errors.Errorf("not support flash back cluster with TiFlash stores")
+	}
+
+	flashbackTS, err := staleread.CalculateAsOfTsExpr(e.ctx, &s.AsOf)
+	if err != nil {
+		return err
+	}
+	if err = ValidateFlashBackTS(ctx, e.ctx, flashbackTS); err != nil {
+		return err
+	}
+
+	return domain.GetDomain(e.ctx).DDL().FlashbackCluster(e.ctx, flashbackTS)
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
