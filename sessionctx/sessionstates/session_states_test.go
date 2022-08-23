@@ -386,7 +386,6 @@ func TestSessionCtx(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				failTime := tk.Session().GetSessionVars().MPPStoreLastFailTime
-				//require.Equal(t, 1, len(failTime.))
 				tm, ok := failTime.Load("store1")
 				require.True(t, ok)
 				v, ok := (param.(*sync.Map)).Load("store1")
