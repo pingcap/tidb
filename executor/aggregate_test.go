@@ -1495,7 +1495,7 @@ func TestAggInDisk(t *testing.T) {
 	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
 }
 
-func TestRandomPanicAggConsume(t *testing.T) {
+func TestRandomPanicConsume(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1513,41 +1513,26 @@ func TestRandomPanicAggConsume(t *testing.T) {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
 
+	sqls := []string{
+		"select /*+ HASH_AGG() */ count(a) from t group by a", // HashAgg Paralleled
+		"select /*+ HASH_AGG() */ count(distinct a) from t",   // HashAgg Unparalleled
+		"select /*+ STREAM_AGG() */ count(a) from t",          // StreamAgg
+	}
+
 	// Test 10 times panic for each AggExec.
 	var res sqlexec.RecordSet
-	for i := 1; i <= 10; i++ {
-		var err error
-		for err == nil {
-			// Test paralleled hash agg.
-			res, err = tk.Exec("select /*+ HASH_AGG() */ count(a) from t group by a")
-			if err == nil {
-				_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
-				require.NoError(t, res.Close())
+	for _, sql := range sqls {
+		for i := 1; i <= 10; i++ {
+			var err error
+			for err == nil {
+				res, err = tk.Exec(sql)
+				if err == nil {
+					_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
+					require.NoError(t, res.Close())
+				}
 			}
+			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 		}
-		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
-
-		err = nil
-		for err == nil {
-			// Test unparalleled hash agg.
-			res, err = tk.Exec("select /*+ HASH_AGG() */ count(distinct a) from t")
-			if err == nil {
-				_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
-				require.NoError(t, res.Close())
-			}
-		}
-		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
-
-		err = nil
-		for err == nil {
-			// Test stream agg.
-			res, err = tk.Exec("select /*+ STREAM_AGG() */ count(a) from t")
-			if err == nil {
-				_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
-				require.NoError(t, res.Close())
-			}
-		}
-		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}
 }
 
