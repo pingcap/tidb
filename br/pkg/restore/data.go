@@ -223,8 +223,8 @@ func (recovery *Recovery) dumpRegionInfo() {
 		}
 	}
 
-	for region_id, peers := range regions {
-		log.Debug("Region", zap.Uint64("RegionID", region_id))
+	for regionID, peers := range regions {
+		log.Debug("Region", zap.Uint64("RegionID", regionID))
 		for _, m := range peers {
 			log.Debug("tikv", zap.Int("storeId", int(m.storeId)))
 			log.Debug("meta:", zap.Uint64("last_log_term", m.GetLastLogTerm()))
@@ -242,8 +242,8 @@ func (recovery *Recovery) dumpRegionInfo() {
 func (recovery *Recovery) dumpRecoverPlan() {
 	log.Debug("dump recovery plan")
 	// Group region peer info by region id.
-	for store_id, _ := range recovery.recoveryPlan {
-		log.Debug("TiKV", zap.Uint64("store id", store_id))
+	for storeID, _ := range recovery.recoveryPlan {
+		log.Debug("TiKV", zap.Uint64("store id", storeID))
 	}
 }
 
@@ -342,8 +342,8 @@ func (recovery *Recovery) makeRecoveryPlan() {
 	}
 
 	type regionEndKey struct {
-		end_key []byte
-		rid     uint64
+		endKey []byte
+		rid    uint64
 	}
 
 	// Group region peer info by region id.
@@ -386,7 +386,7 @@ func (recovery *Recovery) makeRecoveryPlan() {
 
 		// keysapce overlap sk within floor - fk.end_key
 		fk, fv = topo.Floor(sk)
-		if fk != nil && keyCmp(fv.(regionEndKey).end_key, sk) > 0 {
+		if fk != nil && keyCmp(fv.(regionEndKey).endKey, sk) > 0 {
 			continue
 		}
 		topo.Put(sk, regionEndKey{ek, p.rid})
@@ -410,7 +410,7 @@ func (recovery *Recovery) makeRecoveryPlan() {
 			// TODO, panic or something we have to do, a PoC or test may need for decision
 			panic("regions should conject to each other")
 		}
-		prevEndKey = v.end_key
+		prevEndKey = v.endKey
 		prevR = v.rid
 		validPeer[v.rid] = struct{}{}
 	}
