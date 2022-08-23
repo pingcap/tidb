@@ -23,9 +23,8 @@ type FKCheckExec struct {
 	*FKValueHelper
 	ctx sessionctx.Context
 
-	toBeCheckedKeys      []kv.Key
-	toBeCheckedIndexKeys []kv.Key
-	toBeLockedKeys       []kv.Key
+	toBeCheckedFKValues [][]types.Datum
+	toBeLockedKeys      []kv.Key
 }
 
 type FKValueHelper struct {
@@ -64,70 +63,12 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 	}, nil
 }
 
-func getColumnsOffsets(tbInfo *model.TableInfo, cols []model.CIStr) ([]int, error) {
-	colsOffsets := make([]int, len(cols))
-	for i, col := range cols {
-		offset := -1
-		for i := range tbInfo.Columns {
-			if tbInfo.Columns[i].Name.L == col.L {
-				offset = tbInfo.Columns[i].Offset
-				break
-			}
-		}
-		if offset < 0 {
-			return nil, table.ErrUnknownColumn.GenWithStackByArgs(col.L)
-		}
-		colsOffsets[i] = offset
-	}
-	return colsOffsets, nil
-}
-
 func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
 	vals, err := fkc.fetchFKValuesWithCheck(sc, row)
-	if len(vals) == 0 {
-		return nil
+	if len(vals) > 0 {
+		fkc.toBeCheckedFKValues = append(fkc.toBeCheckedFKValues, vals)
 	}
-	if fkc.IdxIsPrimaryKey {
-		handleKey, err := fkc.buildHandleFromFKValues(sc, vals)
-		if err != nil {
-			return err
-		}
-		key := tablecodec.EncodeRecordKey(fkc.Tbl.RecordPrefix(), handleKey)
-		if fkc.IdxIsExclusive {
-			fkc.toBeCheckedKeys = append(fkc.toBeCheckedKeys, key)
-		} else {
-			fkc.toBeCheckedIndexKeys = append(fkc.toBeCheckedIndexKeys, key)
-		}
-		return nil
-	}
-	key, distinct, err := fkc.Idx.GenIndexKey(sc, vals, nil, nil)
-	if err != nil {
-		return err
-	}
-	if distinct && fkc.IdxIsExclusive {
-		fkc.toBeCheckedKeys = append(fkc.toBeCheckedKeys, key)
-	} else {
-		fkc.toBeCheckedIndexKeys = append(fkc.toBeCheckedIndexKeys, key)
-	}
-	return nil
-}
-
-func (fkc *FKCheckExec) buildHandleFromFKValues(sc *stmtctx.StatementContext, vals []types.Datum) (kv.Handle, error) {
-	if len(vals) == 1 && fkc.Idx == nil {
-		return kv.IntHandle(vals[0].GetInt64()), nil
-	}
-	pkDts := make([]types.Datum, 0, len(vals))
-	for i, val := range vals {
-		if fkc.Idx != nil && len(fkc.HandleCols) > 0 {
-			tablecodec.TruncateIndexValue(&val, fkc.Idx.Meta().Columns[i], fkc.HandleCols[i].ColumnInfo)
-		}
-		pkDts = append(pkDts, val)
-	}
-	handleBytes, err := codec.EncodeKey(sc, nil, pkDts...)
-	if err != nil {
-		return nil, err
-	}
-	return kv.NewCommonHandle(handleBytes)
+	return err
 }
 
 func (h *FKValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row []types.Datum) ([]types.Datum, error) {
@@ -186,17 +127,25 @@ func (h *FKValueHelper) hasNullValue(vals []types.Datum) bool {
 }
 
 func (fkc FKCheckExec) doCheck(ctx context.Context) error {
+	keys, prefixKeys, err := fkc.buildCheckKeysFromFKValues(fkc.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return err
+	}
 	txn, err := fkc.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
-	err = fkc.checkKeys(ctx, txn)
-	if err != nil {
-		return err
+	if len(keys) > 0 {
+		err = fkc.checkKeys(ctx, txn, keys)
+		if err != nil {
+			return err
+		}
 	}
-	err = fkc.checkIndexKeys(ctx, txn)
-	if err != nil {
-		return err
+	if len(prefixKeys) > 0 {
+		err = fkc.checkIndexKeys(ctx, txn, prefixKeys)
+		if err != nil {
+			return err
+		}
 	}
 	if len(fkc.toBeLockedKeys) == 0 {
 		return nil
@@ -209,16 +158,67 @@ func (fkc FKCheckExec) doCheck(ctx context.Context) error {
 	return doLockKeys(ctx, fkc.ctx, lockCtx, fkc.toBeLockedKeys...)
 }
 
-func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction) error {
-	if len(fkc.toBeCheckedKeys) == 0 {
-		return nil
+func (fkc FKCheckExec) buildCheckKeysFromFKValues(sc *stmtctx.StatementContext) (keys []kv.Key, prefixKeys []kv.Key, _ error) {
+	if fkc.IdxIsExclusive && (fkc.IdxIsPrimaryKey || fkc.Idx.Meta().Unique) {
+		keys = make([]kv.Key, 0, len(fkc.toBeCheckedFKValues))
+	} else {
+		prefixKeys = make([]kv.Key, 0, len(fkc.toBeCheckedFKValues))
 	}
+	if fkc.IdxIsPrimaryKey {
+		for _, vals := range fkc.toBeCheckedFKValues {
+			handleKey, err := fkc.buildHandleFromFKValues(sc, vals)
+			if err != nil {
+				return nil, nil, err
+			}
+			key := tablecodec.EncodeRecordKey(fkc.Tbl.RecordPrefix(), handleKey)
+			if fkc.IdxIsExclusive {
+				keys = append(keys, key)
+			} else {
+				prefixKeys = append(prefixKeys, key)
+			}
+		}
+		return keys, prefixKeys, nil
+	}
+
+	for _, vals := range fkc.toBeCheckedFKValues {
+		key, distinct, err := fkc.Idx.GenIndexKey(sc, vals, nil, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		if distinct && fkc.IdxIsExclusive {
+			keys = append(keys, key)
+		} else {
+			prefixKeys = append(prefixKeys, key)
+		}
+	}
+	return keys, prefixKeys, nil
+}
+
+func (fkc *FKCheckExec) buildHandleFromFKValues(sc *stmtctx.StatementContext, vals []types.Datum) (kv.Handle, error) {
+	if len(vals) == 1 && fkc.Idx == nil {
+		return kv.IntHandle(vals[0].GetInt64()), nil
+	}
+	pkDts := make([]types.Datum, 0, len(vals))
+	for i, val := range vals {
+		if fkc.Idx != nil && len(fkc.HandleCols) > 0 {
+			tablecodec.TruncateIndexValue(&val, fkc.Idx.Meta().Columns[i], fkc.HandleCols[i].ColumnInfo)
+		}
+		pkDts = append(pkDts, val)
+	}
+	handleBytes, err := codec.EncodeKey(sc, nil, pkDts...)
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewCommonHandle(handleBytes)
+}
+
+func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction, keys []kv.Key) error {
 	// Fill cache using BatchGet
-	_, err := txn.BatchGet(ctx, fkc.toBeCheckedKeys)
+	_, err := txn.BatchGet(ctx, keys)
 	if err != nil {
 		return err
 	}
-	for _, k := range fkc.toBeCheckedKeys {
+	for _, k := range keys {
 		_, err := txn.Get(ctx, k)
 		if err == nil {
 			if !fkc.CheckExist {
@@ -238,8 +238,8 @@ func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction) error
 	return nil
 }
 
-func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) error {
-	if len(fkc.toBeCheckedIndexKeys) == 0 {
+func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction, prefixKeys []kv.Key) error {
+	if len(prefixKeys) == 0 {
 		return nil
 	}
 	memBuffer := txn.GetMemBuffer()
@@ -248,7 +248,7 @@ func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) 
 	defer func() {
 		snap.SetOption(kv.ScanBatchSize, 256)
 	}()
-	for _, key := range fkc.toBeCheckedIndexKeys {
+	for _, key := range prefixKeys {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -322,4 +322,22 @@ func (fkc *FKCheckExec) getIndexKeyExistInReferTable(memBuffer kv.MemBuffer, sna
 		}
 	}
 	return nil, nil, nil
+}
+
+func getColumnsOffsets(tbInfo *model.TableInfo, cols []model.CIStr) ([]int, error) {
+	colsOffsets := make([]int, len(cols))
+	for i, col := range cols {
+		offset := -1
+		for i := range tbInfo.Columns {
+			if tbInfo.Columns[i].Name.L == col.L {
+				offset = tbInfo.Columns[i].Offset
+				break
+			}
+		}
+		if offset < 0 {
+			return nil, table.ErrUnknownColumn.GenWithStackByArgs(col.L)
+		}
+		colsOffsets[i] = offset
+	}
+	return colsOffsets, nil
 }
