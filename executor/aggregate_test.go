@@ -1514,10 +1514,11 @@ func TestRandomPanicConsume(t *testing.T) {
 	}()
 
 	sqls := []string{
-		"select /*+ HASH_AGG() */ count(a) from t group by a", // HashAgg Paralleled
-		"select /*+ HASH_AGG() */ count(distinct a) from t",   // HashAgg Unparalleled
-		"select /*+ STREAM_AGG() */ count(a) from t",          // StreamAgg
-		"select a * a, a / a, a + a , a - a from t",           // Projection
+		"select /*+ HASH_AGG() */ count(a) from t group by a",           // HashAgg Paralleled
+		"select /*+ HASH_AGG() */ count(distinct a) from t",             // HashAgg Unparalleled
+		"select /*+ STREAM_AGG() */ count(a) from t",                    // StreamAgg
+		"select a * a, a / a, a + a , a - a from t",                     // Projection
+		"select /*+ HASH_JOIN(t) */ * from t t1 join t t2 on t1.a=t2.a", // HashJoin
 	}
 
 	// Test 10 times panic for each AggExec.
