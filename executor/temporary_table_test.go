@@ -42,6 +42,14 @@ func TestTemporaryTableNoNetwork(t *testing.T) {
 		})
 	})
 
+	t.Run("global create and then create a normal table", func(t *testing.T) {
+		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
+			tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
+			tk.MustExec("create table txx(a int)")
+			tk.MustExec("begin")
+		})
+	})
+
 	t.Run("local", func(t *testing.T) {
 		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
 			tk.MustExec("create temporary table tmp_t (id int primary key, a int, b int, index(a))")
