@@ -77,6 +77,7 @@ func TestLeadingJoinHint(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestLeadingJoinHint")
 
 	// test cases for outer join
@@ -116,6 +117,8 @@ func TestJoinOrderHint(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
 	// test cases for using the leading hint and straight_join hint at the same time
 	tk.MustExec("select /*+ leading(t1) straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
