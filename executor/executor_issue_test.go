@@ -404,10 +404,23 @@ func TestIssue31678(t *testing.T) {
 	tk.MustExec("INSERT INTO t1 (c) VALUES ('н1234567890')")
 	tk.MustExec("INSERT INTO t2 (b, i) VALUES ('1', 1)")
 
-	tk.MustQuery("SELECT c FROM t1 UNION SELECT b FROM t2").Sort().Check(testkit.Rows("1", "н1234567890"))
-	tk.MustQuery("SELECT c FROM t1 UNION SELECT i FROM t2").Sort().Check(testkit.Rows("1", "н1234567890"))
-	tk.MustQuery("SELECT i FROM t2 UNION SELECT c FROM t1").Sort().Check(testkit.Rows("1", "н1234567890"))
-	tk.MustQuery("SELECT b FROM t2 UNION SELECT c FROM t1").Sort().Check(testkit.Rows("1", "н1234567890"))
+	var queries = []string{
+		"SELECT c FROM t1 UNION SELECT b FROM t2",
+		"SELECT c FROM t1 UNION SELECT i FROM t2",
+		"SELECT i FROM t2 UNION SELECT c FROM t1",
+		"SELECT b FROM t2 UNION SELECT c FROM t1",
+	}
+	var expectedFlen = []int{44, 20, 20, 44}
+	var expectedCharset = []string{"binary", "utf8mb4", "utf8mb4", "binary"}
+	for i, query := range queries {
+		tk.MustQuery(query).Sort().Check(testkit.Rows("1", "н1234567890"))
+		rs, err := tk.Exec(query)
+		require.NoError(t, err)
+		resultFields := rs.Fields()
+		require.Equal(t, 1, len(resultFields), query)
+		require.Equal(t, expectedFlen[i], resultFields[0].Column.FieldType.GetFlen(), query)
+		require.Equal(t, expectedCharset[i], resultFields[0].Column.FieldType.GetCharset(), query)
+	}
 	tk.MustExec("DROP TABLE t1, t2;")
 }
 

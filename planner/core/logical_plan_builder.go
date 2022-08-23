@@ -1522,9 +1522,7 @@ func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.
 		if isBinary {
 			childTpCharLen = charset.CharacterSetInfos[childTp.GetCharset()].Maxlen
 		}
-		if totalLength := childTpCharLen * childTp.GetFlen(); resultTp.GetFlen() < totalLength {
-			resultTp.SetFlen(totalLength)
-		}
+		resultTp.SetFlen(mathutil.Max(resultTp.GetFlen(), childTpCharLen*childTp.GetFlen()))
 	}
 }
 
