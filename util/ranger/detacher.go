@@ -291,26 +291,24 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	// Therefore, we need to calculate pointRanges separately so that it can be used to append tail ranges in considerDNF branch.
 	// See https://github.com/pingcap/tidb/issues/26029 for details.
 	var pointRanges []*Range
-	if hasPrefix(d.lengths) {
-		if fixPrefixColRange(ranges, d.lengths, tpSlice) {
-			if d.mergeConsecutive {
-				pointRanges = make([]*Range, len(ranges))
-				copy(pointRanges, ranges)
-				ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				pointRanges, err = UnionRanges(d.sctx, pointRanges, false)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			} else {
-				ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				pointRanges = ranges
+	if hasPrefix(d.lengths) && fixPrefixColRange(ranges, d.lengths, tpSlice) {
+		if d.mergeConsecutive {
+			pointRanges = make([]*Range, len(ranges))
+			copy(pointRanges, ranges)
+			ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
+			pointRanges, err = UnionRanges(d.sctx, pointRanges, false)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			pointRanges = ranges
 		}
 	} else {
 		pointRanges = ranges
