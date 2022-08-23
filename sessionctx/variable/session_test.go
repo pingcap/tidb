@@ -232,6 +232,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Result_rows: 12345
 # Succ: true
 # IsExplicitTxn: true
+# IsSyncStatsFailed: false
 # IsWriteCacheTable: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
@@ -387,6 +388,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 
 func TestGeneralPlanCacheStmt(t *testing.T) {
 	sessVars := variable.NewSessionVars()
+	sessVars.GeneralPlanCacheSize = 100
 	sql1 := "select * from t where a>?"
 	sql2 := "select * from t where a<?"
 	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql1))

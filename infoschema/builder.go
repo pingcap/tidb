@@ -697,6 +697,10 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	})
 	b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
 
+	if tblInfo.TempTableType != model.TempTableNone {
+		b.addTemporaryTable(tableID)
+	}
+
 	newTbl, ok := b.is.TableByID(tableID)
 	if ok {
 		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
@@ -749,6 +753,11 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	}
 	// Remove the table in sorted table slice.
 	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTbls[0:idx], sortedTbls[idx+1:]...)
+
+	// Remove the table in temporaryTables
+	if b.is.temporaryTableIDs != nil {
+		delete(b.is.temporaryTableIDs, tableID)
+	}
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	for i, tblInfo := range dbInfo.Tables {
@@ -895,8 +904,18 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
 		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
+		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
+			b.addTemporaryTable(tblInfo.ID)
+		}
 	}
 	return nil
+}
+
+func (b *Builder) addTemporaryTable(tblID int64) {
+	if b.is.temporaryTableIDs == nil {
+		b.is.temporaryTableIDs = make(map[int64]struct{})
+	}
+	b.is.temporaryTableIDs[tblID] = struct{}{}
 }
 
 type virtualTableDriver struct {
