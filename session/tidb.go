@@ -49,10 +49,18 @@ type domainMap struct {
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	key := store.UUID()
-
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
+
+	if store == nil {
+		for _, d := range dm.domains {
+			// return available domain if any
+			return d, nil
+		}
+		return nil, errors.New("can not find available domain for a nil store")
+	}
+
+	key := store.UUID()
 
 	d = dm.domains[key]
 	if d != nil {
