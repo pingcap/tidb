@@ -16,6 +16,7 @@ package channel
 
 // Clear is to clear the channel
 func Clear[T any](ch chan T) {
+	//nolint:revive,all_revive
 	for range ch {
 	}
 }
