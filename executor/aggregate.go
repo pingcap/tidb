@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
@@ -274,9 +275,13 @@ func (e *HashAggExec) Close() error {
 			close(e.finalOutputCh)
 		}
 		close(e.finishCh)
-		e.partialOutputChs = nil
-		e.partialInputChs = nil
-		e.finalOutputCh = nil
+		for _, ch := range e.partialOutputChs {
+			channel.Clear(ch)
+		}
+		for _, ch := range e.partialInputChs {
+			channel.Clear(ch)
+		}
+		channel.Clear(e.finalOutputCh)
 		e.executed = false
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
