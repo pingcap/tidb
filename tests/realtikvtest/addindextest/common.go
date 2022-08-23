@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package addindexlittest
+package addindextest
 
 import (
 	"context"
@@ -76,7 +76,7 @@ func newSuiteContext(t *testing.T, tk *testkit.TestKit, store kv.Storage) *suite
 }
 
 func genTableStr(tableName string) string {
-	tableDef := "create table addindexlit." + tableName + " (" +
+	tableDef := "create table addindex." + tableName + " (" +
 		"c0 int, c1 bit(8), c2 boolean, c3 tinyint default 3, c4 smallint not null, c5 mediumint," +
 		"c6 int, c7 bigint, c8 float, c9 double, c10 decimal(13,7), c11 date, c12 time, c13 datetime," +
 		"c14 timestamp, c15 year, c16 char(10), c17 varchar(10), c18 text, c19 tinytext, c20 mediumtext," +
@@ -88,7 +88,7 @@ func genTableStr(tableName string) string {
 func genPartTableStr() (tableDefs []string) {
 	num := nonPartTabNum
 	// Range table def
-	tableDefs = append(tableDefs, "CREATE TABLE addindexlit.t"+strconv.Itoa(num)+" ("+
+	tableDefs = append(tableDefs, "CREATE TABLE addindex.t"+strconv.Itoa(num)+" ("+
 		"c0 int, c1 bit(8), c2 boolean, c3 tinyint default 3, c4 smallint not null, c5 mediumint,"+
 		"c6 int, c7 bigint, c8 float, c9 double, c10 decimal(13,7), c11 date, c12 time, c13 datetime,"+
 		"c14 timestamp, c15 year, c16 char(10), c17 varchar(10), c18 text, c19 tinytext, c20 mediumtext,"+
@@ -106,7 +106,7 @@ func genPartTableStr() (tableDefs []string) {
 		" PARTITION `p8` VALUES LESS THAN MAXVALUE)")
 	num++
 	// Hash part table
-	tableDefs = append(tableDefs, "CREATE TABLE addindexlit.t"+strconv.Itoa(num)+" ("+
+	tableDefs = append(tableDefs, "CREATE TABLE addindex.t"+strconv.Itoa(num)+" ("+
 		"c0 int, c1 bit(8), c2 boolean, c3 tinyint default 3, c4 smallint not null, c5 mediumint,"+
 		"c6 int, c7 bigint, c8 float, c9 double, c10 decimal(13,7), c11 date, c12 time, c13 datetime,"+
 		"c14 timestamp, c15 year, c16 char(10), c17 varchar(10), c18 text, c19 tinytext, c20 mediumtext,"+
@@ -199,7 +199,7 @@ func insertRows(tk *testkit.TestKit) {
 		}
 	)
 	for i := 0; i < tableNum; i++ {
-		insStr = "insert into addindexlit.t" + strconv.Itoa(i) + " (c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28) values"
+		insStr = "insert into addindex.t" + strconv.Itoa(i) + " (c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28) values"
 		for _, value := range values {
 			insStr := insStr + value
 			tk.MustExec(insStr)
@@ -221,15 +221,15 @@ func createIndexOneCol(ctx *suiteContext, tableID int, colID int) error {
 	}
 	if !(ctx.isPK || ctx.isUnique) || tableID == 0 || (ctx.isPK && tableID > 0) {
 		if colID >= 18 && colID < 29 {
-			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c" + strconv.Itoa(colID) + "(" + strconv.Itoa(length) + "))"
+			ddlStr = "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c" + strconv.Itoa(colID) + "(" + strconv.Itoa(length) + "))"
 		} else {
-			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c" + strconv.Itoa(colID) + ")"
+			ddlStr = "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c" + strconv.Itoa(colID) + ")"
 		}
 	} else if (ctx.isUnique) && tableID > 0 {
 		if colID >= 18 && colID < 29 {
-			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + "(" + strconv.Itoa(length) + "))"
+			ddlStr = "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + "(" + strconv.Itoa(length) + "))"
 		} else {
-			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + ")"
+			ddlStr = "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + ")"
 		}
 	}
 	logutil.BgLogger().Info("[add index test] createIndexOneCol", zap.String("sql", ddlStr))
@@ -262,7 +262,7 @@ func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int,
 	} else {
 		colID2Str = strconv.Itoa(colID2)
 	}
-	ddlStr := "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(indexID) + "(c" + colID1Str + ", c" + colID2Str + ")"
+	ddlStr := "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(indexID) + "(c" + colID1Str + ", c" + colID2Str + ")"
 	logutil.BgLogger().Info("[add index test] createIndexTwoCols", zap.String("sql", ddlStr))
 	_, err := ctx.tk.Exec(ddlStr)
 	if err != nil {
@@ -297,7 +297,7 @@ func checkTableResult(ctx *suiteContext, tableName string) {
 
 func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, int, string, int) error) {
 	for tableID := 0; tableID < ctx.tableNum; tableID++ {
-		tableName := "addindexlit.t" + strconv.Itoa(tableID)
+		tableName := "addindex.t" + strconv.Itoa(tableID)
 		for _, i := range colIDs[tableID] {
 			if ctx.workload != nil {
 				ctx.workload.start(ctx, tableID, i)
@@ -323,7 +323,7 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 
 func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*suiteContext, int, string, int, int, int) error) {
 	for tableID := 0; tableID < ctx.tableNum; tableID++ {
-		tableName := "addindexlit.t" + strconv.Itoa(tableID)
+		tableName := "addindex.t" + strconv.Itoa(tableID)
 		indexID := 0
 		for _, i := range iIDs[tableID] {
 			for _, j := range jIDs[tableID] {
@@ -350,7 +350,7 @@ func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*sui
 
 func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, string, int) error) {
 	for tableID := 0; tableID < ctx.tableNum; tableID++ {
-		tableName := "addindexlit.t" + strconv.Itoa(tableID)
+		tableName := "addindex.t" + strconv.Itoa(tableID)
 		if ctx.workload != nil {
 			ctx.workload.start(ctx, tableID, colID)
 		}
@@ -372,14 +372,14 @@ func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, 
 	}
 }
 
-func addIndexLitNonUnique(ctx *suiteContext, tableID int, tableName string, indexID int) (err error) {
+func addIndexNonUnique(ctx *suiteContext, tableID int, tableName string, indexID int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = false
 	err = createIndexOneCol(ctx, tableID, indexID)
 	return err
 }
 
-func addIndexLitUnique(ctx *suiteContext, tableID int, tableName string, indexID int) (err error) {
+func addIndexUnique(ctx *suiteContext, tableID int, tableName string, indexID int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = true
 	if indexID == 0 || indexID == 6 || indexID == 11 || indexID == 19 || tableID > 0 {
@@ -402,21 +402,21 @@ func addIndexLitUnique(ctx *suiteContext, tableID int, tableName string, indexID
 	return err
 }
 
-func addIndexLitPK(ctx *suiteContext, tableID int, tableName string, colID int) (err error) {
+func addIndexPK(ctx *suiteContext, tableID int, tableName string, colID int) (err error) {
 	ctx.isPK = true
 	ctx.isUnique = false
 	err = createIndexOneCol(ctx, tableID, 0)
 	return err
 }
 
-func addIndexLitGenCol(ctx *suiteContext, tableID int, tableName string, colID int) (err error) {
+func addIndexGenCol(ctx *suiteContext, tableID int, tableName string, colID int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = false
 	err = createIndexOneCol(ctx, tableID, 29)
 	return err
 }
 
-func addIndexLitMultiCols(ctx *suiteContext, tableID int, tableName string, indexID int, colID1 int, colID2 int) (err error) {
+func addIndexMultiCols(ctx *suiteContext, tableID int, tableName string, indexID int, colID1 int, colID2 int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = false
 	if colID1 != colID2 {

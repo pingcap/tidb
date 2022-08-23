@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package addindexlittest
+package addindextest
 
 import (
 	"testing"
@@ -24,9 +24,9 @@ import (
 func initTest(t *testing.T) *suiteContext {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
+	tk.MustExec("drop database if exists addindex;")
+	tk.MustExec("create database addindex;")
+	tk.MustExec("use addindex;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
 	ctx := newSuiteContext(t, tk, store)
@@ -43,7 +43,7 @@ func TestCreateNonUniqueIndex(t *testing.T) {
 		{3, 6, 9, 12, 15, 18, 21, 24, 27},
 	}
 	ctx := initTest(t)
-	testOneColFrame(ctx, colIDs, addIndexLitNonUnique)
+	testOneColFrame(ctx, colIDs, addIndexNonUnique)
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
@@ -53,17 +53,17 @@ func TestCreateUniqueIndex(t *testing.T) {
 		{3, 12, 25},
 	}
 	ctx := initTest(t)
-	testOneColFrame(ctx, colIDs, addIndexLitUnique)
+	testOneColFrame(ctx, colIDs, addIndexUnique)
 }
 
 func TestCreatePrimaryKey(t *testing.T) {
 	ctx := initTest(t)
-	testOneIndexFrame(ctx, 0, addIndexLitPK)
+	testOneIndexFrame(ctx, 0, addIndexPK)
 }
 
 func TestCreateGenColIndex(t *testing.T) {
 	ctx := initTest(t)
-	testOneIndexFrame(ctx, 29, addIndexLitGenCol)
+	testOneIndexFrame(ctx, 29, addIndexGenCol)
 }
 
 func TestCreateMultiColsIndex(t *testing.T) {
@@ -78,5 +78,5 @@ func TestCreateMultiColsIndex(t *testing.T) {
 		{18, 21, 24, 27},
 	}
 	ctx := initTest(t)
-	testTwoColsFrame(ctx, coliIDs, coljIDs, addIndexLitMultiCols)
+	testTwoColsFrame(ctx, coliIDs, coljIDs, addIndexMultiCols)
 }

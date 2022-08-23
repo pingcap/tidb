@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package addindexlittest
+package addindextest
 
 import (
 	"context"
@@ -90,7 +90,7 @@ func newWorker(wID int, ty int) *worker {
 func (w *worker) run(ctx *suiteContext, wl *workload) {
 	var err error
 	tk := ctx.getTestKit()
-	tk.MustExec("use addindexlit")
+	tk.MustExec("use addindex")
 	tk.MustExec("set @@tidb_general_log = 1;")
 	for {
 		if ctx.done() {
@@ -164,7 +164,7 @@ func isSkippedError(err error, ctx *suiteContext) bool {
 	return false
 }
 func insertStr(tableName string, id int, date string) string {
-	insStr := "insert into addindexlit." + tableName + "(c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28)" +
+	insStr := "insert into addindex." + tableName + "(c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28)" +
 		" values(" + strconv.Itoa(id) + "," +
 		"3, 3, 3, 3, 3, " + strconv.Itoa(id) + ", 3, 3.0, 3.0, 1113.1111, adddate('" + date + "', " + strconv.Itoa(id-10000) + "), '11:11:13', '2001-01-03 11:11:13', '2001-01-03 11:11:11.123456', 2001, 'cccc', 'cccc', 'cccc', '" + "aaaa" + strconv.Itoa(id) + "', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', '{\"name\": \"Beijing\", \"population\": 102}')"
 	return insStr
@@ -202,7 +202,7 @@ func updateStr(ctx *suiteContext, tableName string, colID []int) (uStr string) {
 			updateStr = updateStr + ", c" + strconv.Itoa(colID[i]) + "=" + colNewValue
 		}
 	}
-	updateStr = "update addindexlit." + tableName + updateStr + " where c0=" + strconv.Itoa(id)
+	updateStr = "update addindex." + tableName + updateStr + " where c0=" + strconv.Itoa(id)
 	return updateStr
 }
 
@@ -224,7 +224,7 @@ func updateWorker(ctx *suiteContext, tk *testkit.TestKit) error {
 }
 
 func deleteStr(tableName string, id int) string {
-	delStr := "delete from addindexlit." + tableName + " where c0 =" + strconv.Itoa(id)
+	delStr := "delete from addindex." + tableName + " where c0 =" + strconv.Itoa(id)
 	return delStr
 }
 
