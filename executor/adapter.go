@@ -1669,13 +1669,13 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 	return sqlDigest, planDigest
 }
 
-func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) map[string]map[bool]map[string]string {
+func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) map[string]map[string]string {
 	if len(statsLoadStatus) < 1 {
 		return nil
 	}
 	is := domain.GetDomain(sctx).InfoSchema()
-	// tableName -> isIndex -> name -> status
-	r := make(map[string]map[bool]map[string]string)
+	// tableName -> name -> status
+	r := make(map[string]map[string]string)
 	for item, status := range statsLoadStatus {
 		t, ok := is.TableByID(item.TableID)
 		if !ok {
@@ -1700,12 +1700,9 @@ func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.
 			continue
 		}
 		if r[tableName] == nil {
-			r[tableName] = make(map[bool]map[string]string)
+			r[tableName] = make(map[string]string)
 		}
-		if r[tableName][item.IsIndex] == nil {
-			r[tableName][item.IsIndex] = make(map[string]string)
-		}
-		r[tableName][item.IsIndex][itemName] = status
+		r[tableName][itemName] = status
 	}
 	return r
 }
