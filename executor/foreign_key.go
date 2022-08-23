@@ -14,20 +14,24 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
-type ExecutorWithForeignKeyCheck interface {
+// WithForeignKeyTrigger indicates the executor has foreign key check or cascade.
+type WithForeignKeyTrigger interface {
 	GetFKChecks() []*FKCheckExec
 }
 
+// FKCheckExec uses to check foreign key constraint.
+// When insert/update child table, need to check the row has related row exists in refer table.
+// When insert/update parent table, need to check the row doesn't have related row exists in refer table.
 type FKCheckExec struct {
 	*plannercore.FKCheck
-	*FKValueHelper
+	*fkValueHelper
 	ctx sessionctx.Context
 
 	toBeCheckedFKValues [][]types.Datum
 	toBeLockedKeys      []kv.Key
 }
 
-type FKValueHelper struct {
+type fkValueHelper struct {
 	colsOffsets []int
 	fkValuesSet set.StringSet
 }
@@ -64,14 +68,14 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 	if err != nil {
 		return nil, err
 	}
-	helper := &FKValueHelper{
+	helper := &fkValueHelper{
 		colsOffsets: colsOffsets,
 		fkValuesSet: set.NewStringSet(),
 	}
 	return &FKCheckExec{
 		ctx:           sctx,
 		FKCheck:       fkCheck,
-		FKValueHelper: helper,
+		fkValueHelper: helper,
 	}, nil
 }
 
@@ -90,7 +94,7 @@ func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRo
 	return nil
 }
 
-func (h *FKValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row []types.Datum) ([]types.Datum, error) {
+func (h *fkValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row []types.Datum) ([]types.Datum, error) {
 	vals, err := h.fetchFKValues(row)
 	if err != nil || h.hasNullValue(vals) {
 		return nil, err
@@ -107,7 +111,7 @@ func (h *FKValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row
 	return vals, nil
 }
 
-func (h *FKValueHelper) fetchFKValues(row []types.Datum) ([]types.Datum, error) {
+func (h *fkValueHelper) fetchFKValues(row []types.Datum) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(h.colsOffsets))
 	for i, offset := range h.colsOffsets {
 		if offset >= len(row) {
@@ -118,7 +122,7 @@ func (h *FKValueHelper) fetchFKValues(row []types.Datum) ([]types.Datum, error) 
 	return vals, nil
 }
 
-func (h *FKValueHelper) hasNullValue(vals []types.Datum) bool {
+func (h *fkValueHelper) hasNullValue(vals []types.Datum) bool {
 	// If any foreign key column value is null, no need to check this row.
 	// test case:
 	// create table t1 (id int key,a int, b int, index(a, b));

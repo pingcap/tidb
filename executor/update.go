@@ -541,6 +541,7 @@ func (e *updateRuntimeStats) Tp() int {
 	return execdetails.TpUpdateRuntimeStats
 }
 
+// GetFKChecks implements WithForeignKeyTrigger interface.
 func (e *UpdateExec) GetFKChecks() []*FKCheckExec {
 	fkChecks := []*FKCheckExec{}
 	for _, fkcs := range e.fkChecks {

@@ -514,7 +514,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if err != nil {
 			return result, err
 		}
-		err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
+		err = a.handleForeignKeyTrigger(ctx, e)
 		return result, err
 	}
 
@@ -534,8 +534,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPessimistic bool) error {
-	exec, ok := e.(ExecutorWithForeignKeyCheck)
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) error {
+	exec, ok := e.(WithForeignKeyTrigger)
 	if !ok {
 		return nil
 	}
