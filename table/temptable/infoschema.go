@@ -21,11 +21,15 @@ import (
 
 // AttachLocalTemporaryTableInfoSchema attach local temporary table information schema to is
 func AttachLocalTemporaryTableInfoSchema(sctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	localTemporaryTables := getLocalTemporaryTables(sctx)
+	if localTemporaryTables == nil {
+		return is
+	}
+
 	if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
 		return is
 	}
 
-	localTemporaryTables := getLocalTemporaryTables(sctx)
 	return &infoschema.TemporaryTableAttachedInfoSchema{
 		InfoSchema:           is,
 		LocalTemporaryTables: localTemporaryTables,
@@ -42,8 +46,12 @@ func DetachLocalTemporaryTableInfoSchema(is infoschema.InfoSchema) infoschema.In
 }
 
 func getLocalTemporaryTables(sctx sessionctx.Context) *infoschema.LocalTemporaryTables {
-	// Do not return nil so that new created tables can always be visited through the returned object.
-	return ensureLocalTemporaryTables(sctx)
+	localTemporaryTables := sctx.GetSessionVars().LocalTemporaryTables
+	if localTemporaryTables == nil {
+		return nil
+	}
+
+	return localTemporaryTables.(*infoschema.LocalTemporaryTables)
 }
 
 func ensureLocalTemporaryTables(sctx sessionctx.Context) *infoschema.LocalTemporaryTables {
