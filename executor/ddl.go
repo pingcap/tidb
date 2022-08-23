@@ -521,10 +521,10 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	return jobInfo, tableInfo, nil
 }
 
-// ValidateFlashBackTS validates that flashBackTS in range [gcSafePoint, currentTS)
+// ValidateFlashBackTS validates that flashBackTS in range [gcSafePoint, currentTS).
 func ValidateFlashBackTS(ctx context.Context, sctx sessionctx.Context, flashBackTS uint64) error {
 	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
-	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
+	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD.
 	if err != nil {
 		metrics.ValidateReadTSFromPDCount.Inc()
 		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
