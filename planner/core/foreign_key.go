@@ -46,6 +46,91 @@ func buildOnModifyChildForeignKeyChecks(ctx sessionctx.Context, is infoschema.In
 	return fkChecks, nil
 }
 
+func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) (map[int64][]*FKCheck, error) {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil, nil
+	}
+	tblID2UpdateColumns := updt.buildTbl2UpdateColumns()
+	fkChecks := make(map[int64][]*FKCheck)
+	for tid, tbl := range tblID2table {
+		tblInfo := tbl.Meta()
+		dbInfo, exist := is.SchemaByTable(tblInfo)
+		if !exist {
+			return nil, infoschema.ErrDatabaseNotExists
+		}
+		updateCols := tblID2UpdateColumns[tid]
+		if len(updateCols) == 0 {
+			continue
+		}
+		for _, fk := range tblInfo.ForeignKeys {
+			if fk.Version < 1 {
+				continue
+			}
+			exist := false
+			for _, referredCol := range fk.Cols {
+				_, exist = updateCols[referredCol.L]
+				if exist {
+					break
+				}
+			}
+			if !exist {
+				continue
+			}
+			referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+			if err != nil {
+				continue
+			}
+			failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbInfo.Name.L, tblInfo.Name.L))
+			fkCheck, err := buildFKCheck(referTable, fk, fk.RefCols, true, failedErr)
+			if err != nil {
+				return nil, err
+			}
+			fkChecks[tid] = append(fkChecks[tid], fkCheck)
+		}
+	}
+	return fkChecks, nil
+}
+
+func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]*model.ColumnInfo {
+	colsInfo := make([]*model.ColumnInfo, len(updt.SelectPlan.Schema().Columns))
+	for _, content := range updt.TblColPosInfos {
+		tbl := updt.tblID2Table[content.TblID]
+		for i, c := range tbl.WritableCols() {
+			colsInfo[content.Start+i] = c.ColumnInfo
+		}
+	}
+	tblID2UpdateColumns := make(map[int64]map[string]*model.ColumnInfo)
+	for tid := range updt.tblID2Table {
+		tblID2UpdateColumns[tid] = make(map[string]*model.ColumnInfo)
+	}
+	for _, assign := range updt.OrderedList {
+		col := colsInfo[assign.Col.Index]
+		for _, content := range updt.TblColPosInfos {
+			if assign.Col.Index >= content.Start && assign.Col.Index < content.End {
+				tblID2UpdateColumns[content.TblID][col.Name.L] = col
+				break
+			}
+		}
+	}
+	for tid, tbl := range updt.tblID2Table {
+		updateCols := tblID2UpdateColumns[tid]
+		if len(updateCols) == 0 {
+			continue
+		}
+		for _, col := range tbl.WritableCols() {
+			if !col.IsGenerated() || !col.GeneratedStored {
+				continue
+			}
+			for depCol := range col.Dependences {
+				if _, ok := updateCols[depCol]; ok {
+					tblID2UpdateColumns[tid][col.Name.L] = col.ColumnInfo
+				}
+			}
+		}
+	}
+	return tblID2UpdateColumns
+}
+
 func buildFKCheck(tbl table.Table, fk *model.FKInfo, cols []model.CIStr, checkExist bool, failedErr error) (*FKCheck, error) {
 	tblInfo := tbl.Meta()
 	if tblInfo.PKIsHandle && len(cols) == 1 {

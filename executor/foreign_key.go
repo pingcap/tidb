@@ -32,6 +32,18 @@ type FKValueHelper struct {
 	fkValuesSet set.StringSet
 }
 
+func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
+	var err error
+	fkChecks := make(map[int64][]*FKCheckExec)
+	for tid, tbl := range tblID2Table {
+		fkChecks[tid], err = buildFKCheckExecs(sctx, tbl, tblID2FKChecks[tid])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return fkChecks, nil
+}
+
 func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*plannercore.FKCheck) ([]*FKCheckExec, error) {
 	fkCheckExecs := make([]*FKCheckExec, 0, len(fkChecks))
 	for _, fkCheck := range fkChecks {
@@ -69,6 +81,13 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 		fkc.toBeCheckedFKValues = append(fkc.toBeCheckedFKValues, vals)
 	}
 	return err
+}
+
+func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
+	if fkc.FK != nil {
+		return fkc.addRowNeedToCheck(sc, newRow)
+	}
+	return nil
 }
 
 func (h *FKValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row []types.Datum) ([]types.Datum, error) {
@@ -255,7 +274,7 @@ func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction, 
 		default:
 		}
 
-		key, value, err := fkc.getIndexKeyExistInReferTable(memBuffer, snap, key)
+		key, value, err := fkc.getIndexKeyValueInTable(memBuffer, snap, key)
 		if err != nil {
 			return err
 		}
@@ -282,7 +301,7 @@ func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction, 
 	return nil
 }
 
-func (fkc *FKCheckExec) getIndexKeyExistInReferTable(memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (k []byte, v []byte, _ error) {
+func (fkc *FKCheckExec) getIndexKeyValueInTable(memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (k []byte, v []byte, _ error) {
 	memIter, err := memBuffer.Iter(key, key.PrefixNext())
 	if err != nil {
 		return nil, nil, err
