@@ -50,32 +50,6 @@ var validMatchType = map[string]empty{
 	flag_n: {}, // The . character matches line terminators
 }
 
-func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-
-	argTp := []types.EvalType{types.ETString, types.ETString}
-	if len(args) == 3 {
-		argTp = append(argTp, types.ETString)
-	}
-
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
-	if err != nil {
-		return nil, err
-	}
-
-	bf.tp.SetFlen(mysql.MaxIntWidth)
-	sig := regexpLikeFuncSig{baseBuiltinFunc: bf}
-	if bf.collation == charset.CollationBin {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeSig)
-	} else {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeUTF8Sig)
-	}
-
-	return &sig, nil
-}
-
 type regexpBaseFuncSig struct {
 	regexpMemorizedSig
 	compile func(string) (*regexp.Regexp, error)
@@ -132,8 +106,36 @@ func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchTyp
 	return flag, nil
 }
 
+// ---------------------------------- regexp_like ----------------------------------
+
 type regexpLikeFunctionClass struct {
 	baseFunctionClass
+}
+
+func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argTp := []types.EvalType{types.ETString, types.ETString}
+	if len(args) == 3 {
+		argTp = append(argTp, types.ETString)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.SetFlen(mysql.MaxIntWidth)
+	sig := regexpLikeFuncSig{baseBuiltinFunc: bf}
+	if bf.collation == charset.CollationBin {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeSig)
+	} else {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeUTF8Sig)
+	}
+
+	return &sig, nil
 }
 
 type regexpLikeFuncSig struct {
