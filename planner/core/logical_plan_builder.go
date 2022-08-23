@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -1512,6 +1513,18 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
+// Set the flen of the union column using the max flen in children.
+func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, colIndex int, u *LogicalUnionAll) {
+	resultTpCharLen := charset.CharacterSetInfos[resultTp.GetCharset()].Maxlen
+	for j := 0; j < len(u.children); j++ {
+		childTp := u.children[j].Schema().Columns[colIndex].RetType
+		childTpCharLen := charset.CharacterSetInfos[childTp.GetCharset()].Maxlen
+		if totalLength := childTpCharLen * childTp.GetFlen(); resultTpCharLen*resultTp.GetFlen() < totalLength {
+			resultTp.SetFlen(int(math.Ceil(float64(totalLength) / float64(resultTpCharLen))))
+		}
+	}
+}
+
 func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAll) error {
 	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
 	names := make([]*types.FieldName, 0, u.children[0].Schema().Len())
@@ -1532,6 +1545,7 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAl
 		}
 		resultTp.SetCharset(collation.Charset)
 		resultTp.SetCollate(collation.Collation)
+		b.setUnionFlen(resultTp, i, u)
 		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
