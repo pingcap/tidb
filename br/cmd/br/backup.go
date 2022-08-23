@@ -181,9 +181,10 @@ func newRawBackupCommand() *cobra.Command {
 // newEBSBackupCommand return an ebs backup subcommand.
 func newEBSBackupCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "ebs",
-		Short: "backup a TiKV cluster via EBS snapshot",
-		Args:  cobra.NoArgs,
+		Use:    "ebs",
+		Short:  "backup a TiKV cluster via EBS snapshot",
+		Args:   cobra.NoArgs,
+		Hidden: true, // only used on tidb cloud now
 		RunE: func(command *cobra.Command, _ []string) error {
 			return runEBSBackupCommand(command, task.EBSBackupCmd)
 		},

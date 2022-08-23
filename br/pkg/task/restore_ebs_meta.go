@@ -43,6 +43,7 @@ const (
 func DefineRestoreEBSMetaFlags(command *cobra.Command) {
 	command.Flags().String(flagOutputMetaFile, "output.json", "the file path of output meta file")
 	command.Flags().Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
+	command.Flags().Uint(flagCloudAPIConcurrency, defaultCloudAPIConcurrency, "concurrency of calling cloud api")
 	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
@@ -50,17 +51,22 @@ func DefineRestoreEBSMetaFlags(command *cobra.Command) {
 
 type RestoreEBSConfig struct {
 	Config
-	OutputFile       string               `json:"output-file"`
-	SkipAWS          bool                 `json:"skip-aws"`
-	VolumeType       config.EBSVolumeType `json:"volume-type"`
-	VolumeIOPS       int64                `json:"volume-iops"`
-	VolumeThroughput int64                `json:"volume-throughput"`
+	OutputFile          string               `json:"output-file"`
+	SkipAWS             bool                 `json:"skip-aws"`
+	CloudAPIConcurrency uint                 `json:"cloud-api-concurrency"`
+	VolumeType          config.EBSVolumeType `json:"volume-type"`
+	VolumeIOPS          int64                `json:"volume-iops"`
+	VolumeThroughput    int64                `json:"volume-throughput"`
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
 func (cfg *RestoreEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -92,8 +98,16 @@ func (cfg *RestoreEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	return cfg.Config.ParseFromFlags(flags)
 }
 
+func (cfg *RestoreEBSConfig) adjust() {
+	if cfg.CloudAPIConcurrency == 0 {
+		cfg.CloudAPIConcurrency = defaultCloudAPIConcurrency
+	}
+	cfg.Config.adjust()
+}
+
 // RunRestoreEBSMeta phase 1 of EBS based restore
 func RunRestoreEBSMeta(c context.Context, g glue.Glue, cmdName string, cfg *RestoreEBSConfig) error {
+	cfg.adjust()
 	helper := restoreEBSMetaHelper{
 		rootCtx: c,
 		g:       g,
@@ -230,7 +244,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		err         error
 		totalSize   int64
 	)
-	ec2Session, err = aws.NewEC2Session()
+	ec2Session, err = aws.NewEC2Session(h.cfg.CloudAPIConcurrency)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
