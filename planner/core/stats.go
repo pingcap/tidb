@@ -1357,8 +1357,11 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			// For SemiJoin and AntiSemiJoin, we convert it to a filter and put it into the WHERE clause.
 			left = left.GenQBNotAfter(sqlrestorer.StageWhere)
 
-			expr := left.SemiJoinToExprString(x.JoinType == AntiSemiJoin, joinConds,
+			expr, err := left.SemiJoinToExprString(x.JoinType == AntiSemiJoin, joinConds,
 				p.Children()[0].Schema(), p.Children()[1].Schema(), right)
+			if err != nil {
+				return
+			}
 			left.WhereConds = append(left.WhereConds, expr)
 			p.Stats().SQLRestorer = left
 		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
@@ -1366,8 +1369,11 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			// register it as a projected column.
 			left = left.GenQBNotAfter(sqlrestorer.StageProjection)
 
-			expr := left.SemiJoinToExprString(x.JoinType == AntiLeftOuterSemiJoin, joinConds,
+			expr, err := left.SemiJoinToExprString(x.JoinType == AntiLeftOuterSemiJoin, joinConds,
 				p.Children()[0].Schema(), p.Children()[1].Schema(), right)
+			if err != nil {
+				return
+			}
 			schema := x.Schema().Columns
 			left.AddProjCol(schema[len(schema)-1].UniqueID, expr)
 			p.Stats().SQLRestorer = left
@@ -1403,8 +1409,11 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			for _, col := range x.CorCols {
 				right.Decorrelate(col.Column.UniqueID, left)
 			}
-			expr := left.SemiJoinToExprString(x.JoinType == AntiSemiJoin, joinConds,
+			expr, err := left.SemiJoinToExprString(x.JoinType == AntiSemiJoin, joinConds,
 				p.Children()[0].Schema(), p.Children()[1].Schema(), right)
+			if err != nil {
+				return
+			}
 			left.WhereConds = append(left.WhereConds, expr)
 			p.Stats().SQLRestorer = left
 		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
@@ -1415,15 +1424,18 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 			for _, col := range x.CorCols {
 				right.Decorrelate(col.Column.UniqueID, left)
 			}
-			expr := left.SemiJoinToExprString(x.JoinType == AntiLeftOuterSemiJoin, joinConds,
+			expr, err := left.SemiJoinToExprString(x.JoinType == AntiLeftOuterSemiJoin, joinConds,
 				p.Children()[0].Schema(), p.Children()[1].Schema(), right)
+			if err != nil {
+				return
+			}
 			schema := x.Schema().Columns
 			left.AddProjCol(schema[len(schema)-1].UniqueID, expr)
 			p.Stats().SQLRestorer = left
 		} else {
 			// For other kinds of join type in Apply, we convert each column from the inner side to an expression
 			// and register it as a projected column.
-			left = left.GenQBNotAfter(sqlrestorer.StageJoin)
+			left = left.GenQBNotAfter(sqlrestorer.StageProjection)
 			right = right.GenQBNotAfter(sqlrestorer.StageWhere)
 
 			for _, col := range x.CorCols {
@@ -1552,6 +1564,9 @@ func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
 		return
 	}
 
+	// At the end of each tracing, we set the output column.
+	// This makes sure (1) we can call String() safely below,
+	// and (2) for a QueryBlock from the StatsInfo, we can call GenQBNotAfter() safely.
 	p.Stats().SQLRestorer.ResetOutputCol()
 	for _, col := range p.self.Schema().Columns {
 		p.Stats().SQLRestorer.AddOutputCol(col.UniqueID)

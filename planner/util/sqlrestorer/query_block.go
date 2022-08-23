@@ -24,7 +24,6 @@ import (
 )
 
 // QueryBlock can be transformed to a SELECT statement easily. It's a helper for restoring a plan tree back to a SQL.
-// We place it in this package for now because it's placed in StatsInfo currently, which is also defined in this package.
 type QueryBlock struct {
 	joinList    joinList
 	WhereConds  []string
@@ -82,14 +81,19 @@ type Stage uint
 const (
 	// StageJoin means this QueryBlock only has joinList,
 	// and its WhereConds, GroupByCols, HavingConds, Limit, Offset and projectedCols are all empty.
+	// The joinList should not be changed after this stage.
 	StageJoin Stage = iota
 	// StageWhere means this QueryBlock may have WhereConds compared to StageJoin,
 	// and it doesn't have other clauses and projectedCols.
+	// The WhereConds should not be changed after this stage.
 	StageWhere
 	// StageProjection means this QueryBlock may have projectedCols compared to StageWhere.
+	// But there should be no aggregate functions in projectedCols.
+	// There should be no new non-aggregate function in projectedCols after this stage.
 	StageProjection
 	// StageAgg means this QueryBlock may have GroupByCols and HavingConds compared to StageWhere,
 	// and there might be aggregate functions in projectedCols.
+	// There should be no new aggregate functions and the HavingConds should not be changed after this stage.
 	StageAgg
 	// StageWindow is not used now. We expect there might be window functions in projectedCols in this stage.
 	StageWindow
@@ -97,6 +101,7 @@ const (
 	// but we don't support restoring OrderByCols for now.
 	StageOrderBy
 	// StageLimit means this QueryBlock may have Limit and Offset compared to StageOrderBy,
+	// The Limit and Offset should not be changed after this stage.
 	StageLimit
 )
 
@@ -255,6 +260,12 @@ func (q *QueryBlock) AddProjCol(colUID int64, expr string) {
 }
 
 // AddOutputCol mark the column need to be output, and this will make this column printed in the select list in the final SQL.
+//
+// Note:
+//
+//	The select list in the result SQL string might contain more columns than the marked output columns.
+//	If you want the select list in the result SQL has the same columns as the marked output columns,
+//	call q.GenQBNotAfter(StageProjection) before AddOutputCol().
 func (q *QueryBlock) AddOutputCol(colUID int64) {
 	// Allocate a unique name for every output column to avoid duplicate names in the SELECT fields,
 	// especially when we are joining tables and some of them have the same column names.
@@ -330,34 +341,24 @@ func (q *QueryBlock) Decorrelate(uid int64, left *QueryBlock) {
 	q.replaceUnknownCol(uid, s)
 }
 
-func (q *QueryBlock) replaceUnknownCol(uid int64, name string) bool {
+func (q *QueryBlock) replaceUnknownCol(uid int64, name string) {
 	q.joinList.replaceUnknownCol(uid, name)
 
-	newConds := make([]string, 0, len(q.WhereConds))
-	for _, cond := range q.WhereConds {
-		newCond := strings.ReplaceAll(cond, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
-		newConds = append(newConds, newCond)
+	for i, cond := range q.WhereConds {
+		q.WhereConds[i] = strings.ReplaceAll(cond, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
 	}
-	q.WhereConds = newConds
 
 	for _, col := range q.projectedCols {
 		col.Expr = strings.ReplaceAll(col.Expr, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
 	}
 
-	newConds = make([]string, 0, len(q.HavingConds))
-	for _, cond := range q.HavingConds {
-		newCond := strings.ReplaceAll(cond, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
-		newConds = append(newConds, newCond)
+	for i, cond := range q.HavingConds {
+		q.HavingConds[i] = strings.ReplaceAll(cond, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
 	}
-	q.HavingConds = newConds
 
-	newConds = make([]string, 0, len(q.GroupByCols))
-	for _, cond := range q.GroupByCols {
-		newCond := strings.ReplaceAll(cond, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
-		newConds = append(newConds, newCond)
+	for i, cond := range q.GroupByCols {
+		q.GroupByCols[i] = strings.ReplaceAll(cond, unknownColumnPlaceholder+strconv.FormatInt(uid, 10), name)
 	}
-	q.GroupByCols = newConds
-	return false
 }
 
 func (jl joinList) replaceUnknownCol(uid int64, name string) {

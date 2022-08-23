@@ -175,6 +175,7 @@ func (jl joinList) String() string {
 
 // ExprToString print an expression as a string.
 // useProjectedCol means if projected columns can be used when printing.
+//
 // Example:
 //
 //	There is a projected column: a + 10 as n, and n's unique ID is 2.
@@ -298,7 +299,7 @@ func (q *QueryBlock) AggFuncToString(agg *aggregation.AggFuncDesc) (string, erro
 
 // SemiJoinToExprString convert a [Anti] [LeftOuter] SemiJoin to an expression.
 func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expression.Expression,
-	leftChildSchema, rightChildSchema *expression.Schema, right *QueryBlock) string {
+	leftChildSchema, rightChildSchema *expression.Schema, right *QueryBlock) (string, error) {
 	var inCondsLeftCols, inCondsRightCOls []*expression.Column
 	var otherConds []expression.Expression
 	// 1. Split into null-aware conds and non null-aware conditions.
@@ -320,11 +321,12 @@ func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expressio
 	// 2. Handle the non null-aware conditions by pushing them into subquery as where conditions
 	if len(otherConds) > 0 {
 		cols := expression.ExtractColumnsFromExpressions(nil, otherConds, nil)
+		// We'll add conditions to the WHERE clause of the inner (right) query, so we make sure it's not after StageWhere.
 		right = right.GenQBNotAfter(StageWhere)
 		for _, expr := range otherConds {
 			s, err := right.ExprToString(expr, true)
 			if err != nil {
-				panic(err)
+				return "", err
 			}
 			right.WhereConds = append(right.WhereConds, s)
 		}
@@ -336,10 +338,12 @@ func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expressio
 	}
 	// 3. Handle the null-aware conditions and generate the expression for the outer query
 	if len(inCondsLeftCols) != len(inCondsRightCOls) {
-		return ""
+		return "", errors.New("unexpected SemiJoin condition")
 	}
 	expr := ""
 	if len(inCondsLeftCols) > 0 {
+		// We want the select list of the inner (right) query only contains the columns that we want,
+		// so we make sure it's not after StageProjection here.
 		right = right.GenQBNotAfter(StageProjection)
 		for _, col := range inCondsRightCOls {
 			right.AddOutputCol(col.UniqueID)
@@ -349,7 +353,7 @@ func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expressio
 		for _, col := range inCondsLeftCols {
 			s, err := q.ExprToString(col, false)
 			if err != nil {
-				panic(err)
+				return "", err
 			}
 			leftCols = append(leftCols, s)
 		}
@@ -374,5 +378,5 @@ func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expressio
 			expr = "NOT EXISTS (" + right.String() + ")"
 		}
 	}
-	return expr
+	return expr, nil
 }
