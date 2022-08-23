@@ -794,7 +794,7 @@ const (
 	// when a single SQL statement exceeds the memory quota specified by the memory quota.
 	TiDBEnableTmpStorageOnOOM = "tidb_enable_tmp_storage_on_oom"
 	// TiDBDDLEnableFastReorg indicates whether to use lighting backfill process for adding index.
-	TiDBDDLEnableFastReorg = "tidb_ddl_fast_reorg"
+	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 )
