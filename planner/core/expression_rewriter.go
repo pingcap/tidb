@@ -825,13 +825,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		return v, true
 	}
 	np = er.popExistsSubPlan(np)
-<<<<<<< HEAD
 	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
-=======
-	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, hasRewriteHint)
->>>>>>> b4cd14d71... planner: use SEMI_JOIN_REWRITE hint to rewrite the semi join (#35325)
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
