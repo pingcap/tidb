@@ -2570,7 +2570,8 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
-	StatsLoadStatus   map[bool]map[string]string
+	// table -> isIndex -> name -> status
+	StatsLoadStatus   map[string]map[bool]map[string]string
 	IsSyncStatsFailed bool
 }
 
@@ -2666,16 +2667,19 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				buf.WriteString(k + ":" + vStr)
 				firstComma = true
 			}
-		}
-		loadStatus := logItems.StatsLoadStatus
-		if len(loadStatus) > 0 {
-			indexStatus := loadStatus[true]
-			colStatus := loadStatus[false]
-			writeLoadStatusItems(&buf, indexStatus, true)
-			if len(indexStatus) > 0 && len(colStatus) > 0 {
-				buf.WriteString(",")
+			if v != 0 && len(logItems.StatsLoadStatus[k]) > 0 {
+				cols := logItems.StatsLoadStatus[k][false]
+				indices := logItems.StatsLoadStatus[k][true]
+				if len(cols) > 0 {
+					writeStatsLoadStatusItems(&buf, cols, false)
+					if len(indices) > 0 {
+						buf.WriteString(",")
+					}
+				}
+				if len(indices) > 0 {
+					writeStatsLoadStatusItems(&buf, indices, true)
+				}
 			}
-			writeLoadStatusItems(&buf, colStatus, false)
 		}
 		buf.WriteString("\n")
 	}
@@ -2776,7 +2780,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	return buf.String()
 }
 
-func writeLoadStatusItems(buf *bytes.Buffer, loadStatus map[string]string, isIndex bool) {
+func writeStatsLoadStatusItems(buf *bytes.Buffer, loadStatus map[string]string, isIndex bool) {
 	if len(loadStatus) > 0 {
 		if isIndex {
 			buf.WriteString("indices[")

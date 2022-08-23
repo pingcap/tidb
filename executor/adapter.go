@@ -1669,12 +1669,13 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 	return sqlDigest, planDigest
 }
 
-func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) map[bool]map[string]string {
+func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) map[string]map[bool]map[string]string {
 	if len(statsLoadStatus) < 1 {
 		return nil
 	}
 	is := domain.GetDomain(sctx).InfoSchema()
-	r := make(map[bool]map[string]string, 2)
+	// tableName -> isIndex -> name -> status
+	r := make(map[string]map[bool]map[string]string)
 	for item, status := range statsLoadStatus {
 		t, ok := is.TableByID(item.TableID)
 		if !ok {
@@ -1685,6 +1686,7 @@ func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.
 				zap.Int64("tableID", item.TableID))
 			continue
 		}
+		tableName := t.Meta().Name.O
 		itemName := ""
 		if item.IsIndex {
 			itemName = t.Meta().FindIndexNameByID(item.ID)
@@ -1697,10 +1699,13 @@ func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.
 				zap.Int64("id", item.ID), zap.Bool("isIndex", item.IsIndex))
 			continue
 		}
-		if r[item.IsIndex] == nil {
-			r[item.IsIndex] = make(map[string]string)
+		if r[tableName] == nil {
+			r[tableName] = make(map[bool]map[string]string)
 		}
-		r[item.IsIndex][itemName] = status
+		if r[tableName][item.IsIndex] == nil {
+			r[tableName][item.IsIndex] = make(map[string]string)
+		}
+		r[tableName][item.IsIndex][itemName] = status
 	}
 	return r
 }

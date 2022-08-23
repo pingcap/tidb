@@ -534,7 +534,7 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (result float64, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
-	recordUsedItemStatsStatus(sctx, c, nil, coll.PhysicalID, colID, false)
+	recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		if len(intRanges) == 0 {
 			return 0, nil
@@ -560,7 +560,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID int64, colRanges []*ranger.Range) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
-	recordUsedItemStatsStatus(sctx, c, nil, coll.PhysicalID, colID, false)
+	recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		result, err := GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
@@ -585,7 +585,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 			colNames = append(colNames, col.Name.O)
 		}
 	}
-	recordUsedItemStatsStatus(sctx, nil, idx, coll.PhysicalID, idxID, true)
+	recordUsedItemStatsStatus(sctx, idx.StatsLoadedStatus, coll.PhysicalID, idxID, true)
 	if !ok || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
@@ -1381,23 +1381,17 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	return true
 }
 
-func recordUsedItemStatsStatus(sctx sessionctx.Context, col *Column, idx *Index,
+// recordUsedItemStatsStatus only records un-FullLoad item load status during user query
+func recordUsedItemStatsStatus(sctx sessionctx.Context, loadStatus StatsLoadedStatus,
 	tableID, id int64, isIndex bool) {
-	if sctx.GetSessionVars().InRestrictedSQL {
+	if sctx.GetSessionVars().InRestrictedSQL || loadStatus.IsFullLoad() {
 		return
 	}
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	item := model.TableItemID{TableID: tableID, ID: id, IsIndex: isIndex}
-	unIntializedStatus := StatsLoadedStatus{statsInitialized: false}
-	status := unIntializedStatus.StatusToString()
-	if isIndex && idx != nil {
-		status = idx.StatusToString()
-	} else if !isIndex && col != nil {
-		status = col.StatusToString()
-	}
 	// For some testcases, it skips ResetContextOfStmt to init StatsLoadStatus
 	if stmtCtx.StatsLoadStatus == nil {
 		stmtCtx.StatsLoadStatus = make(map[model.TableItemID]string)
 	}
-	stmtCtx.StatsLoadStatus[item] = status
+	stmtCtx.StatsLoadStatus[item] = loadStatus.StatusToString()
 }
