@@ -26,6 +26,7 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -62,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/zap"
 )
 
 const (
@@ -4880,6 +4882,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}
 	defer deferFunc()
 
+	log.Info("BuildDataSourceFromView wwz", zap.String("db", dbName.String()), zap.String("tableinfo", tableInfo.Name.String()))
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
 	viewParser.SetParserConfig(b.ctx.GetSessionVars().BuildParserConfig())
@@ -4887,7 +4890,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	if err != nil {
 		return nil, err
 	}
-	originalVisitInfo := b.visitInfo
+	originalVisitInfo := make([]visitInfo, len(b.visitInfo))
+	copy(originalVisitInfo, b.visitInfo)
 	b.visitInfo = make([]visitInfo, 0)
 
 	//For the case that views appear in CTE queries,
@@ -4931,11 +4935,15 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.visitInfo = append(originalVisitInfo, b.visitInfo...)
 
 	if b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+		log.Info("wwz appendVisitInfo", zap.Any("visitInfo", tableInfo.Name.L))
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.L, tableInfo.Name.L, "", ErrViewNoExplain)
 	}
 
 	if len(tableInfo.Columns) != selectLogicalPlan.Schema().Len() {
 		return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+	}
+	for _, v := range b.visitInfo {
+		log.Info("wwz wwz", zap.Any("visitInfo", v))
 	}
 
 	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)

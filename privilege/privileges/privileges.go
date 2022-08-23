@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -110,6 +111,9 @@ func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIden
 func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
 	if SkipWithGrant {
 		return true
+	}
+	if table == "v1" || table == "v2" {
+		log.Info("wwz UserPrivileges RequestVerification", zap.String("db", db), zap.String("table", table))
 	}
 
 	if p.user == "" && p.host == "" {

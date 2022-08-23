@@ -15,10 +15,12 @@
 package schematracker
 
 import (
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"go.uber.org/zap"
 )
 
 // InfoStore is a simple structure that stores DBInfo and TableInfo. It's modifiable and not thread-safe.
@@ -74,6 +76,9 @@ func (i *InfoStore) DeleteSchema(name model.CIStr) bool {
 
 // TableByName returns the TableInfo. It will also return the error like an infoschema.
 func (i *InfoStore) TableByName(schema, table model.CIStr) (*model.TableInfo, error) {
+	if table.L == "v1" || table.L == "v2" {
+		log.Info("wwz TableByName", zap.String("table", table.String()))
+	}
 	schemaKey := i.ciStr2Key(schema)
 	tables, ok := i.tables[schemaKey]
 	if !ok {
@@ -176,6 +181,9 @@ func (i InfoStoreAdaptor) TableIsView(schema, table model.CIStr) bool {
 // TableByName implements the InfoSchema interface.
 // nolint:unused
 func (i InfoStoreAdaptor) TableByName(schema, table model.CIStr) (t table.Table, err error) {
+	if table.L == "v1" || table.L == "v2" {
+		log.Info("wwz TableByName", zap.String("table", table.String()))
+	}
 	tableInfo, err := i.inner.TableByName(schema, table)
 	if err != nil {
 		return nil, err
