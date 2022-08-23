@@ -2205,7 +2205,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if err != nil {
 			return firstNext, err
 		}
-		firstNext = false
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
@@ -2231,6 +2230,18 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if rowCount == 0 {
 			break
 		}
+
+		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
+			switch value.(string) {
+			case "secondNextAndRetConflict":
+				// rowCount != 0 means the second or more valid calling Next
+				if !firstNext {
+					failpoint.Return(firstNext, kv.ErrWriteConflict)
+				}
+			}
+		})
+
+		firstNext = false
 		reg := trace.StartRegion(ctx, "WriteClientConn")
 		if stmtDetail != nil {
 			start = time.Now()
