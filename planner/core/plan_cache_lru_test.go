@@ -15,6 +15,7 @@ package core
 
 import (
 	"container/list"
+	"github.com/pingcap/tidb/util/hack"
 	"testing"
 
 	"github.com/pingcap/tidb/util/kvcache"
@@ -97,7 +98,7 @@ func TestLRUPCPut(t *testing.T) {
 	// test for non-existent elements
 	require.Len(t, maxMemDroppedKv, 2)
 	for i := 0; i < 2; i++ {
-		bucket, exist := lru.buckets[string(keys[i].Hash())]
+		bucket, exist := lru.buckets[hack.String(keys[i].Hash())]
 		require.True(t, exist)
 		for _, element := range bucket {
 			require.NotEqual(t, vals[i], element.Value.(*CacheEntry).PlanValue)
@@ -118,7 +119,7 @@ func TestLRUPCPut(t *testing.T) {
 		require.NotNil(t, key)
 		require.Equal(t, keys[i], key)
 
-		bucket, exist := lru.buckets[string(keys[i].Hash())]
+		bucket, exist := lru.buckets[hack.String(keys[i].Hash())]
 		require.True(t, exist)
 		element, _, exist := lru.pickFromBucket(bucket, pTypes[i])
 		require.NotNil(t, element)

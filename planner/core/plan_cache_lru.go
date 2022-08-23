@@ -15,6 +15,7 @@ package core
 
 import (
 	"container/list"
+	"github.com/pingcap/tidb/util/hack"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -31,7 +32,7 @@ type LRUPlanCache struct {
 	capacity uint
 	size     uint
 	// buckets replace the map in general LRU
-	buckets map[string][]*list.Element
+	buckets map[hack.MutableString][]*list.Element
 
 	// pickFromBucket set rules to get one element from bucket.
 	pickFromBucket func([]*list.Element, interface{}) (*list.Element, int, bool)
@@ -50,7 +51,7 @@ func NewLRUPlanCache(capacity uint) *LRUPlanCache {
 	return &LRUPlanCache{
 		capacity: capacity,
 		size:     0,
-		buckets:  make(map[string][]*list.Element),
+		buckets:  make(map[hack.MutableString][]*list.Element),
 		onEvict:  nil,
 		cache:    list.New(),
 	}
@@ -68,7 +69,7 @@ func (l *LRUPlanCache) SetPickFromBucket(pick func([]*list.Element, interface{})
 
 // Get tries to find the corresponding value according to the given key.
 func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes interface{}) (value kvcache.Value, ok bool) {
-	bucket, bucketExist := l.buckets[string(key.Hash())]
+	bucket, bucketExist := l.buckets[hack.String(key.Hash())]
 	if bucketExist {
 		if element, _, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.cache.MoveToFront(element)
@@ -80,7 +81,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes interface{}) (value kvcac
 
 // Put puts the (key, value) pair into the LRU Cache.
 func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes interface{}) {
-	hash := string(key.Hash())
+	hash := hack.String(key.Hash())
 	bucket, bucketExist := l.buckets[hash]
 	// bucket exist
 	if bucketExist {
@@ -106,7 +107,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes inte
 
 // Delete deletes the multi-values from the LRU Cache.
 func (l *LRUPlanCache) Delete(key kvcache.Key) {
-	hash := string(key.Hash())
+	hash := hack.String(key.Hash())
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		for _, element := range bucket {
@@ -123,7 +124,7 @@ func (l *LRUPlanCache) DeleteAll() {
 		l.cache.Remove(lru)
 		l.size--
 	}
-	l.buckets = make(map[string][]*list.Element)
+	l.buckets = make(map[hack.MutableString][]*list.Element)
 }
 
 // Size gets the current cache size.
@@ -178,7 +179,7 @@ func (l *LRUPlanCache) RemoveOldest() {
 
 // removeFromBucket remove element from bucket
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
-	hash := string(element.Value.(*CacheEntry).PlanKey.Hash())
+	hash := hack.String(element.Value.(*CacheEntry).PlanKey.Hash())
 	bucket := l.buckets[hash]
 	for i, ele := range bucket {
 		if ele == element {
