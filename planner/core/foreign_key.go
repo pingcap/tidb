@@ -182,6 +182,7 @@ func buildFKCheck(tbl table.Table, fk *model.FKInfo, cols []model.CIStr, checkEx
 	}, nil
 }
 
+// FKCheck indicates the foreign key constraint checker.
 type FKCheck struct {
 	FK         *model.FKInfo
 	Tbl        table.Table
