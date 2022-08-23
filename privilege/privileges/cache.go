@@ -1074,9 +1074,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	if priv == mysql.UsagePriv {
 		return true
 	}
-	if table == "v1" || table == "v2" {
-		log.Info("wwz MySQLPrivilege RequestVerification", zap.String("db", db), zap.String("table", table))
-	}
+	log.Info("wwz MySQLPrivilege RequestVerification", zap.String("user", user), zap.String("db", db), zap.String("table", table), zap.Stack("stack"))
 	roleList := p.FindAllUserEffectiveRoles(user, host, activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
 
@@ -1124,7 +1122,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	if columnPriv&priv > 0 {
 		return true
 	}
-
+	log.Info("wwz MySQLPrivilege RequestVerification result", zap.String("db", db), zap.String("table", table), zap.Bool("result", priv == 0))
 	return priv == 0
 }
 

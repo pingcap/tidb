@@ -4882,7 +4882,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}
 	defer deferFunc()
 
-	log.Info("BuildDataSourceFromView wwz", zap.String("db", dbName.String()), zap.String("tableinfo", tableInfo.Name.String()))
+	log.Info("BuildDataSourceFromView wwz", zap.String("db", dbName.String()), zap.String("tableinfo", tableInfo.Name.String()), zap.Stack("stack"))
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
 	viewParser.SetParserConfig(b.ctx.GetSessionVars().BuildParserConfig())
@@ -4890,8 +4890,14 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	if err != nil {
 		return nil, err
 	}
+	for _, v := range b.visitInfo {
+		log.Info("wwz real originalVisitInfo", zap.Any("visitInfo", v.Table))
+	}
 	originalVisitInfo := make([]visitInfo, len(b.visitInfo))
 	copy(originalVisitInfo, b.visitInfo)
+	for _, v := range originalVisitInfo {
+		log.Info("wwz after originalVisitInfo", zap.Any("visitInfo", v.Table))
+	}
 	b.visitInfo = make([]visitInfo, 0)
 
 	//For the case that views appear in CTE queries,
@@ -4925,12 +4931,27 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	if tableInfo.View.Security == model.SecurityDefiner {
 		if pm := privilege.GetPrivilegeManager(b.ctx); pm != nil {
 			for _, v := range b.visitInfo {
-				if !pm.RequestVerificationWithUser(v.db, v.table, v.column, v.privilege, tableInfo.View.Definer) {
-					return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+				log.Info("current wwz", zap.Any("definer", tableInfo.View.Definer), zap.Bool("CurrentUser", tableInfo.View.Definer.CurrentUser))
+				if tableInfo.View.Definer.CurrentUser {
+					if !pm.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, v.db, v.Table, v.column, v.privilege) {
+						log.Info("warning wwz fix ok ????")
+						return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+					}
+				} else {
+					if !pm.RequestVerificationWithUser(v.db, v.Table, v.column, v.privilege, tableInfo.View.Definer) {
+						return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+					}
 				}
 			}
 		}
+		for _, v := range b.visitInfo[:0] {
+			log.Info("wwz b.visitInfo[:0]", zap.Any("visitInfo", v.Table))
+		}
 		b.visitInfo = b.visitInfo[:0]
+	}
+
+	for _, v := range originalVisitInfo {
+		log.Info("wwz originalVisitInfo", zap.Any("visitInfo", v.Table))
 	}
 	b.visitInfo = append(originalVisitInfo, b.visitInfo...)
 
@@ -4943,7 +4964,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 	}
 	for _, v := range b.visitInfo {
-		log.Info("wwz wwz", zap.Any("visitInfo", v))
+		log.Info("wwz wwz", zap.Any("visitInfo", v.Table))
 	}
 
 	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
@@ -6730,7 +6751,7 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 	return append(vi, visitInfo{
 		privilege: priv,
 		db:        db,
-		table:     tbl,
+		Table:     tbl,
 		column:    col,
 		err:       err,
 	})

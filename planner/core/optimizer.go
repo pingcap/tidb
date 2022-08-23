@@ -153,7 +153,7 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 // CheckPrivilege checks the privilege for a user.
 func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
 	for _, v := range vs {
-		log.Info("wwz CheckPrivilege", zap.String("table", v.table))
+		log.Info("wwz CheckPrivilege", zap.String("table", v.Table))
 		if v.privilege == mysql.ExtendedPriv {
 			if !pm.RequestDynamicVerification(activeRoles, v.dynamicPriv, v.dynamicWithGrant) {
 				if v.err == nil {
@@ -161,7 +161,7 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 				}
 				return v.err
 			}
-		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
+		} else if !pm.RequestVerification(activeRoles, v.db, v.Table, v.column, v.privilege) {
 			if v.err == nil {
 				return ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
 			}
@@ -188,7 +188,7 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 					// `CREATE TEMPORARY TABLE` privilege is required from the database, not the table.
 					newVisitInfo := v
 					newVisitInfo.privilege = mysql.CreateTMPTablePriv
-					newVisitInfo.table = ""
+					newVisitInfo.Table = ""
 					privVisitInfo = append(privVisitInfo, newVisitInfo)
 				} else {
 					// If both the normal table and temporary table already exist, we need to check the privilege.
@@ -230,9 +230,9 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 }
 
 func needCheckTmpTablePriv(is infoschema.InfoSchema, v visitInfo) bool {
-	if v.db != "" && v.table != "" {
+	if v.db != "" && v.Table != "" {
 		// Other statements on local temporary tables except `CREATE` do not check any privileges.
-		tb, err := is.TableByName(model.NewCIStr(v.db), model.NewCIStr(v.table))
+		tb, err := is.TableByName(model.NewCIStr(v.db), model.NewCIStr(v.Table))
 		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
 		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
 			return false
@@ -249,7 +249,7 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
-		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
+		err := checker.CheckTableLock(vs[i].db, vs[i].Table, vs[i].privilege, vs[i].alterWritable)
 		// if table with lock-write table dropped, we can access other table, such as `rename` operation
 		if err == lock.ErrLockedTableDropped {
 			break

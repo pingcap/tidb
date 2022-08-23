@@ -71,7 +71,7 @@ import (
 type visitInfo struct {
 	privilege        mysql.PrivilegeType
 	db               string
-	table            string
+	Table            string
 	column           string
 	err              error
 	alterWritable    bool
@@ -600,7 +600,7 @@ func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
 		return false
 	}
 	for _, v := range b.visitInfo {
-		tbl := &stmtctx.TableEntry{DB: v.db, Table: v.table}
+		tbl := &stmtctx.TableEntry{DB: v.db, Table: v.Table}
 		if !existsFunc(tables, tbl) {
 			tables = append(tables, *tbl)
 		}

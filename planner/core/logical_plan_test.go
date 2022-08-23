@@ -1444,7 +1444,7 @@ func (v visitInfoArray) Less(i, j int) bool {
 	if v[i].db < v[j].db {
 		return true
 	}
-	if v[i].table < v[j].table {
+	if v[i].Table < v[j].Table {
 		return true
 	}
 	if v[i].column < v[j].column {

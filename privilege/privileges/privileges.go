@@ -178,7 +178,9 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
-	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
+	result := mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
+	log.Info("RequestVerificationWithUser wwz", zap.String("Username", user.Username), zap.String("table", table), zap.Bool("result", result))
+	return result
 }
 
 func (p *UserPrivileges) isValidHash(record *UserRecord) bool {

@@ -1083,7 +1083,7 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, ch
 		visitInfos = append(visitInfos, visitInfo{
 			privilege: checkType,
 			db:        dbName,
-			table:     tableName,
+			Table:     tableName,
 			column:    "",
 			err:       nil,
 		})
