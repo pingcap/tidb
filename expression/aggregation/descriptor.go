@@ -123,8 +123,6 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		partialAggDesc.Mode = Partial1Mode
 	} else if a.Mode == FinalMode {
 		partialAggDesc.Mode = Partial2Mode
-	} else {
-		panic("Error happened during AggFuncDesc.Split, the AggFunctionMode is not CompleteMode or FinalMode.")
 	}
 	finalAggDesc = &AggFuncDesc{
 		Mode:        FinalMode, // We only support FinalMode now in final phase.
