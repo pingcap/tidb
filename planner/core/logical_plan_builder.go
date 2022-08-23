@@ -1514,21 +1514,16 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 }
 
 // Set the flen of the union column using the max flen in children.
-func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, colIndex int, u *LogicalUnionAll) {
-	if resultTp.GetCharset() == charset.CharsetBin {
-		for j := 0; j < len(u.children); j++ {
-			childTp := u.children[j].Schema().Columns[colIndex].RetType
-			childTpCharLen := charset.CharacterSetInfos[childTp.GetCharset()].Maxlen
-			if totalLength := childTpCharLen * childTp.GetFlen(); resultTp.GetFlen() < totalLength {
-				resultTp.SetFlen(totalLength)
-			}
+func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.Expression) {
+	isBinary := resultTp.GetCharset() == charset.CharsetBin
+	for i := 0; i < len(cols); i++ {
+		childTp := cols[i].GetType()
+		childTpCharLen := 1
+		if isBinary {
+			childTpCharLen = charset.CharacterSetInfos[childTp.GetCharset()].Maxlen
 		}
-	} else {
-		for j := 0; j < len(u.children); j++ {
-			childTp := u.children[j].Schema().Columns[colIndex].RetType
-			if resultTp.GetFlen() < childTp.GetFlen() {
-				resultTp.SetFlen(childTp.GetFlen())
-			}
+		if totalLength := childTpCharLen * childTp.GetFlen(); resultTp.GetFlen() < totalLength {
+			resultTp.SetFlen(totalLength)
 		}
 	}
 }
@@ -1553,7 +1548,7 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAl
 		}
 		resultTp.SetCharset(collation.Charset)
 		resultTp.SetCollate(collation.Collation)
-		b.setUnionFlen(resultTp, i, u)
+		b.setUnionFlen(resultTp, tmpExprs)
 		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
