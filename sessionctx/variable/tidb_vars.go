@@ -884,7 +884,7 @@ const (
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
-	DefTiDBEnableOuterJoinReorder                  = true
+	DefTiDBEnableOuterJoinReorder                  = false
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBHashExchangeWithNewCollation            = true
@@ -961,6 +961,7 @@ const (
 	DefTiDBRegardNULLAsPoint                       = true
 	DefEnablePlacementCheck                        = true
 	DefTimestamp                                   = "0"
+	DefTimestampFloat                              = 0.0
 	DefTiDBEnableStmtSummary                       = true
 	DefTiDBStmtSummaryInternalQuery                = false
 	DefTiDBStmtSummaryRefreshInterval              = 1800
