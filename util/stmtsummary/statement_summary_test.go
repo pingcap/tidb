@@ -67,7 +67,7 @@ func TestAddStatement(t *testing.T) {
 
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.ExecDetail.CommitDetail.Mu.BackoffTypes = make([]string, 0)
+	stmtExecInfo1.ExecDetail.CommitDetail.Mu.PrewriteBackoffTypes = make([]string, 0)
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
@@ -185,15 +185,17 @@ func TestAddStatement(t *testing.T) {
 				LocalLatchTime:  50,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime   int64
-					BackoffTypes        []string
-					SlowestReqTotalTime time.Duration
-					SlowestRegion       uint64
-					SlowestStoreAddr    string
-					SlowestExecDetails  util.TiKVExecDetails
+					CommitBackoffTime    int64
+					PrewriteBackoffTypes []string
+					CommitBackoffTypes   []string
+					SlowestPrewrite      util.ReqDetailInfo
+					CommitPrimary        util.ReqDetailInfo
 				}{
-					CommitBackoffTime: 1000,
-					BackoffTypes:      []string{boTxnLockName},
+					CommitBackoffTime:    1000,
+					PrewriteBackoffTypes: []string{boTxnLockName},
+					CommitBackoffTypes:   []string{},
+					SlowestPrewrite:      util.ReqDetailInfo{},
+					CommitPrimary:        util.ReqDetailInfo{},
 				},
 				WriteKeys:         100000,
 				WriteSize:         1000000,
@@ -321,15 +323,17 @@ func TestAddStatement(t *testing.T) {
 				LocalLatchTime:  5,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime   int64
-					BackoffTypes        []string
-					SlowestReqTotalTime time.Duration
-					SlowestRegion       uint64
-					SlowestStoreAddr    string
-					SlowestExecDetails  util.TiKVExecDetails
+					CommitBackoffTime    int64
+					PrewriteBackoffTypes []string
+					CommitBackoffTypes   []string
+					SlowestPrewrite      util.ReqDetailInfo
+					CommitPrimary        util.ReqDetailInfo
 				}{
-					CommitBackoffTime: 100,
-					BackoffTypes:      []string{boTxnLockName},
+					CommitBackoffTime:    100,
+					PrewriteBackoffTypes: []string{boTxnLockName},
+					CommitBackoffTypes:   []string{},
+					SlowestPrewrite:      util.ReqDetailInfo{},
+					CommitPrimary:        util.ReqDetailInfo{},
 				},
 				WriteKeys:         10000,
 				WriteSize:         100000,
@@ -611,15 +615,17 @@ func generateAnyExecInfo() *StmtExecInfo {
 				LocalLatchTime:  10,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime   int64
-					BackoffTypes        []string
-					SlowestReqTotalTime time.Duration
-					SlowestRegion       uint64
-					SlowestStoreAddr    string
-					SlowestExecDetails  util.TiKVExecDetails
+					CommitBackoffTime    int64
+					PrewriteBackoffTypes []string
+					CommitBackoffTypes   []string
+					SlowestPrewrite      util.ReqDetailInfo
+					CommitPrimary        util.ReqDetailInfo
 				}{
-					CommitBackoffTime: 200,
-					BackoffTypes:      []string{boTxnLockName},
+					CommitBackoffTime:    200,
+					PrewriteBackoffTypes: []string{boTxnLockName},
+					CommitBackoffTypes:   []string{},
+					SlowestPrewrite:      util.ReqDetailInfo{},
+					CommitPrimary:        util.ReqDetailInfo{},
 				},
 				WriteKeys:         20000,
 				WriteSize:         200000,

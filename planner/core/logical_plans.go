@@ -1277,6 +1277,31 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	return gathers
 }
 
+func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, conds []expression.Expression) error {
+	if len(path.IdxCols) == 0 {
+		path.TableFilters = conds
+		return nil
+	}
+	res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
+	if err != nil {
+		return err
+	}
+	path.Ranges = res.Ranges
+	path.AccessConds = res.AccessConds
+	path.TableFilters = res.RemainedConds
+	path.EqCondCount = res.EqCondCount
+	path.EqOrInCondCount = res.EqOrInCount
+	path.IsDNFCond = res.IsDNFCond
+	path.ConstCols = make([]bool, len(path.IdxCols))
+	if res.ColumnValues != nil {
+		for i := range path.ConstCols {
+			path.ConstCols[i] = res.ColumnValues[i] != nil
+		}
+	}
+	path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, path.Index.ID, path.Ranges)
+	return err
+}
+
 func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
 	path.Ranges = ranger.FullNotNullRange()
@@ -1285,29 +1310,8 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	if len(conds) == 0 {
 		return nil
 	}
-	if len(path.IdxCols) != 0 {
-		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
-		if err != nil {
-			return err
-		}
-		path.Ranges = res.Ranges
-		path.AccessConds = res.AccessConds
-		path.TableFilters = res.RemainedConds
-		path.EqCondCount = res.EqCondCount
-		path.EqOrInCondCount = res.EqOrInCount
-		path.IsDNFCond = res.IsDNFCond
-		path.ConstCols = make([]bool, len(path.IdxCols))
-		if res.ColumnValues != nil {
-			for i := range path.ConstCols {
-				path.ConstCols[i] = res.ColumnValues[i] != nil
-			}
-		}
-		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, path.Index.ID, path.Ranges)
-		if err != nil {
-			return err
-		}
-	} else {
-		path.TableFilters = conds
+	if err := ds.detachCondAndBuildRangeForPath(path, conds); err != nil {
+		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
@@ -1439,31 +1443,8 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 			}
 		}
 	}
-	if len(path.IdxCols) != 0 {
-		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
-		if err != nil {
-			return err
-		}
-		path.Ranges = res.Ranges
-		path.AccessConds = res.AccessConds
-		path.TableFilters = res.RemainedConds
-		path.EqCondCount = res.EqCondCount
-		path.EqOrInCondCount = res.EqOrInCount
-		path.IsDNFCond = res.IsDNFCond
-		path.ConstCols = make([]bool, len(path.IdxCols))
-		if res.ColumnValues != nil {
-			for i := range path.ConstCols {
-				path.ConstCols[i] = res.ColumnValues[i] != nil
-			}
-		}
-		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, path.Index.ID, path.Ranges)
-		if err != nil {
-			return err
-		}
-	} else {
-		path.TableFilters = conds
-	}
-	return nil
+	err := ds.detachCondAndBuildRangeForPath(path, conds)
+	return err
 }
 
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
