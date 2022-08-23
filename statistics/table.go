@@ -1395,5 +1395,9 @@ func recordUsedItemStatsStatus(sctx sessionctx.Context, col *Column, idx *Index,
 	} else if !isIndex && col != nil {
 		status = col.StatusToString()
 	}
+	// For some testcases, it skips ResetContextOfStmt to init StatsLoadStatus
+	if stmtCtx.StatsLoadStatus == nil {
+		stmtCtx.StatsLoadStatus = make(map[model.TableItemID]string)
+	}
 	stmtCtx.StatsLoadStatus[item] = status
 }
