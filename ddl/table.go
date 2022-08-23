@@ -1154,11 +1154,6 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 		return ver, errors.Trace(err)
 	}
 
-	if replicaInfo.Count > 0 && tableHasPlacementSettings(tblInfo) {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
-	}
-
 	// Ban setting replica count for tables in system database.
 	if tidb_util.IsMemOrSysDB(job.SchemaName) {
 		return ver, errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
@@ -1519,11 +1514,6 @@ func onAlterTablePartitionPlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return 0, err
 	}
 
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
-	}
-
 	ptInfo := tblInfo.GetPartitionInfo()
 	var partitionDef *model.PartitionDefinition
 	definitions := ptInfo.Definitions
@@ -1587,11 +1577,6 @@ func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
-	}
-
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
 	}
 
 	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, policyRefInfo); err != nil {

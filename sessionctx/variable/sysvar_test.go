@@ -707,7 +707,6 @@ func TestSkipInitIsUsed(t *testing.T) {
 				TiDBSnapshot,
 				TiDBEnableChunkRPC,
 				TxnIsolationOneShot,
-				TiDBOptimizerEnableOuterJoinReorder,
 				TiDBDDLReorgPriority,
 				TiDBSlowQueryFile,
 				TiDBWaitSplitRegionFinish,
