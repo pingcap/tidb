@@ -15,13 +15,16 @@
 package addindexlittest
 
 import (
-	"fmt"
+	"context"
 	"strconv"
-	"strings"
+	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 const (
@@ -30,31 +33,46 @@ const (
 )
 
 type suiteContext struct {
-	t           *testing.T
-	tk          *testkit.TestKit
-	IsUnique    bool
-	IsPK        bool
-	HasWorkload bool
-	EndWorkload bool
-	TableNum    int
-	ColNum      int
-	RowNum      int
-	Wl          workload
+	ctx      context.Context
+	cancel   func()
+	store    kv.Storage
+	t        *testing.T
+	tk       *testkit.TestKit
+	isUnique bool
+	isPK     bool
+	tableNum int
+	colNum   int
+	rowNum   int
+	workload *workload
+	tkPool   *sync.Pool
 }
 
-func newSuiteContext(t *testing.T, tk *testkit.TestKit) *suiteContext {
-	return &suiteContext{
-		t:        t,
-		tk:       tk,
-		TableNum: 3,
-		ColNum:   28,
-		RowNum:   64,
+func (s *suiteContext) getTestKit() *testkit.TestKit {
+	return s.tkPool.Get().(*testkit.TestKit)
+}
+
+func (s *suiteContext) putTestKit(tk *testkit.TestKit) {
+	s.tkPool.Put(tk)
+}
+
+func (s *suiteContext) done() bool {
+	select {
+	case <-s.ctx.Done():
+		return true
+	default:
+		return false
 	}
 }
 
-type workload interface {
-	StartWorkload(ctx *suiteContext, ID ...int) error
-	StopWorkload(ctx *suiteContext) error
+func newSuiteContext(t *testing.T, tk *testkit.TestKit, store kv.Storage) *suiteContext {
+	return &suiteContext{
+		store:    store,
+		t:        t,
+		tk:       tk,
+		tableNum: 3,
+		colNum:   28,
+		rowNum:   64,
+	}
 }
 
 func genTableStr(tableName string) string {
@@ -98,21 +116,19 @@ func genPartTableStr() (tableDefs []string) {
 	return
 }
 
-func createTable(ctx *suiteContext) {
+func createTable(tk *testkit.TestKit) {
 	for i := 0; i < nonPartTabNum; i++ {
 		tableName := "t" + strconv.Itoa(i)
 		tableDef := genTableStr(tableName)
-		_, err := ctx.tk.Exec(tableDef)
-		require.NoError(ctx.t, err)
+		tk.MustExec(tableDef)
 	}
 	tableDefs := genPartTableStr()
 	for _, tableDef := range tableDefs {
-		_, err := ctx.tk.Exec(tableDef)
-		require.NoError(ctx.t, err)
+		tk.MustExec(tableDef)
 	}
 }
 
-func insertRows(ctx *suiteContext) {
+func insertRows(tk *testkit.TestKit) {
 	var (
 		insStr string
 		values []string = []string{
@@ -186,8 +202,7 @@ func insertRows(ctx *suiteContext) {
 		insStr = "insert into addindexlit.t" + strconv.Itoa(i) + " (c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28) values"
 		for _, value := range values {
 			insStr := insStr + value
-			_, err := ctx.tk.Exec(insStr)
-			require.NoError(ctx.t, err)
+			tk.MustExec(insStr)
 		}
 	}
 }
@@ -195,32 +210,32 @@ func insertRows(ctx *suiteContext) {
 func createIndexOneCol(ctx *suiteContext, tableID int, colID int) error {
 	addIndexStr := " add index idx"
 	var ddlStr string
-	if ctx.IsPK {
+	if ctx.isPK {
 		addIndexStr = " add primary key idx"
-	} else if ctx.IsUnique {
+	} else if ctx.isUnique {
 		addIndexStr = " add unique index idx"
 	}
 	length := 4
-	if ctx.IsUnique && colID == 19 {
+	if ctx.isUnique && colID == 19 {
 		length = 16
 	}
-	if !(ctx.IsPK || ctx.IsUnique) || tableID == 0 || (ctx.IsPK && tableID > 0) {
+	if !(ctx.isPK || ctx.isUnique) || tableID == 0 || (ctx.isPK && tableID > 0) {
 		if colID >= 18 && colID < 29 {
 			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c" + strconv.Itoa(colID) + "(" + strconv.Itoa(length) + "))"
 		} else {
 			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c" + strconv.Itoa(colID) + ")"
 		}
-	} else if (ctx.IsUnique) && tableID > 0 {
+	} else if (ctx.isUnique) && tableID > 0 {
 		if colID >= 18 && colID < 29 {
 			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + "(" + strconv.Itoa(length) + "))"
 		} else {
 			ddlStr = "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + ")"
 		}
 	}
-	fmt.Printf("log ddlStr: %q\n", ddlStr)
+	logutil.BgLogger().Info("[add index test] createIndexOneCol", zap.String("sql", ddlStr))
 	_, err := ctx.tk.Exec(ddlStr)
 	if err != nil {
-		if ctx.IsUnique || ctx.IsPK {
+		if ctx.isUnique || ctx.isPK {
 			require.Contains(ctx.t, err.Error(), "Duplicate entry")
 		} else {
 			require.NoError(ctx.t, err)
@@ -232,9 +247,9 @@ func createIndexOneCol(ctx *suiteContext, tableID int, colID int) error {
 func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int, colID2 int) error {
 	var colID1Str, colID2Str string
 	addIndexStr := " add index idx"
-	if ctx.IsPK {
+	if ctx.isPK {
 		addIndexStr = " add primary key idx"
-	} else if ctx.IsUnique {
+	} else if ctx.isUnique {
 		addIndexStr = " add unique index idx"
 	}
 	if colID1 >= 18 && colID1 < 29 {
@@ -248,56 +263,56 @@ func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int,
 		colID2Str = strconv.Itoa(colID2)
 	}
 	ddlStr := "alter table addindexlit.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(indexID) + "(c" + colID1Str + ", c" + colID2Str + ")"
-	fmt.Printf("log ddlStr: %q\n", ddlStr)
+	logutil.BgLogger().Info("[add index test] createIndexTwoCols", zap.String("sql", ddlStr))
 	_, err := ctx.tk.Exec(ddlStr)
 	if err != nil {
-		fmt.Printf("create index failed, ddl: %q, err: %q", ddlStr, err.Error())
+		logutil.BgLogger().Error("[add index test] add index failed",
+			zap.String("sql", ddlStr), zap.Error(err))
 	}
 	require.NoError(ctx.t, err)
 	return err
 }
 
 func checkResult(ctx *suiteContext, tableName string, indexID int) {
-	_, err := ctx.tk.Exec("admin check index " + tableName + " idx" + strconv.Itoa(indexID))
-	fmt.Printf("log ddlStr: %q\n", "admin check index "+tableName+" idx"+strconv.Itoa(indexID))
+	adminCheckSQL := "admin check index " + tableName + " idx" + strconv.Itoa(indexID)
+	_, err := ctx.tk.Exec(adminCheckSQL)
+	logutil.BgLogger().Error("[add index test] checkResult", zap.String("sql", adminCheckSQL))
 	require.NoError(ctx.t, err)
 	require.Equal(ctx.t, ctx.tk.Session().AffectedRows(), uint64(0))
 	_, err = ctx.tk.Exec("alter table " + tableName + " drop index idx" + strconv.Itoa(indexID))
 	if err != nil {
-		fmt.Printf("drop index failed, ddl: %q, err: %q", "alter table "+tableName+" drop index idx"+strconv.Itoa(indexID), err.Error())
+		logutil.BgLogger().Error("[add index test] drop index failed",
+			zap.String("sql", adminCheckSQL), zap.Error(err))
 	}
 	require.NoError(ctx.t, err)
 }
 
 func checkTableResult(ctx *suiteContext, tableName string) {
-	_, err := ctx.tk.Exec("admin check table " + tableName)
-	fmt.Printf("log ddlStr: %q\n", "admin check table "+tableName)
+	adminCheckSQL := "admin check table " + tableName
+	_, err := ctx.tk.Exec(adminCheckSQL)
+	logutil.BgLogger().Error("[add index test] checkTableResult", zap.String("sql", adminCheckSQL))
 	require.NoError(ctx.t, err)
 	require.Equal(ctx.t, ctx.tk.Session().AffectedRows(), uint64(0))
 }
 
 func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, int, string, int) error) {
-	for tableID := 0; tableID < ctx.TableNum; tableID++ {
+	for tableID := 0; tableID < ctx.tableNum; tableID++ {
 		tableName := "addindexlit.t" + strconv.Itoa(tableID)
 		for _, i := range colIDs[tableID] {
-			if ctx.HasWorkload {
-				// Start workload
-				go func() {
-					_ = ctx.Wl.StartWorkload(ctx, tableID, i)
-				}()
+			if ctx.workload != nil {
+				ctx.workload.start(ctx, tableID, i)
 			}
 			err := f(ctx, tableID, tableName, i)
 			if err != nil {
-				if ctx.IsUnique || ctx.IsPK {
+				if ctx.isUnique || ctx.isPK {
 					require.Contains(ctx.t, err.Error(), "Duplicate entry")
 				} else {
-					fmt.Printf("create index failed, err: %q", err.Error())
+					logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
 					require.NoError(ctx.t, err)
 				}
 			}
-			if ctx.HasWorkload {
-				// Stop workload
-				_ = ctx.Wl.StopWorkload(ctx)
+			if ctx.workload != nil {
+				_ = ctx.workload.stop(ctx)
 			}
 			if err == nil {
 				checkResult(ctx, tableName, i)
@@ -307,25 +322,22 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 }
 
 func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*suiteContext, int, string, int, int, int) error) {
-	for tableID := 0; tableID < ctx.TableNum; tableID++ {
+	for tableID := 0; tableID < ctx.tableNum; tableID++ {
 		tableName := "addindexlit.t" + strconv.Itoa(tableID)
 		indexID := 0
 		for _, i := range iIDs[tableID] {
 			for _, j := range jIDs[tableID] {
-				if ctx.HasWorkload {
-					// Start workload
-					go func() {
-						_ = ctx.Wl.StartWorkload(ctx, tableID, i, j)
-					}()
+				if ctx.workload != nil {
+					ctx.workload.start(ctx, tableID, i, j)
 				}
 				err := f(ctx, tableID, tableName, indexID, i, j)
 				if err != nil {
-					fmt.Printf("create index failed, err: %q", err.Error())
+					logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
 				}
 				require.NoError(ctx.t, err)
-				if ctx.HasWorkload {
+				if ctx.workload != nil {
 					// Stop workload
-					_ = ctx.Wl.StopWorkload(ctx)
+					_ = ctx.workload.stop(ctx)
 				}
 				if err == nil && i != j {
 					checkResult(ctx, tableName, indexID)
@@ -337,27 +349,21 @@ func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*sui
 }
 
 func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, string, int) error) {
-	for tableID := 0; tableID < ctx.TableNum; tableID++ {
+	for tableID := 0; tableID < ctx.tableNum; tableID++ {
 		tableName := "addindexlit.t" + strconv.Itoa(tableID)
-		if ctx.HasWorkload {
-			// Start workload
-			go func() {
-				_ = ctx.Wl.StartWorkload(ctx, tableID, colID)
-			}()
+		if ctx.workload != nil {
+			ctx.workload.start(ctx, tableID, colID)
 		}
 		err := f(ctx, tableID, tableName, colID)
 		if err != nil {
-			fmt.Printf("create index failed, err: %q", err.Error())
+			logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
 		}
 		require.NoError(ctx.t, err)
-		if ctx.HasWorkload {
-			// Stop workload
-			go func() {
-				_ = ctx.Wl.StopWorkload(ctx)
-			}()
+		if ctx.workload != nil {
+			_ = ctx.workload.stop(ctx)
 		}
 		if err == nil {
-			if ctx.IsPK {
+			if ctx.isPK {
 				checkTableResult(ctx, tableName)
 			} else {
 				checkResult(ctx, tableName, colID)
@@ -367,57 +373,56 @@ func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, 
 }
 
 func addIndexLitNonUnique(ctx *suiteContext, tableID int, tableName string, indexID int) (err error) {
-	ctx.IsPK = false
-	ctx.IsUnique = false
+	ctx.isPK = false
+	ctx.isUnique = false
 	err = createIndexOneCol(ctx, tableID, indexID)
 	return err
 }
 
 func addIndexLitUnique(ctx *suiteContext, tableID int, tableName string, indexID int) (err error) {
-	ctx.IsPK = false
-	ctx.IsUnique = true
+	ctx.isPK = false
+	ctx.isUnique = true
 	if indexID == 0 || indexID == 6 || indexID == 11 || indexID == 19 || tableID > 0 {
 		err = createIndexOneCol(ctx, tableID, indexID)
 		if err != nil {
-			fmt.Printf("create index failed, err: %q", err.Error())
+			logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
 		} else {
-			fmt.Printf("create index success: %q, %q\n", tableName, indexID)
+			logutil.BgLogger().Info("[add index test] add index success",
+				zap.String("table name", tableName), zap.Int("index ID", indexID))
 		}
 		require.NoError(ctx.t, err)
 	} else {
 		err = createIndexOneCol(ctx, tableID, indexID)
 		if err != nil {
-			pos := strings.Index(err.Error(), "1062")
-			require.Greater(ctx.t, pos, 0)
-			if pos > 0 {
-				fmt.Printf("create index failed: %q, %q, %q\n", tableName, indexID, err.Error())
-			}
+			require.Contains(ctx.t, err.Error(), "1062")
+			logutil.BgLogger().Error("[add index test] add index failed",
+				zap.Error(err), zap.String("table name", tableName), zap.Int("index ID", indexID))
 		}
 	}
 	return err
 }
 
 func addIndexLitPK(ctx *suiteContext, tableID int, tableName string, colID int) (err error) {
-	ctx.IsPK = true
-	ctx.IsUnique = false
+	ctx.isPK = true
+	ctx.isUnique = false
 	err = createIndexOneCol(ctx, tableID, 0)
 	return err
 }
 
 func addIndexLitGenCol(ctx *suiteContext, tableID int, tableName string, colID int) (err error) {
-	ctx.IsPK = false
-	ctx.IsUnique = false
+	ctx.isPK = false
+	ctx.isUnique = false
 	err = createIndexOneCol(ctx, tableID, 29)
 	return err
 }
 
 func addIndexLitMultiCols(ctx *suiteContext, tableID int, tableName string, indexID int, colID1 int, colID2 int) (err error) {
-	ctx.IsPK = false
-	ctx.IsUnique = false
+	ctx.isPK = false
+	ctx.isUnique = false
 	if colID1 != colID2 {
 		err = createIndexTwoCols(ctx, tableID, indexID, colID1, colID2)
 		if err != nil {
-			fmt.Printf("create index failed, err: %q", err.Error())
+			logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
 		}
 		require.NoError(ctx.t, err)
 	}

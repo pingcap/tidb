@@ -28,19 +28,18 @@ func initTest(t *testing.T) *suiteContext {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on`)
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
-	ctx := newSuiteContext(t, tk)
-	// create table
-	createTable(ctx)
-	insertRows(ctx)
-
+	ctx := newSuiteContext(t, tk, store)
+	createTable(tk)
+	insertRows(tk)
+	initWorkloadParams(ctx)
 	lit.GlobalEnv.PdAddr = "127.0.0.1:2379"
 	return ctx
 }
 
 func TestCreateNonUniqueIndex(t *testing.T) {
-	var colIDs [][]int = [][]int{
+	var colIDs = [][]int{
 		{1, 4, 7, 10, 13, 16, 19, 22, 25},
 		{2, 5, 8, 11, 14, 17, 20, 23, 26},
 		{3, 6, 9, 12, 15, 18, 21, 24, 27},
@@ -59,7 +58,7 @@ func TestCreateUniqueIndex(t *testing.T) {
 	testOneColFrame(ctx, colIDs, addIndexLitUnique)
 }
 
-func TestCreatePK(t *testing.T) {
+func TestCreatePrimaryKey(t *testing.T) {
 	ctx := initTest(t)
 	testOneIndexFrame(ctx, 0, addIndexLitPK)
 }
@@ -70,12 +69,12 @@ func TestCreateGenColIndex(t *testing.T) {
 }
 
 func TestCreateMultiColsIndex(t *testing.T) {
-	var coliIDs [][]int = [][]int{
+	var coliIDs = [][]int{
 		{1, 4, 7, 10, 13},
 		{2, 5, 8, 11},
 		{3, 6, 9, 12, 15},
 	}
-	var coljIDs [][]int = [][]int{
+	var coljIDs = [][]int{
 		{16, 19, 22, 25},
 		{14, 17, 20, 23, 26},
 		{18, 21, 24, 27},
