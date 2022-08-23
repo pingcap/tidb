@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	rpprof "runtime/pprof"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -188,6 +189,25 @@ func (h *memoryDebugModeHandler) genInfo(status string, needProfile bool, heapIn
 	return h.infoField, err
 }
 
+func (h *memoryDebugModeHandler) getTrackerTreeMemUseLogs() []zap.Field {
+	trackerMemUseMap := h.memTracker.CountAllChildrenMemUse()
+	logs := make([]zap.Field, 0, len(trackerMemUseMap))
+	var keys []string
+	for k, _ := range trackerMemUseMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		var name string
+		l := len(k)
+		if l > 4 {
+			name = k[:l-4]
+		}
+		logs = append(logs, zap.String("TrackerTree "+name, memory.FormatBytes(trackerMemUseMap[k])))
+	}
+	return logs
+}
+
 func (h *memoryDebugModeHandler) run() {
 	var err error
 	var fields []zap.Field
@@ -250,6 +270,7 @@ func (h *memoryDebugModeHandler) run() {
 						logs = append(logs, zap.String("Executor_"+strconv.Itoa(t.Label()), memory.FormatBytes(t.BytesConsumed())))
 					}
 					logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than threshold * 20%", logs...)
+					logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers and print the tracker tree", h.getTrackerTreeMemUseLogs()...)
 				}
 			}
 		}
