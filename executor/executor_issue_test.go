@@ -392,6 +392,25 @@ func TestIssue30971(t *testing.T) {
 	}
 }
 
+func TestIssue31678(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/31678
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("CREATE TABLE t1 (c VARCHAR(11)) CHARACTER SET utf8mb4")
+	tk.MustExec("CREATE TABLE t2 (b CHAR(1) CHARACTER SET binary, i INT)")
+	tk.MustExec("INSERT INTO t1 (c) VALUES ('н1234567890')")
+	tk.MustExec("INSERT INTO t2 (b, i) VALUES ('1', 1)")
+
+	tk.MustQuery("SELECT c FROM t1 UNION SELECT b FROM t2").Sort().Check(testkit.Rows("1", "н1234567890"))
+	tk.MustQuery("SELECT c FROM t1 UNION SELECT i FROM t2").Sort().Check(testkit.Rows("1", "н1234567890"))
+	tk.MustQuery("SELECT i FROM t2 UNION SELECT c FROM t1").Sort().Check(testkit.Rows("1", "н1234567890"))
+	tk.MustQuery("SELECT b FROM t2 UNION SELECT c FROM t1").Sort().Check(testkit.Rows("1", "н1234567890"))
+	tk.MustExec("DROP TABLE t1, t2;")
+}
+
 func TestIndexJoin31494(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
