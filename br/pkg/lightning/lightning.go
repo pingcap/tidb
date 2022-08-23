@@ -615,7 +615,8 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot read request", err)
 		return
 	}
-	log.L().Info("received task config", zap.ByteString("content", data))
+	filteredData := utils.HideSensitive(string(data))
+	log.L().Info("received task config", zap.String("content", filteredData))
 
 	cfg := config.NewConfig()
 	if err = cfg.LoadFromGlobal(l.globalCfg); err != nil {
