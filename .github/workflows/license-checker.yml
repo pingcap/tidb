@@ -3,10 +3,10 @@ name: License checker
 on:
   push:
     branches:
-      - master
+      - feature/ddl-as-service
   pull_request:
     branches:
-      - master
+      - feature/ddl-as-service
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}

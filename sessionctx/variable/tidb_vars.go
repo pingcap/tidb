@@ -797,6 +797,9 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBEnableDDLService indicates whether to enable the DDL service.
+	// When it is enabled, the current cluster will allow to run DDL jobs from other clusters registered in it.
+	TiDBEnableDDLService = "tidb_enable_ddl_service"
 )
 
 // TiDB intentional limits
@@ -1015,6 +1018,7 @@ const (
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableGeneralPlanCache                  = false
 	DefTiDBGeneralPlanCacheSize                    = 100
+	DefTiDBEnableDDLService                        = false
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize           int32  = 10240
 	MinDDLReorgBatchSize           int32  = 32
@@ -1065,6 +1069,8 @@ var (
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
+	// EnableDDLService indicates whether to enable DDL service
+	EnableDDLService = atomic.NewBool(DefTiDBEnableDDLService)
 )
 
 var (

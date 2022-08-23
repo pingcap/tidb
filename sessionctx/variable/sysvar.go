@@ -1774,6 +1774,12 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptInt64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableDDLService, Value: BoolToOnOff(DefTiDBEnableDDLService), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableDDLService.Load()), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		EnableDDLService.Store(TiDBOptOn(val))
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
