@@ -138,6 +138,7 @@ type S3BackendOptions struct {
 	UseAccelerateEndpoint bool   `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
 	RoleARN               string `json:"role-arn" toml:"role-arn"`
 	ExternalID            string `json:"external-id" toml:"external-id"`
+	ObjectLockEnabled     bool   `json:"object-lock-enabled" toml:"object-lock_enabled"`
 }
 
 // Apply apply s3 options on backuppb.S3.
@@ -402,7 +403,8 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		svc:     c,
 		options: &qs,
 	}
-	return s3Storage, s3Storage.checkObjectLockEnabled()
+	qs.ObjectLockEnabled = s3Storage.checkObjectLockEnabled()
+	return s3Storage, nil
 }
 
 // checkBucket checks if a bucket exists.
@@ -447,20 +449,21 @@ func getObject(svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
-func (rs *S3Storage) checkObjectLockEnabled() error {
+func (rs *S3Storage) checkObjectLockEnabled() bool {
 	input := &s3.GetObjectLockConfigurationInput{
 		Bucket: aws.String(rs.options.Bucket),
 	}
 	resp, err := rs.svc.GetObjectLockConfiguration(input)
 	if err != nil {
-		return errors.Trace(err)
+		log.Warn("failed to check object lock for bucket", zap.String("bucket", rs.options.Bucket), zap.Error(err))
+		return false
 	}
 	if resp.ObjectLockConfiguration != nil {
 		if s3.ObjectLockEnabledEnabled == *resp.ObjectLockConfiguration.ObjectLockEnabled {
 			rs.objectLockEnabled = true
 		}
 	}
-	return nil
+	return rs.objectLockEnabled
 }
 
 // WriteFile writes data to a file to storage.
