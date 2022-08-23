@@ -127,6 +127,11 @@ func (s *MemStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 	return append([]byte{}, fileData...), nil
 }
 
+// unimplement
+func (s *MemStorage) ReadRangeFile(ctx context.Context, name string, offset int64, length int64) ([]byte, error) {
+	return nil, nil
+}
+
 // FileExists return true if file exists.
 // It implements the `ExternalStorage` interface
 func (s *MemStorage) FileExists(ctx context.Context, name string) (bool, error) {

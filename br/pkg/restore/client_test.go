@@ -566,12 +566,10 @@ func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		nil,
 		func(
 			ctx context.Context,
 			files []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			metaFilesCache restore.MetaFilesCache,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 		) error {
@@ -601,12 +599,10 @@ func TestRestoreMetaKVFilesWithBatchMethod2(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		nil,
 		func(
 			ctx context.Context,
 			fs []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			metaFilesCache restore.MetaFilesCache,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 		) error {
@@ -659,12 +655,10 @@ func TestRestoreMetaKVFilesWithBatchMethod3(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		nil,
 		func(
 			ctx context.Context,
 			fs []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			metaFilesCache restore.MetaFilesCache,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 		) error {
@@ -712,12 +706,10 @@ func TestRestoreMetaKVFilesWithBatchMethod4(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		nil,
 		func(
 			ctx context.Context,
 			fs []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			metaFilesCache restore.MetaFilesCache,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 		) error {

@@ -292,6 +292,23 @@ func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, e
 	return data, err
 }
 
+func (s *AzureBlobStorage) ReadRangeFile(ctx context.Context, name string, offset int64, length int64) ([]byte, error) {
+	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
+	resp, err := client.Download(ctx, &azblob.DownloadBlobOptions{
+		Offset: &offset,
+		Count:  &length,
+	})
+	if err != nil {
+		return nil, errors.Annotatef(err, "Failed to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+	}
+	defer resp.RawResponse.Body.Close()
+	data, err := io.ReadAll(resp.Body(azblob.RetryReaderOptions{}))
+	if err != nil {
+		return nil, errors.Annotatef(err, "Failed to read azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+	}
+	return data, err
+}
+
 // FileExists checks if a file exists in Azure Blob Storage.
 func (s *AzureBlobStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))

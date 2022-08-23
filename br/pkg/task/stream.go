@@ -879,12 +879,17 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
+	helper, err := stream.BuildMetaDataHelper(ctx, storage)
+	if err != nil {
+		return err
+	}
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
-		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
+		Helper: helper,
+		BeforeDoWriteBack: func(path string, last, current *backuppb.MetadataV2) (skip bool) {
 			log.Info("Updating metadata.", zap.String("file", path),
-				zap.Int("data-file-before", len(last.GetFiles())),
-				zap.Int("data-file-after", len(current.GetFiles())))
+				zap.Int("data-file-before", len(last.GetFileGroups())),
+				zap.Int("data-file-after", len(current.GetFileGroups())))
 			return cfg.DryRun
 		},
 	}
@@ -1091,21 +1096,21 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
-	streamFilesLoader, err := client.GetStreamFilesLoader(ctx)
-	if err != nil {
-		return errors.Trace(err)
+	// compatible with MetaDataV1 and MetaDataV2
+	if err = client.InitMetaDataHelper(ctx); err != nil {
+		return errors.Annotate(err, "failed to init metadata helper")
 	}
-	shiftStartTS, err := streamFilesLoader.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
+	shiftStartTS, err := client.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Annotate(err, "failed to get shift TS")
 	}
 
 	// read meta by given ts.
-	metaSize, err := streamFilesLoader.LoadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
+	metas, err := client.ReadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if metaSize == 0 {
+	if len(metas) == 0 {
 		log.Info("nothing to restore.")
 		return nil
 	}
@@ -1113,7 +1118,7 @@ func restoreStream(
 	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
 
 	// read data file by given ts.
-	dmlFiles, ddlFiles, metaFilesCache, err := streamFilesLoader.LoadStreamDataFiles(ctx, shiftStartTS, cfg.StartTS, cfg.RestoreTS)
+	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1139,7 +1144,7 @@ func restoreStream(
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, metaFilesCache, updateStats, p.Inc)
+		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
@@ -1335,13 +1340,18 @@ func getFullBackupTS(
 func getGlobalResolvedTS(
 	ctx context.Context,
 	s storage.ExternalStorage,
+	helper stream.MetaDataHelper,
 ) (uint64, error) {
 	storeMap := struct {
 		sync.Mutex
 		resolvedTSMap map[int64]uint64
 	}{}
 	storeMap.resolvedTSMap = make(map[int64]uint64)
-	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
+	err := stream.FastUnmarshalMetaData(ctx, s, helper, func(path string, raw []byte) error {
+		m, err := helper.ParseToMetaDataV2(raw)
+		if err != nil {
+			return err
+		}
 		storeMap.Lock()
 		if resolveTS, exist := storeMap.resolvedTSMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
 			storeMap.resolvedTSMap[m.StoreId] = m.ResolvedTs

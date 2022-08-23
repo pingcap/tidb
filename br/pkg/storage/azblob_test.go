@@ -56,6 +56,10 @@ func TestAzblob(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("data"), d)
 
+	d, err = azblobStorage.ReadRangeFile(ctx, "key2", 2, 30)
+	require.NoError(t, err)
+	require.Equal(t, []byte("ta2222334675722222222228972222"), d)
+
 	exist, err := azblobStorage.FileExists(ctx, "key")
 	require.NoError(t, err)
 	require.True(t, exist)

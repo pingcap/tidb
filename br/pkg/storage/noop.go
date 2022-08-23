@@ -23,6 +23,10 @@ func (*noopStorage) ReadFile(_ context.Context, _ string) ([]byte, error) {
 	return []byte{}, nil
 }
 
+func (*noopStorage) ReadRangeFile(ctx context.Context, name string, offset int64, length int64) ([]byte, error) {
+	return []byte{}, nil
+}
+
 // FileExists return true if file exists.
 func (*noopStorage) FileExists(_ context.Context, _ string) (bool, error) {
 	return false, nil

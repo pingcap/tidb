@@ -78,6 +78,11 @@ func (*HDFSStorage) ReadFile(_ context.Context, _ string) ([]byte, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
+// ReadRangeFile reads a partial file from storage.
+func (*HDFSStorage) ReadRangeFile(_ context.Context, _ string, _ int64, _ int64) ([]byte, error) {
+	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
+}
+
 // FileExists return true if file exists
 func (s *HDFSStorage) FileExists(_ context.Context, name string) (bool, error) {
 	filePath := fmt.Sprintf("%s/%s", s.remote, name)

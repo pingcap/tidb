@@ -51,6 +51,7 @@ require (
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/kisielk/errcheck v1.6.1
+	github.com/klauspost/compress v1.15.1
 	github.com/kyoh86/exportloopref v0.1.8
 	github.com/mgechev/revive v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7

@@ -80,6 +80,8 @@ type ExternalStorage interface {
 	WriteFile(ctx context.Context, name string, data []byte) error
 	// ReadFile reads a complete file from storage, similar to os.ReadFile
 	ReadFile(ctx context.Context, name string) ([]byte, error)
+	// ReadRangeFile reads a partial file from storage.
+	ReadRangeFile(ctx context.Context, name string, offset int64, length int64) ([]byte, error)
 	// FileExists return true if file exists
 	FileExists(ctx context.Context, name string) (bool, error)
 	// DeleteFile delete the file in storage

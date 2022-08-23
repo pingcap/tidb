@@ -488,6 +488,27 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) 
 	return data, nil
 }
 
+func (rs *S3Storage) ReadRangeFile(ctx context.Context, file string, offset int64, length int64) ([]byte, error) {
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		Key:    aws.String(rs.options.Prefix + file),
+		// range inclusive, bytes=0-499 -> [0, 499]
+		Range: aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)),
+	}
+	result, err := rs.svc.GetObjectWithContext(ctx, input)
+	if err != nil {
+		return nil, errors.Annotatef(err,
+			"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
+			*input.Bucket, *input.Key)
+	}
+	defer result.Body.Close()
+	data, err := io.ReadAll(result.Body)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return data, nil
+}
+
 // DeleteFile delete the file in s3 storage
 func (rs *S3Storage) DeleteFile(ctx context.Context, file string) error {
 	input := &s3.DeleteObjectInput{
