@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
 	"golang.org/x/exp/slices"
@@ -51,6 +52,16 @@ func (bj BinaryJSON) Type() string {
 		return "DOUBLE"
 	case TypeCodeString:
 		return "STRING"
+	case TypeCodeOpaque:
+		typ := bj.GetOpaqueFieldType()
+		switch typ {
+		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+			return "BLOB"
+		case mysql.TypeBit:
+			return "BIT"
+		default:
+			return "OPAQUE"
+		}
 	default:
 		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, bj.TypeCode)
 		panic(msg)
@@ -791,6 +802,8 @@ func CompareBinary(left, right BinaryJSON) int {
 					return cmp
 				}
 			}
+		case TypeCodeOpaque:
+			cmp = bytes.Compare(left.GetString(), right.GetString())
 		}
 	} else {
 		cmp = precedence1 - precedence2
