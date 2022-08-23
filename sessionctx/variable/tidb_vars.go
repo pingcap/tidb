@@ -881,7 +881,7 @@ const (
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
-	DefTiDBEnableOuterJoinReorder                  = true
+	DefTiDBEnableOuterJoinReorder                  = false
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBHashExchangeWithNewCollation            = true
@@ -972,7 +972,7 @@ const (
 	DefTiDBPersistAnalyzeOptions                   = true
 	DefTiDBEnableColumnTracking                    = false
 	DefTiDBStatsLoadSyncWait                       = 0
-	DefTiDBStatsLoadPseudoTimeout                  = false
+	DefTiDBStatsLoadPseudoTimeout                  = true
 	DefSysdateIsNow                                = false
 	DefTiDBEnableMutationChecker                   = false
 	DefTiDBTxnAssertionLevel                       = AssertionOffStr
