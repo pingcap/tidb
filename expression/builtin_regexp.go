@@ -51,6 +51,7 @@ var validMatchType = map[string]empty{
 }
 
 type regexpBaseFuncSig struct {
+	baseBuiltinFunc
 	regexpMemorizedSig
 	compile func(string) (*regexp.Regexp, error)
 }
@@ -106,6 +107,18 @@ func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchTyp
 	return flag, nil
 }
 
+// To get a unified compile interface in initMemoizedRegexp, we need to process many things in genCompile
+func (re *regexpBaseFuncSig) genCompile(matchType string) (func(string) (*regexp.Regexp, error), error) {
+	matchType, err := re.getMatchType(&re.baseBuiltinFunc, matchType)
+	if err != nil {
+		return nil, err
+	}
+
+	return func(pat string) (*regexp.Regexp, error) {
+		return regexp.Compile(fmt.Sprintf("(?%s)%s", matchType, pat))
+	}, nil
+}
+
 // ---------------------------------- regexp_like ----------------------------------
 
 type regexpLikeFunctionClass struct {
@@ -128,7 +141,9 @@ func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 
 	bf.tp.SetFlen(mysql.MaxIntWidth)
-	sig := regexpLikeFuncSig{baseBuiltinFunc: bf}
+	sig := regexpLikeFuncSig{
+		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
+	}
 	if bf.collation == charset.CollationBin {
 		sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeSig)
 	} else {
@@ -139,7 +154,6 @@ func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 }
 
 type regexpLikeFuncSig struct {
-	baseBuiltinFunc
 	regexpBaseFuncSig
 }
 
@@ -150,18 +164,6 @@ func (re *regexpLikeFuncSig) vectorized() bool {
 func (re *regexpLikeFuncSig) clone(from *regexpLikeFuncSig) {
 	re.cloneFrom(&from.baseBuiltinFunc)
 	re.cloneBase(&from.regexpBaseFuncSig)
-}
-
-// To get a unified compile interface in initMemoizedRegexp, we need to process many things in genCompile
-func (re *regexpLikeFuncSig) genCompile(matchType string) (func(string) (*regexp.Regexp, error), error) {
-	matchType, err := re.getMatchType(&re.baseBuiltinFunc, matchType)
-	if err != nil {
-		return nil, err
-	}
-
-	return func(pat string) (*regexp.Regexp, error) {
-		return regexp.Compile(fmt.Sprintf("(?%s)%s", matchType, pat))
-	}, nil
 }
 
 // Call this function when all args are constant
@@ -273,4 +275,112 @@ func (re *regexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		i64s[i] = boolToInt64(re.MatchString(params[0].getStringVal(i)))
 	}
 	return nil
+}
+
+// ---------------------------------- regexp_substr ----------------------------------
+
+type regexpSubstrFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argTp := []types.EvalType{types.ETString, types.ETString}
+	switch len(args) {
+	case 3:
+		argTp = append(argTp, types.ETInt)
+	case 4:
+		argTp = append(argTp, types.ETInt, types.ETInt)
+	case 5:
+		argTp = append(argTp, types.ETInt, types.ETInt, types.ETString)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTp...)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.SetFlen(mysql.MaxIntWidth)
+	sig := regexpSubstrFuncSig{
+		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
+	}
+	if bf.collation == charset.CollationBin {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrSig)
+	} else {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrUTF8Sig)
+	}
+
+	return &sig, nil
+}
+
+type regexpSubstrFuncSig struct {
+	regexpBaseFuncSig
+}
+
+func (re *regexpSubstrFuncSig) vectorized() bool {
+	return true
+}
+
+func (re *regexpSubstrFuncSig) clone(from *regexpSubstrFuncSig) {
+	re.cloneFrom(&from.baseBuiltinFunc)
+	re.cloneBase(&from.regexpBaseFuncSig)
+}
+
+// Call this function when all args are constant
+func (re *regexpSubstrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
+	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+
+	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+
+	pos := int64(1)
+	occurrence := int64(1)
+	matchType := ""
+	arg_num := len(re.args)
+
+	if arg_num == 3 {
+		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+	}
+
+	if arg_num == 4 {
+		occurrence, isNull, err = re.args[3].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+	}
+
+	if arg_num == 5 {
+		matchType, isNull, err = re.args[4].EvalString(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+	}
+
+	re.compile, err = re.genCompile(matchType)
+	if err != nil {
+		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
+	// Trim string to set start searching index
+	if pos != 1 {
+
+	}
+
+	reg, err := re.compile(pat)
+	if err != nil {
+		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
+	return boolToInt64(reg.MatchString(expr)), false, nil
 }
