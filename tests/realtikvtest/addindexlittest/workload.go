@@ -78,9 +78,9 @@ type workload struct {
 	date      string
 }
 
-func newWorker(wId int, ty int) *worker {
+func newWorker(wID int, ty int) *worker {
 	wr := worker{
-		id:       wId,
+		id:       wID,
 		loadType: ty,
 		wChan:    make(chan *workChan, 1),
 	}
