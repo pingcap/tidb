@@ -5,6 +5,8 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/url"
@@ -73,6 +75,8 @@ type S3Storage struct {
 	session *session.Session
 	svc     s3iface.S3API
 	options *backuppb.S3
+
+	objectLockEnabled bool
 }
 
 // S3Uploader does multi-part upload to s3.
@@ -393,11 +397,12 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		}
 	}
 
-	return &S3Storage{
+	s3Storage := &S3Storage{
 		session: ses,
 		svc:     c,
 		options: &qs,
-	}, nil
+	}
+	return s3Storage, s3Storage.checkObjectLockEnabled()
 }
 
 // checkBucket checks if a bucket exists.
@@ -442,6 +447,22 @@ func getObject(svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
+func (rs *S3Storage) checkObjectLockEnabled() error {
+	input := &s3.GetObjectLockConfigurationInput{
+		Bucket: aws.String(rs.options.Bucket),
+	}
+	resp, err := rs.svc.GetObjectLockConfiguration(input)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if resp.ObjectLockConfiguration != nil {
+		if s3.ObjectLockEnabledEnabled == *resp.ObjectLockConfiguration.ObjectLockEnabled {
+			rs.objectLockEnabled = true
+		}
+	}
+	return nil
+}
+
 // WriteFile writes data to a file to storage.
 func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) error {
 	input := &s3.PutObjectInput{
@@ -461,7 +482,13 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if rs.options.StorageClass != "" {
 		input = input.SetStorageClass(rs.options.StorageClass)
 	}
-
+	if rs.objectLockEnabled {
+		// we need to calculate contentMD5 if s3 object lock enabled.
+		// otherwise we will get en missing content_md5 error from s3.
+		hash := md5.Sum(data)
+		contentMD5 := base64.StdEncoding.EncodeToString(hash[:])
+		input.SetContentMD5(contentMD5)
+	}
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
 	if err != nil {
 		return errors.Trace(err)
