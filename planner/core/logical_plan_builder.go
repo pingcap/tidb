@@ -4874,6 +4874,8 @@ func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIS
 
 // BuildDataSourceFromView is used to build LogicalPlan from view
 func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+	viewDepth := b.ctx.GetSessionVars().StmtCtx.ViewDepth
+	b.ctx.GetSessionVars().StmtCtx.ViewDepth++
 	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
 	if err != nil {
 		return nil, err
@@ -4912,7 +4914,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
 			terror.ErrorNotEqual(err, ErrInternal) &&
 			terror.ErrorNotEqual(err, ErrFieldNotInGroupBy) &&
-			terror.ErrorNotEqual(err, ErrMixOfGroupFuncAndFields) {
+			terror.ErrorNotEqual(err, ErrMixOfGroupFuncAndFields) &&
+			terror.ErrorNotEqual(err, ErrViewNoExplain) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err
@@ -4920,6 +4923,11 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 
 	if tableInfo.View.Security == model.SecurityDefiner {
 		if pm := privilege.GetPrivilegeManager(b.ctx); pm != nil {
+			if viewDepth != 0 &&
+				b.ctx.GetSessionVars().StmtCtx.InExplainStmt &&
+				!pm.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, dbName.L, tableInfo.Name.L, "", mysql.SelectPriv) {
+				return nil, ErrViewNoExplain
+			}
 			for _, v := range b.visitInfo {
 				if !pm.RequestVerificationWithUser(v.db, v.table, v.column, v.privilege, tableInfo.View.Definer) {
 					return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
