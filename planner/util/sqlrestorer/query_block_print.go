@@ -311,7 +311,7 @@ func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expressio
 				if leftChildSchema.Contains(col) {
 					inCondsLeftCols = append(inCondsLeftCols, col)
 				} else if rightChildSchema.Contains(col) {
-					inCondsRightCOls = append(inCondsRightCOls, col)
+					inCondsRightCols = append(inCondsRightCols, col)
 				}
 			}
 		} else {
@@ -337,7 +337,7 @@ func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expressio
 		}
 	}
 	// 3. Handle the null-aware conditions and generate the expression for the outer query
-	if len(inCondsLeftCols) != len(inCondsRightCOls) {
+	if len(inCondsLeftCols) != len(inCondsRightCols) {
 		return "", errors.New("unexpected SemiJoin condition")
 	}
 	expr := ""
@@ -345,7 +345,7 @@ func (q *QueryBlock) SemiJoinToExprString(isAntiJoin bool, joinConds []expressio
 		// We want the select list of the inner (right) query only contains the columns that we want,
 		// so we make sure it's not after StageProjection here.
 		right = right.GenQBNotAfter(StageProjection)
-		for _, col := range inCondsRightCOls {
+		for _, col := range inCondsRightCols {
 			right.AddOutputCol(col.UniqueID)
 		}
 		inExprRightPart := "(" + right.String() + ")"
