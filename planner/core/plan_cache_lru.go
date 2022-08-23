@@ -45,27 +45,19 @@ type LRUPlanCache struct {
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(capacity uint) *LRUPlanCache {
+func NewLRUPlanCache(capacity uint, pickFromBucket func([]*list.Element, []*types.FieldType) (*list.Element, int, bool),
+	onEvict func(kvcache.Key, kvcache.Value)) *LRUPlanCache {
 	if capacity < 1 {
 		panic("capacity of LRU Cache should be at least 1.")
 	}
 	return &LRUPlanCache{
-		capacity: capacity,
-		size:     0,
-		buckets:  make(map[hack.MutableString][]*list.Element),
-		onEvict:  nil,
-		cache:    list.New(),
+		capacity:       capacity,
+		size:           0,
+		buckets:        make(map[hack.MutableString][]*list.Element),
+		cache:          list.New(),
+		pickFromBucket: pickFromBucket,
+		onEvict:        onEvict,
 	}
-}
-
-// SetOnEvict set the function called on each eviction.
-func (l *LRUPlanCache) SetOnEvict(onEvict func(kvcache.Key, kvcache.Value)) {
-	l.onEvict = onEvict
-}
-
-// SetPickFromBucket set the function called on each eviction.
-func (l *LRUPlanCache) SetPickFromBucket(pick func([]*list.Element, []*types.FieldType) (*list.Element, int, bool)) {
-	l.pickFromBucket = pick
 }
 
 // Get tries to find the corresponding value according to the given key.

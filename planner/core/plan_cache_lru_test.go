@@ -69,8 +69,10 @@ func pickFromBucket(bucket []*list.Element, ptypes []*types.FieldType) (*list.El
 }
 
 func TestLRUPCPut(t *testing.T) {
-	lru := NewLRUPlanCache(3)
-	lru.SetPickFromBucket(pickFromBucket)
+	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
+	lru := NewLRUPlanCache(3, pickFromBucket, func(key kvcache.Key, value kvcache.Value) {
+		maxMemDroppedKv[key] = value
+	})
 	require.Equal(t, uint(3), lru.capacity)
 
 	keys := make([]*mockCacheKey, 5)
@@ -81,12 +83,6 @@ func TestLRUPCPut(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
 	}
-	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
-
-	// test onEvict function
-	lru.SetOnEvict(func(key kvcache.Key, value kvcache.Value) {
-		maxMemDroppedKv[key] = value
-	})
 
 	// one key corresponding to multi values
 	for i := 0; i < 5; i++ {
@@ -144,8 +140,7 @@ func TestLRUPCPut(t *testing.T) {
 }
 
 func TestLRUPCGet(t *testing.T) {
-	lru := NewLRUPlanCache(3)
-	lru.SetPickFromBucket(pickFromBucket)
+	lru := NewLRUPlanCache(3, pickFromBucket, nil)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -194,8 +189,7 @@ func TestLRUPCGet(t *testing.T) {
 }
 
 func TestLRUPCGet2(t *testing.T) {
-	lru := NewLRUPlanCache(3)
-	lru.SetPickFromBucket(pickFromBucket)
+	lru := NewLRUPlanCache(3, pickFromBucket, nil)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -244,8 +238,7 @@ func TestLRUPCGet2(t *testing.T) {
 }
 
 func TestLRUPCDelete(t *testing.T) {
-	lru := NewLRUPlanCache(3)
-	lru.SetPickFromBucket(pickFromBucket)
+	lru := NewLRUPlanCache(3, pickFromBucket, nil)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
@@ -277,8 +270,7 @@ func TestLRUPCDelete(t *testing.T) {
 }
 
 func TestLRUPCDeleteAll(t *testing.T) {
-	lru := NewLRUPlanCache(3)
-	lru.SetPickFromBucket(pickFromBucket)
+	lru := NewLRUPlanCache(3, pickFromBucket, nil)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
@@ -307,8 +299,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 }
 
 func TestLRUPCKeys(t *testing.T) {
-	lru := NewLRUPlanCache(5)
-	lru.SetPickFromBucket(pickFromBucket)
+	lru := NewLRUPlanCache(5, pickFromBucket, nil)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -335,8 +326,7 @@ func TestLRUPCKeys(t *testing.T) {
 }
 
 func TestLRUPCValues(t *testing.T) {
-	lru := NewLRUPlanCache(5)
-	lru.SetPickFromBucket(pickFromBucket)
+	lru := NewLRUPlanCache(5, pickFromBucket, nil)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
