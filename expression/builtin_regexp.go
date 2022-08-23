@@ -44,10 +44,10 @@ func (i *InvalidMatchType) Error() string {
 }
 
 var validMatchType = map[string]empty{
-	flag_i: empty{}, // Case-insensitive matching
-	flag_c: empty{}, // Case-sensitive matching
-	flag_m: empty{}, // Multiple-line mode
-	flag_n: empty{}, // The . character matches line terminators
+	flag_i: {}, // Case-insensitive matching
+	flag_c: {}, // Case-sensitive matching
+	flag_m: {}, // Multiple-line mode
+	flag_n: {}, // The . character matches line terminators
 }
 
 func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
