@@ -15,9 +15,11 @@ package core
 
 import (
 	"container/list"
-	"github.com/pingcap/tidb/util/hack"
 	"testing"
 
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 )
@@ -46,17 +48,15 @@ func newMockHashKey(key int64) *mockCacheKey {
 
 type fakePlan struct {
 	plan int64
-	tps  []string
+	tps  []*types.FieldType
 }
 
-func pickFromBucket(bucket []*list.Element, itB interface{}) (*list.Element, int, bool) {
-	itemsB := itB.([]string)
-
+func pickFromBucket(bucket []*list.Element, ptypes []*types.FieldType) (*list.Element, int, bool) {
 	for i, element := range bucket {
 		itemsA := element.Value.(*CacheEntry).PlanValue.(*fakePlan).tps
 		flag := true
 		for j := 0; j < len(itemsA); j++ {
-			if itemsA[j] != itemsB[j] {
+			if itemsA[j] != ptypes[j] {
 				flag = false
 				break
 			}
@@ -75,7 +75,13 @@ func TestLRUPCPut(t *testing.T) {
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
-	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
+	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
+	}
+	//pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
 
 	// test onEvict function
@@ -144,8 +150,12 @@ func TestLRUPCGet(t *testing.T) {
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
-	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
-
+	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
+	}
 	// 5 bucket
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
@@ -190,8 +200,12 @@ func TestLRUPCGet2(t *testing.T) {
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
-	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
-
+	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
+	}
 	// 5 bucket
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i % 3))
@@ -236,8 +250,10 @@ func TestLRUPCDelete(t *testing.T) {
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
-	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}}
-
+	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
+	}
 	for i := 0; i < 3; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = &fakePlan{
@@ -267,8 +283,10 @@ func TestLRUPCDeleteAll(t *testing.T) {
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
-	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}}
-
+	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
+	}
 	for i := 0; i < 3; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = &fakePlan{
@@ -295,8 +313,12 @@ func TestLRUPCKeys(t *testing.T) {
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
-	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
-
+	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
+	}
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = &fakePlan{
@@ -319,8 +341,12 @@ func TestLRUPCValues(t *testing.T) {
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
-	pTypes := [][]string{{"a", "0"}, {"b", "1"}, {"c", "2"}, {"d", "3"}, {"e", "4"}}
-
+	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
+	}
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = &fakePlan{

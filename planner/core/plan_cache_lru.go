@@ -15,9 +15,10 @@ package core
 
 import (
 	"container/list"
-	"github.com/pingcap/tidb/util/hack"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 )
 
@@ -35,7 +36,7 @@ type LRUPlanCache struct {
 	buckets map[hack.MutableString][]*list.Element
 
 	// pickFromBucket set rules to get one element from bucket.
-	pickFromBucket func([]*list.Element, interface{}) (*list.Element, int, bool)
+	pickFromBucket func([]*list.Element, []*types.FieldType) (*list.Element, int, bool)
 
 	// onEvict function will be called if any eviction happened
 	onEvict func(kvcache.Key, kvcache.Value)
@@ -63,12 +64,12 @@ func (l *LRUPlanCache) SetOnEvict(onEvict func(kvcache.Key, kvcache.Value)) {
 }
 
 // SetPickFromBucket set the function called on each eviction.
-func (l *LRUPlanCache) SetPickFromBucket(pick func([]*list.Element, interface{}) (*list.Element, int, bool)) {
+func (l *LRUPlanCache) SetPickFromBucket(pick func([]*list.Element, []*types.FieldType) (*list.Element, int, bool)) {
 	l.pickFromBucket = pick
 }
 
 // Get tries to find the corresponding value according to the given key.
-func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes interface{}) (value kvcache.Value, ok bool) {
+func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool) {
 	bucket, bucketExist := l.buckets[hack.String(key.Hash())]
 	if bucketExist {
 		if element, _, exist := l.pickFromBucket(bucket, paramTypes); exist {
@@ -80,7 +81,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes interface{}) (value kvcac
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
-func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes interface{}) {
+func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType) {
 	hash := hack.String(key.Hash())
 	bucket, bucketExist := l.buckets[hash]
 	// bucket exist
