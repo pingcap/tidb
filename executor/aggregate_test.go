@@ -1517,6 +1517,7 @@ func TestRandomPanicConsume(t *testing.T) {
 		"select /*+ HASH_AGG() */ count(a) from t group by a", // HashAgg Paralleled
 		"select /*+ HASH_AGG() */ count(distinct a) from t",   // HashAgg Unparalleled
 		"select /*+ STREAM_AGG() */ count(a) from t",          // StreamAgg
+		"select a * a, a / a, a + a , a - a from t",           // Projection
 	}
 
 	// Test 10 times panic for each AggExec.
