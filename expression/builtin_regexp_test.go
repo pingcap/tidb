@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit/testutil"
@@ -190,4 +191,45 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 	}
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpLikeCases)
+}
+
+func TestRegexpSubstrConst(t *testing.T) {
+	ctx := createContext(t)
+
+	// test regexp_substr(expr, pat)
+	testParam2 := []struct {
+		input    string
+		pattern  string
+		match    string
+		matchBin string // bin result
+		err      error
+	}{}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam2 {
+			fc := funcs[ast.RegexpSubstr]
+			f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
+			require.NoError(t, err)
+
+			expectMatch := tt.match
+			if isBin == 1 {
+				arg := datumsToConstants(types.MakeDatums(tt.input))
+				tp := arg[0].GetType()
+				tp.SetType(mysql.TypeVarString)
+				tp.SetCharset(charset.CharsetBin)
+				tp.SetCollate(charset.CollationBin)
+				tp.SetFlen(types.UnspecifiedLength)
+				tp.SetFlag(mysql.BinaryFlag)
+				expectMatch = tt.matchBin
+			}
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
 }

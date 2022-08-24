@@ -37,11 +37,10 @@ const (
 	flag_n = "n"
 )
 
-type InvalidMatchType struct{}
-
-func (i *InvalidMatchType) Error() string {
-	return "Invalid match type"
-}
+const (
+	invalidMatchType = "Invalid match type"
+	invalidIndex     = "Index out of bounds in regular expression search"
+)
 
 var validMatchType = map[string]empty{
 	flag_i: {}, // Case-insensitive matching
@@ -81,7 +80,7 @@ func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchTyp
 		// Check validation of the flag
 		_, err := validMatchType[c]
 		if err == false {
-			return "", &InvalidMatchType{}
+			return "", ErrRegexp.GenWithStackByArgs(invalidMatchType)
 		}
 
 		if c == flag_c {
@@ -305,84 +304,131 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 
-	bf.tp.SetFlen(mysql.MaxIntWidth)
+	argType := args[0].GetType()
+	bf.tp.SetFlen(argType.GetFlen())
 	sig := regexpSubstrFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 	if bf.collation == charset.CollationBin {
 		sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrSig)
+		sig.isBinCollation = true
 	} else {
 		sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrUTF8Sig)
+		sig.isBinCollation = false
 	}
 
 	return &sig, nil
 }
 
 type regexpSubstrFuncSig struct {
+	baseBuiltinFunc
 	regexpBaseFuncSig
+	isBinCollation bool
 }
 
 func (re *regexpSubstrFuncSig) vectorized() bool {
 	return true
 }
 
-func (re *regexpSubstrFuncSig) clone(from *regexpSubstrFuncSig) {
-	re.cloneFrom(&from.baseBuiltinFunc)
-	re.cloneBase(&from.regexpBaseFuncSig)
+func (re *regexpSubstrFuncSig) Clone() builtinFunc {
+	newSig := &regexpSubstrFuncSig{}
+	newSig.cloneFrom(&re.baseBuiltinFunc)
+	newSig.clone(&re.regexpBaseFuncSig)
+	return newSig
 }
 
 // Call this function when all args are constant
-func (re *regexpSubstrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	if isNull || err != nil {
-		return 0, true, err
+		return "", true, err
 	}
 
 	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
 	if isNull || err != nil {
-		return 0, true, err
+		return "", true, err
 	}
 
 	pos := int64(1)
 	occurrence := int64(1)
 	matchType := ""
 	arg_num := len(re.args)
+	var bexpr []byte
 
 	if arg_num == 3 {
 		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
 		if isNull || err != nil {
-			return 0, true, err
+			return "", true, err
+		}
+
+		// check position and trim target
+		if re.isBinCollation {
+			bexpr = []byte(expr)
+			if pos < 1 || pos > int64(len(bexpr)) {
+				return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+			}
+
+			bexpr = bexpr[pos-1:] // Trim
+		} else {
+			if pos < 1 || pos > int64(len(expr)) {
+				return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+			}
+
+			expr = expr[pos-1:] // Trim
 		}
 	}
 
 	if arg_num == 4 {
 		occurrence, isNull, err = re.args[3].EvalInt(re.ctx, row)
 		if isNull || err != nil {
-			return 0, true, err
+			return "", true, err
+		}
+
+		if occurrence < 1 {
+			return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 		}
 	}
 
 	if arg_num == 5 {
 		matchType, isNull, err = re.args[4].EvalString(re.ctx, row)
 		if isNull || err != nil {
-			return 0, true, err
+			return "", true, err
 		}
 	}
 
 	re.compile, err = re.genCompile(matchType)
 	if err != nil {
-		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
-	}
-
-	// Trim string to set start searching index
-	if pos != 1 {
-
+		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 
 	reg, err := re.compile(pat)
 	if err != nil {
-		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 
-	return boolToInt64(reg.MatchString(expr)), false, nil
+	if re.isBinCollation {
+		matches := reg.FindAll(bexpr, -1)
+		length := int64(len(matches))
+		if length == 0 {
+			return "", true, nil
+		}
+
+		if occurrence > length {
+			occurrence = length
+		}
+
+		return fmt.Sprintf("0x%x", matches[occurrence-1]), false, nil
+	}
+
+	matches := reg.FindAllString(expr, -1)
+	length := int64(len(matches))
+	if length == 0 {
+		return "", true, nil
+	}
+
+	if occurrence > length {
+		occurrence = length
+	}
+
+	return matches[occurrence-1], false, nil
 }
