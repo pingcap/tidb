@@ -55,7 +55,7 @@ func NewLRUPlanCache(capacity uint, pickFromBucket func(map[*list.Element]struct
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
-		buckets:        make(map[hack.MutableString]map[*list.Element]struct{}),
+		buckets:        make(map[hack.MutableString]map[*list.Element]struct{}, 1),
 		lruList:        list.New(),
 		pickFromBucket: pickFromBucket,
 		onEvict:        onEvict,
@@ -119,7 +119,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 			l.lruList.Remove(element)
 			l.size--
 		}
-		l.buckets[hash] = make(map[*list.Element]struct{})
+		l.buckets[hash] = make(map[*list.Element]struct{}, 1)
 	}
 }
 
@@ -132,7 +132,7 @@ func (l *LRUPlanCache) DeleteAll() {
 		l.lruList.Remove(lru)
 		l.size--
 	}
-	l.buckets = make(map[hack.MutableString]map[*list.Element]struct{})
+	l.buckets = make(map[hack.MutableString]map[*list.Element]struct{}, 1)
 }
 
 // Size gets the current cache size.
@@ -148,7 +148,7 @@ func (l *LRUPlanCache) Values() []kvcache.Value {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	values := make([]kvcache.Value, 0, l.lruList.Len())
+	values := make([]kvcache.Value, 0, l.lruList.Len(), 1)
 	for element := l.lruList.Front(); element != nil; element = element.Next() {
 		value := element.Value.(*CacheEntry).PlanValue
 		values = append(values, value)
