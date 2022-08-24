@@ -50,7 +50,7 @@ type LRUPlanCache struct {
 func NewLRUPlanCache(capacity uint, pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool),
 	onEvict func(kvcache.Key, kvcache.Value)) (*LRUPlanCache, error) {
 	if capacity < 1 {
-		return nil, errors.New("capacity of LRU Cache should be at least 1.")
+		return nil, errors.New("capacity of LRU Cache should be at least 1")
 	}
 	return &LRUPlanCache{
 		capacity:       capacity,

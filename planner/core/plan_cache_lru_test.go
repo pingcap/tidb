@@ -70,9 +70,9 @@ func pickFromBucket(bucket map[*list.Element]struct{}, ptypes []*types.FieldType
 
 func TestLRUPCPut(t *testing.T) {
 	// test initialize
-	lru_, err_ := NewLRUPlanCache(0, pickFromBucket, nil)
-	require.Nil(t, lru_)
-	require.Error(t, err_, "capacity of LRU Cache should be at least 1.")
+	lruA, errA := NewLRUPlanCache(0, pickFromBucket, nil)
+	require.Nil(t, lruA)
+	require.Error(t, errA, "capacity of LRU Cache should be at least 1")
 
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
 	lru, err := NewLRUPlanCache(3, pickFromBucket, func(key kvcache.Key, value kvcache.Value) {
