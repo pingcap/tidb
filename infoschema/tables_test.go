@@ -17,7 +17,6 @@ package infoschema_test
 import (
 	"crypto/tls"
 	"fmt"
-	"math"
 	"os"
 	"strings"
 	"testing"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -53,7 +53,9 @@ func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64)})
+	lru := kvcache.NewLRUPlanCache(100)
+	lru.SetChoose(plannercore.PickPlanByParamTypes)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: lru})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()

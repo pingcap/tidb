@@ -15,6 +15,7 @@
 package core
 
 import (
+	"container/list"
 	"math"
 	"strconv"
 	"time"
@@ -43,38 +44,19 @@ var (
 
 func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
 	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	val, exist := cache.Get(key)
-	if !exist {
-		return nil, exist
-	}
-	candidates := val.([]*PlanCacheValue)
-	for _, candidate := range candidates {
-		if candidate.varTypesUnchanged(paramTypes) {
-			return candidate, true
+	val, exist := cache.Get(key, paramTypes)
+	if exist {
+		plan, ok := val.(*PlanCacheValue)
+		if ok {
+			return plan, true
 		}
 	}
 	return nil, false
 }
 
-func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue) {
+func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue, paramTypes []*types.FieldType) {
 	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	val, exist := cache.Get(key)
-	if !exist {
-		cache.Put(key, []*PlanCacheValue{plan})
-		return
-	}
-	candidates := val.([]*PlanCacheValue)
-	for i, candidate := range candidates {
-		if candidate.varTypesUnchanged(plan.ParamTypes) {
-			// hit an existing cached plan
-			candidates[i] = plan
-			return
-		}
-	}
-	// add to current candidate list
-	// TODO: limit the candidate list length
-	candidates = append(candidates, plan)
-	cache.Put(key, candidates)
+	cache.Put(key, plan, paramTypes)
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
@@ -314,4 +296,22 @@ func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, p
 	}
 	// TODO: implement it
 	return "", nil, false, nil
+}
+
+// PickPlanByParamTypes pick one plan from bucket, cooperates with LRUPlanCache
+func PickPlanByParamTypes(bucket []*list.Element, paramTypes interface{}) (*list.Element, int, bool) {
+	tps, ok := paramTypes.([]*types.FieldType)
+	if !ok {
+		return nil, -1, false
+	}
+	for idx, element := range bucket {
+		planVal := element.Value.(*kvcache.CacheEntry).PlanValue.(*PlanCacheValue)
+		if planVal == nil {
+			return nil, -1, false
+		}
+		if planVal.ParamTypes.CheckTypesCompatibility4PC(tps) {
+			return element, idx, true
+		}
+	}
+	return nil, -1, false
 }

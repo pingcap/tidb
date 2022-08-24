@@ -17,7 +17,6 @@ package expression_test
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
@@ -3796,8 +3796,10 @@ func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 
 	var err error
+	lru := kvcache.NewLRUPlanCache(100)
+	lru.SetChoose(plannercore.PickPlanByParamTypes)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+		PreparedPlanCache: lru,
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)

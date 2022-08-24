@@ -55,7 +55,7 @@ type Context struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	sm          util.SessionManager
-	pcache      *kvcache.SimpleLRUCache
+	pcache      *kvcache.LRUPlanCache
 	level       kvrpcpb.DiskFullOpt
 	is          sessionctx.InfoschemaMetaVersion
 }
@@ -248,7 +248,7 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 }
 
 // GetPlanCache implements the sessionctx.Context interface.
-func (c *Context) GetPlanCache(_ bool) *kvcache.SimpleLRUCache {
+func (c *Context) GetPlanCache(_ bool) *kvcache.LRUPlanCache {
 	return c.pcache
 }
 

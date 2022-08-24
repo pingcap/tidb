@@ -17,7 +17,6 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"math"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -1339,8 +1338,10 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 	tk.MustExec(`prepare stmt from 'select * from t'`)
 
 	// DB is not specified
+	lru := kvcache.NewLRUPlanCache(100)
+	lru.SetChoose(core.PickPlanByParamTypes)
 	se2, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+		PreparedPlanCache: lru,
 	})
 	require.NoError(t, err)
 	tk2 := testkit.NewTestKitWithSession(t, store, se2)
