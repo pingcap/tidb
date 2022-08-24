@@ -801,10 +801,6 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("0")) // default value
 	tk.MustExec("set global tidb_enable_foreign_key = 1")
 	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1"))
-	// session scope
-	tk.MustQuery("select @@session.tidb_enable_foreign_key").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set session tidb_enable_foreign_key = 1")
-	tk.MustQuery("select @@session.tidb_enable_foreign_key").Check(testkit.Rows("1"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {

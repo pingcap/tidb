@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -121,7 +122,7 @@ func allocateFKIndexID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
-	if !sctx.GetSessionVars().EnableForeignKey {
+	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
 	fkCheck := sctx.GetSessionVars().ForeignKeyChecks

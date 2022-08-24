@@ -6125,7 +6125,7 @@ func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPa
 		RefTable:  refer.Table.Name,
 		Cols:      make([]model.CIStr, len(keys)),
 	}
-	if ctx.GetSessionVars().EnableForeignKey {
+	if variable.EnableForeignKey.Load() {
 		fkInfo.Version = 1
 	}
 

@@ -943,9 +943,11 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableForeignKey, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableForeignKey = TiDBOptOn(val)
+	{Scope: ScopeGlobal, Name: TiDBEnableForeignKey, Value: BoolToOnOff(false), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		EnableForeignKey.Store(TiDBOptOn(val))
 		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(EnableForeignKey.Load()), nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
