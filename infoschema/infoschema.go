@@ -496,17 +496,6 @@ func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model
 	return is.referredForeignKeyMap[name]
 }
 
-// CheckReferredForeignKeyValid checks the referredFK is valid with referTbInfo.
-func CheckReferredForeignKeyValid(referTbInfo *model.TableInfo, referredFK *model.ReferredFKInfo) bool {
-	for _, colName := range referredFK.Cols {
-		col := model.FindColumnInfo(referTbInfo.Columns, colName.L)
-		if col == nil {
-			return false
-		}
-	}
-	return true
-}
-
 // LocalTemporaryTables store local temporary tables
 type LocalTemporaryTables struct {
 	// Local temporary tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
