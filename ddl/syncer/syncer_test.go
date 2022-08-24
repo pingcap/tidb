@@ -85,15 +85,6 @@ func TestSyncerSimple(t *testing.T) {
 
 	key := util2.DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
 	checkRespKV(t, 1, key, InitialVersion, resp.Kvs...)
-	// for MustGetGlobalVersion function
-	globalVer, err := d.SchemaSyncer().MustGetGlobalVersion(ctx)
-	require.NoError(t, err)
-	require.Equal(t, InitialVersion, fmt.Sprintf("%d", globalVer))
-
-	childCtx, cancel := context.WithTimeout(ctx, minInterval)
-	defer cancel()
-	_, err = d.SchemaSyncer().MustGetGlobalVersion(childCtx)
-	require.True(t, isTimeoutError(err))
 
 	ic2 := infoschema.NewCache(2)
 	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
@@ -138,7 +129,7 @@ func TestSyncerSimple(t *testing.T) {
 	require.Equal(t, "", checkErr)
 
 	// for CheckAllVersions
-	childCtx, cancel = context.WithTimeout(ctx, 200*time.Millisecond)
+	childCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	require.Error(t, d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer))
 	cancel()
 

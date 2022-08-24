@@ -124,7 +124,10 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 			TxnScope:    txnScope,
 		},
 	}
-	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx, is))
+
+	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, is); interceptor != nil {
+		txn.SetOption(kv.SnapInterceptor, interceptor)
+	}
 
 	p.is = is
 	err = p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, "")
@@ -228,3 +231,6 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 func (p *StalenessTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	return nil, errors.New("GetSnapshotWithStmtForUpdateTS not supported for stalenessTxnProvider")
 }
+
+// OnLocalTemporaryTableCreated will not be called for StalenessTxnContextProvider
+func (p *StalenessTxnContextProvider) OnLocalTemporaryTableCreated() {}

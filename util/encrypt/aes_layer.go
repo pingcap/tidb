@@ -32,8 +32,8 @@ const defaultEncryptBlockSize = 1024
 
 // CtrCipher encrypting data using AES in counter mode
 type CtrCipher struct {
-	nonce uint64
 	block cipher.Block
+	nonce uint64
 	// encryptBlockSize indicates the encrypt block size in bytes.
 	encryptBlockSize int64
 	// aesBlockCount indicates the total aes blocks in one encrypt block
@@ -83,10 +83,10 @@ func (ctr *CtrCipher) stream(counter uint64) cipher.Stream {
 type Writer struct {
 	err                error
 	w                  io.WriteCloser
-	n                  int
-	buf                []byte
 	cipherStream       cipher.Stream
+	buf                []byte
 	flushedUserDataCnt int64
+	n                  int
 }
 
 // NewWriter returns a new Writer which encrypt data using AES before writing to the underlying object.

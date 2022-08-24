@@ -690,7 +690,7 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 		require.True(t, ok)
 		err = executor.ResetContextOfStmt(tk.Session(), stmt)
 		require.NoError(t, err)
-		plan, _, err := core.GetPlanFromSessionPlanCache(ctx, tk.Session(), is, execPlan.PrepStmt, execPlan.Params)
+		plan, _, err := core.GetPlanFromSessionPlanCache(ctx, tk.Session(), false, is, execPlan.PrepStmt, execPlan.Params)
 		require.NoError(t, err)
 		planStr[i] = core.ToString(plan)
 		require.Regexpf(t, expectedPattern, planStr[i], "for %dth %s", i, sql1)

@@ -149,8 +149,12 @@ func TestPlanReplayer(t *testing.T) {
 
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select * from t1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as select * from v1")
 	tk.MustExec("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
 	tk.MustExec("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
+	tk.MustExec("plan replayer dump explain select * from v1")
+	tk.MustExec("plan replayer dump explain select * from v2")
 }
 
 func TestShow(t *testing.T) {
