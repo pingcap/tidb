@@ -661,7 +661,7 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 				c := context.Background()
 				// Though we record tiflash replica in txt, we only set 1 tiflash replica as it's enough for reproduce the plan
 				sql := fmt.Sprintf("alter table %s.%s set tiflash replica 1", dbName, tableName)
-				_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(c, sql)
+				_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sql)
 				logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 			}
 		}
@@ -670,6 +670,7 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 }
 
 func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
+	unLoadVars := make([]string, 0)
 	for _, zipFile := range z.File {
 		if strings.Compare(zipFile.Name, variablesFile) == 0 {
 			varMap := make(map[string]string)
@@ -687,19 +688,27 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			for name, value := range varMap {
 				sysVar := variable.GetSysVar(name)
 				if sysVar == nil {
-					return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+					unLoadVars = append(unLoadVars, name)
+					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
+					continue
 				}
 				sVal, err := sysVar.Validate(vars, value, variable.ScopeSession)
 				if err != nil {
-					logutil.BgLogger().Debug(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
+					unLoadVars = append(unLoadVars, name)
+					logutil.BgLogger().Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
 					continue
 				}
 				err = vars.SetSystemVar(name, sVal)
 				if err != nil {
-					return err
+					unLoadVars = append(unLoadVars, name)
+					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
+					continue
 				}
 			}
 		}
+	}
+	if len(unLoadVars) > 0 {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("variables set failed:%s", strings.Join(unLoadVars, ",")))
 	}
 	return nil
 }
@@ -723,15 +732,15 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	}
 	c := context.Background()
 	// create database if not exists
-	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(c, sqls[0])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[0])
 	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 	// use database
-	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(c, sqls[1])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[1])
 	if err != nil {
 		return err
 	}
 	// create table or view
-	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(c, sqls[2])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[2])
 	if err != nil {
 		return err
 	}
