@@ -412,7 +412,8 @@ func TestIssue30971(t *testing.T) {
 
 func TestIssue31678(t *testing.T) {
 	// The issue31678 is mainly about type conversion in UNION
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS t1, t2;")
