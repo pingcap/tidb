@@ -6563,6 +6563,55 @@ func TestHelp(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestWithoutCharsetFlags(t *testing.T) {
+	type testCaseWithFlag struct {
+		src     string
+		ok      bool
+		restore string
+		flag    RestoreFlags
+	}
+
+	flag := RestoreStringSingleQuotes | RestoreSpacesAroundBinaryOperation | RestoreBracketAroundBinaryOperation | RestoreNameBackQuotes
+	cases := []testCaseWithFlag{
+		{"select 'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8mb4'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8 X'D0B1'", true, "SELECT x'd0b1'", flag | RestoreStringWithoutCharset},
+
+		{"select _utf8mb4'a'", true, "SELECT 'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8'a'", true, "SELECT _utf8'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8'a'", true, "SELECT _utf8'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8 X'D0B1'", true, "SELECT _utf8 x'd0b1'", flag | RestoreStringWithoutDefaultCharset},
+	}
+
+	p := parser.New()
+	p.EnableWindowFunc(false)
+	for _, tbl := range cases {
+		stmts, _, err := p.Parse(tbl.src, "", "")
+		if !tbl.ok {
+			require.Error(t, err)
+			continue
+		}
+		require.NoError(t, err)
+		// restore correctness test
+		var sb strings.Builder
+		restoreSQLs := ""
+		for _, stmt := range stmts {
+			sb.Reset()
+			ctx := NewRestoreCtx(tbl.flag, &sb)
+			ctx.DefaultDB = "test"
+			err = stmt.Restore(ctx)
+			require.NoError(t, err)
+			restoreSQL := sb.String()
+			if restoreSQLs != "" {
+				restoreSQLs += "; "
+			}
+			restoreSQLs += restoreSQL
+		}
+		require.Equal(t, tbl.restore, restoreSQLs)
+	}
+}
+
 func TestRestoreBinOpWithBrackets(t *testing.T) {
 	cases := []testCase{
 		{"select mod(a+b, 4)+1", true, "SELECT (((`a` + `b`) % 4) + 1)"},
