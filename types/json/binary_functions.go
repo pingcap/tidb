@@ -803,10 +803,15 @@ func CompareBinary(left, right BinaryJSON) int {
 				}
 			}
 		case TypeCodeOpaque:
-			cmp = bytes.Compare(left.GetString(), right.GetString())
+			cmp = bytes.Compare(left.GetOpaque().Buf, right.GetOpaque().Buf)
 		}
 	} else {
 		cmp = precedence1 - precedence2
+		if cmp > 0 {
+			cmp = 1
+		} else if cmp < 0 {
+			cmp = -1
+		}
 	}
 	return cmp
 }
