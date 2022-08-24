@@ -1501,6 +1501,7 @@ func TestRandomPanicConsume(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_max_chunk_size=32")
 	tk.MustExec("set @@tidb_init_chunk_size=1")
+	tk.MustExec("set global tidb_enable_concurrent_ddl=off;") // concurrent_ddl sql use aggregate and panic
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	for i := 0; i <= 1000; i++ {
