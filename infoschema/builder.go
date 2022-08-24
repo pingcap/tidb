@@ -793,6 +793,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
 	b.copyPoliciesMap(oldIS)
+	b.copyTemporaryTableIDsMap(oldIS)
 	b.copyReferredForeignKeyMap(oldIS)
 
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
@@ -816,6 +817,19 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
+	}
+}
+
+func (b *Builder) copyTemporaryTableIDsMap(oldIS *infoSchema) {
+	is := b.is
+	if len(oldIS.temporaryTableIDs) == 0 {
+		is.temporaryTableIDs = nil
+		return
+	}
+
+	is.temporaryTableIDs = make(map[int64]struct{})
+	for tblID := range oldIS.temporaryTableIDs {
+		is.temporaryTableIDs[tblID] = struct{}{}
 	}
 }
 
