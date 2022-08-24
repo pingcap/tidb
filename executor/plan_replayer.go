@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -326,19 +327,10 @@ func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableN
 			continue
 		}
 		if t.Meta().TiFlashReplica != nil && t.Meta().TiFlashReplica.Count > 0 {
-			sql := fmt.Sprintf("SELECT TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT FROM INFORMATION_SCHEMA.TIFLASH_REPLICA WHERE TABLE_SCHEMA ='%s' AND TABLE_NAME='%s' AND REPLICA_COUNT > 0",
-				dbName.L, tableName.L)
-			recordSet, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-			if err != nil {
-				return err
+			row := []string{
+				pair.DBName, pair.TableName, strconv.FormatUint(t.Meta().TiFlashReplica.Count, 10),
 			}
-			sRows, err := resultSetToStringSlice(context.Background(), recordSet)
-			if err != nil {
-				return err
-			}
-			for _, row := range sRows {
-				fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
-			}
+			fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
 		}
 	}
 	return nil
@@ -633,7 +625,6 @@ func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error
 func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 	for _, zipFile := range z.File {
 		if strings.Compare(zipFile.Name, tiFlashReplicasFile) == 0 {
-			//varMap := make(map[string]string)
 			v, err := zipFile.Open()
 			if err != nil {
 				return errors.AddStack(err)
