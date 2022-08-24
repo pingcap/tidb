@@ -12,8 +12,8 @@ def go_deps():
         name = "cc_mvdan_interfacer",
         build_file_proto_mode = "disable",
         importpath = "mvdan.cc/interfacer",
-        sum = "h1:pb+H2aFFN/wqH+Fk0CX781/RVSd7eTF5X05S+UAngUo=",
-        version = "v0.0.0-20220817083047-f1a62685f7f9",
+        sum = "h1:WX1yoOaKQfddO/mLzdV4wptyWgoH/6hwLs7QHTixo0I=",
+        version = "v0.0.0-20180901003855-c20040233aed",
     )
     go_repository(
         name = "cc_mvdan_lint",
@@ -2781,8 +2781,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:4UQdx1acoUrQD0Q5Etz1ABd31duzSgp3XwEnb/cvV9I=",
-        version = "v0.0.0-20220804022843-f006036b1277",
+        sum = "h1:pb+H2aFFN/wqH+Fk0CX781/RVSd7eTF5X05S+UAngUo=",
+        version = "v0.0.0-20220817083047-f1a62685f7f9",
     )
     go_repository(
         name = "com_github_pingcap_log",
