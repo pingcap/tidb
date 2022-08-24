@@ -58,8 +58,8 @@ func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 
 // points2Ranges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
-func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType) ([]*Range, error) {
-	ranges := make([]*Range, 0, len(rangePoints)/2)
+func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType) (Ranges, error) {
+	ranges := make(Ranges, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sctx, rangePoints[i], tp)
 		if err != nil {
@@ -177,9 +177,9 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 // The additional column ranges can only be appended to point ranges.
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
-func appendPoints2Ranges(sctx sessionctx.Context, origin []*Range, rangePoints []*point,
-	ft *types.FieldType) ([]*Range, error) {
-	var newIndexRanges []*Range
+func appendPoints2Ranges(sctx sessionctx.Context, origin Ranges, rangePoints []*point,
+	ft *types.FieldType) (Ranges, error) {
+	var newIndexRanges Ranges
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
 		if !oRange.IsPoint(sctx) {
@@ -196,8 +196,8 @@ func appendPoints2Ranges(sctx sessionctx.Context, origin []*Range, rangePoints [
 }
 
 func appendPoints2IndexRange(sctx sessionctx.Context, origin *Range, rangePoints []*point,
-	ft *types.FieldType) ([]*Range, error) {
-	newRanges := make([]*Range, 0, len(rangePoints)/2)
+	ft *types.FieldType) (Ranges, error) {
+	newRanges := make(Ranges, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sctx, rangePoints[i], ft)
 		if err != nil {
@@ -238,11 +238,11 @@ func appendPoints2IndexRange(sctx sessionctx.Context, origin *Range, rangePoints
 	return newRanges, nil
 }
 
-func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
+func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges) Ranges {
 	if len(ranges) == 0 {
 		return pointRanges
 	}
-	newRanges := make([]*Range, 0, len(pointRanges)*len(ranges))
+	newRanges := make(Ranges, 0, len(pointRanges)*len(ranges))
 	for _, pointRange := range pointRanges {
 		for _, r := range ranges {
 			lowVal := append(pointRange.LowVal, r.LowVal...)
@@ -263,8 +263,8 @@ func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
 
 // points2TableRanges build ranges for table scan from range points.
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
-func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType) ([]*Range, error) {
-	ranges := make([]*Range, 0, len(rangePoints)/2)
+func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType) (Ranges, error) {
+	ranges := make(Ranges, 0, len(rangePoints)/2)
 	var minValueDatum, maxValueDatum types.Datum
 	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
 	if mysql.HasUnsignedFlag(tp.GetFlag()) {
@@ -314,7 +314,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 }
 
 // buildColumnRange builds range from CNF conditions.
-func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool, colLen int) (ranges []*Range, err error) {
+func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool, colLen int) (ranges Ranges, err error) {
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
@@ -354,33 +354,32 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 }
 
 // BuildTableRange builds range of PK column for PhysicalTableScan.
-func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType) ([]*Range, error) {
+func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType) (Ranges, error) {
 	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength)
 }
 
 // BuildColumnRange builds range from access conditions for general columns.
-func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int) ([]*Range, error) {
+func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int) (Ranges, error) {
 	if len(conds) == 0 {
 		return FullRange(), nil
 	}
 	return buildColumnRange(conds, sctx, tp, false, colLen)
 }
 
-func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType,
-	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
+func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
+	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
+	// TODO: handle prefix when building ranges
 	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	var (
-		ranges []*Range
+		ranges Ranges
 		err    error
 	)
-	for _, col := range d.cols {
-		newTp = append(newTp, newFieldType(col.RetType))
-	}
+	lastRanges := FullRange()
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessCondition[i], collate.GetCollator(newTp[i].GetCollate()))
+		point := rb.build(accessConds[i], collate.GetCollator(newTp[i].GetCollate()))
 		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
+			return nil, nil, nil, errors.Trace(rb.err)
 		}
 		if i == 0 {
 			ranges, err = points2Ranges(d.sctx, point, newTp[i])
@@ -388,35 +387,44 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType,
 			ranges, err = appendPoints2Ranges(d.sctx, ranges, point, newTp[i])
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, nil, errors.Trace(err)
 		}
+		if ranges.MemUsage() > d.rangeMemQuota {
+			d.reachRangeMemQuota = true
+			return lastRanges, accessConds[:i], accessConds[i:], nil
+		}
+		lastRanges = ranges
 	}
 	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
-	for i := eqAndInCount; i < len(accessCondition); i++ {
+	for i := eqAndInCount; i < len(accessConds); i++ {
 		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i], collator), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator), collator)
 		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
+			return nil, nil, nil, errors.Trace(rb.err)
 		}
 	}
 	if eqAndInCount == 0 {
 		ranges, err = points2Ranges(d.sctx, rangePoints, newTp[0])
-	} else if eqAndInCount < len(accessCondition) {
+	} else if eqAndInCount < len(accessConds) {
 		ranges, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, newTp[eqAndInCount])
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
-	return ranges, nil
+	if ranges.MemUsage() > d.rangeMemQuota {
+		d.reachRangeMemQuota = true
+		return lastRanges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
+	}
+	return ranges, accessConds, nil, nil
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
-func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
-	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
-	ranges, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessCondition)
+func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCount int,
+	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
+	ranges, newAccessConds, newFilterConds, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessConds)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	// Take prefix index into consideration.
@@ -424,12 +432,12 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 		if fixPrefixColRange(ranges, d.lengths, newTp) {
 			ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, nil, errors.Trace(err)
 			}
 		}
 	}
 
-	return ranges, nil
+	return ranges, newAccessConds, newFilterConds, nil
 }
 
 type sortRange struct {
@@ -442,7 +450,7 @@ type sortRange struct {
 // For two intervals [a, b], [c, d], we have guaranteed that a <= c. If b >= c. Then two intervals are overlapped.
 // And this two can be merged as [a, max(b, d)].
 // Otherwise they aren't overlapped.
-func UnionRanges(sctx sessionctx.Context, ranges []*Range, mergeConsecutive bool) ([]*Range, error) {
+func UnionRanges(sctx sessionctx.Context, ranges Ranges, mergeConsecutive bool) (Ranges, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	if len(ranges) == 0 {
 		return nil, nil
@@ -512,7 +520,7 @@ func hasPrefix(lengths []int) bool {
 //	whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
 //	value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
 //	So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
-func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
+func fixPrefixColRange(ranges Ranges, lengths []int, tp []*types.FieldType) bool {
 	var hasCut bool
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
@@ -639,7 +647,7 @@ func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []e
 }
 
 // RangesToString print a list of Ranges into a string which can appear in an SQL as a condition.
-func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []string) (string, error) {
+func RangesToString(sc *stmtctx.StatementContext, rans Ranges, colNames []string) (string, error) {
 	for _, ran := range rans {
 		if len(ran.LowVal) != len(ran.HighVal) {
 			return "", errors.New("range length mismatch")
