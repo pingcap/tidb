@@ -421,6 +421,7 @@ dumpling_tidy:
 dumpling_bins:
 	@which bin/tidb-server
 	@which bin/minio
+	@which bin/mc
 	@which bin/tidb-lightning
 	@which bin/sync_diff_inspector
 
