@@ -551,6 +551,11 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	}
 	fmt.Fprintf(fw, "create database if not exists `%v`; use `%v`;", pair.DBName, pair.DBName)
 	fmt.Fprintf(fw, "%s", sRows[0][1])
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
