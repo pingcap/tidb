@@ -49,7 +49,7 @@ func TestCTEPreviewAndReport(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	s := newSuite(t)
 	defer s.close()
