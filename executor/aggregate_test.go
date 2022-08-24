@@ -1522,10 +1522,12 @@ func TestRandomPanicConsume(t *testing.T) {
 		"select /*+ HASH_JOIN(t) */ * from t t1 join t t2 on t1.a=t2.a", // HashJoin
 	}
 
-	// Test 10 times panic for each AggExec.
+	// Test 10 times panic for each Executor.
 	var res sqlexec.RecordSet
 	for _, sql := range sqls {
 		for i := 1; i <= 10; i++ {
+			concurrency := rand.Int31n(4) + 1 // test 1~5 concurrency randomly
+			tk.MustExec(fmt.Sprintf("set @@tidb_executor_concurrency=%v", concurrency))
 			var err error
 			for err == nil {
 				res, err = tk.Exec(sql)
