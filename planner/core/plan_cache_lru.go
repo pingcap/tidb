@@ -55,7 +55,7 @@ func NewLRUPlanCache(capacity uint, pickFromBucket func(map[*list.Element]struct
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
-		buckets:        make(map[hack.MutableString]map[*list.Element]struct{}, 1),
+		buckets:        make(map[hack.MutableString]map[*list.Element]struct{}, 1), //Generally one query has one plan
 		lruList:        list.New(),
 		pickFromBucket: pickFromBucket,
 		onEvict:        onEvict,
