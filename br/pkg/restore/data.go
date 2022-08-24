@@ -27,8 +27,9 @@ import (
 // recover the tikv cluster
 // 1. read all meta data from tikvs
 // 2. make recovery plan and then recovery max allocate ID firstly
-// 3. send the recover plan and the wait tikv to apply, in waitapply, all assigned region leader will check and apply log to the last log
-// 4. send the resolvedTs to tikv for deleting data.
+// 3. send the recover plan and the wait tikv to apply, in waitapply, all assigned region leader will check apply log to the last log
+// 4. ensure all region apply to last log
+// 5. send the resolvedTs to tikv for deleting data.
 func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, dumpRegionInfo bool, mgr *conn.Mgr, progress glue.Progress) (int, error) {
 
 	numOfTiKVs := len(allStores)
@@ -53,6 +54,11 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 	}
 
 	err = recovery.RecoverRegions(ctx, allStores)
+	if err != nil {
+		return totalRegions, errors.Trace(err)
+	}
+
+	recovery.WaitApply(ctx, allStores)
 	if err != nil {
 		return totalRegions, errors.Trace(err)
 	}
@@ -298,6 +304,39 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context, allStores []*metap
 			}
 			recovery.progress.Inc()
 			log.Info("recovery command execution success", zap.Uint64("storeID", reply.GetStoreId()))
+			return nil
+		})
+	}
+	// Wait for all TiKV instances force leader and wait apply to last log.
+	return eg.Wait()
+}
+
+// send wait apply to all tikv ensure all region peer apply log into the last
+func (recovery *Recovery) WaitApply(ctx context.Context, allStores []*metapb.Store) (err error) {
+	eg, ectx := errgroup.WithContext(ctx)
+	totalTiKVs := len(recovery.recoveryPlan)
+	workers := utils.NewWorkerPool(uint(totalTiKVs), "wait apply")
+
+	for _, store := range allStores {
+		storeAddr := getStoreAddress(allStores, store.Id)
+		tikvClient, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
+		if err != nil {
+			log.Error("create tikv client failed", zap.String("ip", storeAddr))
+			return errors.Trace(err)
+		}
+		storeId := store.Id
+		log.Debug("iterate  tikv", zap.String("tikv address", storeAddr))
+		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			log.Info("send wait apply to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
+			req := &recovpb.WaitApplyRequest{StoreId: storeId}
+			resp, err := tikvClient.WaitApply(ectx, req)
+			if err != nil {
+				log.Error("wait apply failed", zap.Uint64("storeID", storeId))
+				return errors.Trace(err)
+			}
+
+			recovery.progress.Inc()
+			log.Info("recovery wait apply execution success", zap.Uint64("storeID", resp.GetStoreId()))
 			return nil
 		})
 	}
