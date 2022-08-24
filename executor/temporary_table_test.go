@@ -26,34 +26,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTemporaryTableNoNetwork(t *testing.T) {
-	t.Run("global", func(t *testing.T) {
-		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
-			tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
-			tk.MustExec("begin")
-		})
+func TestNormalGlobalTemporaryTableNoNetwork(t *testing.T) {
+	assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
+		tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
+		tk.MustExec("begin")
 	})
+}
 
-	t.Run("global create and then truncate", func(t *testing.T) {
-		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
-			tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
-			tk.MustExec("truncate table tmp_t")
-			tk.MustExec("begin")
-		})
+func TestGlobalTemporaryTableNoNetworkWithCreateAndTruncate(t *testing.T) {
+	assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
+		tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
+		tk.MustExec("truncate table tmp_t")
+		tk.MustExec("begin")
 	})
+}
 
-	t.Run("local", func(t *testing.T) {
-		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
-			tk.MustExec("create temporary table tmp_t (id int primary key, a int, b int, index(a))")
-			tk.MustExec("begin")
-		})
+func TestGlobalTemporaryTableNoNetworkWithCreateAndThenCreateNormalTable(t *testing.T) {
+	assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
+		tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
+		tk.MustExec("create table txx(a int)")
+		tk.MustExec("begin")
 	})
+}
 
-	t.Run("local and create table inside txn", func(t *testing.T) {
-		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
-			tk.MustExec("begin")
-			tk.MustExec("create temporary table tmp_t (id int primary key, a int, b int, index(a))")
-		})
+func TestLocalTemporaryTableNoNetworkWithCreateOutsideTxn(t *testing.T) {
+	assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
+		tk.MustExec("create temporary table tmp_t (id int primary key, a int, b int, index(a))")
+		tk.MustExec("begin")
+	})
+}
+
+func TestLocalTemporaryTableNoNetworkWithInsideTxn(t *testing.T) {
+	assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
+		tk.MustExec("begin")
+		tk.MustExec("create temporary table tmp_t (id int primary key, a int, b int, index(a))")
 	})
 }
 

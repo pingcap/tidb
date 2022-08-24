@@ -225,6 +225,7 @@ const (
 	MaxDurationWidthNoFsp    = 10 // HH:MM:SS
 	MaxDurationWidthWithFsp  = 17 // HH:MM:SS[.fraction] -838:59:59.000000 to 838:59:59.000000
 	MaxBlobWidth             = 16777216
+	MaxLongBlobWidth         = 4294967295
 	MaxBitDisplayWidth       = 64
 	MaxFloatPrecisionLength  = 24
 	MaxDoublePrecisionLength = 53
