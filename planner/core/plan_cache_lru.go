@@ -148,7 +148,7 @@ func (l *LRUPlanCache) Values() []kvcache.Value {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	values := make([]kvcache.Value, 0, l.lruList.Len(), 1)
+	values := make([]kvcache.Value, 0, l.lruList.Len())
 	for element := l.lruList.Front(); element != nil; element = element.Next() {
 		value := element.Value.(*CacheEntry).PlanValue
 		values = append(values, value)
