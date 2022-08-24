@@ -1390,7 +1390,7 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 // recordUsedItemStatsStatus only records un-FullLoad item load status during user query
 func recordUsedItemStatsStatus(sctx sessionctx.Context, loadStatus StatsLoadedStatus,
 	tableID, id int64, isIndex bool) {
-	if sctx.GetSessionVars().InRestrictedSQL || loadStatus.IsFullLoad() {
+	if loadStatus.IsFullLoad() {
 		return
 	}
 	stmtCtx := sctx.GetSessionVars().StmtCtx
