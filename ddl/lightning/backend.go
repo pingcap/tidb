@@ -49,9 +49,6 @@ func (bc *BackendContext) FinishImport(engineInfoKey string, unique bool, tbl ta
 	if !exist {
 		return errors.New(LitErrGetEngineFail)
 	}
-	defer func() {
-		bc.EngMgr.Drop(engineInfoKey)
-	}()
 
 	err := ei.ImportAndClean()
 	if err != nil {

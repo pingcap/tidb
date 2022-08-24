@@ -100,13 +100,16 @@ func (m *engineManager) Unregister(engineKey string) {
 	if !exists {
 		return
 	}
-	ei.Clean()
+
+	// If it is Canceled, the needRestore should be true
+	if ei.backCtx.needRestore {
+		ei.backCtx.SetNeedRestore(false)
+		ei.Clean()
+	}
 	m.Drop(engineKey)
 	m.MemRoot.ReleaseWithTag(engineKey)
 	m.MemRoot.Release(StructSizeWorkerCtx * int64(ei.writerCount))
 	m.MemRoot.Release(StructSizeEngineInfo)
-	engineCacheSize := int64(ei.backCtx.cfg.TikvImporter.EngineMemCacheSize)
-	m.MemRoot.Release(engineCacheSize)
 }
 
 // UnregisterAll delete all engineInfo from the engineManager.
