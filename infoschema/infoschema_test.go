@@ -327,18 +327,19 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	require.True(t, ok)
 
 	doChange := func(changes ...func(m *meta.Meta, builder *infoschema.Builder)) infoschema.InfoSchema {
-		builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos([]*model.DBInfo{db}, nil, is.SchemaMetaVersion())
-		require.NoError(t, err)
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-		err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		curIs := is
+		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
+				builder := infoschema.NewBuilder(store, nil).InitWithOldInfoSchema(curIs)
 				change(m, builder)
+				curIs = builder.Build()
 			}
 			return nil
 		})
 		require.NoError(t, err)
-		return builder.Build()
+		return curIs
 	}
 
 	createGlobalTemporaryTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
@@ -347,6 +348,18 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 				ID:            tblID,
 				TempTableType: model.TempTableGlobal,
 				State:         model.StatePublic,
+			})
+			require.NoError(t, err)
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID})
+			require.NoError(t, err)
+		}
+	}
+
+	createNormalTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
+		return func(m *meta.Meta, builder *infoschema.Builder) {
+			err := m.CreateTableOrView(db.ID, &model.TableInfo{
+				ID:    tblID,
+				State: model.StatePublic,
 			})
 			require.NoError(t, err)
 			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID})
@@ -436,6 +449,16 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		createGlobalTemporaryTableChange(tbID),
 		createGlobalTemporaryTableChange(tbID2),
 		dropTableChange(tbID),
+	).HasTemporaryTable())
+
+	// create temporary and then create normal
+	tbID, err = genGlobalID(store)
+	require.NoError(t, err)
+	tbID2, err = genGlobalID(store)
+	require.NoError(t, err)
+	require.True(t, doChange(
+		createGlobalTemporaryTableChange(tbID),
+		createNormalTableChange(tbID2),
 	).HasTemporaryTable())
 }
 
