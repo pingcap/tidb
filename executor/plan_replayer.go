@@ -786,7 +786,7 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 			}
 		}
 	}
-	
+
 	// set tiflash replica if exists
 	err = loadSetTiFlashReplica(e.Ctx, z)
 	if err != nil {
