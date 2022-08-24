@@ -797,9 +797,6 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
-	// Whether enable foreign key feature.
-	// TODO(crazycs520): remove this after foreign key GA.
-	EnableForeignKey bool `toml:"enable-foreign-key" json:"enable-foreign-key"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
