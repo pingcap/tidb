@@ -1500,9 +1500,6 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
-<<<<<<< HEAD
-func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnionAll) error {
-=======
 // Set the flen of the union column using the max flen in children.
 func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.Expression) {
 	isBinary := resultTp.GetCharset() == charset.CharsetBin
@@ -1517,7 +1514,6 @@ func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.
 }
 
 func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAll) error {
->>>>>>> 25dda978f... types: fix a bug in casting str2str when `union` (#37242)
 	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
 	names := make([]*types.FieldName, 0, u.children[0].Schema().Len())
 
