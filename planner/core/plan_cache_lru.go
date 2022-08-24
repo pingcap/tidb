@@ -35,7 +35,7 @@ type LRUPlanCache struct {
 	size     uint
 	// buckets replace the map in general LRU
 	buckets map[hack.MutableString]map[*list.Element]struct{}
-	cache   *list.List
+	lruList *list.List
 	// lock make cache thread safe
 	lock sync.Mutex
 
@@ -48,18 +48,18 @@ type LRUPlanCache struct {
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
 func NewLRUPlanCache(capacity uint, pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool),
-	onEvict func(kvcache.Key, kvcache.Value)) *LRUPlanCache {
+	onEvict func(kvcache.Key, kvcache.Value)) (*LRUPlanCache, error) {
 	if capacity < 1 {
-		panic("capacity of LRU Cache should be at least 1.")
+		return nil, errors.New("capacity of LRU Cache should be at least 1.")
 	}
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
 		buckets:        make(map[hack.MutableString]map[*list.Element]struct{}),
-		cache:          list.New(),
+		lruList:        list.New(),
 		pickFromBucket: pickFromBucket,
 		onEvict:        onEvict,
-	}
+	}, nil
 }
 
 // Get tries to find the corresponding value according to the given key.
@@ -70,7 +70,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	bucket, bucketExist := l.buckets[hack.String(key.Hash())]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
-			l.cache.MoveToFront(element)
+			l.lruList.MoveToFront(element)
 			return element.Value.(*CacheEntry).PlanValue, true
 		}
 	}
@@ -88,7 +88,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			element.Value.(*CacheEntry).PlanValue = value
-			l.cache.MoveToFront(element)
+			l.lruList.MoveToFront(element)
 			return
 		}
 	} else {
@@ -99,11 +99,11 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 		PlanKey:   key,
 		PlanValue: value,
 	}
-	element := l.cache.PushFront(newCacheEntry)
+	element := l.lruList.PushFront(newCacheEntry)
 	l.buckets[hash][element] = struct{}{}
 	l.size++
 	if l.size > l.capacity {
-		l.RemoveOldest()
+		l.removeOldest()
 	}
 }
 
@@ -116,7 +116,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		for element := range bucket {
-			l.cache.Remove(element)
+			l.lruList.Remove(element)
 			l.size--
 		}
 		l.buckets[hash] = make(map[*list.Element]struct{})
@@ -128,8 +128,8 @@ func (l *LRUPlanCache) DeleteAll() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	for lru := l.cache.Back(); lru != nil; lru = l.cache.Back() {
-		l.cache.Remove(lru)
+	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
+		l.lruList.Remove(lru)
 		l.size--
 	}
 	l.buckets = make(map[hack.MutableString]map[*list.Element]struct{})
@@ -148,8 +148,8 @@ func (l *LRUPlanCache) Values() []kvcache.Value {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	values := make([]kvcache.Value, 0, l.cache.Len())
-	for element := l.cache.Front(); element != nil; element = element.Next() {
+	values := make([]kvcache.Value, 0, l.lruList.Len())
+	for element := l.lruList.Front(); element != nil; element = element.Next() {
 		value := element.Value.(*CacheEntry).PlanValue
 		values = append(values, value)
 	}
@@ -181,23 +181,20 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	}
 	l.capacity = capacity
 	for l.size > l.capacity {
-		l.RemoveOldest()
+		l.removeOldest()
 	}
 	return nil
 }
 
-// RemoveOldest removes the oldest element from the cache.
-func (l *LRUPlanCache) RemoveOldest() {
-	l.lock.Lock()
-	defer l.lock.Unlock()
-
+// removeOldest removes the oldest element from the cache.
+func (l *LRUPlanCache) removeOldest() {
 	if l.size > 0 {
-		lru := l.cache.Back()
+		lru := l.lruList.Back()
 		if l.onEvict != nil {
 			l.onEvict(lru.Value.(*CacheEntry).PlanKey, lru.Value.(*CacheEntry).PlanValue)
 		}
 
-		l.cache.Remove(lru)
+		l.lruList.Remove(lru)
 		l.removeFromBucket(lru)
 		l.size--
 	}
