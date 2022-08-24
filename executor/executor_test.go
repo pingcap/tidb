@@ -80,6 +80,7 @@ func checkFileName(s string) bool {
 		"meta.txt",
 		"stats/test.t_dump_single.json",
 		"schema/test.t_dump_single.schema.txt",
+		"table_tiflash_replica.txt",
 		"variables.toml",
 		"sqls.sql",
 		"session_bindings.sql",
