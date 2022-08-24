@@ -367,7 +367,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			}
 			if len(tailRes.AccessConds) > 0 {
 				newRanges := appendRanges2PointRanges(pointRanges, tailRes.Ranges)
-				if newRanges.MemUsage() > d.rangeMemQuota {
+				if d.rangeMemQuota > 0 && newRanges.MemUsage() > d.rangeMemQuota {
 					// TODO: maybe better fallback than res.Ranges
 					d.reachRangeMemQuota = true
 					res.RemainedConds = append(res.RemainedConds, tailRes.AccessConds...)
@@ -781,13 +781,20 @@ type DetachRangeResult struct {
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
 func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (*DetachRangeResult, error) {
+	// When InPreparedPlanBuilding is true, we don't need to restrict range memory usage because it uses the cached plan's AccessCondition
+	// to build range. Though parameter values can affect range memory usage, parameter values usually have similar sizes and its effect
+	// to range memory usage is small.
+	var rangeMemQuota int64
+	if !sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
+		rangeMemQuota = sctx.GetSessionVars().OptimizerMemQuota
+	}
 	d := &rangeDetacher{
 		sctx:             sctx,
 		allConds:         conditions,
 		cols:             cols,
 		lengths:          lengths,
 		mergeConsecutive: true,
-		rangeMemQuota:    sctx.GetSessionVars().OptimizerMemQuota,
+		rangeMemQuota:    rangeMemQuota,
 	}
 	return d.detachCondAndBuildRangeForCols()
 }

@@ -389,7 +389,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
-		if ranges.MemUsage() > d.rangeMemQuota {
+		if d.rangeMemQuota > 0 && ranges.MemUsage() > d.rangeMemQuota {
 			d.reachRangeMemQuota = true
 			return lastRanges, accessConds[:i], accessConds[i:], nil
 		}
@@ -412,7 +412,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	if ranges.MemUsage() > d.rangeMemQuota {
+	if d.rangeMemQuota > 0 && ranges.MemUsage() > d.rangeMemQuota {
 		d.reachRangeMemQuota = true
 		return lastRanges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
 	}
