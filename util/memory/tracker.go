@@ -193,7 +193,7 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMuForHardLimit.Lock()
 	defer t.actionMuForHardLimit.Unlock()
-	t.actionMuForHardLimit.actionOnExceed = reArrangeFallback(t.actionMuForHardLimit.actionOnExceed, a)
+	t.actionMuForHardLimit.actionOnExceed = reArrangeFallback(a, t.actionMuForHardLimit.actionOnExceed)
 }
 
 // FallbackOldAndSetNewActionForSoftLimit sets the action when memory usage exceeds bytesSoftLimit
@@ -201,7 +201,7 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
 	t.actionMuForSoftLimit.Lock()
 	defer t.actionMuForSoftLimit.Unlock()
-	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(t.actionMuForSoftLimit.actionOnExceed, a)
+	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(a, t.actionMuForSoftLimit.actionOnExceed)
 }
 
 // GetFallbackForTest get the oom action used by test.
@@ -224,10 +224,8 @@ func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	}
 	if a.GetPriority() < b.GetPriority() {
 		a, b = b, a
-		a.SetFallback(b)
-	} else {
-		a.SetFallback(reArrangeFallback(a.GetFallback(), b))
 	}
+	a.SetFallback(reArrangeFallback(a.GetFallback(), b))
 	return a
 }
 

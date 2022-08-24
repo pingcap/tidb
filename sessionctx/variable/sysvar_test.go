@@ -719,7 +719,6 @@ func TestSkipInitIsUsed(t *testing.T) {
 				TiDBSnapshot,
 				TiDBEnableChunkRPC,
 				TxnIsolationOneShot,
-				TiDBOptimizerEnableOuterJoinReorder,
 				TiDBDDLReorgPriority,
 				TiDBSlowQueryFile,
 				TiDBWaitSplitRegionFinish,
@@ -821,6 +820,24 @@ func TestTimestamp(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, "", val)
 	require.NotEqual(t, "10", val)
+
+	// Test validating a value that less than the minimum one.
+	sv := GetSysVar(Timestamp)
+	_, err = sv.Validate(vars, "-5", ScopeSession)
+	require.NoError(t, err)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect timestamp value: '-5'", warn.Error())
+
+	// Test validating values that larger than the maximum one.
+	_, err = sv.Validate(vars, "3147483698", ScopeSession)
+	require.Equal(t, "[variable:1231]Variable 'timestamp' can't be set to the value of '3147483698'", err.Error())
+
+	_, err = sv.Validate(vars, "2147483648", ScopeSession)
+	require.Equal(t, "[variable:1231]Variable 'timestamp' can't be set to the value of '2147483648'", err.Error())
+
+	// Test validating the maximum value.
+	_, err = sv.Validate(vars, "2147483647", ScopeSession)
+	require.NoError(t, err)
 }
 
 func TestIdentity(t *testing.T) {
