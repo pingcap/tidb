@@ -396,7 +396,11 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 		sc := new(stmtctx.StatementContext)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if tt.input != tt.output {
+<<<<<<< HEAD
 			c.Assert(ErrDataTooLong.Equal(err), IsTrue)
+=======
+			require.True(t, ErrDataTooLong.Equal(err), "flen: %d, charset: %s, input: %s, output: %s", tt.flen, tt.charset, tt.input, tt.output)
+>>>>>>> 25dda978f... types: fix a bug in casting str2str when `union` (#37242)
 		} else {
 			c.Assert(err, IsNil)
 		}
