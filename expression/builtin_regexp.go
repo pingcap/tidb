@@ -56,7 +56,7 @@ type regexpBaseFuncSig struct {
 	compile func(string) (*regexp.Regexp, error)
 }
 
-func (re *regexpBaseFuncSig) cloneBase(from *regexpBaseFuncSig) {
+func (re *regexpBaseFuncSig) clone(from *regexpBaseFuncSig) {
 	if from.memorizedRegexp != nil {
 		re.memorizedRegexp = from.memorizedRegexp.Copy()
 	}
@@ -157,13 +157,15 @@ type regexpLikeFuncSig struct {
 	regexpBaseFuncSig
 }
 
-func (re *regexpLikeFuncSig) vectorized() bool {
-	return true
+func (re *regexpLikeFuncSig) Clone() builtinFunc {
+	newSig := &regexpLikeFuncSig{}
+	newSig.cloneFrom(&re.baseBuiltinFunc)
+	newSig.clone(&re.regexpBaseFuncSig)
+	return newSig
 }
 
-func (re *regexpLikeFuncSig) clone(from *regexpLikeFuncSig) {
-	re.cloneFrom(&from.baseBuiltinFunc)
-	re.cloneBase(&from.regexpBaseFuncSig)
+func (re *regexpLikeFuncSig) vectorized() bool {
+	return true
 }
 
 // Call this function when all args are constant
