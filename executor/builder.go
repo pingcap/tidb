@@ -800,6 +800,33 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		return b.buildRevoke(s)
 	case *ast.BRIEStmt:
 		return b.buildBRIE(s, v.Schema())
+	case *ast.CreateUserStmt, *ast.AlterUserStmt:
+		var (
+			lockOptions []*ast.PasswordOrLockOption
+			ok          bool
+		)
+		if stmt, ok := v.Statement.(*ast.CreateUserStmt); ok {
+			lockOptions = stmt.PasswordOrLockOptions
+		} else if stmt, ok := v.Statement.(*ast.AlterUserStmt); ok {
+			lockOptions = stmt.PasswordOrLockOptions
+		}
+		if ok && len(lockOptions) > 0 {
+			for i := len(lockOptions) - 1; i >= 0; i-- {
+				if lockOptions[i].Type == ast.Lock {
+					if b.Ti.AccountLockTelemetry == nil {
+						b.Ti.AccountLockTelemetry = &AccountLockTelemetryInfo{}
+					}
+					b.Ti.AccountLockTelemetry.LockUser = true
+					break
+				} else if lockOptions[i].Type == ast.Unlock {
+					if b.Ti.AccountLockTelemetry == nil {
+						b.Ti.AccountLockTelemetry = &AccountLockTelemetryInfo{}
+					}
+					b.Ti.AccountLockTelemetry.UnlockUser = true
+					break
+				}
+			}
+		}
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity

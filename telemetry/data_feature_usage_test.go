@@ -134,6 +134,30 @@ func TestCachedTable(t *testing.T) {
 	require.False(t, usage.CachedTable)
 }
 
+func TestAccountLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.AccountLock.LockUser)
+	require.Equal(t, int64(0), usage.AccountLock.UnlockUser)
+
+	tk.MustExec("drop user if exists testUser")
+	tk.MustExec("create user testUser account lock")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.AccountLock.LockUser)
+	require.Equal(t, int64(0), usage.AccountLock.UnlockUser)
+	tk.MustExec("alter user testUser account unlock")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.AccountLock.LockUser)
+	require.Equal(t, int64(1), usage.AccountLock.UnlockUser)
+}
+
 func TestMultiSchemaChange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

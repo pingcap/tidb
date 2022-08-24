@@ -133,6 +133,8 @@ var (
 	telemetryTablePartitionRangeColumnsUsage  = metrics.TelemetryTablePartitionRangeColumnsCnt
 	telemetryTablePartitionListColumnsUsage   = metrics.TelemetryTablePartitionListColumnsCnt
 	telemetryTablePartitionMaxPartitionsUsage = metrics.TelemetryTablePartitionMaxPartitionsCnt
+	telemetryLockUserUsage                    = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
+	telemetryUnlockUserUsage                  = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -3431,6 +3433,15 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		}
 		if ti.PartitionTelemetry.UseTablePartitionListColumns {
 			telemetryTablePartitionListColumnsUsage.Inc()
+		}
+	}
+
+	if ti.AccountLockTelemetry != nil {
+		if ti.AccountLockTelemetry.LockUser {
+			telemetryLockUserUsage.Inc()
+		}
+		if ti.AccountLockTelemetry.UnlockUser {
+			telemetryUnlockUserUsage.Inc()
 		}
 	}
 }
