@@ -50,7 +50,7 @@ const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
+func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo := job.Args[0].(*model.TableInfo)
 
@@ -62,7 +62,13 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, err
 		}
 		return tbInfo, errors.Trace(err)
 	}
-
+	retryable, err := checkTableForeignKeyValidInOwner(d, t, job, tbInfo, fkCheck)
+	if err != nil {
+		if !retryable {
+			job.State = model.JobStateCancelled
+		}
+		return tbInfo, errors.Trace(err)
+	}
 	// allocate foreign key ID.
 	for _, fkInfo := range tbInfo.ForeignKeys {
 		fkInfo.ID = allocateFKIndexID(tbInfo)
@@ -150,7 +156,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return createTableWithForeignKeys(d, t, job, tbInfo, fkCheck)
 	}
 
-	tbInfo, err := createTable(d, t, job)
+	tbInfo, err := createTable(d, t, job, fkCheck)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -169,15 +175,8 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
 	switch job.SchemaState {
 	case model.StateNone:
-		retryable, err := checkTableForeignKeyValidInOwner(d, t, job, tbInfo, fkCheck)
-		if err != nil {
-			if !retryable {
-				job.State = model.JobStateCancelled
-			}
-			return ver, errors.Trace(err)
-		}
 		// create table in non-public state
-		tbInfo, err = createTable(d, t, job)
+		tbInfo, err = createTable(d, t, job, fkCheck)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -222,7 +221,7 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	for i := range args {
 		stubJob.TableID = args[i].ID
 		stubJob.Args[0] = args[i]
-		tbInfo, err := createTable(d, t, stubJob)
+		tbInfo, err := createTable(d, t, stubJob, fkCheck)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)

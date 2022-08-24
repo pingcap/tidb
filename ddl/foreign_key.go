@@ -183,6 +183,9 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 }
 
 func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (retryable bool, _ error) {
+	if !variable.EnableForeignKey.Load() {
+		return false, nil
+	}
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return true, err
