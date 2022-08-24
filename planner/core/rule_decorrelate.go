@@ -146,10 +146,48 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				return s.optimize(ctx, p)
 			}
 		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
+<<<<<<< HEAD
+=======
+			// After the column pruning, some expressions in the projection operator may be pruned.
+			// In this situation, we can decorrelate the apply operator.
+			allConst := len(proj.Exprs) > 0
+			for _, expr := range proj.Exprs {
+				if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
+					allConst = false
+					break
+				}
+			}
+			if allConst && apply.JoinType == LeftOuterJoin {
+				// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
+				//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
+				//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
+				// We disable the decorrelation directly for now.
+				// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
+				goto NoOptimize
+			}
+
+			// step1: substitute the all the schema with new expressions (including correlated column maybe, but it doesn't affect the collation infer inside)
+			// eg: projection: constant("guo") --> column8, once upper layer substitution failed here, the lower layer behind
+			// projection can't supply column8 anymore.
+			//
+			//	upper OP (depend on column8)   --> projection(constant "guo" --> column8)  --> lower layer OP
+			//	          |                                                       ^
+			//	          +-------------------------------------------------------+
+			//
+			//	upper OP (depend on column8)   --> lower layer OP
+			//	          |                             ^
+			//	          +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
+			hasFail := apply.columnSubstituteAll(proj.Schema(), proj.Exprs)
+			if hasFail {
+				goto NoOptimize
+			}
+			// step2: when it can be substituted all, we then just do the de-correlation (apply conditions included).
+>>>>>>> d3483026e... planner: mark the both side operand of NAAJ & refuse partial column substitute in projection elimination of Apply de-correlation (#37117)
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}
-			apply.columnSubstitute(proj.Schema(), proj.Exprs)
+			apply.decorrelate(outerPlan.Schema())
+
 			innerPlan = proj.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
