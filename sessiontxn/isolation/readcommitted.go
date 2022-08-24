@@ -313,19 +313,21 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 
 // AdviseOptimizeWithPlan in RC covers much fewer cases compared with pessimistic repeatable read.
 // We do not fetch latest ts immediately for such scenes.
-// 1. PointGet of SELECT ... FOR UPDATE  2. Insert without select 3. update by PointGet 4. delete by PointGet.
-// The func `planner.Optimize` always calls the `txnManger.AdviseWarmup` to warmup in the past, it makes a tso request
-// for all sqls execept `SELECT` with RcCheckTs, but whether to use the tso request and wait it are depended
-// on `AdviseOptimizeWithPlan`.
+// 1. A query like the form of "SELECT ... FOR UPDATE" whose execution plan is "PointGet".
+// 2. An INSERT statement without "SELECT" subquery.
+// 3. A UPDATE statement whose execution plan is "PointGet".
+// 4. A DELETE statement whose execution plan is "PointGet".
+// The function `planner.Optimize` always calls the `txnManger.AdviseWarmup` to warmup in the past, it makes a tso request
+// for all sqls execept `SELECT` with RcCheckTs, but whether to use the tso request and wait it are depended on `AdviseOptimizeWithPlan`.
 // (a) text protocol request
-// For insert statements without select, they always don't use the above tso, don't wait for it either.
+// For insert statements without select subquery, they always don't use the tso above, don't wait for it either.
 // If tidb_rc_insert_use_last_tso is ON, we don't make tso requests too, we use the p.latestOracleTS.
 // If tidb_rc_insert_use_last_tso is OFF, we make tso requests but don't wait.
 // For update/delete/select statements, if tidb_rc_point_lock_read_use_last_tso is ON, we don't make tso requests,
 // we use the p.latestOracleTS.
-// (b) binary protocol request(prepare mode)
-// The behaviour is as text protocol request at most time, except that the it can get a plan from plan cache,
-// when optimizer doesn't call txnManger.AdviseWarmup forever.
+// (b) binary protocol request (prepare mode)
+// The behavior is like text protocol request at most time, except that the it can get a plan from plan cache,
+// when optimizer doesn't call `txnManger.AdviseWarmup` forever.
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
