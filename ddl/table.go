@@ -173,7 +173,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 }
 
 func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
-	switch job.SchemaState {
+	switch tbInfo.State {
 	case model.StateNone:
 		// create table in non-public state
 		tbInfo, err = createTable(d, t, job, fkCheck)

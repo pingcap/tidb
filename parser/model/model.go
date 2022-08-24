@@ -348,7 +348,7 @@ func FindIndexByColumns(tbInfo *TableInfo, cols ...CIStr) *IndexInfo {
 	return nil
 }
 
-// IsIndexPrefixCovered checks the index's columns is begin with the cols.
+// IsIndexPrefixCovered checks the index's columns beginning with the cols.
 func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...CIStr) bool {
 	if len(index.Columns) < len(cols) {
 		return false
