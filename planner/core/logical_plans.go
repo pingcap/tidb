@@ -375,6 +375,22 @@ func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*proper
 	return
 }
 
+// decorrelate eliminate the correlated column with if the col is in schema.
+func (p *LogicalJoin) decorrelate(schema *expression.Schema) {
+	for i, cond := range p.LeftConditions {
+		p.LeftConditions[i] = cond.Decorrelate(schema)
+	}
+	for i, cond := range p.RightConditions {
+		p.RightConditions[i] = cond.Decorrelate(schema)
+	}
+	for i, cond := range p.OtherConditions {
+		p.OtherConditions[i] = cond.Decorrelate(schema)
+	}
+	for i, cond := range p.EqualConditions {
+		p.EqualConditions[i] = cond.Decorrelate(schema).(*expression.ScalarFunction)
+	}
+}
+
 // columnSubstituteAll is used in projection elimination in apply de-correlation.
 // Substitutions for all conditions should be successful, otherwise, we should keep all conditions unchanged.
 func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []expression.Expression) (hasFail bool) {

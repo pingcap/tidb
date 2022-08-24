@@ -187,10 +187,12 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			if hasFail {
 				goto NoOptimize
 			}
-			// step2: when it can be substituted all, we then just do the de-correlation.
+			// step2: when it can be substituted all, we then just do the de-correlation (apply conditions included).
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}
+			apply.decorrelate(outerPlan.Schema())
+
 			innerPlan = proj.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
