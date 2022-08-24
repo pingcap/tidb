@@ -92,7 +92,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 			return
 		}
 	} else {
-		l.buckets[hash] = make(map[*list.Element]struct{})
+		l.buckets[hash] = make(map[*list.Element]struct{}, 1)
 	}
 
 	newCacheEntry := &CacheEntry{
