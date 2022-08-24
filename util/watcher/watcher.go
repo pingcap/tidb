@@ -42,8 +42,8 @@ type Watcher struct {
 	Events  chan Event
 	Errors  chan error
 	closed  chan struct{}
-	names   map[string]struct{}
-	files   map[string]os.FileInfo
+	names   map[string]struct{}    // original added names needed to watch
+	files   map[string]os.FileInfo // all latest watching files
 	wg      sync.WaitGroup
 	running atomic.Int32
 	mu      sync.Mutex

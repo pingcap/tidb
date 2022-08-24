@@ -73,9 +73,11 @@ type RemoteTopSQLReporter struct {
 	collecting              *collecting
 	normalizedSQLMap        *normalizedSQLMap
 	normalizedPlanMap       *normalizedPlanMap
-	stmtStatsBuffer         map[uint64]stmtstats.StatementStatsMap
-	decodePlan              planBinaryDecodeFunc
-	compressPlan            planBinaryCompressFunc
+	stmtStatsBuffer         map[uint64]stmtstats.StatementStatsMap // timestamp => stmtstats.StatementStatsMap
+	// calling decodePlan this can take a while, so should not block critical paths.
+	decodePlan planBinaryDecodeFunc
+	// Instead of dropping large plans, we compress it into encoded format and report
+	compressPlan planBinaryCompressFunc
 	DefaultDataSinkRegisterer
 }
 

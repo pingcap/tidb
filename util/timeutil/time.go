@@ -49,6 +49,7 @@ var systemTZ atomic.String
 // they suggests that only programmers knows which one is best for their use case.
 // For detail, please refer to: https://github.com/golang/go/issues/26106
 type locCache struct {
+	// locMap stores locations used in past and can be retrieved by a timezone's name.
 	locMap map[string]*time.Location
 	mu     sync.RWMutex
 }

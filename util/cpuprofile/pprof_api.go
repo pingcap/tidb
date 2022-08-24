@@ -66,11 +66,11 @@ func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 type Collector struct {
 	ctx       context.Context
 	writer    io.Writer
-	err       error
+	err       error // fields uses to store the result data of collected.
 	cancel    context.CancelFunc
 	firstRead chan struct{}
 	dataCh    ProfileConsumer
-	result    *profile.Profile
+	result    *profile.Profile // fields uses to store the result data of collected.
 	wg        sync.WaitGroup
 	started   bool
 }

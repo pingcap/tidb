@@ -30,16 +30,14 @@ import (
 
 type mockAgentServer struct {
 	hang struct {
-		beginTime atomic.Value
-		endTime   atomic.Value
+		beginTime atomic.Value // time.Time
+		endTime   atomic.Value // time.Time
 	}
 	grpcServer *grpc.Server
-	sqlMetas   map[ // time.Time
-	// time.Time
-	string]tipb.SQLMeta
-	planMetas map[string]string
-	addr      string
-	records   [][]*tipb.TopSQLRecord
+	sqlMetas   map[string]tipb.SQLMeta
+	planMetas  map[string]string
+	addr       string
+	records    [][]*tipb.TopSQLRecord
 	sync.Mutex
 }
 

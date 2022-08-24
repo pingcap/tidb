@@ -140,6 +140,7 @@ var _ sort.Interface = &record{}
 // record do not guarantee the tsItems is sorted by timestamp when there is a time jump backward.
 // record is also sortable, and the tsIndex will be updated while sorting the internal tsItems.
 type record struct {
+	// tsIndex is used to quickly find the corresponding tsItems index through timestamp.
 	tsIndex        map[uint64]int
 	sqlDigest      []byte
 	planDigest     []byte
