@@ -210,13 +210,22 @@ func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
 
 func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {
 	col := &Column{RetType: newIntFieldType()}
+<<<<<<< HEAD
 	c.Assert(setExprColumnInOperand(col).(*Column).InOperand, check.IsTrue)
+=======
+	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
+>>>>>>> d3483026e... planner: mark the both side operand of NAAJ & refuse partial column substitute in projection elimination of Apply de-correlation (#37117)
 
 	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
 	c.Assert(err, check.IsNil)
 	fun := &ScalarFunction{Function: f}
+<<<<<<< HEAD
 	setExprColumnInOperand(fun)
 	c.Assert(f.getArgs()[0].(*Column).InOperand, check.IsTrue)
+=======
+	SetExprColumnInOperand(fun)
+	require.True(t, f.getArgs()[0].(*Column).InOperand)
+>>>>>>> d3483026e... planner: mark the both side operand of NAAJ & refuse partial column substitute in projection elimination of Apply de-correlation (#37117)
 }
 
 func (s testUtilSuite) TestPopRowFirstArg(c *check.C) {
