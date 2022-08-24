@@ -489,7 +489,7 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 			if !mutable {
 				value = &c.Value
 			}
-			return &valueInfo{mutable, value}
+			return &valueInfo{value, mutable}
 		}
 		if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
 			return getValueInfo(c)
@@ -707,8 +707,8 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 
 // valueInfo is used for recording the constant column value in DetachCondAndBuildRangeForIndex.
 type valueInfo struct {
-	mutable bool         // If true, the constant column value depends on mutable constant.
 	value   *types.Datum // If not mutable, value is the constant column value. Otherwise value is nil.
+	mutable bool         // If true, the constant column value depends on mutable constant.
 }
 
 func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *valueInfo) (bool, error) {
@@ -1008,7 +1008,7 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 	if err != nil {
 		return accessesCond, err
 	}
-	vi := &valueInfo{false, &evaluated}
+	vi := &valueInfo{&evaluated, false}
 	con := &expression.Constant{Value: evaluated, RetType: cols[0].RetType}
 	// make a tidb_shard() function, e.g. `tidb_shard(a) = 8`
 	cond, err := expression.NewFunction(sctx, ast.EQ, cols[0].RetType, cols[0], con)
