@@ -1784,6 +1784,7 @@ func BuildTableInfo(
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 		tblColumns = append(tblColumns, table.ToColumn(v.ToInfo()))
 	}
+	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
 		// Build hidden columns if necessary.
 		hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
@@ -1804,10 +1805,11 @@ func BuildTableInfo(
 		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			var fkName model.CIStr
+			foreignKeyID++
 			if constr.Name != "" {
 				fkName = model.NewCIStr(constr.Name)
 			} else {
-				fkName = model.NewCIStr(fmt.Sprintf("fk_%v", tbInfo.MaxForeignKeyID+1))
+				fkName = model.NewCIStr(fmt.Sprintf("fk_%v", foreignKeyID))
 			}
 			if model.FindFKInfoByName(tbInfo.ForeignKeys, fkName.L) != nil {
 				return nil, infoschema.ErrCannotAddForeign

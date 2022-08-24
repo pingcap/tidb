@@ -575,6 +575,10 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 		{
 			"create table t2 (a int, b int, index(a,b), index(b,a), foreign key (a,b) references t2(b,a));",
 		},
+		{
+			"create table t1 (a int key, b int, index(b))",
+			"create table t2 (a int, b int, foreign key (a) references t1(a), foreign key (b) references t1(b));",
+		},
 	}
 	for _, ca := range passCases {
 		tk.MustExec("drop table if exists t2")
