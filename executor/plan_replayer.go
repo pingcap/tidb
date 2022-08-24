@@ -373,11 +373,11 @@ func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *domain.Doma
 
 func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
 	varMap := make(map[string]string)
-	recordSet, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "show variables")
+	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show variables")
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSet)
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
 		return err
 	}
@@ -391,15 +391,20 @@ func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
 	if err := toml.NewEncoder(vf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
-	recordSet, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "show bindings")
+	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show bindings")
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSet)
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
 		return err
 	}
@@ -410,15 +415,20 @@ func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	for _, row := range sRows {
 		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
 	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
-	recordSet, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "show global bindings")
+	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show global bindings")
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSet)
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
 		return err
 	}
@@ -429,26 +439,31 @@ func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	for _, row := range sRows {
 		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
 	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze bool) error {
-	var recordSet sqlexec.RecordSet
+	var recordSets []sqlexec.RecordSet
 	var err error
 	if isAnalyze {
 		// Explain analyze
-		recordSet, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("explain analyze %s", sql))
+		recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
 		if err != nil {
 			return err
 		}
 	} else {
 		// Explain
-		recordSet, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("explain %s", sql))
+		recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain %s", sql))
 		if err != nil {
 			return err
 		}
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSet)
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
 		return err
 	}
@@ -458,6 +473,11 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -503,11 +523,11 @@ func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable,
 }
 
 func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Context) error {
-	recordSet, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
+	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSet)
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
 		return err
 	}
