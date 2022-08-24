@@ -514,6 +514,23 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			create: "create global temporary table t2 (a int, b int, foreign key fk(b) references t1(b)) on commit delete rows",
 			err:    "[schema:1215]Cannot add foreign key constraint",
 		},
+		{
+			create: "create table t1 (a int, foreign key ``(a) references t1(a));",
+			err:    "[ddl:1280]Incorrect index name ''",
+		},
+		{
+			create: "create table t1 (a int, constraint `` foreign key (a) references t1(a));",
+			err:    "[ddl:1280]Incorrect index name ''",
+		},
+		{
+			create: "create table t1 (a int, constraint `fk` foreign key (a,a) references t1(a, b));",
+			err:    "[schema:1060]Duplicate column name 'a'",
+		},
+		{
+			refer:  "create table t1(a int, b int, index(a,b));",
+			create: "create table t2 (a int, b int, foreign key (a,b) references t1(a,a));",
+			err:    "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_1' in the referenced table 't1'",
+		},
 	}
 	for _, ca := range cases {
 		tk.MustExec("drop table if exists t2")

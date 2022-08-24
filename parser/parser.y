@@ -11453,6 +11453,7 @@ Constraint:
 		cst := $2.(*ast.Constraint)
 		if $1 != nil {
 			cst.Name = $1.(string)
+			cst.IsEmptyIndex = len(cst.Name) == 0
 		}
 		$$ = cst
 	}
