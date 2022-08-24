@@ -22,10 +22,10 @@ import (
 
 // Config is the configuration.
 type Config struct {
-	DBCfg       dbutil.DBConfig `toml:"db" json:"db"`
 	TableSQL    string          `toml:"table-sql" json:"table-sql"`
 	IndexSQL    string          `toml:"index-sql" json:"index-sql"`
 	LogLevel    string          `toml:"log-level" json:"log-level"`
+	DBCfg       dbutil.DBConfig `toml:"db" json:"db"`
 	WorkerCount int             `toml:"worker-count" json:"worker-count"`
 	JobCount    int             `toml:"job-count" json:"job-count"`
 	Batch       int             `toml:"batch" json:"batch"`
