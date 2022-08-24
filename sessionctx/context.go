@@ -220,7 +220,7 @@ func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) er
 // How far future from now ValidateStaleReadTS allows at most
 const allowedTimeFromNow = 100 * time.Millisecond
 
-// ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
+// ValidateStaleReadTS validates that readTS does not exceed the current time not strictly and is not 0.
 func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
 	if readTS == 0 {
 		return errors.Errorf("read timestamp should not be 0")
