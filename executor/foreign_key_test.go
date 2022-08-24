@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/terror"
@@ -575,4 +576,164 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 	require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
 	tk.MustExec("commit")
 	tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 5 25 a"))
+}
+
+func TestForeignKeyLockInTxn(t *testing.T) {
+	return
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+
+	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@foreign_key_checks=1")
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
+	cases := []struct {
+		prepareSQLs []string
+	}{
+		// Case-1: test unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int, name varchar(10), unique index (id))",
+				"create table t2 (a int,  name varchar(10), unique index (a), foreign key fk(a) references t1(id))",
+			},
+		},
+		//Case-2: test unique index contain foreign key columns and other columns.
+		//{
+		//	prepareSQLs: []string{
+		//		"create table t1 (id int, name varchar(10), unique index (id, name))",
+		//		"create table t2 (name varchar(10), a int,  unique index (a,  name), foreign key fk(a) references t1(id))",
+		//	},
+		//},
+		////Case-3: test non-unique index only contain foreign key columns.
+		//{
+		//	prepareSQLs: []string{
+		//		"create table t1 (id int, name varchar(10), index (id))",
+		//		"create table t2 (a int,  name varchar(10), index (a), foreign key fk(a) references t1(id))",
+		//	},
+		//},
+		////Case-4: test non-unique index contain foreign key columns and other columns.
+		//{
+		//	prepareSQLs: []string{
+		//		"create table t1 (id int, name varchar(10), index (id, name))",
+		//		"create table t2 (name varchar(10), a int,  index (a,  name), foreign key fk(a) references t1(id))",
+		//	},
+		//},
+		////Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+		//{
+		//	prepareSQLs: []string{
+		//		"set @@tidb_enable_clustered_index=0;",
+		//		"create table t1 (id int, name varchar(10), primary key (id))",
+		//		"create table t2 (a int,  name varchar(10), primary key (a), foreign key fk(a) references t1(id))",
+		//	},
+		//},
+		////Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+		//{
+		//	prepareSQLs: []string{
+		//		"set @@tidb_enable_clustered_index=1;",
+		//		"create table t1 (id int, name varchar(10), primary key (id))",
+		//		"create table t2 (a int,  name varchar(10), primary key (a), foreign key fk(a) references t1(id))",
+		//	},
+		//},
+		////Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+		//{
+		//	prepareSQLs: []string{
+		//		"set @@tidb_enable_clustered_index=0;",
+		//		"create table t1 (id int, name varchar(10), primary key (id, name))",
+		//		"create table t2 (a int,  name varchar(10), primary key (a , name), foreign key fk(a) references t1(id))",
+		//	},
+		//},
+		//// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+		//{
+		//	prepareSQLs: []string{
+		//		"set @@tidb_enable_clustered_index=1;",
+		//		"create table t1 (id int, name varchar(10), primary key (id, name))",
+		//		"create table t2 (a int,  name varchar(10), primary key (a , name), foreign key fk(a) references t1(id))",
+		//	},
+		//},
+	}
+
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		// Test in optimistic txn
+		tk.MustExec("insert into t1 (id, name) values (1, 'a');")
+		// Test insert child table
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t2 (a, name) values (1, 'a');")
+		tk2.MustExec("delete from t1 where id = 1")
+		err := tk.ExecToErr("commit")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Write conflict")
+		// Test update child table
+		tk.MustExec("insert into t1 (id, name) values (1, 'a'), (2, 'b');")
+		tk.MustExec("insert into t2 (a, name) values (1, 'a');")
+		tk.MustExec("begin optimistic")
+		tk.MustExec("update t2 set a=2 where a = 1")
+		tk2.MustExec("delete from t1 where id = 2")
+		err = tk.ExecToErr("commit")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Write conflict")
+		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a"))
+		tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("1 a"))
+
+		// Test in pessimistic txn
+		tk.MustExec("delete from t2")
+		// Test insert child table
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into t2 (a, name) values (1, 'a');")
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := tk2.ExecToErr("delete from t1 where id = 1")
+			require.Error(t, err)
+			require.Equal(t, "[planner:1451]Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))", err.Error())
+		}()
+		tk.MustExec("commit")
+		wg.Wait()
+		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a"))
+		tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("1 a"))
+		// Test update child table
+		tk.MustExec("insert into t1 (id, name) values (2, 'b');")
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("update t2 set a=2 where a = 1")
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := tk2.ExecToErr("delete from t1 where id = 2")
+			require.Error(t, err)
+			require.Equal(t, "[planner:1451]Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))", err.Error())
+		}()
+		tk.MustExec("commit")
+		wg.Wait()
+		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a", "2 b"))
+		tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("2 a"))
+	}
+}
+
+func TestForeignKeyOnInsertIgnore(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t1 (i INT PRIMARY KEY);")
+	tk.MustExec("CREATE TABLE t2 (i INT, FOREIGN KEY (i) REFERENCES t1 (i));")
+	tk.MustExec("INSERT INTO t1 VALUES (1),(3);")
+	tk.MustExec("INSERT IGNORE INTO t2 VALUES (1),(2),(3),(4);")
+	warning := "Warning 1452 Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`i`) REFERENCES `t1` (`i`))"
+	tk.MustQuery("show warnings;").Check(testkit.Rows(warning, warning))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
 }
