@@ -15,8 +15,11 @@
 package expression
 
 import (
+	"encoding/hex"
 	"fmt"
 	"regexp"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -201,8 +204,8 @@ func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 }
 
 // we need to memorize the regexp when:
-//   1. pattern and match type are constant
-//   2. pattern is const and match type is null
+//  1. pattern and match type are constant
+//  2. pattern is const and match type is null
 //
 // return true: need, false: needless
 func (re *regexpLikeFuncSig) needMemorization() bool {
@@ -309,6 +312,8 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	sig := regexpSubstrFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
+	sig.cloneFrom(&bf)
+
 	if bf.collation == charset.CollationBin {
 		sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrSig)
 		sig.isBinCollation = true
@@ -355,6 +360,10 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	arg_num := len(re.args)
 	var bexpr []byte
 
+	if re.isBinCollation {
+		bexpr = []byte(expr)
+	}
+
 	if arg_num == 3 {
 		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
 		if isNull || err != nil {
@@ -370,10 +379,11 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 
 			bexpr = bexpr[pos-1:] // Trim
 		} else {
-			if pos < 1 || pos > int64(len(expr)) {
+			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
 				return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 			}
 
+			// TODO handle non-ascii character
 			expr = expr[pos-1:] // Trim
 		}
 	}
@@ -417,7 +427,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 			occurrence = length
 		}
 
-		return fmt.Sprintf("0x%x", matches[occurrence-1]), false, nil
+		return fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(matches[occurrence-1]))), false, nil
 	}
 
 	matches := reg.FindAllString(expr, -1)

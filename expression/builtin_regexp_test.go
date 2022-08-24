@@ -193,6 +193,14 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpLikeCases)
 }
 
+func setBinCollation(tp *types.FieldType) {
+	tp.SetType(mysql.TypeVarString)
+	tp.SetCharset(charset.CharsetBin)
+	tp.SetCollate(charset.CollationBin)
+	tp.SetFlen(types.UnspecifiedLength)
+	tp.SetFlag(mysql.BinaryFlag)
+}
+
 func TestRegexpSubstrConst(t *testing.T) {
 	ctx := createContext(t)
 
@@ -200,30 +208,72 @@ func TestRegexpSubstrConst(t *testing.T) {
 	testParam2 := []struct {
 		input    string
 		pattern  string
-		match    string
-		matchBin string // bin result
+		match    interface{}
+		matchBin interface{} // bin result
 		err      error
-	}{}
+	}{
+		// {"abc", "bc", "bc", "0x6263", nil},
+		// {"你好", "好", "好", "0xE5A5BD", nil},
+	}
 
 	for isBin := 0; isBin <= 1; isBin++ {
 		for _, tt := range testParam2 {
 			fc := funcs[ast.RegexpSubstr]
-			f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
-			require.NoError(t, err)
-
 			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern))
 			if isBin == 1 {
-				arg := datumsToConstants(types.MakeDatums(tt.input))
-				tp := arg[0].GetType()
-				tp.SetType(mysql.TypeVarString)
-				tp.SetCharset(charset.CharsetBin)
-				tp.SetCollate(charset.CollationBin)
-				tp.SetFlen(types.UnspecifiedLength)
-				tp.SetFlag(mysql.BinaryFlag)
+				setBinCollation(args[0].GetType())
 				expectMatch = tt.matchBin
 			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+
+	// test regexp_substr(expr, pat, pos)
+	testParam3 := []struct {
+		input    string
+		pattern  string
+		pos      int64
+		match    interface{}
+		matchBin interface{} // bin result
+		err      error
+	}{
+		// {"abc", "bc", 2, "bc", "0x6263", nil},
+		// {"你好", "好", 2, "好", "0xE5A5BD", nil},
+		// {"abc", "bc", 3, nil, nil, nil},
+		{"你好啊", "好", 3, nil, nil, nil},
+		// {"abc", "bc", -1, nil, nil, ErrRegexp},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for i, tt := range testParam3 {
+			fc := funcs[ast.RegexpSubstr]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			fmt.Println("index: ", i)
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			fmt.Println("actualMatch: ", actualMatch)
+			if expectMatch != nil {
+				fmt.Println("expectMatch: ", expectMatch)
+			} else {
+				fmt.Println("expectMatch: null")
+			}
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
