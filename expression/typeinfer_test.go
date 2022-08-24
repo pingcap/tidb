@@ -2975,7 +2975,7 @@ func (s *InferTypeSuite) createTestCase4JSONFuncs() []typeInferTestCase {
 		{"json_merge(c_json, c_json)", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{"json_object('k', 'v')", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{"json_array('k', 'v')", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
-		{"json_pretty(c_json)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxLongBlobWidth, types.UnspecifiedLength},
+		{"json_pretty(c_json)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth * 4, types.UnspecifiedLength},
 		{"json_contains(c_json, 'a')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"json_contains_path(c_json, 'one', '$.a')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"json_quote('k')", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.BinaryFlag | mysql.NotNullFlag, 8, types.UnspecifiedLength},

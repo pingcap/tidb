@@ -1148,7 +1148,7 @@ func (c *jsonPrettyFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, err
 	}
 	bf.tp.AddFlag(mysql.BinaryFlag)
-	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	bf.tp.SetFlen(mysql.MaxBlobWidth * 4)
 	sig := &builtinJSONSPrettySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonPrettySig)
 	return sig, nil
