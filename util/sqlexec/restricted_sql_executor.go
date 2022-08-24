@@ -55,15 +55,15 @@ type RestrictedSQLExecutor interface {
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
-	IgnoreWarning      bool
-	SnapshotTS         uint64
-	AnalyzeVer         int
 	AnalyzeSnapshot    *bool
-	PartitionPruneMode string
-	UseCurSession      bool
-	TrackSysProcID     uint64
 	TrackSysProc       func(id uint64, ctx sessionctx.Context) error
 	UnTrackSysProc     func(id uint64)
+	PartitionPruneMode string
+	SnapshotTS         uint64
+	AnalyzeVer         int
+	TrackSysProcID     uint64
+	IgnoreWarning      bool
+	UseCurSession      bool
 }
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
