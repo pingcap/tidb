@@ -1860,6 +1860,7 @@ type LogicalCTE struct {
 
 	cte            *CTEClass
 	cteAsName      model.CIStr
+	cteName        model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
 	MergeHints     MergeHintInfo

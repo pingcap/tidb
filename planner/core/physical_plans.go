@@ -17,6 +17,7 @@ package core
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -1631,6 +1632,7 @@ type PhysicalCTE struct {
 	RecurPlan PhysicalPlan
 	CTE       *CTEClass
 	cteAsName model.CIStr
+	cteName   model.CIStr
 }
 
 // PhysicalCTETable is for CTE table.
@@ -1694,7 +1696,7 @@ func (p *CTEDefinition) ExplainInfo() string {
 // ExplainID overrides the ExplainID.
 func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
+		return "CTE_" + strings.ToUpper(p.cteName.L)
 	})
 }
 
