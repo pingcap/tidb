@@ -312,11 +312,11 @@ func BuildMetaDataHelper(ctx context.Context, storage storage.ExternalStorage) (
 
 	if strings.Contains(string(data), "V2") {
 		log.Info("use storage v2, restore backup files in v2/")
-		return NewMetaDataV1Helper(), nil
+		return NewMetaDataV2Helper(), nil
 	}
 
 	log.Info("use storage v1, restore backup files in v1/")
-	return NewMetaDataV2Helper(), nil
+	return NewMetaDataV1Helper(), nil
 }
 
 // FastUnmarshalMetaData used a 128 worker pool to speed up
