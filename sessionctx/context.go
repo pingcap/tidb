@@ -222,6 +222,9 @@ const allowedTimeFromNow = 100 * time.Millisecond
 
 // ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
 func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
+	if readTS == 0 {
+		return errors.Errorf("read timestamp should not be 0")
+	}
 	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
 	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
 	if err != nil {
