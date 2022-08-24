@@ -82,7 +82,7 @@ set -e
 
 export GO_FAILPOINTS=''
 echo "******** Verify checkpoint no-op ********"
-run_lightning --backend local --enable-checkpoint=1 --config "tests/$TEST_NAME/config.toml" --log-file $res_file
+run_lightning --backend local --enable-checkpoint=1 --config "tests/$TEST_NAME/config.toml" --log-file $res_file -L debug
 check_not_contains "failed to set system var"
 check_not_contains "unknown system var"
 check_contains "skip read-only variable"
