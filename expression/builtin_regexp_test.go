@@ -28,6 +28,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func getStringConstant(value string) *Constant {
+	return &Constant{
+		Value:   types.NewStringDatum(value),
+		RetType: types.NewFieldType(mysql.TypeVarchar),
+	}
+}
+
+func getVecExprBenchCaseForRegexpLike(inputs ...[]string) vecExprBenchCase {
+	gens := make([]dataGenerator, 0, 3)
+	paramTypes := make([]types.EvalType, 0, 3)
+	for _, input := range inputs {
+		gens = append(gens, &selectStringGener{
+			candidates: input,
+			randGen:    newDefaultRandGen(),
+		})
+		paramTypes = append(paramTypes, types.ETString)
+	}
+
+	return vecExprBenchCase{
+		retEvalType:   types.ETInt,
+		childrenTypes: paramTypes,
+		geners:        gens,
+	}
+}
+
 // test Regexp_like function when all parameters are constant
 func TestRegexpLikeConst(t *testing.T) {
 	ctx := createContext(t)
@@ -116,64 +141,46 @@ func TestRegexpLikeConst(t *testing.T) {
 	}
 }
 
-func getVecExprBenchCaseForRegexpLike(inputs ...[]string) vecExprBenchCase {
-	gens := make([]dataGenerator, 0, 3)
-	paramTypes := make([]types.EvalType, 0, 3)
-	for _, input := range inputs {
-		gens = append(gens, &selectStringGener{
-			candidates: input,
-			randGen:    newDefaultRandGen(),
-		})
-		paramTypes = append(paramTypes, types.ETString)
-	}
-
-	return vecExprBenchCase{
-		retEvalType:   types.ETInt,
-		childrenTypes: paramTypes,
-		geners:        gens,
-	}
-}
-
-func getStringConstant(value string) *Constant {
-	return &Constant{
-		Value:   types.NewStringDatum(value),
-		RetType: types.NewFieldType(mysql.TypeVarchar),
-	}
-}
-
 func TestRegexpLikeFunctionVec(t *testing.T) {
 	var expr []string = []string{"abc", "aBc", "Good\nday", "\n"}
 	var pattern []string = []string{"abc", "od$", "^day", "day$", "."}
 	var matchType []string = []string{"m", "i", "icc", "cii", "n", "mni"}
 
 	constants := make([]*Constant, 3)
+	for i := 0; i < 3; i++ {
+		constants[i] = nil
+	}
 
 	// Prepare data: expr is constant
 	constants[0] = getStringConstant("abc")
-	constants[1] = nil
-	constants[2] = nil
 	exprConstCase := getVecExprBenchCaseForRegexpLike(expr, pattern, matchType)
-	exprConstCase.constants = constants
+	exprConstCase.constants = make([]*Constant, 3)
+	copy(exprConstCase.constants, constants)
+	constants[0] = nil
 
 	// Prepare data: pattern is constant
-	constants[0] = nil
 	constants[1] = getStringConstant("abc")
 	patConstCase := getVecExprBenchCaseForRegexpLike(expr, pattern)
-	patConstCase.constants = constants
+	patConstCase.constants = make([]*Constant, 3)
+	copy(patConstCase.constants, constants)
+	constants[1] = nil
 
 	// Prepare data: matchType is constant
-	constants[0] = nil
-	constants[1] = nil
 	constants[2] = getStringConstant("imn")
 	matchTypeConstCase := getVecExprBenchCaseForRegexpLike(expr, pattern, matchType)
-	matchTypeConstCase.constants = constants
+	matchTypeConstCase.constants = make([]*Constant, 3)
+	copy(matchTypeConstCase.constants, constants)
+	constants[2] = nil
 
 	// Prepare data: pattern and matchType are constant
 	constants[0] = nil
 	constants[1] = getStringConstant("abc")
 	constants[2] = getStringConstant("imn")
 	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexpLike(expr, pattern, matchType)
-	patAndMatchTypeConstCase.constants = constants
+	patAndMatchTypeConstCase.constants = make([]*Constant, 3)
+	copy(patAndMatchTypeConstCase.constants, constants)
+	constants[1] = nil
+	constants[2] = nil
 
 	// Build vecBuiltinRegexpLikeCases
 	var vecBuiltinRegexpLikeCases = map[string][]vecExprBenchCase{
@@ -199,6 +206,43 @@ func setBinCollation(tp *types.FieldType) {
 	tp.SetCollate(charset.CollationBin)
 	tp.SetFlen(types.UnspecifiedLength)
 	tp.SetFlag(mysql.BinaryFlag)
+}
+
+func getVecExprBenchCaseForRegexpSubstr(inputs ...interface{}) vecExprBenchCase {
+	gens := make([]dataGenerator, 0, 5)
+	paramTypes := make([]types.EvalType, 0, 5)
+
+	for _, input := range inputs {
+		switch input.(type) {
+		case []int:
+			actualInput := input.([]int)
+			gens = append(gens, &rangeInt64Gener{
+				begin:   actualInput[0],
+				end:     actualInput[1],
+				randGen: newDefaultRandGen(),
+			})
+			paramTypes = append(paramTypes, types.ETInt)
+		case []string:
+			strs := make([]string, 0)
+			actualInput := input.([]string)
+			for _, elem := range actualInput {
+				strs = append(strs, elem)
+			}
+			gens = append(gens, &selectStringGener{
+				candidates: strs,
+				randGen:    newDefaultRandGen(),
+			})
+			paramTypes = append(paramTypes, types.ETString)
+		default:
+			panic("Invalid type")
+		}
+	}
+
+	return vecExprBenchCase{
+		retEvalType:   types.ETString,
+		childrenTypes: paramTypes,
+		geners:        gens,
+	}
 }
 
 func TestRegexpSubstrConst(t *testing.T) {
@@ -389,6 +433,38 @@ func TestRegexpSubstrConst(t *testing.T) {
 	}
 }
 
+// ATTENTION We are unable to test bin collation
 func TestRegexpSubstrVec(t *testing.T) {
+	var expr []string = []string{"abc abd abe", "你好啊啊啊啊啊", "好的 好滴 好~", "Good\nday", "\n\n\n\n\n\n"}
+	var pattern []string = []string{"ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", "."}
+	var position []int = []int{1, 5}
+	var occurrence []int = []int{-1, 10}
+	var matchType []string = []string{"m", "i", "icc", "cii", "n", "mni"}
 
+	args := make([]interface{}, 0)
+	args = append(args, interface{}(expr))
+	args = append(args, interface{}(pattern))
+	args = append(args, interface{}(position))
+	args = append(args, interface{}(occurrence))
+	args = append(args, interface{}(matchType))
+
+	constants := make([]*Constant, 5)
+	for i := 0; i < 5; i++ {
+		constants[i] = nil
+	}
+
+	// Prepare data: expr is constant
+	// Prepare data: pattern is constant
+	// Prepare data: position is constant
+	// Prepare data: occurrence is constant
+	// Prepare data: match type is constant
+
+	// Build vecBuiltinRegexpSubstrCases
+	var vecBuiltinRegexpSubstrCases = map[string][]vecExprBenchCase{
+		ast.RegexpSubstr: {
+			getVecExprBenchCaseForRegexpSubstr(args...),
+		},
+	}
+
+	testVectorizedBuiltinFunc(t, vecBuiltinRegexpSubstrCases)
 }
