@@ -47,7 +47,7 @@ import (
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
 }
 
@@ -57,7 +57,7 @@ func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
 }
 
@@ -120,7 +120,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{
 		Username: "xxx",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -545,6 +545,12 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 
 	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key clustered auto_random(1))")
 	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t6` (a bigint key clustered auto_random(2, 32))")
+	assertShardingInfo("t6", "PK_AUTO_RANDOM_BITS=2, RANGE BITS=32")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t7` (a bigint key clustered auto_random(5, 64))")
+	assertShardingInfo("t7", "PK_AUTO_RANDOM_BITS=5")
 
 	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
 }
@@ -1388,7 +1394,7 @@ func TestInfoSchemaClientErrors(t *testing.T) {
 	errno.IncrementError(1365, "root", "localhost")
 
 	tk.MustExec("CREATE USER 'infoschematest'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil))
 
 	err := tk.QueryToErr("SELECT * FROM information_schema.client_errors_summary_global")
 	require.Equal(t, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation", err.Error())
@@ -1486,7 +1492,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 
 	tk := newTestKitWithRoot(t, store)
 	tk.MustExec("create user 'testuser'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -1497,7 +1503,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 	tk = newTestKitWithRoot(t, store)
 	tk.MustExec("create user 'testuser2'@'localhost'")
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil))

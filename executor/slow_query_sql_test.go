@@ -210,7 +210,7 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 func TestIssue37066(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg

@@ -48,6 +48,8 @@ type TestKit struct {
 	t       testing.TB
 	store   kv.Storage
 	session session.Session
+
+	useGeneralPlanCache bool
 }
 
 // NewTestKit returns a new *TestKit.
@@ -73,6 +75,13 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 	}
 }
 
+// NewTestKitWithGeneralPlanCache returns a new *TestKit.
+func NewTestKitWithGeneralPlanCache(t testing.TB, store kv.Storage) *TestKit {
+	tk := NewTestKit(t, store)
+	tk.useGeneralPlanCache = true
+	return tk
+}
+
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = newSession(tk.t, tk.store)
@@ -94,7 +103,12 @@ func (tk *TestKit) Session() session.Session {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
-	res, err := tk.Exec(sql, args...)
+	tk.MustExecWithContext(context.Background(), sql, args...)
+}
+
+// MustExecWithContext executes a sql statement and asserts nil error.
+func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...interface{}) {
+	res, err := tk.ExecWithContext(ctx, sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
 	tk.require.NoError(err, comment)
 
@@ -106,11 +120,16 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+	return tk.MustQueryWithContext(context.Background(), sql, args...)
+}
+
+// MustQueryWithContext query the statements and returns result rows.
+func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ...interface{}) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
-	rs, err := tk.Exec(sql, args...)
+	rs, err := tk.ExecWithContext(ctx, sql, args...)
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(rs, comment)
-	return tk.ResultSetToResult(rs, comment)
+	return tk.ResultSetToResultWithCtx(ctx, rs, comment)
 }
 
 // MustIndexLookup checks whether the plan for the sql is IndexLookUp.
@@ -224,13 +243,26 @@ func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	ctx := context.Background()
+	return tk.ExecWithContext(context.Background(), sql, args...)
+}
+
+// ExecWithContext executes a sql statement using the prepared stmt API
+func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
-		stmts, err := tk.session.Parse(ctx, sql)
-		if err != nil {
-			return nil, errors.Trace(err)
+		var stmts []ast.StmtNode
+		if tk.useGeneralPlanCache {
+			if execStmt, ok := tk.session.Parameterize(ctx, sql); ok {
+				stmts = append(stmts, execStmt)
+			}
+		}
+		if len(stmts) == 0 {
+			var err error
+			stmts, err = tk.session.Parse(ctx, sql)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		warns := sc.GetWarnings()
 		parserWarns := warns[len(prevWarns):]
