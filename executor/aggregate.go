@@ -1025,6 +1025,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 
 		allMemDelta := int64(0)
 		sel := make([]int, 0, e.childResult.NumRows())
+		var tmpBuf [1]chunk.Row
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
@@ -1037,7 +1038,8 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			}
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
-				memDelta, err := af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(j)}, partialResults[i])
+				tmpBuf[0] = e.childResult.GetRow(j)
+				memDelta, err := af.UpdatePartialResult(e.ctx, tmpBuf[:], partialResults[i])
 				if err != nil {
 					return err
 				}
