@@ -68,6 +68,9 @@ func (r *TiFlashRecorder) Iterate(f func(tableID int64, replica model.TiFlashRep
 }
 
 func (r *TiFlashRecorder) Rewrite(oldID int64, newID int64) {
+	if newID == oldID {
+		return 
+	}
 	old, ok := r.items[oldID]
 	log.Info("rewriting tiflash replica", zap.Int64("old", oldID), zap.Int64("new", newID), zap.Bool("success", ok))
 	if ok {

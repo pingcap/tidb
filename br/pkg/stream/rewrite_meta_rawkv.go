@@ -405,7 +405,7 @@ func (sr *SchemasReplace) rewriteValueV2(value []byte, cf string, rewrite func([
 	case DefaultCF:
 		newValue, needRewrite, err := rewrite(value)
 		if err != nil {
-			return rewriteResult{}, nil
+			return rewriteResult{}, errors.Trace(err)
 		}
 		return rewriteResult{
 			NeedRewrite: needRewrite,
