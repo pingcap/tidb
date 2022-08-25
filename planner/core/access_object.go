@@ -496,5 +496,5 @@ func (p *PhysicalCTE) AccessObject() AccessObject {
 	if p.cteName == p.cteAsName {
 		return OtherAccessObject(fmt.Sprintf("CTE:%s", p.cteName.L))
 	}
-	return OtherAccessObject(fmt.Sprintf("CTE:%s as %s", p.cteName.L, p.cteAsName.L))
+	return OtherAccessObject(fmt.Sprintf("CTE:%s AS %s", p.cteName.L, p.cteAsName.L))
 }
