@@ -188,16 +188,14 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 
 // removeOldest removes the oldest element from the cache.
 func (l *LRUPlanCache) removeOldest() {
-	if l.size > 0 {
-		lru := l.lruList.Back()
-		if l.onEvict != nil {
-			l.onEvict(lru.Value.(*CacheEntry).PlanKey, lru.Value.(*CacheEntry).PlanValue)
-		}
-
-		l.lruList.Remove(lru)
-		l.removeFromBucket(lru)
-		l.size--
+	lru := l.lruList.Back()
+	if l.onEvict != nil {
+		l.onEvict(lru.Value.(*CacheEntry).PlanKey, lru.Value.(*CacheEntry).PlanValue)
 	}
+
+	l.lruList.Remove(lru)
+	l.removeFromBucket(lru)
+	l.size--
 }
 
 // removeFromBucket remove element from bucket
