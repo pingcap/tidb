@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
@@ -291,5 +292,28 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[2].ID)) // pseudo stats
 	default:
 		t.Error("unexpected plan:", pp)
+	}
+}
+
+func TestPlanStatsStatusRecord(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (b int,key b(b))`)
+	tk.MustExec("insert into t (b) values (1)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select * from t where b >= 1")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus, 0)
+	// drop stats in order to change status
+	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
+	tk.MustQuery("select * from t where b >= 1")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus, 2)
+	for _, status := range tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus {
+		require.Equal(t, status, "allEvicted")
 	}
 }
