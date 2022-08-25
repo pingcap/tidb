@@ -165,6 +165,7 @@ func BuildObserveMetaRange() *kv.KeyRange {
 
 // MetaDataHelper make restore compatible with metadataV1 and metadataV2.
 type MetaDataHelper interface {
+	InitCacheEntry(path string, ref int)
 	ReadFile(ctx context.Context, path string, offset uint64, length uint64, storage storage.ExternalStorage) ([]byte, error)
 	GetStreamBackupMetaPrefix() string
 	ParseToMetaDataV2(rawMetaData []byte) (*backuppb.MetadataV2, error)
@@ -173,6 +174,9 @@ type MetaDataHelper interface {
 }
 
 type MetaDataV1Helper struct {
+}
+
+func (m *MetaDataV1Helper) InitCacheEntry(_ string, _ int) {
 }
 
 func (m *MetaDataV1Helper) ReadFile(ctx context.Context, path string, _ uint64, _ uint64, storage storage.ExternalStorage) ([]byte, error) {
@@ -264,17 +268,47 @@ func NewMetaDataV1Helper() *MetaDataV1Helper {
 	return &MetaDataV1Helper{}
 }
 
+type ContentRef struct {
+	ref  int
+	data []byte
+}
+
 type MetaDataV2Helper struct {
+	cache   map[string]*ContentRef
 	decoder *zstd.Decoder
 }
 
-func (m *MetaDataV2Helper) ReadFile(ctx context.Context, path string, offset uint64, length uint64, storage storage.ExternalStorage) ([]byte, error) {
-	data, err := storage.ReadRangeFile(ctx, path, int64(offset), int64(length))
-	if err != nil {
-		return nil, errors.Trace(err)
+func (m *MetaDataV2Helper) InitCacheEntry(path string, ref int) {
+	m.cache[path] = &ContentRef{
+		ref:  ref,
+		data: nil,
 	}
-	data, err = m.decoder.DecodeAll(data, nil)
-	return data, errors.Trace(err)
+}
+
+func (m *MetaDataV2Helper) ReadFile(ctx context.Context, path string, offset uint64, length uint64, storage storage.ExternalStorage) ([]byte, error) {
+	var err error
+	cref, exist := m.cache[path]
+	if !exist {
+		return nil, errors.Errorf("the cache entry is uninitialized")
+	}
+
+	cref.ref -= 1
+
+	if len(cref.data) == 0 {
+		cref.data, err = storage.ReadFile(ctx, path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	buf, err := m.decoder.DecodeAll(cref.data[offset:offset+length], nil)
+
+	if cref.ref <= 0 {
+		cref.data = nil
+		delete(m.cache, path)
+	}
+
+	return buf, errors.Trace(err)
 }
 
 func (m *MetaDataV2Helper) GetStreamBackupMetaPrefix() string {
@@ -300,6 +334,7 @@ func (*MetaDataV2Helper) Marshal(meta *backuppb.MetadataV2) ([]byte, error) {
 func NewMetaDataV2Helper() *MetaDataV2Helper {
 	decoder, _ := zstd.NewReader(nil)
 	return &MetaDataV2Helper{
+		cache:   make(map[string]*ContentRef),
 		decoder: decoder,
 	}
 }

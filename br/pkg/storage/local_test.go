@@ -24,27 +24,12 @@ func TestDeleteFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, false, ret)
 
-	writer, err := store.Create(context.Background(), name)
+	_, err = store.Create(context.Background(), name)
 	require.NoError(t, err)
 
 	ret, err = store.FileExists(context.Background(), name)
 	require.NoError(t, err)
 	require.Equal(t, true, ret)
-
-	fullContent := []byte("123456")
-	_, err = writer.Write(context.Background(), fullContent)
-	require.NoError(t, err)
-	err = writer.Close(context.Background())
-	require.NoError(t, err)
-
-	content, err := store.ReadFile(context.Background(), name)
-	require.NoError(t, err)
-	require.Equal(t, fullContent, content)
-
-	expect_content := []byte("2345")
-	content, err = store.ReadRangeFile(context.Background(), name, 1, 4)
-	require.NoError(t, err)
-	require.Equal(t, expect_content, content)
 
 	err = store.DeleteFile(context.Background(), name)
 	require.NoError(t, err)
@@ -114,8 +99,4 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, i)
-}
-
-func TestWriteReadFile(t *testing.T) {
-
 }

@@ -5,7 +5,6 @@ package storage
 import (
 	"bufio"
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,24 +50,6 @@ func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) er
 func (l *LocalStorage) ReadFile(_ context.Context, name string) ([]byte, error) {
 	path := filepath.Join(l.base, name)
 	return os.ReadFile(path)
-}
-
-// ReadFile reads the file from the storage and returns contents.
-func (l *LocalStorage) ReadRangeFile(_ context.Context, name string, offset int64, length int64) ([]byte, error) {
-	//nolint: gosec
-	f, err := os.Open(filepath.Join(l.base, name))
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	_, err = f.Seek(offset, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	data := make([]byte, length)
-	_, err = io.ReadFull(f, data)
-	return data, err
 }
 
 // FileExists implement ExternalStorage.FileExists.

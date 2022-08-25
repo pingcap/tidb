@@ -142,24 +142,6 @@ func (s *gcsStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 	return b, errors.Trace(err)
 }
 
-// ReadRangeFile reads a partial file from storage.
-func (s *gcsStorage) ReadRangeFile(ctx context.Context, name string, offset int64, length int64) ([]byte, error) {
-	object := s.objectName(name)
-	rc, err := s.bucket.Object(object).NewRangeReader(ctx, offset, length)
-	if err != nil {
-		return nil, errors.Annotatef(err,
-			"failed to read gcs file, file info: input.bucket='%s', input.key='%s', input.offset='%d', input.length='%d'",
-			s.gcs.Bucket, object, offset, length)
-	}
-	defer rc.Close()
-
-	// for fake-gcs-server, when read the last range,
-	// rc.Attrs.Size will be length of the whole file
-	b := make([]byte, length)
-	_, err = io.ReadFull(rc, b)
-	return b, errors.Trace(err)
-}
-
 // FileExists return true if file exists.
 func (s *gcsStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	object := s.objectName(name)

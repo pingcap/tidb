@@ -476,28 +476,6 @@ func TestReadNoError(t *testing.T) {
 	require.Equal(t, []byte("test"), content)
 }
 
-// TestReadRangeNoError ensures the ReadRangeFile API issues a GetObject request and correctly
-// read the entire body.
-func TestReadRangeNoError(t *testing.T) {
-	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
-
-	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
-			require.Equal(t, "bytes=100-499", aws.StringValue(input.Range))
-			return &s3.GetObjectOutput{
-				Body: io.NopCloser(bytes.NewReader([]byte("test"))),
-			}, nil
-		})
-
-	content, err := s.storage.ReadRangeFile(ctx, "file", 100, 400)
-	require.NoError(t, err)
-	require.Equal(t, []byte("test"), content)
-}
-
 // TestFileExistsNoError ensures the FileExists API issues a HeadObject request
 // and reports a file exists.
 func TestFileExistsNoError(t *testing.T) {
