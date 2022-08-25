@@ -315,6 +315,153 @@ func genGlobalID(store kv.Storage) (int64, error) {
 	return globalID, errors.Trace(err)
 }
 
+func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	is := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
+	require.False(t, is.HasTemporaryTable())
+	db, ok := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, ok)
+
+	doChange := func(changes ...func(m *meta.Meta, builder *infoschema.Builder)) infoschema.InfoSchema {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		curIs := is
+		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			for _, change := range changes {
+				builder := infoschema.NewBuilder(store, nil).InitWithOldInfoSchema(curIs)
+				change(m, builder)
+				curIs = builder.Build()
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		return curIs
+	}
+
+	createGlobalTemporaryTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
+		return func(m *meta.Meta, builder *infoschema.Builder) {
+			err := m.CreateTableOrView(db.ID, &model.TableInfo{
+				ID:            tblID,
+				TempTableType: model.TempTableGlobal,
+				State:         model.StatePublic,
+			})
+			require.NoError(t, err)
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID})
+			require.NoError(t, err)
+		}
+	}
+
+	createNormalTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
+		return func(m *meta.Meta, builder *infoschema.Builder) {
+			err := m.CreateTableOrView(db.ID, &model.TableInfo{
+				ID:    tblID,
+				State: model.StatePublic,
+			})
+			require.NoError(t, err)
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID})
+			require.NoError(t, err)
+		}
+	}
+
+	dropTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
+		return func(m *meta.Meta, builder *infoschema.Builder) {
+			err := m.DropTableOrView(db.ID, tblID)
+			require.NoError(t, err)
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, SchemaID: db.ID, TableID: tblID})
+			require.NoError(t, err)
+		}
+	}
+
+	truncateGlobalTemporaryTableChange := func(tblID, newTblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
+		return func(m *meta.Meta, builder *infoschema.Builder) {
+			err := m.DropTableOrView(db.ID, tblID)
+			require.NoError(t, err)
+
+			err = m.CreateTableOrView(db.ID, &model.TableInfo{
+				ID:            newTblID,
+				TempTableType: model.TempTableGlobal,
+				State:         model.StatePublic,
+			})
+			require.NoError(t, err)
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionTruncateTable, SchemaID: db.ID, OldTableID: tblID, TableID: newTblID})
+			require.NoError(t, err)
+		}
+	}
+
+	alterTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
+		return func(m *meta.Meta, builder *infoschema.Builder) {
+			_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionAddColumn, SchemaID: db.ID, TableID: tblID})
+			require.NoError(t, err)
+		}
+	}
+
+	// create table
+	tbID, err := genGlobalID(store)
+	require.NoError(t, err)
+	newIS := doChange(
+		createGlobalTemporaryTableChange(tbID),
+	)
+	require.True(t, newIS.HasTemporaryTable())
+
+	// full load
+	newDB, ok := newIS.SchemaByName(model.NewCIStr("test"))
+	require.True(t, ok)
+	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.SchemaMetaVersion())
+	require.NoError(t, err)
+	require.True(t, builder.Build().HasTemporaryTable())
+
+	// create and then drop
+	tbID, err = genGlobalID(store)
+	require.NoError(t, err)
+	require.False(t, doChange(
+		createGlobalTemporaryTableChange(tbID),
+		dropTableChange(tbID),
+	).HasTemporaryTable())
+
+	// create and then alter
+	tbID, err = genGlobalID(store)
+	require.NoError(t, err)
+	require.True(t, doChange(
+		createGlobalTemporaryTableChange(tbID),
+		alterTableChange(tbID),
+	).HasTemporaryTable())
+
+	// create and truncate
+	tbID, err = genGlobalID(store)
+	require.NoError(t, err)
+	newTbID, err := genGlobalID(store)
+	require.NoError(t, err)
+	require.True(t, doChange(
+		createGlobalTemporaryTableChange(tbID),
+		truncateGlobalTemporaryTableChange(tbID, newTbID),
+	).HasTemporaryTable())
+
+	// create two and drop one
+	tbID, err = genGlobalID(store)
+	require.NoError(t, err)
+	tbID2, err := genGlobalID(store)
+	require.NoError(t, err)
+	require.True(t, doChange(
+		createGlobalTemporaryTableChange(tbID),
+		createGlobalTemporaryTableChange(tbID2),
+		dropTableChange(tbID),
+	).HasTemporaryTable())
+
+	// create temporary and then create normal
+	tbID, err = genGlobalID(store)
+	require.NoError(t, err)
+	tbID2, err = genGlobalID(store)
+	require.NoError(t, err)
+	require.True(t, doChange(
+		createGlobalTemporaryTableChange(tbID),
+		createNormalTableChange(tbID2),
+	).HasTemporaryTable())
+}
+
 func TestBuildBundle(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

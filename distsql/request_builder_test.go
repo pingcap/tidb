@@ -481,7 +481,7 @@ func TestRequestBuilder5(t *testing.T) {
 	}
 
 	actual, err := (&RequestBuilder{}).SetKeyRanges(keyRanges).
-		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
+		SetAnalyzeRequest(&tipb.AnalyzeReq{}, kv.RC).
 		SetKeepOrder(true).
 		SetConcurrency(15).
 		Build()
@@ -494,7 +494,7 @@ func TestRequestBuilder5(t *testing.T) {
 		KeepOrder:        true,
 		Desc:             false,
 		Concurrency:      15,
-		IsolationLevel:   kv.SI,
+		IsolationLevel:   kv.RC,
 		Priority:         1,
 		NotFillCache:     true,
 		ReadReplicaScope: kv.GlobalReplicaScope,
