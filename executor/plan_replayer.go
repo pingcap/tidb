@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,17 @@ import (
 
 var _ Executor = &PlanReplayerSingleExec{}
 var _ Executor = &PlanReplayerLoadExec{}
+
+const (
+	configFile          = "config.toml"
+	metaFile            = "meta.txt"
+	variablesFile       = "variables.toml"
+	sqlFile             = "sqls.sql"
+	tiFlashReplicasFile = "table_tiflash_replica.txt"
+	sessionBindingFile  = "session_bindings.sql"
+	globalBindingFile   = "global_bindings.sql"
+	explainFile         = "explain.txt"
+)
 
 // PlanReplayerSingleExec represents a plan replayer executor.
 type PlanReplayerSingleExec struct {
@@ -165,6 +177,7 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
  |   |-stats2.json
  |   |-....
  |-config.toml
+ |-table_tiflash_replica.txt
  |-variables.toml
  |-bindings.sql
  |-sqls.sql
@@ -232,6 +245,11 @@ func (e *PlanReplayerSingleExec) dumpSingle(ctx context.Context, path string) (f
 		return "", err
 	}
 
+	// Dump tables tiflash replicas
+	if err = dumpTiFlashReplica(e.ctx, zw, pairs); err != nil {
+		return "", err
+	}
+
 	// Dump stats
 	if err = dumpStats(zw, pairs, do); err != nil {
 		return "", err
@@ -243,7 +261,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(ctx context.Context, path string) (f
 	}
 
 	// Dump sql
-	sql, err := zw.Create("sqls.sql")
+	sql, err := zw.Create(sqlFile)
 	if err != nil {
 		return "", nil
 	}
@@ -271,7 +289,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(ctx context.Context, path string) (f
 }
 
 func dumpConfig(zw *zip.Writer) error {
-	cf, err := zw.Create("config.toml")
+	cf, err := zw.Create(configFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
@@ -282,13 +300,38 @@ func dumpConfig(zw *zip.Writer) error {
 }
 
 func dumpMeta(zw *zip.Writer) error {
-	mt, err := zw.Create("meta.txt")
+	mt, err := zw.Create(metaFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
 	_, err = mt.Write([]byte(printer.GetTiDBInfo()))
 	if err != nil {
 		return errors.AddStack(err)
+	}
+	return nil
+}
+
+func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
+	bf, err := zw.Create(tiFlashReplicasFile)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	is := domain.GetDomain(ctx).InfoSchema()
+	for pair := range pairs {
+		dbName := model.NewCIStr(pair.DBName)
+		tableName := model.NewCIStr(pair.TableName)
+		t, err := is.TableByName(dbName, tableName)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to find table info", zap.Error(err),
+				zap.String("dbName", dbName.L), zap.String("tableName", tableName.L))
+			continue
+		}
+		if t.Meta().TiFlashReplica != nil && t.Meta().TiFlashReplica.Count > 0 {
+			row := []string{
+				pair.DBName, pair.TableName, strconv.FormatUint(t.Meta().TiFlashReplica.Count, 10),
+			}
+			fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
+		}
 	}
 	return nil
 }
@@ -338,7 +381,7 @@ func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
 	if err != nil {
 		return err
 	}
-	vf, err := zw.Create("variables.toml")
+	vf, err := zw.Create(variablesFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
@@ -365,7 +408,7 @@ func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	if err != nil {
 		return err
 	}
-	bf, err := zw.Create("session_bindings.sql")
+	bf, err := zw.Create(sessionBindingFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
@@ -389,7 +432,7 @@ func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	if err != nil {
 		return err
 	}
-	bf, err := zw.Create("global_bindings.sql")
+	bf, err := zw.Create(globalBindingFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
@@ -424,7 +467,7 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 	if err != nil {
 		return err
 	}
-	fw, err := zw.Create("explain.txt")
+	fw, err := zw.Create(explainFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
@@ -604,9 +647,48 @@ func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error
 	return nil
 }
 
-func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
+func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 	for _, zipFile := range z.File {
-		if strings.Compare(zipFile.Name, "variables.toml") == 0 {
+		if strings.Compare(zipFile.Name, tiFlashReplicasFile) == 0 {
+			v, err := zipFile.Open()
+			if err != nil {
+				return errors.AddStack(err)
+			}
+			//nolint: errcheck,all_revive
+			defer v.Close()
+			buf := new(bytes.Buffer)
+			_, err = buf.ReadFrom(v)
+			if err != nil {
+				return errors.AddStack(err)
+			}
+			rows := strings.Split(buf.String(), "\n")
+			for _, row := range rows {
+				if len(row) < 1 {
+					continue
+				}
+				r := strings.Split(row, "\t")
+				if len(r) < 3 {
+					logutil.BgLogger().Debug("plan replayer: skip error",
+						zap.Error(errors.New("setting tiflash replicas failed")))
+					continue
+				}
+				dbName := r[0]
+				tableName := r[1]
+				c := context.Background()
+				// Though we record tiflash replica in txt, we only set 1 tiflash replica as it's enough for reproduce the plan
+				sql := fmt.Sprintf("alter table %s.%s set tiflash replica 1", dbName, tableName)
+				_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sql)
+				logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
+			}
+		}
+	}
+	return nil
+}
+
+func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
+	unLoadVars := make([]string, 0)
+	for _, zipFile := range z.File {
+		if strings.Compare(zipFile.Name, variablesFile) == 0 {
 			varMap := make(map[string]string)
 			v, err := zipFile.Open()
 			if err != nil {
@@ -622,19 +704,27 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			for name, value := range varMap {
 				sysVar := variable.GetSysVar(name)
 				if sysVar == nil {
-					return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+					unLoadVars = append(unLoadVars, name)
+					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
+					continue
 				}
 				sVal, err := sysVar.Validate(vars, value, variable.ScopeSession)
 				if err != nil {
-					logutil.BgLogger().Debug(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
+					unLoadVars = append(unLoadVars, name)
+					logutil.BgLogger().Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
 					continue
 				}
 				err = vars.SetSystemVar(name, sVal)
 				if err != nil {
-					return err
+					unLoadVars = append(unLoadVars, name)
+					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
+					continue
 				}
 			}
 		}
+	}
+	if len(unLoadVars) > 0 {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("variables set failed:%s", strings.Join(unLoadVars, ",")))
 	}
 	return nil
 }
@@ -720,6 +810,12 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 				return err
 			}
 		}
+	}
+
+	// set tiflash replica if exists
+	err = loadSetTiFlashReplica(e.Ctx, z)
+	if err != nil {
+		return err
 	}
 
 	// build view next
