@@ -511,7 +511,7 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 	defer func() {
 		tk.MustExec("drop user issue27867;")
 	}()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 	tk.MustGetErrCode("grant all on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
 	// Check case insensitivity
 	tk.MustGetErrCode("grant all on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
