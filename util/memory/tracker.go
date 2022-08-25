@@ -420,10 +420,12 @@ func (t *Tracker) Release(bytes int64) {
 		if tracker.shouldRecordRelease() {
 			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
-			finalizer := func(ref *finalizerRef) {
-				tracker.release(bytes)
+			finalizer := func(tracker *Tracker) func(ref *finalizerRef) {
+				return func(ref *finalizerRef) {
+					tracker.release(bytes)
+				}
 			}
-			runtime.SetFinalizer(newRef, finalizer)
+			runtime.SetFinalizer(newRef, finalizer(tracker))
 			tracker.recordRelease(bytes)
 			return
 		}
