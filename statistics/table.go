@@ -186,6 +186,9 @@ type CacheItemMemoryUsage interface {
 	ItemID() int64
 	TotalMemoryUsage() int64
 	TrackingMemUsage() int64
+	HistMemUsage() int64
+	TopnMemUsage() int64
+	CMSMemUsage() int64
 }
 
 // ColumnMemUsage records column memory usage
@@ -213,6 +216,21 @@ func (c *ColumnMemUsage) TrackingMemUsage() int64 {
 	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
 }
 
+// HistMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) HistMemUsage() int64 {
+	return c.HistogramMemUsage
+}
+
+// TopnMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) TopnMemUsage() int64 {
+	return c.TopNMemUsage
+}
+
+// CMSMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) CMSMemUsage() int64 {
+	return c.CMSketchMemUsage
+}
+
 // IndexMemUsage records index memory usage
 type IndexMemUsage struct {
 	IndexID           int64
@@ -235,6 +253,21 @@ func (c *IndexMemUsage) ItemID() int64 {
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *IndexMemUsage) TrackingMemUsage() int64 {
 	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
+}
+
+// HistMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) HistMemUsage() int64 {
+	return c.HistogramMemUsage
+}
+
+// TopnMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) TopnMemUsage() int64 {
+	return c.TopNMemUsage
+}
+
+// CMSMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) CMSMemUsage() int64 {
+	return c.CMSketchMemUsage
 }
 
 // MemoryUsage returns the total memory usage of this Table.
@@ -362,8 +395,15 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSket
 // GetColRowCount tries to get the row count of the a column if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (t *Table) GetColRowCount() float64 {
-	for _, col := range t.Columns {
+	IDs := make([]int64, 0, len(t.Columns))
+	for id := range t.Columns {
+		IDs = append(IDs, id)
+	}
+	slices.Sort(IDs)
+	for _, id := range IDs {
+		col := t.Columns[id]
 		// need to make sure stats on this column is loaded.
+		// TODO: use the new method to check if it's loaded
 		if col != nil && !(col.Histogram.NDV > 0 && col.notNullCount() == 0) && col.TotalRowCount() != 0 {
 			return col.TotalRowCount()
 		}
@@ -491,10 +531,12 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (float64, error) {
+func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (result float64, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
-	var result float64
 	c, ok := coll.Columns[colID]
+	if c != nil {
+		recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
+	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		if len(intRanges) == 0 {
 			return 0, nil
@@ -509,7 +551,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 		}
 		return result, nil
 	}
-	result, err := c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
+	result, err = c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
@@ -520,6 +562,9 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID int64, colRanges []*ranger.Range) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
+	if c != nil {
+		recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
+	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		result, err := GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
@@ -543,6 +588,9 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 		for _, col := range idx.Info.Columns {
 			colNames = append(colNames, col.Name.O)
 		}
+	}
+	if idx != nil {
+		recordUsedItemStatsStatus(sctx, idx.StatsLoadedStatus, coll.PhysicalID, idxID, true)
 	}
 	if !ok || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
@@ -1337,4 +1385,19 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	}
 	// This table has no statistics yet. We can directly return true.
 	return true
+}
+
+// recordUsedItemStatsStatus only records un-FullLoad item load status during user query
+func recordUsedItemStatsStatus(sctx sessionctx.Context, loadStatus StatsLoadedStatus,
+	tableID, id int64, isIndex bool) {
+	if loadStatus.IsFullLoad() {
+		return
+	}
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	item := model.TableItemID{TableID: tableID, ID: id, IsIndex: isIndex}
+	// For some testcases, it skips ResetContextOfStmt to init StatsLoadStatus
+	if stmtCtx.StatsLoadStatus == nil {
+		stmtCtx.StatsLoadStatus = make(map[model.TableItemID]string)
+	}
+	stmtCtx.StatsLoadStatus[item] = loadStatus.StatusToString()
 }

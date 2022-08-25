@@ -67,21 +67,21 @@ const (
 )
 
 type memInfoCache struct {
-	*sync.RWMutex
-	mem        uint64
 	updateTime time.Time
+	mu         *sync.RWMutex
+	mem        uint64
 }
 
 func (c *memInfoCache) get() (memo uint64, t time.Time) {
-	c.RLock()
-	defer c.RUnlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	memo, t = c.mem, c.updateTime
 	return
 }
 
 func (c *memInfoCache) set(memo uint64, t time.Time) {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.mem, c.updateTime = memo, t
 }
 
@@ -132,13 +132,13 @@ func init() {
 		MemUsed = MemUsedNormal
 	}
 	memLimit = &memInfoCache{
-		RWMutex: &sync.RWMutex{},
+		mu: &sync.RWMutex{},
 	}
 	memUsage = &memInfoCache{
-		RWMutex: &sync.RWMutex{},
+		mu: &sync.RWMutex{},
 	}
 	serverMemUsage = &memInfoCache{
-		RWMutex: &sync.RWMutex{},
+		mu: &sync.RWMutex{},
 	}
 	_, err := MemTotal()
 	terror.MustNil(err)
