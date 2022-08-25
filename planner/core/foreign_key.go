@@ -58,18 +58,22 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 		if len(updateCols) == 0 {
 			continue
 		}
+		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
+		for _, referredFK := range referredFKs {
+			if !isMapContainAnyCols(updateCols, referredFK.Cols...) {
+				continue
+			}
+			fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
+			if err != nil {
+				return nil, err
+			}
+			fkChecks[tid] = append(fkChecks[tid], fkCheck)
+		}
 		for _, fk := range tblInfo.ForeignKeys {
 			if fk.Version < 1 {
 				continue
 			}
-			exist := false
-			for _, referredCol := range fk.Cols {
-				_, exist = updateCols[referredCol.L]
-				if exist {
-					break
-				}
-			}
-			if !exist {
+			if !isMapContainAnyCols(updateCols, fk.Cols...) {
 				continue
 			}
 			failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbInfo.Name.L, tblInfo.Name.L))
@@ -81,6 +85,16 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 		}
 	}
 	return fkChecks, nil
+}
+
+func isMapContainAnyCols(colsMap map[string]*model.ColumnInfo, cols ...model.CIStr) bool {
+	for _, col := range cols {
+		_, exist := colsMap[col.L]
+		if exist {
+			return true
+		}
+	}
+	return false
 }
 
 func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]*model.ColumnInfo {
