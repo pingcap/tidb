@@ -629,10 +629,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
+	iw.lookup.workerWg.Add(1)
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(
 		func() {
-			iw.lookup.workerWg.Add(1)
 			iw.buildHashTableForOuterResult(ctx, task, h)
 		},
 		func(r interface{}) {

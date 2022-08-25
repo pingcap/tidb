@@ -1528,18 +1528,26 @@ func TestRandomPanicConsume(t *testing.T) {
 	// Test 10 times panic for each Executor.
 	var res sqlexec.RecordSet
 	for _, sql := range sqls {
-		for i := 1; i <= 10; i++ {
+		for i := 1; i <= 1000; i++ {
 			concurrency := rand.Int31n(4) + 1 // test 1~5 concurrency randomly
 			tk.MustExec(fmt.Sprintf("set @@tidb_executor_concurrency=%v", concurrency))
 			var err error
+			times := 10
 			for err == nil {
 				res, err = tk.Exec(sql)
 				if err == nil {
 					_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
 					require.NoError(t, res.Close())
+					times--
+				}
+				if times == 0 {
+					t.Log("All Success")
+					break
 				}
 			}
-			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+			if times > 0 {
+				require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+			}
 		}
 	}
 }
