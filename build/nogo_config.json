@@ -161,6 +161,7 @@
       "util/etcd/": "util/etcd/ code",
       "util/expensivequery/": "util/expensivequery/ code",
       "util/filter/": "util/filter/ code",
+      "util/gpool/": "util/gpool/ code",
       "util/importer/": "util/importer/ code",
       "util/keydecoder/": "util/keydecoder/ code",
       "util/kvcache/": "util/kvcache/ code",
