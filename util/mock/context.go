@@ -48,16 +48,16 @@ var (
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
-	values      map[fmt.Stringer]interface{}
 	txn         wrapTxn    // mock global variable
 	Store       kv.Storage // mock global variable
-	sessionVars *variable.SessionVars
 	ctx         context.Context
-	cancel      context.CancelFunc
 	sm          util.SessionManager
+	is          sessionctx.InfoschemaMetaVersion
+	values      map[fmt.Stringer]interface{}
+	sessionVars *variable.SessionVars
+	cancel      context.CancelFunc
 	pcache      *kvcache.SimpleLRUCache
 	level       kvrpcpb.DiskFullOpt
-	is          sessionctx.InfoschemaMetaVersion
 }
 
 type wrapTxn struct {
@@ -247,8 +247,8 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 	return nil
 }
 
-// PreparedPlanCache implements the sessionctx.Context interface.
-func (c *Context) PreparedPlanCache() *kvcache.SimpleLRUCache {
+// GetPlanCache implements the sessionctx.Context interface.
+func (c *Context) GetPlanCache(_ bool) *kvcache.SimpleLRUCache {
 	return c.pcache
 }
 
