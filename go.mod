@@ -50,7 +50,7 @@ require (
 	github.com/pingcap/log v1.1.0
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20220718022156-3e2483c20a9e
+	github.com/pingcap/tipb v0.0.0-20220824081009-0714a57aff1d
 	github.com/prometheus/client_golang v1.12.2
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.32.1
@@ -245,5 +245,3 @@ replace github.com/pingcap/tidb/parser => ./parser
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
-
-replace github.com/pingcap/tipb => github.com/hongyunyan/tipb v0.0.0-20220810101340-edd6e7c425fd

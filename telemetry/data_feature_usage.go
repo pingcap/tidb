@@ -49,7 +49,6 @@ type featureUsage struct {
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
 	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
-	TiFlashModeStatistics TiFlashModeStatistics            `json:"TiFlashModeStatistics"`
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
 	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
@@ -88,8 +87,6 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.NonTransactionalUsage = getNonTransactionalUsage()
 
 	usage.GlobalKill = getGlobalKillUsageInfo()
-
-	usage.TiFlashModeStatistics = getTiFlashModeStatistics(sctx)
 
 	usage.LogBackup = getLogBackupUsageInfo(sctx)
 
@@ -314,15 +311,6 @@ func postReportNonTransactionalCounter() {
 
 func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
-}
-
-// TiFlashModeStatistics records the usage info of Fast Mode
-type TiFlashModeStatistics struct {
-	EnableFastScan bool `json:"enable_fast_scan"`
-}
-
-func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
-	return TiFlashModeStatistics{EnableFastScan: ctx.GetSessionVars().TiFlashFastScan}
 }
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
