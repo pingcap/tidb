@@ -1503,7 +1503,7 @@ func TestRandomPanicConsume(t *testing.T) {
 	tk.MustExec("set @@tidb_init_chunk_size=1")
 	tk.MustExec("set global tidb_enable_concurrent_ddl=off;") // concurrent_ddl sql use aggregate and panic
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t(a int, index idx(a))")
 	for i := 0; i <= 1000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%v),(%v),(%v)", i, i, i))
 	}
@@ -1515,11 +1515,14 @@ func TestRandomPanicConsume(t *testing.T) {
 	}()
 
 	sqls := []string{
-		"select /*+ HASH_AGG() */ count(a) from t group by a",           // HashAgg Paralleled
-		"select /*+ HASH_AGG() */ count(distinct a) from t",             // HashAgg Unparalleled
-		"select /*+ STREAM_AGG() */ count(a) from t",                    // StreamAgg
-		"select a * a, a / a, a + a , a - a from t",                     // Projection
-		"select /*+ HASH_JOIN(t) */ * from t t1 join t t2 on t1.a=t2.a", // HashJoin
+		"select /*+ HASH_AGG() */ count(a) from t group by a",                 // HashAgg Paralleled
+		"select /*+ HASH_AGG() */ count(distinct a) from t",                   // HashAgg Unparalleled
+		"select /*+ STREAM_AGG() */ count(a) from t",                          // StreamAgg
+		"select a * a, a / a, a + a , a - a from t",                           // Projection
+		"select /*+ HASH_JOIN(t1) */ * from t t1 join t t2 on t1.a=t2.a",      // HashJoin
+		"select /*+ MERGE_JOIN(t1) */ * from t t1 join t t2 on t1.a=t2.a",     // MergeJoin
+		"select /*+ INL_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;",      // Index Join
+		"select /*+ INL_HASH_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;", // Index Hash Join
 	}
 
 	// Test 10 times panic for each Executor.
