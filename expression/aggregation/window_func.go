@@ -124,7 +124,11 @@ func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowF
 }
 
 // CanPushDownToTiFlash control whether a window function desc can be push down to tiflash.
-func (s *WindowFuncDesc) CanPushDownToTiFlash() bool {
+func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx sessionctx.Context) bool {
+	// args
+	if !expression.CanExprsPushDown(ctx.GetSessionVars().StmtCtx, s.Args, ctx.GetClient(), kv.TiFlash) {
+		return false
+	}
 	// window functions
 	switch s.Name {
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncLead, ast.WindowFuncLag:
