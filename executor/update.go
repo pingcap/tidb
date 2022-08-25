@@ -427,9 +427,7 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
-	if e.memTracker != nil {
-		defer e.memTracker.Detach()
-	}
+	defer e.memTracker.Detach()
 	e.setMessage()
 	if e.runtimeStats != nil && e.stats != nil {
 		txn, err := e.ctx.Txn(false)
