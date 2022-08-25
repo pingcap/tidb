@@ -492,7 +492,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 
 func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext, rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	var err error
-	e.rowContainer.buildSideRows[workerID], e.rowContainer.buildSideRowPtrs[workerID], err = rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx, e.rowContainer.buildSideRows[workerID], e.buildSideRowPtrs[workerID], true)
+	e.rowContainer.buildSideRows[workerID], e.rowContainer.buildSideRowPtrs[workerID], err = rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx, e.rowContainer.buildSideRows[workerID], e.rowContainer.buildSideRowPtrs[workerID], true)
 	buildSideRows, rowsPtrs := e.rowContainer.buildSideRows[workerID], e.rowContainer.buildSideRowPtrs[workerID]
 	if err != nil {
 		joinResult.err = err
