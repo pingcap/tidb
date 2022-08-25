@@ -70,14 +70,15 @@ func pickFromBucket(bucket map[*list.Element]struct{}, ptypes []*types.FieldType
 
 func TestLRUPCPut(t *testing.T) {
 	// test initialize
-	lruA, errA := NewLRUPlanCache(0, pickFromBucket, nil)
+	lruA, errA := NewLRUPlanCache(0, pickFromBucket)
 	require.Nil(t, lruA)
 	require.Error(t, errA, "capacity of LRU Cache should be at least 1")
 
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
-	lru, err := NewLRUPlanCache(3, pickFromBucket, func(key kvcache.Key, value kvcache.Value) {
+	lru, err := NewLRUPlanCache(3, pickFromBucket)
+	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
 		maxMemDroppedKv[key] = value
-	})
+	}
 	require.NoError(t, err)
 	require.Equal(t, uint(3), lru.capacity)
 
@@ -146,7 +147,7 @@ func TestLRUPCPut(t *testing.T) {
 }
 
 func TestLRUPCGet(t *testing.T) {
-	lru, err := NewLRUPlanCache(3, pickFromBucket, nil)
+	lru, err := NewLRUPlanCache(3, pickFromBucket)
 	require.NoError(t, err)
 
 	keys := make([]*mockCacheKey, 5)
@@ -159,57 +160,7 @@ func TestLRUPCGet(t *testing.T) {
 	}
 	// 5 bucket
 	for i := 0; i < 5; i++ {
-		keys[i] = newMockHashKey(int64(i))
-		vals[i] = &fakePlan{
-			plan: int64(i),
-			tps:  pTypes[i],
-		}
-		lru.Put(keys[i], vals[i], pTypes[i])
-	}
-
-	// test for non-existent elements
-	for i := 0; i < 2; i++ {
-		value, exists := lru.Get(keys[i], pTypes[i])
-		require.False(t, exists)
-		require.Nil(t, value)
-	}
-
-	for i := 2; i < 5; i++ {
-		value, exists := lru.Get(keys[i], pTypes[i])
-		require.True(t, exists)
-		require.NotNil(t, value)
-		require.Equal(t, vals[i], value)
-		require.Equal(t, uint(3), lru.size)
-		require.Equal(t, uint(3), lru.capacity)
-
-		root := lru.lruList.Front()
-		require.NotNil(t, root)
-
-		entry, ok := root.Value.(*CacheEntry)
-		require.True(t, ok)
-		require.Equal(t, keys[i], entry.PlanKey)
-
-		value, ok = entry.PlanValue.(*fakePlan)
-		require.True(t, ok)
-		require.Equal(t, vals[i], value)
-	}
-}
-
-func TestLRUPCGet2(t *testing.T) {
-	lru, err := NewLRUPlanCache(3, pickFromBucket, nil)
-	require.NoError(t, err)
-
-	keys := make([]*mockCacheKey, 5)
-	vals := make([]*fakePlan, 5)
-	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
-	}
-	// 5 bucket
-	for i := 0; i < 5; i++ {
-		keys[i] = newMockHashKey(int64(i % 3))
+		keys[i] = newMockHashKey(int64(i % 4))
 		vals[i] = &fakePlan{
 			plan: int64(i),
 			tps:  pTypes[i],
@@ -246,7 +197,7 @@ func TestLRUPCGet2(t *testing.T) {
 }
 
 func TestLRUPCDelete(t *testing.T) {
-	lru, err := NewLRUPlanCache(3, pickFromBucket, nil)
+	lru, err := NewLRUPlanCache(3, pickFromBucket)
 	require.NoError(t, err)
 
 	keys := make([]*mockCacheKey, 3)
@@ -279,7 +230,7 @@ func TestLRUPCDelete(t *testing.T) {
 }
 
 func TestLRUPCDeleteAll(t *testing.T) {
-	lru, err := NewLRUPlanCache(3, pickFromBucket, nil)
+	lru, err := NewLRUPlanCache(3, pickFromBucket)
 	require.NoError(t, err)
 
 	keys := make([]*mockCacheKey, 3)
@@ -305,61 +256,5 @@ func TestLRUPCDeleteAll(t *testing.T) {
 		require.False(t, exists)
 		require.Nil(t, value)
 		require.Equal(t, 0, int(lru.size))
-	}
-}
-
-func TestLRUPCKeys(t *testing.T) {
-	lru, err := NewLRUPlanCache(5, pickFromBucket, nil)
-	require.NoError(t, err)
-
-	keys := make([]*mockCacheKey, 5)
-	vals := make([]*fakePlan, 5)
-	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
-	}
-	for i := 0; i < 5; i++ {
-		keys[i] = newMockHashKey(int64(i))
-		vals[i] = &fakePlan{
-			plan: int64(i),
-			tps:  pTypes[i],
-		}
-		lru.Put(keys[i], vals[i], pTypes[i])
-	}
-
-	ks := lru.Keys()
-	require.Equal(t, 5, len(ks))
-	for i := 0; i < 5; i++ {
-		require.Contains(t, ks, keys[i])
-	}
-}
-
-func TestLRUPCValues(t *testing.T) {
-	lru, err := NewLRUPlanCache(5, pickFromBucket, nil)
-	require.NoError(t, err)
-
-	keys := make([]*mockCacheKey, 5)
-	vals := make([]*fakePlan, 5)
-	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
-		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
-	}
-	for i := 0; i < 5; i++ {
-		keys[i] = newMockHashKey(int64(i))
-		vals[i] = &fakePlan{
-			plan: int64(i),
-			tps:  pTypes[i],
-		}
-		lru.Put(keys[i], vals[i], pTypes[i])
-	}
-
-	values := lru.Values()
-	require.Equal(t, 5, len(values))
-	for i := 0; i < 5; i++ {
-		require.Equal(t, vals[4-i], values[i])
 	}
 }

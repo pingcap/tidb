@@ -41,14 +41,14 @@ type LRUPlanCache struct {
 
 	// pickFromBucket get one element from bucket according to the incoming function.The LRUPlanCache can not work if this is nil
 	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)
-	// onEvict will be called if any eviction happened
+	// onEvict will be called if any eviction happened, only for test use now
 	onEvict func(kvcache.Key, kvcache.Value)
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(capacity uint, pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool),
-	onEvict func(kvcache.Key, kvcache.Value)) (*LRUPlanCache, error) {
+func NewLRUPlanCache(capacity uint,
+	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)) (*LRUPlanCache, error) {
 	if capacity < 1 {
 		return nil, errors.New("capacity of LRU Cache should be at least 1")
 	}
@@ -58,7 +58,6 @@ func NewLRUPlanCache(capacity uint, pickFromBucket func(map[*list.Element]struct
 		buckets:        make(map[string]map[*list.Element]struct{}, 1), //Generally one query has one plan
 		lruList:        list.New(),
 		pickFromBucket: pickFromBucket,
-		onEvict:        onEvict,
 	}, nil
 }
 
@@ -141,34 +140,6 @@ func (l *LRUPlanCache) Size() int {
 	defer l.lock.Unlock()
 
 	return int(l.size)
-}
-
-// Values return all values in cache.
-func (l *LRUPlanCache) Values() []kvcache.Value {
-	l.lock.Lock()
-	defer l.lock.Unlock()
-
-	values := make([]kvcache.Value, 0, l.lruList.Len())
-	for element := l.lruList.Front(); element != nil; element = element.Next() {
-		value := element.Value.(*CacheEntry).PlanValue
-		values = append(values, value)
-	}
-	return values
-}
-
-// Keys return all keys in cache.
-func (l *LRUPlanCache) Keys() []kvcache.Key {
-	l.lock.Lock()
-	defer l.lock.Unlock()
-
-	keys := make([]kvcache.Key, 0, len(l.buckets))
-	for _, bucket := range l.buckets {
-		for element := range bucket {
-			keys = append(keys, element.Value.(*CacheEntry).PlanKey)
-			break
-		}
-	}
-	return keys
 }
 
 // SetCapacity sets capacity of the cache.
