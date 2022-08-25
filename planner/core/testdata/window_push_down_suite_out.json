@@ -144,10 +144,10 @@
           "              └─TableFullScan_22 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `sum` is not supported now.",
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
           "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
           "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
-          "MPP mode may be blocked because window function `sum` is not supported now."
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
         ]
       }
     ]
@@ -228,8 +228,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `sum` is not supported now.",
-          "MPP mode may be blocked because window function `sum` is not supported now."
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
         ]
       },
       {
@@ -240,8 +240,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `count` is not supported now.",
-          "MPP mode may be blocked because window function `count` is not supported now."
+          "MPP mode may be blocked because window function `count` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `count` or its arguments are not supported now."
         ]
       },
       {
@@ -252,8 +252,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `min` is not supported now.",
-          "MPP mode may be blocked because window function `min` is not supported now."
+          "MPP mode may be blocked because window function `min` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `min` or its arguments are not supported now."
         ]
       },
       {
@@ -264,8 +264,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `max` is not supported now.",
-          "MPP mode may be blocked because window function `max` is not supported now."
+          "MPP mode may be blocked because window function `max` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `max` or its arguments are not supported now."
         ]
       },
       {
@@ -276,8 +276,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `avg` is not supported now.",
-          "MPP mode may be blocked because window function `avg` is not supported now."
+          "MPP mode may be blocked because window function `avg` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `avg` or its arguments are not supported now."
         ]
       },
       {
@@ -305,8 +305,8 @@
           "      └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `sum` is not supported now.",
-          "MPP mode may be blocked because window function `sum` is not supported now."
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
         ]
       }
     ]
