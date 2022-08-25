@@ -39,7 +39,7 @@ type LRUPlanCache struct {
 	// lock make cache thread safe
 	lock sync.Mutex
 
-	// pickFromBucket get one element from bucket according to the incoming function.The LRUPlanCache can not work if this is nil
+	// pickFromBucket get one element from bucket. The LRUPlanCache can not work if it is nil
 	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)
 	// onEvict will be called if any eviction happened, only for test use now
 	onEvict func(kvcache.Key, kvcache.Value)
