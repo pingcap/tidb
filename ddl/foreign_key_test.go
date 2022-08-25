@@ -520,7 +520,6 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 1, len(tb2Info.Indices))
 	require.Equal(t, "fk_b", tb2Info.Indices[0].Name.L)
 	require.Equal(t, "`test2`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`)", tb2Info.ForeignKeys[0].String("test2", "t2"))
-
 	// TODO(crazycs520): add test for "rename table t1"
 }
 
