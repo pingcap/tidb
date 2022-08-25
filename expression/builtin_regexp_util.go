@@ -26,8 +26,9 @@ import (
 //
 // isNull field shows if user ignores this param in sql
 // for example:
-//   select regexp_like("123", "123", "m"), here isNull field is false for the third parameter
-//   select regexp_like("123", "123"), here isNull field is true for the third parameter
+//
+//	select regexp_like("123", "123", "m"), here isNull field is false for the third parameter
+//	select regexp_like("123", "123"), here isNull field is true for the third parameter
 type regexpParam struct {
 	constStrVal string
 	constIntVal int64
@@ -163,4 +164,27 @@ func getBuffers(params []*regexpParam) []*chunk.Column {
 		}
 	}
 	return buffers
+}
+
+func utf8Len(b byte) int {
+	flag := uint8(128)
+	if (flag & b) == 0 {
+		return 1
+	}
+
+	length := 0
+
+	for ; (flag & b) != 0; flag >>= 1 {
+		length++
+	}
+
+	return length
+}
+
+// This string should always be valid which means that it should always return true in ValidString(str)
+func trimUtf8String(str *string, trimmedNum int64) {
+	for ; trimmedNum > 0; trimmedNum-- {
+		length := utf8Len((*str)[0]) // character length
+		(*str) = (*str)[length:]
+	}
 }

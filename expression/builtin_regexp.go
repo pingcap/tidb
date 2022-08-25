@@ -364,7 +364,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 		bexpr = []byte(expr)
 	}
 
-	if arg_num == 3 {
+	if arg_num >= 3 {
 		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
@@ -373,29 +373,28 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 		// check position and trim target
 		if re.isBinCollation {
 			bexpr = []byte(expr)
-			if pos < 1 || pos > int64(len(bexpr)) {
+			if pos < 1 || (pos > int64(len(bexpr)) && len(expr) != 0) {
 				return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 			}
 
 			bexpr = bexpr[pos-1:] // Trim
 		} else {
-			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
+			if pos < 1 || (pos > int64(utf8.RuneCountInString(expr)) && len(expr) != 0) {
 				return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 			}
 
-			// TODO handle non-ascii character
-			expr = expr[pos-1:] // Trim
+			trimUtf8String(&expr, pos-1) // Trim
 		}
 	}
 
-	if arg_num == 4 {
+	if arg_num >= 4 {
 		occurrence, isNull, err = re.args[3].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
 
 		if occurrence < 1 {
-			return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+			occurrence = 1
 		}
 	}
 
@@ -424,7 +423,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 
 		if occurrence > length {
-			occurrence = length
+			return "", true, nil
 		}
 
 		return fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(matches[occurrence-1]))), false, nil
@@ -437,7 +436,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	if occurrence > length {
-		occurrence = length
+		return "", true, nil
 	}
 
 	return matches[occurrence-1], false, nil
