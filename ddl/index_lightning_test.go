@@ -21,9 +21,12 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/lightning"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -94,4 +97,55 @@ func TestAddIndexLit(t *testing.T) {
 	// Unique duplicate key
 	err := tk.ExecToErr("alter table t1 add index unique idx3(c3)")
 	require.Error(t, err)
+}
+
+func TestAddIndexMergeProcess(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (c1 int primary key, c2 int, c3 int)")
+	tk.MustExec("insert into t values (1, 2, 3), (4, 5, 6);")
+	// Force onCreateIndex use the backfill-merge process.
+	lightning.GlobalEnv.IsInited = false
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+
+	var checkErr error
+	var runDML, backfillDone bool
+	originHook := dom.DDL().GetHook()
+	dom.DDL().SetHook(&ddl.TestDDLCallback{
+		Do: dom,
+		OnJobUpdatedExported: func(job *model.Job) {
+			if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
+				var tbl table.Table
+				tbl, checkErr = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+				if checkErr != nil {
+					return
+				}
+				idx := tbl.Meta().FindIndexByName("idx")
+				if idx == nil {
+					return
+				}
+				if idx.BackfillState == model.BackfillStateRunning {
+					if !backfillDone {
+						// Wait another round so that the backfill range is determined(1-4).
+						backfillDone = true
+						return
+					}
+					runDML = true
+					// Write record 7 to the temporary index.
+					_, checkErr = tk2.Exec("insert into t values (7, 8, 9);")
+				}
+			}
+		},
+	})
+	tk.MustExec("alter table t add index idx(c1);")
+	dom.DDL().SetHook(originHook)
+	require.True(t, backfillDone)
+	require.True(t, runDML)
+	require.NoError(t, checkErr)
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t use index (idx);").Check(testkit.Rows("1 2 3", "4 5 6", "7 8 9"))
+	tk.MustQuery("select * from t ignore index (idx);").Check(testkit.Rows("1 2 3", "4 5 6", "7 8 9"))
 }

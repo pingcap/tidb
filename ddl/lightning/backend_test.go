@@ -70,14 +70,6 @@ func TestLightningBackend(t *testing.T) {
 
 	jobID = 2
 	BackCtxMgr.Store(jobID, newBackendContext(ctx, jobID, nil, cfg, sysVars, BackCtxMgr.MemRoot))
-	bc, isEnable := BackCtxMgr.Load(jobID)
-	needRestore := bc.NeedRestore()
+	_, isEnable = BackCtxMgr.Load(jobID)
 	require.Equal(t, true, isEnable)
-	require.Equal(t, false, needRestore)
-
-	bc.SetNeedRestore(true)
-	bc, isEnable = BackCtxMgr.Load(jobID)
-	needRestore = bc.NeedRestore()
-	require.Equal(t, true, isEnable)
-	require.Equal(t, true, needRestore)
 }

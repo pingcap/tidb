@@ -276,7 +276,10 @@ func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int,
 func checkResult(ctx *suiteContext, tableName string, indexID int) {
 	adminCheckSQL := "admin check index " + tableName + " idx" + strconv.Itoa(indexID)
 	_, err := ctx.tk.Exec(adminCheckSQL)
-	logutil.BgLogger().Error("[add index test] checkResult", zap.String("sql", adminCheckSQL))
+	if err != nil {
+		logutil.BgLogger().Error("[add index test] checkResult",
+			zap.String("sql", adminCheckSQL), zap.Error(err))
+	}
 	require.NoError(ctx.t, err)
 	require.Equal(ctx.t, ctx.tk.Session().AffectedRows(), uint64(0))
 	_, err = ctx.tk.Exec("alter table " + tableName + " drop index idx" + strconv.Itoa(indexID))
@@ -290,7 +293,10 @@ func checkResult(ctx *suiteContext, tableName string, indexID int) {
 func checkTableResult(ctx *suiteContext, tableName string) {
 	adminCheckSQL := "admin check table " + tableName
 	_, err := ctx.tk.Exec(adminCheckSQL)
-	logutil.BgLogger().Error("[add index test] checkTableResult", zap.String("sql", adminCheckSQL))
+	if err != nil {
+		logutil.BgLogger().Error("[add index test] checkTableResult",
+			zap.String("sql", adminCheckSQL), zap.Error(err))
+	}
 	require.NoError(ctx.t, err)
 	require.Equal(ctx.t, ctx.tk.Session().AffectedRows(), uint64(0))
 }

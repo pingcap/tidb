@@ -101,11 +101,7 @@ func (m *engineManager) Unregister(engineKey string) {
 		return
 	}
 
-	// If it is Canceled, the needRestore should be true
-	if ei.backCtx.needRestore {
-		ei.backCtx.SetNeedRestore(false)
-		ei.Clean()
-	}
+	ei.Clean()
 	m.Drop(engineKey)
 	m.MemRoot.ReleaseWithTag(engineKey)
 	m.MemRoot.Release(StructSizeWorkerCtx * int64(ei.writerCount))

@@ -75,49 +75,16 @@ func isPiTREnable(w *worker) bool {
 }
 
 // importIndexDataToStore import local index sst file into TiKV.
-func importIndexDataToStore(reorg *reorgInfo, indexID int64, unique bool, tbl table.Table) error {
-	if bc, ok := lit.BackCtxMgr.Load(reorg.Job.ID); ok && bc.NeedRestore() {
-		engineInfoKey := lit.GenEngineInfoKey(reorg.ID, indexID)
+func importIndexDataToStore(jobID int64, indexID int64, unique bool, tbl table.Table) error {
+	if bc, ok := lit.BackCtxMgr.Load(jobID); ok {
+		engineInfoKey := lit.GenEngineInfoKey(jobID, indexID)
 		err := bc.FinishImport(engineInfoKey, unique, tbl)
 		if err != nil {
 			err = errors.Trace(err)
 			return err
 		}
-		// After import local data into TiKV, then the progress set to 85.
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorg.SchemaName, reorg.TableName).Set(85)
 	}
 	return nil
-}
-
-// cleanUpLightningEnv will clean one DDL job's backend context.
-func cleanUpLightningEnv(reorg *reorgInfo) {
-	if _, ok := lit.BackCtxMgr.Load(reorg.Job.ID); ok {
-		lit.BackCtxMgr.Unregister(reorg.ID)
-	}
-}
-
-// cleanUpLightningEngines will clean one DDL job's engines.
-func cleanUpLightningEngines(reorg *reorgInfo) {
-	if bc, ok := lit.BackCtxMgr.Load(reorg.Job.ID); ok {
-		bc.SetNeedRestore(false)
-		bc.EngMgr.UnregisterAll()
-	}
-}
-
-// Check if this reorg is a restore reorg task
-// Check if current lightning reorg task can keep on executing.
-// Otherwise, restart the reorg task.
-func canRestoreReorgTask(job *model.Job, indexID int64) bool {
-	// The reorg stage is just started, do nothing
-	if job.SnapshotVer == 0 {
-		return false
-	}
-
-	// Check if backend and engine are both active in memory.
-	if !lit.CanRestoreReorgTask(job.ID, indexID) {
-		return false
-	}
-	return true
 }
 
 // Below is lightning worker implementation
@@ -525,48 +492,54 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 	// taskDone means that the merged handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
-	err := iterateSnapshotIndexes(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startKey, taskRange.endKey, func(indexKey kv.Key, rawValue []byte) (more bool, err error) {
-		oprEndTime := time.Now()
-		logSlowOperations(oprEndTime.Sub(oprStartTime), "iterate temporary index in merge process", 0)
-		oprStartTime = oprEndTime
+	idxPrefix := w.table.IndexPrefix()
+	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, idxPrefix, txn.StartTS(),
+		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
+			oprEndTime := time.Now()
+			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterate temporary index in merge process", 0)
+			oprStartTime = oprEndTime
 
-		taskDone := indexKey.Cmp(taskRange.endKey) > 0
+			if taskRange.endInclude {
+				taskDone = indexKey.Cmp(taskRange.endKey) > 0
+			} else {
+				taskDone = indexKey.Cmp(taskRange.endKey) >= 0
+			}
 
-		if taskDone || len(w.tmpIdxRecords) >= w.batchCnt {
-			return false, nil
-		}
+			if taskDone || len(w.tmpIdxRecords) >= w.batchCnt {
+				return false, nil
+			}
 
-		isDelete := false
-		unique := false
-		skip := false
-		var keyVer []byte
-		length := len(rawValue)
-		keyVer = append(keyVer, rawValue[length-1:]...)
-		rawValue = rawValue[:length-1]
-		length--
-		// Just skip it.
-		if bytes.Equal(keyVer, []byte("m")) {
+			isDelete := false
+			unique := false
+			skip := false
+			var keyVer []byte
+			length := len(rawValue)
+			keyVer = append(keyVer, rawValue[length-1:]...)
+			rawValue = rawValue[:length-1]
+			length--
+			// Just skip it.
+			if bytes.Equal(keyVer, []byte("m")) {
+				return true, nil
+			}
+			if bytes.Equal(rawValue, []byte("delete")) {
+				isDelete = true
+				rawValue = rawValue[:length-6]
+			} else if bytes.Equal(rawValue, []byte("deleteu")) {
+				isDelete = true
+				unique = true
+				rawValue = rawValue[:length-7]
+			}
+			var convertedIndexKey []byte
+			convertedIndexKey = append(convertedIndexKey, indexKey...)
+			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, convertedIndexKey)
+			idxRecord := &temporaryIndexRecord{key: convertedIndexKey, delete: isDelete, unique: unique, keyVer: keyVer, skip: skip}
+			if !isDelete {
+				idxRecord.vals = rawValue
+			}
+			w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
+			w.batchCheckTmpKeys = append(w.batchCheckTmpKeys, indexKey)
 			return true, nil
-		}
-		if bytes.Equal(rawValue, []byte("delete")) {
-			isDelete = true
-			rawValue = rawValue[:length-6]
-		} else if bytes.Equal(rawValue, []byte("deleteu")) {
-			isDelete = true
-			unique = true
-			rawValue = rawValue[:length-7]
-		}
-		var convertedIndexKey []byte
-		convertedIndexKey = append(convertedIndexKey, indexKey...)
-		tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, convertedIndexKey)
-		idxRecord := &temporaryIndexRecord{key: convertedIndexKey, delete: isDelete, unique: unique, keyVer: keyVer, skip: skip}
-		if !isDelete {
-			idxRecord.vals = rawValue
-		}
-		w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
-		w.batchCheckTmpKeys = append(w.batchCheckTmpKeys, indexKey)
-		return true, nil
-	})
+		})
 
 	if len(w.tmpIdxRecords) == 0 {
 		taskDone = true

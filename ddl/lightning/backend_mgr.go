@@ -134,7 +134,7 @@ func newBackendContext(ctx context.Context, jobID int64, be *backend.Backend,
 func (m *backendCtxManager) Unregister(jobID int64) {
 	bc, exist := m.Load(jobID)
 	if !exist {
-		logutil.BgLogger().Error(LitErrGetBackendFail, zap.Int64("backend key", jobID))
+		return
 	}
 	bc.EngMgr.UnregisterAll()
 	bc.backend.Close()

@@ -73,11 +73,15 @@ func (ei *engineInfo) Flush(ctx context.Context) error {
 }
 
 func (ei *engineInfo) Clean() {
+	if ei.openedEngine == nil {
+		return
+	}
 	indexEngine := ei.openedEngine
 	closedEngine, err := indexEngine.Close(ei.backCtx.ctx, ei.cfg)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.String("Engine key", ei.key))
 	}
+	ei.openedEngine = nil
 	// Here the local intermediate file will be removed.
 	err = closedEngine.Cleanup(ei.backCtx.ctx)
 	if err != nil {
@@ -96,6 +100,7 @@ func (ei *engineInfo) ImportAndClean() error {
 		logutil.BgLogger().Error(errMsg)
 		return errors.New(errMsg)
 	}
+	ei.openedEngine = nil
 
 	// Reset disk quota before ingest, if user changed it.
 	GlobalEnv.checkAndResetQuota()
@@ -197,20 +202,4 @@ func (wCtx *WorkerContext) WriteRow(key, idxVal []byte) error {
 // GenEngineInfoKey generate one engine key with jobID and indexID.
 func GenEngineInfoKey(jobID int64, indexID int64) string {
 	return strconv.FormatInt(jobID, 10) + strconv.FormatInt(indexID, 10)
-}
-
-// CanRestoreReorgTask only when backend and Engine still be cached, then the task could be restored,
-// otherwise return false to let reorg task restart.
-func CanRestoreReorgTask(jobID int64, indexID int64) bool {
-	bc, bcExist := BackCtxMgr.Load(jobID)
-	if !bcExist {
-		logutil.BgLogger().Warn(LitWarnBackendNOTExist, zap.Int64("backend key:", jobID))
-		return false
-	}
-	engineInfoKey := GenEngineInfoKey(jobID, indexID)
-	_, enExist := bc.EngMgr.Load(engineInfoKey)
-	if enExist && bcExist {
-		return true
-	}
-	return false
 }

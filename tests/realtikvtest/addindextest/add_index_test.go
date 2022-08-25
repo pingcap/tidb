@@ -17,9 +17,16 @@ package addindextest
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 )
+
+func init() {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Path = "127.0.0.1:2379"
+	})
+}
 
 func initTest(t *testing.T) *suiteContext {
 	store := realtikvtest.CreateMockStoreAndSetup(t)

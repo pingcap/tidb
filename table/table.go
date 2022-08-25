@@ -177,7 +177,7 @@ type Table interface {
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
 
-	// IndexPrefix reutruns the indxe key prefix.
+	// IndexPrefix returns the index key prefix.
 	IndexPrefix() kv.Key
 
 	// AddRecord inserts a row which should contain only public columns

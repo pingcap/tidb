@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"sync"
@@ -258,8 +259,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		case model.ActionModifyColumn:
 			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
 		}
-		// If go through new backfill path, will delay remove operation.
-		if _, ok := lightning.BackCtxMgr.Load(reorgInfo.Job.ID); !ok {
+		if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge {
 			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 				logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 				return errors.Trace(err1)
@@ -553,7 +553,7 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 // getTableRange gets the start and end handle of a table (or partition).
 func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(ctx, d.store, priority, tbl, snapshotVer, nil, nil,
+	err = iterateSnapshotKeys(ctx, d.store, priority, tbl.RecordPrefix(), snapshotVer, nil, nil,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandleKey = rowKey
 			return false, nil
@@ -962,13 +962,13 @@ func getMergeReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.
 		}
 		logutil.BgLogger().Info("[ddl] job get table range",
 			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
-			zap.String("startHandle", tryDecodeToHandleString(start)),
-			zap.String("endHandle", tryDecodeToHandleString(end)))
+			zap.String("start key", hex.EncodeToString(start)),
+			zap.String("end key", hex.EncodeToString(end)))
 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = rh.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}

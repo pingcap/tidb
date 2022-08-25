@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"sync"
@@ -456,7 +457,7 @@ func tryDecodeToHandleString(key kv.Key) string {
 	if err != nil {
 		recordPrefixIdx := bytes.Index(key, []byte("_r"))
 		if recordPrefixIdx == -1 {
-			return fmt.Sprintf("key: %x", key)
+			return fmt.Sprintf("key: %s", hex.EncodeToString(key))
 		}
 		handleBytes := key[recordPrefixIdx+2:]
 		terminatedWithZero := len(handleBytes) > 0 && handleBytes[len(handleBytes)-1] == 0
@@ -466,7 +467,7 @@ func tryDecodeToHandleString(key kv.Key) string {
 				return handle.String() + ".next"
 			}
 		}
-		return fmt.Sprintf("%x", handleBytes)
+		return fmt.Sprintf("handleBytes: %s", hex.EncodeToString(handleBytes))
 	}
 	return handle.String()
 }
@@ -659,9 +660,9 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:
-				backfillWorker := spawnAddIndexWorker(sessCtx, i, job, t, decodeColMap, reorgInfo, jc)
-				if backfillWorker == nil {
-					break
+				backfillWorker, err := spawnAddIndexWorker(sessCtx, i, job, t, decodeColMap, reorgInfo, jc)
+				if err != nil {
+					return err
 				}
 				backfillWorkers = append(backfillWorkers, backfillWorker)
 			case typeUpdateColumnWorker:
@@ -711,13 +712,17 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			zap.String("startHandle", tryDecodeToHandleString(startKey)),
 			zap.String("endHandle", tryDecodeToHandleString(endKey)))
 
-		// Disk quota checking and import partial data into TiKV if needed.
-		// Do lightning flush data to make checkpoint.
-		if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && bc.NeedRestore() {
-			engineKey := lightning.GenEngineInfoKey(job.ID, reorgInfo.currElement.ID)
-			err := bc.Flush(engineKey)
-			if err != nil {
-				return errors.Trace(err)
+		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+			// Disk quota checking and import partial data into TiKV if needed.
+			// Do lightning flush data to make checkpoint.
+			if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok {
+				engineKey := lightning.GenEngineInfoKey(job.ID, reorgInfo.currElement.ID)
+				err := bc.Flush(engineKey)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				return errors.New(lightning.LitErrGetBackendFail)
 			}
 		}
 		remains, err := w.sendRangeTaskToWorkers(t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
@@ -734,94 +739,47 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 }
 
 func spawnAddIndexWorker(sessCtx sessionctx.Context, seq int, job *model.Job, t table.PhysicalTable,
-	decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *backfillWorker {
-	// Firstly, check and try lightning path.
-	if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok && bc.NeedRestore() {
+	decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*backfillWorker, error) {
+	switch job.ReorgMeta.ReorgTp {
+	case model.ReorgTypeTxn, model.ReorgTypeTxnMerge:
+		idxWorker := newAddIndexWorker(sessCtx, seq, t, decodeColMap, reorgInfo, jc)
+		go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+		return idxWorker.backfillWorker, nil
+	case model.ReorgTypeLitMerge:
+		bc, ok := lightning.BackCtxMgr.Load(job.ID)
+		if !ok {
+			return nil, errors.Trace(errors.New(lightning.LitErrGetBackendFail))
+		}
 		err := bc.EngMgr.Register(bc, job, reorgInfo.currElement.ID)
 		if err != nil {
-			if seq == 0 { // The first worker.
-				lightning.BackCtxMgr.Unregister(job.ID) // fallback to the general worker.
-				logutil.BgLogger().Warn(lightning.LitErrCreateEngineFail, zap.Error(err), zap.Bool("fallback", true))
-			} else {
-				// It may reach to a limit of the lightning workers.
-				logutil.BgLogger().Warn(lightning.LitWarnExtentWorker, zap.Error(err), zap.Bool("fallback", false))
-				return nil
-			}
-		} else {
-			idxWorker, err := newAddIndexWorkerLit(sessCtx, seq, t, decodeColMap, reorgInfo, jc)
-			if err == nil {
-				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
-				return idxWorker.backfillWorker
-			}
+			return nil, errors.Trace(errors.New(lightning.LitErrCreateEngineFail))
 		}
+		idxWorker, err := newAddIndexWorkerLit(sessCtx, seq, t, decodeColMap, reorgInfo, jc)
+		go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+		return idxWorker.backfillWorker, nil
+	default:
+		return nil, errors.New(fmt.Sprintf("unknown reorg type %v", job.ReorgMeta.ReorgTp))
 	}
-	// Fallback to the general add index worker.
-	idxWorker := newAddIndexWorker(sessCtx, seq, t, decodeColMap, reorgInfo, jc)
-	go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
-	return idxWorker.backfillWorker
 }
 
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-// indexIterFunc is used for low-level index iteration.
-type indexIterFunc func(rowKey kv.Key, rawRecord []byte) (more bool, err error)
-
-func iterateSnapshotIndexes(ctx *JobContext, store kv.Storage, priority int, t table.Table, version uint64,
-	startKey kv.Key, endKey kv.Key, fn indexIterFunc) error {
-	ver := kv.Version{Ver: version}
-	snap := store.GetSnapshot(ver)
-	snap.SetOption(kv.Priority, priority)
-	snap.SetOption(kv.RequestSourceInternal, true)
-	snap.SetOption(kv.RequestSourceType, ctx.ddlJobSourceType())
-	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
-		snap.SetOption(kv.ResourceGroupTagger, tagger)
-	}
-
-	it, err := snap.Iter(startKey, endKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer it.Close()
-
-	for it.Valid() {
-		if !it.Key().HasPrefix(t.IndexPrefix()) {
-			break
-		}
-
-		more, err := fn(it.Key(), it.Value())
-		if !more || err != nil {
-			return errors.Trace(err)
-		}
-
-		err = kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key()))
-		if err != nil {
-			if kv.ErrNotExist.Equal(err) {
-				break
-			}
-			return errors.Trace(err)
-		}
-	}
-
-	return nil
-}
-
-func iterateSnapshotRows(ctx *JobContext, store kv.Storage, priority int, t table.Table, version uint64,
+func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, prefixKey kv.Key, version uint64,
 	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
+	isRecord := tablecodec.IsRecordKey(prefixKey.Next())
 	var firstKey kv.Key
 	if startKey == nil {
-		firstKey = t.RecordPrefix()
+		firstKey = prefixKey
 	} else {
 		firstKey = startKey
 	}
-
 	var upperBound kv.Key
 	if endKey == nil {
-		upperBound = t.RecordPrefix().PrefixNext()
+		upperBound = prefixKey.PrefixNext()
 	} else {
 		upperBound = endKey.PrefixNext()
 	}
-
 	ver := kv.Version{Ver: version}
 	snap := store.GetSnapshot(ver)
 	snap.SetOption(kv.Priority, priority)
@@ -838,16 +796,16 @@ func iterateSnapshotRows(ctx *JobContext, store kv.Storage, priority int, t tabl
 	defer it.Close()
 
 	for it.Valid() {
-		if !it.Key().HasPrefix(t.RecordPrefix()) {
+		if !it.Key().HasPrefix(prefixKey) {
 			break
 		}
-
 		var handle kv.Handle
-		handle, err = tablecodec.DecodeRowKey(it.Key())
-		if err != nil {
-			return errors.Trace(err)
+		if isRecord {
+			handle, err = tablecodec.DecodeRowKey(it.Key())
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
-
 		more, err := fn(handle, it.Key(), it.Value())
 		if !more || err != nil {
 			return errors.Trace(err)
@@ -1079,7 +1037,7 @@ func (w *backfillWorker) handleMergeTask(d *ddlCtx, task *reorgBackfillTask, bf 
 	for {
 		// Give job chance to be canceled, if we not check it here,
 		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
-		// Because mergeIndexTask may run a peroid time,
+		// Because mergeIndexTask may run a period time,
 		// we should check whether this ddl job is still runnable.
 		err := d.isReorgRunnable(w.reorgInfo.Job)
 		if err != nil {
@@ -1128,7 +1086,7 @@ func (w *worker) sendRangeTaskToMergeWorkers(t table.Table, workers []*backfillW
 	physicalTableID := phyicID
 
 	// Build reorg tasks.
-	for _, keyRange := range kvRanges {
+	for i, keyRange := range kvRanges {
 		endKey := keyRange.EndKey
 		endK, err := getIndexRangeEndKey(reorgInfo.d.jobContext(reorgInfo.Job), workers[0].sessCtx.GetStore(), workers[0].priority, t, keyRange.StartKey, endKey)
 		if err != nil {
@@ -1142,7 +1100,9 @@ func (w *worker) sendRangeTaskToMergeWorkers(t table.Table, workers []*backfillW
 		task := &reorgBackfillTask{
 			physicalTableID: physicalTableID,
 			startKey:        keyRange.StartKey,
-			endKey:          endKey}
+			endKey:          endKey,
+			// If the boundaries overlap, we should ignore the preceding endKey.
+			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1}
 		batchTasks = append(batchTasks, task)
 
 		if len(batchTasks) >= len(workers) {
@@ -1195,7 +1155,6 @@ func (w *worker) handleMergeTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 			zap.String("startHandle", tryDecodeToHandleString(startKey)),
 			zap.String("nextHandle", tryDecodeToHandleString(nextKey)),
 			zap.Int64("batchAddedCount", taskAddedCount),
-			zap.String("taskFailedError", err.Error()),
 			zap.String("takeTime", elapsedTime.String()),
 			zap.NamedError("updateHandleError", err))
 		return errors.Trace(err)

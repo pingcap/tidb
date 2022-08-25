@@ -31,13 +31,12 @@ import (
 
 // BackendContext store a backend info for add index reorg task.
 type BackendContext struct {
-	key         string // Currently, backend key used ddl job id string
-	backend     *backend.Backend
-	ctx         context.Context
-	cfg         *config.Config
-	EngMgr      engineManager
-	sysVars     map[string]string
-	needRestore bool
+	key     string // Currently, backend key used ddl job id string
+	backend *backend.Backend
+	ctx     context.Context
+	cfg     *config.Config
+	EngMgr  engineManager
+	sysVars map[string]string
 }
 
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
@@ -100,14 +99,4 @@ func (bc *BackendContext) Flush(engineKey string) error {
 		}
 	}
 	return nil
-}
-
-// NeedRestore indicates whether the backfill job need to be restored.
-func (bc *BackendContext) NeedRestore() bool {
-	return bc.needRestore
-}
-
-// SetNeedRestore sets the need restore flag.
-func (bc *BackendContext) SetNeedRestore(needRestore bool) {
-	bc.needRestore = needRestore
 }
