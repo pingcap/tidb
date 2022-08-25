@@ -34,7 +34,7 @@ type LRUPlanCache struct {
 	capacity uint
 	size     uint
 	// buckets replace the map in general LRU
-	buckets map[hack.MutableString]map[*list.Element]struct{}
+	buckets map[string]map[*list.Element]struct{}
 	lruList *list.List
 	// lock make cache thread safe
 	lock sync.Mutex
@@ -55,7 +55,7 @@ func NewLRUPlanCache(capacity uint, pickFromBucket func(map[*list.Element]struct
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
-		buckets:        make(map[hack.MutableString]map[*list.Element]struct{}, 1), //Generally one query has one plan
+		buckets:        make(map[string]map[*list.Element]struct{}, 1), //Generally one query has one plan
 		lruList:        list.New(),
 		pickFromBucket: pickFromBucket,
 		onEvict:        onEvict,
@@ -67,7 +67,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	bucket, bucketExist := l.buckets[hack.String(key.Hash())]
+	bucket, bucketExist := l.buckets[string(hack.String(key.Hash()))]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
@@ -82,7 +82,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	hash := hack.String(key.Hash())
+	hash := string(key.Hash())
 	bucket, bucketExist := l.buckets[hash]
 	// bucket exist
 	if bucketExist {
@@ -113,13 +113,13 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	defer l.lock.Unlock()
 
 	hash := hack.String(key.Hash())
-	bucket, bucketExist := l.buckets[hash]
+	bucket, bucketExist := l.buckets[string(hash)]
 	if bucketExist {
 		for element := range bucket {
 			l.lruList.Remove(element)
 			l.size--
 		}
-		l.buckets[hash] = make(map[*list.Element]struct{}, 1)
+		l.buckets[string(hash)] = make(map[*list.Element]struct{}, 1)
 	}
 }
 
@@ -132,7 +132,7 @@ func (l *LRUPlanCache) DeleteAll() {
 		l.lruList.Remove(lru)
 		l.size--
 	}
-	l.buckets = make(map[hack.MutableString]map[*list.Element]struct{}, 1)
+	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
 }
 
 // Size gets the current cache size.
@@ -202,6 +202,6 @@ func (l *LRUPlanCache) removeOldest() {
 
 // removeFromBucket remove element from bucket
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
-	bucket := l.buckets[hack.String(element.Value.(*CacheEntry).PlanKey.Hash())]
+	bucket := l.buckets[string(hack.String(element.Value.(*CacheEntry).PlanKey.Hash()))]
 	delete(bucket, element)
 }
