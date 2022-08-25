@@ -111,7 +111,6 @@ func RunTest(t *testing.T, f func(t *T)) {
 		}
 	}
 	for stack := newPickStack(); stack.Valid(); stack.NextStack() {
-
 		success := t.Run("", runFunc(stack, f))
 
 		if !success {
