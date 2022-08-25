@@ -383,21 +383,6 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	require.False(t, ok)
 }
 
-// check for the condition that unsupport set tiflash mode
-func TestSetTiFlashModeUnsupported(t *testing.T) {
-	s, teardown := createTiFlashContext(t)
-	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create temporary table ddltiflash(z int)")
-	// unsupport for temporary table
-	tk.MustGetErrMsg("alter table ddltiflash set tiflash mode fast", "[ddl:8200]TiDB doesn't support ALTER TABLE for local temporary table")
-	// unsupport for system table
-	tk.MustGetErrMsg("alter table information_schema.tiflash_replica set tiflash mode fast", "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table")
-}
-
 // Truncate partition shall not block.
 func TestTiFlashTruncatePartition(t *testing.T) {
 	s, teardown := createTiFlashContext(t)

@@ -100,5 +100,4 @@ func TestTiflashUsage(t *testing.T) {
 	tk.Session().Close()
 	require.Equal(t, telemetry.CurrentTiflashTableScanCount.String(), "2")
 	require.Equal(t, telemetry.CurrentTiflashTableScanWithFastScanCount.String(), "1")
-
 }

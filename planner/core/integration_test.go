@@ -542,7 +542,7 @@ func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
-	tk.MustExec("alter table t set tiflash mode fast")
+	tk.MustExec("set @@session.tiflash_fastscan=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
