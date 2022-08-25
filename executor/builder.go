@@ -807,7 +807,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		} else if stmt, ok := v.Statement.(*ast.AlterUserStmt); ok {
 			lockOptions = stmt.PasswordOrLockOptions
 		}
-		if lockOptions != nil && len(lockOptions) > 0 {
+		if len(lockOptions) > 0 {
 			for i := len(lockOptions) - 1; i >= 0; i-- {
 				if lockOptions[i].Type == ast.Lock {
 					if b.Ti.AccountLockTelemetry == nil {
