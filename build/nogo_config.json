@@ -322,7 +322,8 @@
     "only_files": {
       "kv/": "kv code",
       "util/memory": "util/memory",
-      "ddl/": "ddl"
+      "ddl/": "ddl",
+      "planner/": "planner"
     }
   },
   "pkgfact": {
