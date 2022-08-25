@@ -289,7 +289,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 	if !exist {
 		newID, exist = sr.globalTableIdMap[tableInfo.ID]
 		if !exist {
-			newID, err = sr.genGenGlobalID(context.Background())
+			newID, err = sr.genGenGlobalID(context.TODO())
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
