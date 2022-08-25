@@ -67,6 +67,7 @@ func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
 }
+
 func TestTiflashUsage(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(1))
 	tk := testkit.NewTestKit(t, store)
