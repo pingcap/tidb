@@ -2895,3 +2895,43 @@ func TestIssue29823(t *testing.T) {
 	err = tk2.QueryToErr("show tables from test")
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'u1'@'%' to database 'test'")
 }
+
+func TestCheckPreparePrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create user u1")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values(1)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
+
+	// sql
+	err := tk2.ExecToErr("prepare s from 'select * from test.t'")
+	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't'")
+	err = tk2.ExecToErr("execute s")
+	require.EqualError(t, err, "[planner:8111]Prepared statement not found")
+
+	// binary proto
+	stmtID, _, _, err := tk2.Session().PrepareStmt("select * from test.t")
+	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't'")
+	require.Zero(t, stmtID)
+
+	// grant
+	tk.MustExec("grant SELECT ON test.t TO  'u1'@'%';")
+
+	// should success after grant
+	tk2.MustExec("prepare s from 'select * from test.t'")
+	tk2.MustQuery("execute s").Check(testkit.Rows("1"))
+	stmtID, _, _, err = tk2.Session().PrepareStmt("select * from test.t")
+	require.NoError(t, err)
+	require.NotZero(t, stmtID)
+	rs, err := tk2.Session().ExecutePreparedStmt(context.TODO(), stmtID, nil)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, rs.Close())
+	}()
+	tk2.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
+}
