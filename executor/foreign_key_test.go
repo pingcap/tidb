@@ -28,7 +28,6 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -254,7 +253,6 @@ func TestForeignKeyOnInsertChildTableInTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -356,7 +354,6 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -581,7 +578,6 @@ func TestForeignKeyOnInsertIgnore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
