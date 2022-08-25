@@ -347,7 +347,7 @@ func TestTableStorageStats(t *testing.T) {
 
 	tk.MustExec("grant all privileges on *.* to 'testuser2'@'localhost'")
 	tk.MustExec("grant select on *.* to 'testuser3'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -355,14 +355,14 @@ func TestTableStorageStats(t *testing.T) {
 	// User has no access to this schema, so the result set is empty.
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("0"))
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil))
 
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser3",
 		Hostname: "localhost",
 	}, nil, nil))
