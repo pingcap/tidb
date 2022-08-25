@@ -888,8 +888,8 @@ def go_deps():
         name = "com_github_fatanugraha_noloopclosure",
         build_file_proto_mode = "disable",
         importpath = "github.com/fatanugraha/noloopclosure",
-        sum = "h1:kxqwEtwWJoU5fxvgr3nGF8Ky3CZWIay9dB1hfF/3ehA=",
-        version = "v0.1.0",
+        sum = "h1:AhepjAikNpk50qTZoipHZqeZtnyKT/C2Tk5dGn7nC+A=",
+        version = "v0.1.1",
     )
 
     go_repository(
