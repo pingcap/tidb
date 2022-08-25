@@ -2331,7 +2331,7 @@ func (cr *chunkRestore) deliverLoop(
 
 		if m, ok := metric.FromContext(ctx); ok {
 			// value of currOffset comes from parser.pos which increase monotonically. the init value of parser.pos
-			// comes from chunk.Chunk.Offset. so it should happen that currOffset - startOffset < 0.
+			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
 			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
 			// TODO: reproduce and find the root cause and fix it completely
 			if currOffset >= startOffset {
