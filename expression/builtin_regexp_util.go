@@ -30,11 +30,12 @@ import (
 //	select regexp_like("123", "123", "m"), here isNull field is false for the third parameter
 //	select regexp_like("123", "123"), here isNull field is true for the third parameter
 type regexpParam struct {
-	constStrVal string
-	constIntVal int64
-	isConst     bool
-	isNull      bool
-	col         *chunk.Column
+	constStrVal   string
+	constIntVal   int64
+	defaultIntVal int64 // default value when isNull is true
+	isConst       bool
+	isNull        bool
+	col           *chunk.Column
 }
 
 func (re *regexpParam) getCol() *chunk.Column {
@@ -62,6 +63,10 @@ func (re *regexpParam) getStringVal(id int) string {
 }
 
 func (re *regexpParam) getIntVal(id int) int64 {
+	if re.isNull {
+		return re.defaultIntVal
+	}
+
 	if re.isConst {
 		return re.constIntVal
 	}
@@ -101,6 +106,39 @@ func buildStringParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, isNull bo
 	return &pa, nil
 }
 
+func buildIntParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, isNull bool, defaultIntVal int64) (*regexpParam, error) {
+	var pa regexpParam
+	var err error
+
+	pa.isNull = isNull
+	if pa.isNull {
+		pa.defaultIntVal = defaultIntVal
+		return &pa, nil
+	}
+
+	pa.col, err = bf.bufAllocator.get()
+	if err != nil {
+		return nil, err
+	}
+
+	// Get values from input
+	if err := bf.args[id].VecEvalInt(bf.ctx, input, pa.col); err != nil {
+		return nil, err
+	}
+
+	// Check if this is a const value
+	pa.isConst = bf.args[id].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
+	if pa.isConst {
+		// Initialize the const
+		pa.constIntVal, err = getColumnConstValInt(pa.col, input.NumRows())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &pa, nil
+}
+
 func getColumnConstValString(col *chunk.Column, n int) (string, error) {
 	// Precondition: col is generated from a constant expression
 	for i := 0; i < n; i++ {
@@ -110,6 +148,17 @@ func getColumnConstValString(col *chunk.Column, n int) (string, error) {
 		return col.GetString(i), nil
 	}
 	return "", errors.New("Can't get const string")
+}
+
+func getColumnConstValInt(col *chunk.Column, n int) (int64, error) {
+	// Precondition: col is generated from a constant expression
+	for i := 0; i < n; i++ {
+		if col.IsNull(i) {
+			continue
+		}
+		return col.GetInt64(i), nil
+	}
+	return 0, errors.New("Can't get const int")
 }
 
 // memorized regexp means the constant pattern.
@@ -164,6 +213,15 @@ func getBuffers(params []*regexpParam) []*chunk.Column {
 		}
 	}
 	return buffers
+}
+
+func isResultNull(columns []*chunk.Column, i int) bool {
+	for _, col := range columns {
+		if col.IsNull(i) {
+			return true
+		}
+	}
+	return false
 }
 
 func utf8Len(b byte) int {

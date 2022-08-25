@@ -388,3 +388,7 @@ func TestRegexpSubstrConst(t *testing.T) {
 		}
 	}
 }
+
+func TestRegexpSubstrVec(t *testing.T) {
+
+}

@@ -121,6 +121,22 @@ func (re *regexpBaseFuncSig) genCompile(matchType string) (func(string) (*regexp
 	}, nil
 }
 
+func (re *regexpBaseFuncSig) genRegexp(pat string, matchType string) (*regexp.Regexp, error) {
+	if re.isMemorizedRegexpInitialized() {
+		return re.memorizedRegexp, re.memorizedErr
+	}
+
+	var err error
+
+	// Generate compiler first
+	re.compile, err = re.genCompile(matchType)
+	if err != nil {
+		return nil, err
+	}
+
+	return re.compile(pat)
+}
+
 // ---------------------------------- regexp_like ----------------------------------
 
 type regexpLikeFunctionClass struct {
@@ -229,12 +245,12 @@ func (re *regexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	// user may ignore match type parameter
 	hasMatchType := (len(re.args) == 3)
 	param, err := buildStringParam(&re.baseBuiltinFunc, 2, input, !hasMatchType)
+	params = append(params, param)
+	defer releaseBuffers(&re.baseBuiltinFunc, params)
+
 	if err != nil {
 		return err
 	}
-
-	params = append(params, param)
-	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
 	// Check memorization
 	if re.needMemorization() {
@@ -249,20 +265,6 @@ func (re *regexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		re.initMemoizedRegexp(re.compile, params[1].getCol(), n)
 	}
 
-	getRegexp := func(pat string, matchType string) (*regexp.Regexp, error) {
-		if re.isMemorizedRegexpInitialized() {
-			return re.memorizedRegexp, re.memorizedErr
-		}
-
-		// Generate compiler first
-		re.compile, err = re.genCompile(matchType)
-		if err != nil {
-			return nil, err
-		}
-
-		return re.compile(pat)
-	}
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(getBuffers(params)...)
 	i64s := result.Int64s()
@@ -272,7 +274,7 @@ func (re *regexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		}
 
 		matchType := params[2].getStringVal(i)
-		re, err := getRegexp(params[1].getStringVal(i), matchType)
+		re, err := re.genRegexp(params[1].getStringVal(i), matchType)
 		if err != nil {
 			return err
 		}
@@ -360,17 +362,13 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	arg_num := len(re.args)
 	var bexpr []byte
 
-	if re.isBinCollation {
-		bexpr = []byte(expr)
-	}
-
 	if arg_num >= 3 {
 		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
 
-		// check position and trim target
+		// Check position and trim expr
 		if re.isBinCollation {
 			bexpr = []byte(expr)
 			if pos < 1 || (pos > int64(len(bexpr)) && len(expr) != 0) {
@@ -418,11 +416,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	if re.isBinCollation {
 		matches := reg.FindAll(bexpr, -1)
 		length := int64(len(matches))
-		if length == 0 {
-			return "", true, nil
-		}
-
-		if occurrence > length {
+		if length == 0 || occurrence > length {
 			return "", true, nil
 		}
 
@@ -431,13 +425,146 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 
 	matches := reg.FindAllString(expr, -1)
 	length := int64(len(matches))
-	if length == 0 {
-		return "", true, nil
-	}
-
-	if occurrence > length {
+	if length == 0 || occurrence > length {
 		return "", true, nil
 	}
 
 	return matches[occurrence-1], false, nil
+}
+
+// we need to memorize the regexp when:
+//  1. pattern and match type are constant
+//  2. pattern is const and match type is null
+//
+// return true: need, false: needless
+func (re *regexpSubstrFuncSig) needMemorization() bool {
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) == 5 || re.args[4].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+}
+
+// Call this function when at least one of the args is vector
+// REGEXP_SUBSTR(expr, pat[, pos[, occurrence[, match_type]]])
+func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	params := make([]*regexpParam, 0, 5)
+
+	for i := 0; i < 2; i++ {
+		param, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
+		if err != nil {
+			return err
+		}
+		params = append(params, param)
+	}
+
+	paramLen := len(re.args)
+
+	// Handle position parameter
+	hasPosition := (paramLen >= 3)
+	param, err := buildIntParam(&re.baseBuiltinFunc, 2, input, !hasPosition, 1)
+	params = append(params, param)
+	defer releaseBuffers(&re.baseBuiltinFunc, params)
+
+	if err != nil {
+		return err
+	}
+
+	// Handle occurrence parameter
+	hasOccur := (paramLen >= 4)
+	param, err = buildIntParam(&re.baseBuiltinFunc, 3, input, !hasOccur, 1)
+	params = append(params, param)
+
+	if err != nil {
+		return err
+	}
+
+	// Handle match type
+	hasMatchType := (paramLen == 5)
+	param, err = buildStringParam(&re.baseBuiltinFunc, 4, input, !hasMatchType)
+	params = append(params, param)
+
+	if err != nil {
+		return err
+	}
+
+	// Check memorization
+	if re.needMemorization() {
+		// matchType must be const or null
+		matchType := params[4].getStringVal(0)
+
+		re.compile, err = re.genCompile(matchType)
+		if err != nil {
+			return err
+		}
+
+		re.initMemoizedRegexp(re.compile, params[1].getCol(), n)
+	}
+
+	result.ResizeInt64(n, false)
+	buffers := getBuffers(params)
+
+	// Start to calculate
+	for i := 0; i < n; i++ {
+		if isResultNull(buffers, i) {
+			result.AppendNull()
+			continue
+		}
+
+		expr := params[0].getStringVal(i)
+		var bexpr []byte
+
+		if re.isBinCollation {
+			bexpr = []byte(expr)
+		}
+
+		// Check position and trim expr
+		pos := params[2].getIntVal(i)
+		if re.isBinCollation {
+			bexpr = []byte(expr)
+			if pos < 1 || (pos > int64(len(bexpr)) && len(expr) != 0) {
+				return ErrRegexp.GenWithStackByArgs(invalidIndex)
+			}
+
+			bexpr = bexpr[pos-1:] // Trim
+		} else {
+			if pos < 1 || (pos > int64(utf8.RuneCountInString(expr)) && len(expr) != 0) {
+				return ErrRegexp.GenWithStackByArgs(invalidIndex)
+			}
+
+			trimUtf8String(&expr, pos-1) // Trim
+		}
+
+		// Get occurrence
+		occurrence := params[3].getIntVal(i)
+		if occurrence < 1 {
+			occurrence = 1
+		}
+
+		// Get match type and generate regexp
+		matchType := params[4].getStringVal(i)
+		reg, err := re.genRegexp(params[1].getStringVal(i), matchType)
+		if err != nil {
+			return err
+		}
+
+		// Find string
+		if re.isBinCollation {
+			matches := reg.FindAll(bexpr, -1)
+			length := int64(len(matches))
+			if length == 0 || occurrence > length {
+				result.AppendNull()
+				continue
+			}
+
+			result.AppendString(fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(matches[occurrence-1]))))
+		} else {
+			matches := reg.FindAllString(expr, -1)
+			length := int64(len(matches))
+			if length == 0 || occurrence > length {
+				result.AppendNull()
+				continue
+			}
+
+			result.AppendString(matches[occurrence-1])
+		}
+	}
+	return nil
 }
