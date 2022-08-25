@@ -31,12 +31,8 @@ func buildOnModifyChildForeignKeyChecks(ctx sessionctx.Context, is infoschema.In
 		if fk.Version < 1 {
 			continue
 		}
-		referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
-		if err != nil {
-			continue
-		}
 		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
-		fkCheck, err := buildFKCheck(referTable, fk, fk.RefCols, true, failedErr)
+		fkCheck, err := buildFKCheckOnModifyChildTable(is, fk, failedErr)
 		if err != nil {
 			return nil, err
 		}
@@ -76,12 +72,8 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 			if !exist {
 				continue
 			}
-			referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
-			if err != nil {
-				continue
-			}
 			failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbInfo.Name.L, tblInfo.Name.L))
-			fkCheck, err := buildFKCheck(referTable, fk, fk.RefCols, true, failedErr)
+			fkCheck, err := buildFKCheckOnModifyChildTable(is, fk, failedErr)
 			if err != nil {
 				return nil, err
 			}
@@ -131,19 +123,50 @@ func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]*model.ColumnI
 	return tblID2UpdateColumns
 }
 
-func buildFKCheck(tbl table.Table, fk *model.FKInfo, cols []model.CIStr, checkExist bool, failedErr error) (*FKCheck, error) {
+func buildFKCheckOnModifyChildTable(is infoschema.InfoSchema, fk *model.FKInfo, failedErr error) (*FKCheck, error) {
+	referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+	if err != nil {
+		return nil, nil
+	}
+	fkCheck, err := buildFKCheck(referTable, fk.RefCols, failedErr)
+	if err != nil {
+		return nil, err
+	}
+	fkCheck.CheckExist = true
+	fkCheck.FK = fk
+	return fkCheck, nil
+}
+
+func buildFKCheckOnModifyReferTable(is infoschema.InfoSchema, referredFK *model.ReferredFKInfo) (*FKCheck, error) {
+	childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+	if err != nil {
+		return nil, nil
+	}
+	fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
+	if fk == nil || fk.Version < 1 {
+		return nil, nil
+	}
+	failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
+	fkCheck, err := buildFKCheck(childTable, fk.Cols, failedErr)
+	if err != nil {
+		return nil, err
+	}
+	fkCheck.CheckExist = false
+	fkCheck.ReferredFK = referredFK
+	return fkCheck, nil
+}
+
+func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKCheck, error) {
 	tblInfo := tbl.Meta()
 	if tblInfo.PKIsHandle && len(cols) == 1 {
 		refColInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)
 		if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
 			refCol := table.FindCol(tbl.Cols(), refColInfo.Name.O)
 			return &FKCheck{
-				FK:              fk,
 				Tbl:             tbl,
 				IdxIsPrimaryKey: true,
 				IdxIsExclusive:  true,
 				HandleCols:      []*table.Column{refCol},
-				CheckExist:      checkExist,
 				FailedErr:       failedErr,
 			}, nil
 		}
@@ -172,19 +195,43 @@ func buildFKCheck(tbl table.Table, fk *model.FKInfo, cols []model.CIStr, checkEx
 	}
 
 	return &FKCheck{
-		FK:              fk,
 		Tbl:             tbl,
 		Idx:             tblIdx,
 		IdxIsExclusive:  len(cols) == len(referTbIdxInfo.Columns),
 		IdxIsPrimaryKey: referTbIdxInfo.Primary && tblInfo.IsCommonHandle,
-		CheckExist:      checkExist,
 		FailedErr:       failedErr,
 	}, nil
+}
+
+func buildOnDeleteFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) (map[int64][]*FKCheck, error) {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil, nil
+	}
+	fkChecks := make(map[int64][]*FKCheck)
+	for tid, tbl := range tblID2table {
+		tblInfo := tbl.Meta()
+		dbInfo, exist := is.SchemaByTable(tblInfo)
+		if !exist {
+			return nil, infoschema.ErrDatabaseNotExists
+		}
+		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
+		for _, referredFK := range referredFKs {
+			fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
+			if err != nil {
+				return nil, err
+			}
+			if fkCheck != nil {
+				fkChecks[tid] = append(fkChecks[tid], fkCheck)
+			}
+		}
+	}
+	return fkChecks, nil
 }
 
 // FKCheck indicates the foreign key constraint checker.
 type FKCheck struct {
 	FK         *model.FKInfo
+	ReferredFK *model.ReferredFKInfo
 	Tbl        table.Table
 	Idx        table.Index
 	Cols       []model.CIStr

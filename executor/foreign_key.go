@@ -66,7 +66,12 @@ func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*pla
 }
 
 func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *plannercore.FKCheck) (*FKCheckExec, error) {
-	cols := fkCheck.FK.Cols
+	var cols []model.CIStr
+	if fkCheck.FK != nil {
+		cols = fkCheck.FK.Cols
+	} else if fkCheck.ReferredFK != nil {
+		cols = fkCheck.ReferredFK.Cols
+	}
 	colsOffsets, err := getColumnsOffsets(tbl.Meta(), cols)
 	if err != nil {
 		return nil, err
@@ -102,6 +107,8 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
 	if fkc.FK != nil {
 		return fkc.addRowNeedToCheck(sc, newRow)
+	} else if fkc.ReferredFK != nil {
+		return fkc.addRowNeedToCheck(sc, oldRow)
 	}
 	return nil
 }

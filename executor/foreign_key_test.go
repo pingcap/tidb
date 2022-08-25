@@ -696,3 +696,186 @@ func TestForeignKeyOnInsertIgnore(t *testing.T) {
 	tk.MustQuery("show warnings;").Check(testkit.Rows(warning, warning))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
 }
+
+func TestForeignKeyOnDeleteCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	// Case-1: test unique index only contain foreign key columns.
+	cases := []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "create table t1 (id int key,a int, b int, unique index(a, b));"},
+		{sql: "create table t2 (id int key,a int, b int, unique index (a,b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
+	}
+	checkCaseFn := func() {
+		for _, ca := range cases {
+			if ca.err == nil {
+				tk.MustExec(ca.sql)
+			} else {
+				err := tk.ExecToErr(ca.sql)
+				msg := fmt.Sprintf("sql: %v, err: %v, expected_err: %v", ca.sql, err, ca.err)
+				require.NotNil(t, err, msg)
+				require.True(t, ca.err.Equal(err), msg)
+			}
+		}
+	}
+	checkCaseFn()
+
+	// Case-2: test unique index contain foreign key columns and other columns.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int, a int, b int, unique index (a, b, id));"},
+		{sql: "create table t2 (id int, a int, b int, unique index (a, b, id), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-3: test non-unique index only contain foreign key columns.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int key,a int, b int, index(a, b));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-4: test non-unique index contain foreign key columns and other columns.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int key,a int, b int, index(a, b, id));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b,id), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=0;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
+		{sql: "create table t2 (id int,a int, b int, primary key(a, b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4)"},
+		{sql: "insert into t2 values (1, 1, 1)"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=1;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
+		{sql: "create table t2 (id int,a int, b int, primary key(a, b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=0;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b, id));"},
+		{sql: "create table t2 (id int,a int, b int, primary key(a, b, id), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4)"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=1;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b, id));"},
+		{sql: "create table t2 (id int,a int, b int, primary key(a, b, id), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4)"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-9: test primary key is handle and contain foreign key column.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=0;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, primary key(id));"},
+		{sql: "create table t2 (id int,a int, primary key(a), foreign key fk(a) references t1(id));"},
+		{sql: "insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4);"},
+		{sql: "insert into t2 values (1, 1);"},
+		{sql: "delete from t1 where id = 2;"},
+		{sql: "delete from t1 where a = 3 or a = 4;"},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+}
