@@ -144,6 +144,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			if v := val.(string); len(v) > 0 {
 				switch v {
 				case "retry_once":
+					//nolint:noloopclosure
 					if i == 0 {
 						err = ErrTxnRetryable
 					}
