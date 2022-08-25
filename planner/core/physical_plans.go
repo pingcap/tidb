@@ -17,7 +17,6 @@ package core
 import (
 	"fmt"
 	"strconv"
-	"strings"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -1696,7 +1695,7 @@ func (p *CTEDefinition) ExplainInfo() string {
 // ExplainID overrides the ExplainID.
 func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		return "CTE_" + strings.ToUpper(p.cteName.L)
+		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
 }
 

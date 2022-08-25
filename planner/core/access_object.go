@@ -493,5 +493,9 @@ func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) AccessO
 
 // AccessObject implements physicalScan interface.
 func (p *PhysicalCTE) AccessObject() AccessObject {
-	return OtherAccessObject(fmt.Sprintf("CTE:%s", p.cteName.L))
+	if p.cteName == p.cteAsName {
+		return OtherAccessObject(fmt.Sprintf("CTE:%s", p.cteName.L))
+	} else {
+		return OtherAccessObject(fmt.Sprintf("CTE:%s as %s", p.cteName.L, p.cteAsName.L))
+	}
 }
