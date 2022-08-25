@@ -55,8 +55,9 @@ type DBReplace struct {
 
 type SchemasReplace struct {
 	DbMap                     map[OldID]*DBReplace
-	RewriteTS                 uint64
-	TableFilter               filter.Filter
+	globalTableIdMap          map[OldID]NewID
+	RewriteTS                 uint64        // used to rewrite commit ts in meta kv.
+	TableFilter               filter.Filter // used to filter schema/table
 	genGenGlobalID            func(ctx context.Context) (int64, error)
 	genGenGlobalIDs           func(ctx context.Context, n int) ([]int64, error)
 	insertDeleteRangeForTable func(jobID int64, tableIDs []int64)
@@ -92,8 +93,19 @@ func NewSchemasReplace(
 	insertDeleteRangeForTable func(jobID int64, tableIDs []int64),
 	insertDeleteRangeForIndex func(jobID int64, elementID *int64, tableID int64, indexIDs []int64),
 ) *SchemasReplace {
+	globalTableIdMap := make(map[OldID]NewID)
+	for _, dr := range dbMap {
+		for tblID, tr := range dr.TableMap {
+			globalTableIdMap[tblID] = tr.NewTableID
+			for oldpID, newpID := range tr.PartitionMap {
+				globalTableIdMap[oldpID] = newpID
+			}
+		}
+	}
+
 	return &SchemasReplace{
 		DbMap:                     dbMap,
+		globalTableIdMap:          globalTableIdMap,
 		RewriteTS:                 restoreTS,
 		TableFilter:               tableFilter,
 		genGenGlobalID:            genID,
@@ -199,6 +211,11 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	parseField func([]byte) (tableID int64, err error),
 	encodeField func(tableID int64) []byte,
 ) ([]byte, bool, error) {
+	var (
+		err   error
+		newID int64
+		exist bool
+	)
 	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
 	if err != nil {
 		return nil, false, errors.Trace(err)
@@ -216,7 +233,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 
 	dbReplace, exist := sr.DbMap[dbID]
 	if !exist {
-		newID, err := sr.genGenGlobalID(context.Background())
+		newID, err = sr.genGenGlobalID(context.Background())
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -226,9 +243,13 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 
 	tableReplace, exist := dbReplace.TableMap[tableID]
 	if !exist {
-		newID, err := sr.genGenGlobalID(context.Background())
-		if err != nil {
-			return nil, false, errors.Trace(err)
+		newID, exist = sr.globalTableIdMap[tableID]
+		if !exist {
+			newID, err = sr.genGenGlobalID(context.Background())
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			sr.globalTableIdMap[tableID] = newID
 		}
 		tableReplace = NewTableReplace(nil, newID)
 		dbReplace.TableMap[tableID] = tableReplace
@@ -243,7 +264,12 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 }
 
 func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bool, error) {
-	var tableInfo model.TableInfo
+	var (
+		tableInfo model.TableInfo
+		err       error
+		newID     int64
+		exist     bool
+	)
 	if err := json.Unmarshal(value, &tableInfo); err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -251,7 +277,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 	// update table ID
 	dbReplace, exist := sr.DbMap[dbID]
 	if !exist {
-		newID, err := sr.genGenGlobalID(context.Background())
+		newID, err = sr.genGenGlobalID(context.Background())
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -261,10 +287,15 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 
 	tableReplace, exist := dbReplace.TableMap[tableInfo.ID]
 	if !exist {
-		newID, err := sr.genGenGlobalID(context.Background())
-		if err != nil {
-			return nil, false, errors.Trace(err)
+		newID, exist = sr.globalTableIdMap[tableInfo.ID]
+		if !exist {
+			newID, err = sr.genGenGlobalID(context.TODO())
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			sr.globalTableIdMap[tableInfo.ID] = newID
 		}
+
 		tableReplace = NewTableReplace(&tableInfo, newID)
 		dbReplace.TableMap[tableInfo.ID] = tableReplace
 	} else {
@@ -287,12 +318,15 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 	partitions := newTableInfo.GetPartitionInfo()
 	if partitions != nil {
 		for i, tbl := range partitions.Definitions {
-			newID, exist := tableReplace.PartitionMap[tbl.ID]
+			newID, exist = tableReplace.PartitionMap[tbl.ID]
 			if !exist {
-				var err error
-				newID, err = sr.genGenGlobalID(context.Background())
-				if err != nil {
-					return nil, false, errors.Trace(err)
+				newID, exist = sr.globalTableIdMap[tbl.ID]
+				if !exist {
+					newID, err = sr.genGenGlobalID(context.Background())
+					if err != nil {
+						return nil, false, errors.Trace(err)
+					}
+					sr.globalTableIdMap[tbl.ID] = newID
 				}
 				tableReplace.PartitionMap[tbl.ID] = newID
 			}
@@ -470,8 +504,6 @@ func (sr *SchemasReplace) tryToGCJob(job *model.Job) error {
 					return err
 				}
 			}
-		case model.ActionExchangeTablePartition:
-			return errors.Errorf("restore of ddl `exchange-table-partition` is not supported")
 		}
 	}
 	return nil
