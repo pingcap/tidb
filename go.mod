@@ -233,4 +233,4 @@ replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.
 replace honnef.co/go/tools => honnef.co/go/tools v0.3.2
 
 // TODO: require PR https://github.com/pingcap/kvproto/pull/961 to merged
-replace github.com/pingcap/kvproto => ../kvproto
+replace github.com/pingcap/kvproto => github.com/fengou1/kvproto v0.0.0-20220824080529-b0fec6b1090c
