@@ -120,7 +120,7 @@ func (c CTEUsageCounter) Sub(rhs CTEUsageCounter) CTEUsageCounter {
 func GetCTECounter() CTEUsageCounter {
 	return CTEUsageCounter{
 		NonRecursiveCTEUsed: readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "nonRecurCTE"})),
-		RecursiveUsed:       readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "recursive_cte"})),
+		RecursiveUsed:       readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "recurCTE"})),
 		NonCTEUsed:          readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "notCTE"})),
 	}
 }
