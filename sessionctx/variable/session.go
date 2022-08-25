@@ -2570,6 +2570,8 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
+	// table -> name -> status
+	StatsLoadStatus   map[string]map[string]string
 	IsSyncStatsFailed bool
 }
 
@@ -2665,6 +2667,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				buf.WriteString(k + ":" + vStr)
 				firstComma = true
 			}
+			if v != 0 && len(logItems.StatsLoadStatus[k]) > 0 {
+				writeStatsLoadStatusItems(&buf, logItems.StatsLoadStatus[k])
+			}
 		}
 		buf.WriteString("\n")
 	}
@@ -2748,7 +2753,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.BinaryPlan) != 0 {
 		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
-
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
@@ -2762,7 +2766,24 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
 		buf.WriteString(";")
 	}
+
 	return buf.String()
+}
+
+func writeStatsLoadStatusItems(buf *bytes.Buffer, loadStatus map[string]string) {
+	if len(loadStatus) > 0 {
+		buf.WriteString("[")
+		firstComma := false
+		for name, status := range loadStatus {
+			if firstComma {
+				buf.WriteString("," + name + ":" + status)
+			} else {
+				buf.WriteString(name + ":" + status)
+				firstComma = true
+			}
+		}
+		buf.WriteString("]")
+	}
 }
 
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
