@@ -492,12 +492,14 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 	}
 }
 
+// SetRuleGroupIndex sets the group index of tiflash
 func (tiflash *MockTiFlash) SetRuleGroupIndex(groupIndex int) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	tiflash.groupIndex = groupIndex
 }
 
+// GetRuleGroupIndex gets the group index of tiflash
 func (tiflash *MockTiFlash) GetRuleGroupIndex() int {
 	tiflash.Lock()
 	defer tiflash.Unlock()
