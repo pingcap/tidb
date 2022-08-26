@@ -19,13 +19,13 @@ import (
 )
 
 type StreamMetadataSet struct {
-	metadata map[string]*backuppb.MetadataV2
+	metadata map[string]*backuppb.Metadata
 	// The metadata after changed that needs to be write back.
-	writeback map[string]*backuppb.MetadataV2
+	writeback map[string]*backuppb.Metadata
 
-	Helper stream.MetaDataHelper
+	Helper *stream.MetadataHelper
 
-	BeforeDoWriteBack func(path string, last, current *backuppb.MetadataV2) (skip bool)
+	BeforeDoWriteBack func(path string, last, current *backuppb.Metadata) (skip bool)
 }
 
 // LoadUntil loads the metadata until the specified timestamp.
@@ -34,12 +34,12 @@ type StreamMetadataSet struct {
 func (ms *StreamMetadataSet) LoadUntil(ctx context.Context, s storage.ExternalStorage, until uint64) error {
 	metadataMap := struct {
 		sync.Mutex
-		metas map[string]*backuppb.MetadataV2
+		metas map[string]*backuppb.Metadata
 	}{}
-	ms.writeback = make(map[string]*backuppb.MetadataV2)
-	metadataMap.metas = make(map[string]*backuppb.MetadataV2)
-	err := stream.FastUnmarshalMetaData(ctx, s, ms.Helper, func(path string, raw []byte) error {
-		m, err := ms.Helper.ParseToMetaDataV2Hard(raw)
+	ms.writeback = make(map[string]*backuppb.Metadata)
+	metadataMap.metas = make(map[string]*backuppb.Metadata)
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
+		m, err := ms.Helper.ParseToMetadataHard(raw)
 		if err != nil {
 			return err
 		}
@@ -79,7 +79,7 @@ func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (
 
 // CalculateShiftTS calculates the shift-ts.
 func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
-	metadatas := make([]*backuppb.MetadataV2, 0, len(ms.metadata))
+	metadatas := make([]*backuppb.Metadata, 0, len(ms.metadata))
 	for _, m := range ms.metadata {
 		metadatas = append(metadatas, m)
 	}
@@ -132,7 +132,7 @@ func (ms *StreamMetadataSet) RemoveDataBefore(from uint64) []*backuppb.DataFileG
 	return removed
 }
 
-func (ms *StreamMetadataSet) WriteBack(path string, file *backuppb.MetadataV2) {
+func (ms *StreamMetadataSet) WriteBack(path string, file *backuppb.Metadata) {
 	ms.writeback[path] = file
 }
 
@@ -253,7 +253,7 @@ func SetTSToFile(
 	return truncateAndWrite(ctx, s, filename, []byte(content))
 }
 
-func UpdateShiftTS(m *backuppb.MetadataV2, startTS uint64, restoreTS uint64) (uint64, bool) {
+func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint64, bool) {
 	var (
 		minBeginTS uint64
 		isExist    bool
@@ -281,7 +281,7 @@ func UpdateShiftTS(m *backuppb.MetadataV2, startTS uint64, restoreTS uint64) (ui
 
 // CalculateShiftTS gets the minimal begin-ts about transaction according to the kv-event in write-cf.
 func CalculateShiftTS(
-	metas []*backuppb.MetadataV2,
+	metas []*backuppb.Metadata,
 	startTS uint64,
 	restoreTS uint64,
 ) (uint64, bool) {

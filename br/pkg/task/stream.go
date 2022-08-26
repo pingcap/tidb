@@ -879,14 +879,10 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
-	helper, err := stream.BuildMetaDataHelper(ctx, storage)
-	if err != nil {
-		return err
-	}
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
-		Helper: helper,
-		BeforeDoWriteBack: func(path string, last, current *backuppb.MetadataV2) (skip bool) {
+		Helper: stream.NewMetadataHelper(),
+		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
 			log.Info("Updating metadata.", zap.String("file", path),
 				zap.Int("data-file-before", len(last.GetFileGroups())),
 				zap.Int("data-file-after", len(current.GetFileGroups())))
@@ -1096,10 +1092,6 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
-	// compatible with MetaDataV1 and MetaDataV2
-	if err = client.InitMetaDataHelper(ctx); err != nil {
-		return errors.Annotate(err, "failed to init metadata helper")
-	}
 	shiftStartTS, err := client.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Annotate(err, "failed to get shift TS")
@@ -1222,6 +1214,9 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	client.InitMetadataHelper()
+
 	return client, nil
 }
 
@@ -1340,15 +1335,15 @@ func getFullBackupTS(
 func getGlobalResolvedTS(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	helper stream.MetaDataHelper,
+	helper *stream.MetadataHelper,
 ) (uint64, error) {
 	storeMap := struct {
 		sync.Mutex
 		resolvedTSMap map[int64]uint64
 	}{}
 	storeMap.resolvedTSMap = make(map[int64]uint64)
-	err := stream.FastUnmarshalMetaData(ctx, s, helper, func(path string, raw []byte) error {
-		m, err := helper.ParseToMetaDataV2(raw)
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
+		m, err := helper.ParseToMetadata(raw)
 		if err != nil {
 			return err
 		}

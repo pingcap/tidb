@@ -147,8 +147,7 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 func (bc *Client) SetLockFile(ctx context.Context) error {
 	return bc.storage.WriteFile(ctx, metautil.LockFile,
 		[]byte("DO NOT DELETE\n"+
-			"This file exists to remind other backup jobs won't use this path\n"+
-			"DO NOT CHANGE IT: V2"))
+			"This file exists to remind other backup jobs won't use this path"))
 }
 
 // SetGCTTL set gcTTL for client.

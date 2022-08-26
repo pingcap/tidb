@@ -141,7 +141,7 @@ func TestGetGlobalResolvedTS(t *testing.T) {
 	tmpdir := t.TempDir()
 	s, err := storage.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
-	helper := stream.NewMetaDataV1Helper()
+	helper := stream.NewMetadataHelper()
 
 	stores := []fakeResolvedInfo{
 		{
@@ -170,7 +170,7 @@ func TestGetGlobalResolvedTS2(t *testing.T) {
 	tmpdir := t.TempDir()
 	s, err := storage.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
-	helper := stream.NewMetaDataV1Helper()
+	helper := stream.NewMetadataHelper()
 
 	stores := []fakeResolvedInfo{
 		{

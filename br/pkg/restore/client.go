@@ -152,7 +152,7 @@ type Client struct {
 
 	storage storage.ExternalStorage
 
-	helper stream.MetaDataHelper
+	helper *stream.MetadataHelper
 
 	// if fullClusterRestore = true:
 	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
@@ -392,9 +392,8 @@ func (rc *Client) IsRawKvMode() bool {
 	return rc.backupMeta.IsRawKv
 }
 
-func (rc *Client) InitMetaDataHelper(ctx context.Context) (err error) {
-	rc.helper, err = stream.BuildMetaDataHelper(ctx, rc.storage)
-	return err
+func (rc *Client) InitMetadataHelper() {
+	rc.helper = stream.NewMetadataHelper()
 }
 
 // GetFilesInRawRange gets all files that are in the given range or intersects with the given range.
@@ -1708,8 +1707,8 @@ func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint
 		value  uint64
 		exists bool
 	}{}
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, rc.helper, func(path string, raw []byte) error {
-		m, err := rc.helper.ParseToMetaDataV2(raw)
+	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, raw []byte) error {
+		m, err := rc.helper.ParseToMetadata(raw)
 		if err != nil {
 			return err
 		}
@@ -1733,15 +1732,15 @@ func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint
 }
 
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) ([]*backuppb.MetadataV2, error) {
+func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) ([]*backuppb.Metadata, error) {
 	streamBackupMetaFiles := struct {
 		sync.Mutex
-		metas []*backuppb.MetadataV2
+		metas []*backuppb.Metadata
 	}{}
-	streamBackupMetaFiles.metas = make([]*backuppb.MetadataV2, 0, 128)
+	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
 
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, rc.helper, func(path string, raw []byte) error {
-		metadata, err := rc.helper.ParseToMetaDataV2(raw)
+	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, raw []byte) error {
+		metadata, err := rc.helper.ParseToMetadata(raw)
 		if err != nil {
 			return err
 		}
@@ -1761,7 +1760,7 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64,
 // ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
 func (rc *Client) ReadStreamDataFiles(
 	ctx context.Context,
-	metas []*backuppb.MetadataV2,
+	metas []*backuppb.Metadata,
 ) (dataFiles, metaFiles []*backuppb.DataFileInfo, err error) {
 	dFiles := make([]*backuppb.DataFileInfo, 0)
 	mFiles := make([]*backuppb.DataFileInfo, 0)
@@ -1778,7 +1777,7 @@ func (rc *Client) ReadStreamDataFiles(
 				}
 
 				// If ds.Path is empty, it is MetadataV1.
-				if len(ds.Path) > 0 {
+				if m.MetaVersion == backuppb.MetaVersion_V2 {
 					d.Path = ds.Path
 				}
 
@@ -1790,7 +1789,7 @@ func (rc *Client) ReadStreamDataFiles(
 				log.Debug("backup stream collect data partition", zap.Uint64("offset", d.Offset), zap.Uint64("length", d.Length))
 			}
 			// metadatav1 doesn't use cache
-			if len(ds.Path) > 0 {
+			if m.MetaVersion == backuppb.MetaVersion_V2 {
 				rc.helper.InitCacheEntry(ds.Path, len(ds.DataFilesInfo))
 			}
 		}
