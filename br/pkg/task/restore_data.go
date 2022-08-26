@@ -12,7 +12,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
-	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	RestoreDataCmd = "Restore Data"
+	ResolvedKvDataCmd = "Restore Data"
 )
 
 const (
@@ -36,12 +36,19 @@ const (
 func DefineRestoreDataFlags(command *cobra.Command) {
 	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
 	command.Flags().Bool(flagDumpRegionInfo, false, "dump all regions info")
+	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
+	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
+	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 }
 
 type RestoreDataConfig struct {
 	Config
 	DumpRegionInfo bool `json:"region-info"`
 	DryRun         bool `json:"dry-run"`
+	// TODO: reserved those parameter for performance optimization
+	VolumeType       config.EBSVolumeType `json:"volume-type"`
+	VolumeIOPS       int64                `json:"volume-iops"`
+	VolumeThroughput int64                `json:"volume-throughput"`
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
@@ -53,6 +60,21 @@ func (cfg *RestoreDataConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	cfg.DumpRegionInfo, err = flags.GetBool(flagDumpRegionInfo)
 	if err != nil {
+		return errors.Trace(err)
+	}
+
+	volumeType, err := flags.GetString(flagVolumeType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.VolumeType = config.EBSVolumeType(volumeType)
+	if !cfg.VolumeType.Valid() {
+		return errors.New("invalid volume type: " + volumeType)
+	}
+	if cfg.VolumeIOPS, err = flags.GetInt64(flagVolumeIOPS); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -68,7 +90,7 @@ func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64,
 }
 
 // RunRestore starts a restore task inside the current goroutine.
-func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *RestoreDataConfig) error {
+func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *RestoreDataConfig) error {
 	startAll := time.Now()
 	defer summary.Summary(cmdName)
 
@@ -77,7 +99,7 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 
 	// genenic work included opentrace, and restore client etc.
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("task.RunRestoreData", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("task.runResolveKvData", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -139,12 +161,16 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 	}()
 
 	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), connutil.SkipTiFlash)
+	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	numStore := len(allStores)
+	// progress = read meta + send recovery + resolve kv data.
+	progress := g.StartProgress(ctx, cmdName, int64(numStore*3), !cfg.LogProgress)
+	go progressFileWriterRoutine(ctx, progress, int64(numStore*3))
 
-	if len(allStores) != totalTiKVs {
+	if numStore != totalTiKVs {
 		log.Error("the restore meta contains the number of tikvs inconsist with the resore cluster", zap.Int("current stores", len(allStores)), zap.Int("backup stores", totalTiKVs))
 		return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
 			"number of tikvs mismatch")
@@ -155,7 +181,7 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 	if cfg.DryRun {
 		totalRegions = 1024
 	} else {
-		totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr.GetTLSConfig(), cfg.DumpRegionInfo)
+		totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, cfg.DumpRegionInfo, mgr, progress)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -165,6 +191,11 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 	if err := mgr.UnmarkRecovering(ctx); err != nil {
 		return errors.Trace(err)
 	}
+
+	//TODO: restore volume type into origin type
+	//ModifyVolume(*ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) by backupmeta
+
+	progress.Close()
 	summary.CollectDuration("restore duration", time.Since(startAll))
 	summary.SetSuccessStatus(true)
 	return nil

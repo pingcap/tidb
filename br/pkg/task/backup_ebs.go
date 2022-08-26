@@ -140,15 +140,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	if e != nil {
 		return errors.Trace(err)
 	}
-	defer func() {
-		if ctx.Err() != nil {
-			log.Warn("context canceled, doing clean work with background context")
-			ctx = context.Background()
-		}
-		if restoreE := restoreFunc(ctx); restoreE != nil {
-			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-		}
-	}()
 
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
 	clusterVersion, err := mgr.GetClusterVersion(ctx)
@@ -159,10 +150,10 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	if normalizedVer == nil {
 		return errors.New("invalid cluster version")
 	}
-	allocID, err := mgr.GetBaseAllocID(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+
+	//TODO: alloc id shall removed since we restore allocate id from region meta
+	var allocID uint64 = 1000
+
 	log.Info("get pd cluster info", zap.Stringer("cluster version", normalizedVer),
 		zap.Uint64("alloc-id", allocID))
 
@@ -177,6 +168,20 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 	snapIDMap := make(map[string]string)
+
+	defer func() {
+		if ctx.Err() != nil {
+			log.Warn("context canceled, doing clean work with background context")
+			ctx = context.Background()
+		}
+		// snapshot already taken, means resume scheduler had done before
+		if len(snapIDMap) == 0 {
+			if restoreE := restoreFunc(ctx); restoreE != nil {
+				log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+			}
+		}
+	}()
+
 	var volAZs aws.VolumeAZs
 	if !cfg.SkipAWS {
 		log.Info("start async snapshots")
@@ -185,6 +190,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 			// TODO maybe we should consider remove snapshots already exists in a failure
 			return errors.Trace(err)
 		}
+
+		// resume scheduler after snapshot sent
+		if restoreE := restoreFunc(ctx); restoreE != nil {
+			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+		}
+
+		// this is the most expensive action during the restore
 		log.Info("wait async snapshots finish")
 		totalSize, err = ec2Session.WaitSnapshotsCreated(snapIDMap, progress)
 		if err != nil {

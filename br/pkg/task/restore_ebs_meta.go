@@ -15,8 +15,10 @@ package task
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -24,11 +26,13 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/aws"
 	"github.com/pingcap/tidb/br/pkg/config"
-	"github.com/pingcap/tidb/br/pkg/conn"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -111,7 +115,7 @@ type restoreEBSMetaHelper struct {
 	cfg     *RestoreEBSConfig
 
 	metaInfo *config.EBSBasedBRMeta
-	mgr      *conn.Mgr
+	pdc      *pdutil.PdController
 }
 
 // we don't call close of fields on failure, outer logic should call helper.close.
@@ -121,11 +125,32 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	mgr, err := NewMgr(ctx, h.g, h.cfg.PD, h.cfg.TLS, GetKeepalive(&h.cfg.Config), h.cfg.CheckRequirements, false, conn.NormalVersionChecker)
+	var (
+		tlsConf *tls.Config
+	)
+	pdAddress := strings.Join(h.cfg.PD, ",")
+	if len(pdAddress) == 0 {
+		return errors.Annotate(berrors.ErrInvalidArgument, "pd address can not be empty")
+	}
+
+	securityOption := pd.SecurityOption{}
+	if h.cfg.TLS.IsEnabled() {
+		securityOption.CAPath = h.cfg.TLS.CA
+		securityOption.CertPath = h.cfg.TLS.Cert
+		securityOption.KeyPath = h.cfg.TLS.Key
+		tlsConf, err = h.cfg.TLS.ToTLSConfig()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	controller, err := pdutil.NewPdController(ctx, pdAddress, tlsConf, securityOption)
 	if err != nil {
+		log.Error("fail to create pd controller", zap.Error(err))
 		return errors.Trace(err)
 	}
-	h.mgr = mgr
+
+	h.pdc = controller
 
 	// read meta from s3
 	metaInfo, err := config.NewMetaFromStorage(ctx, externStorage)
@@ -141,8 +166,8 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 }
 
 func (h *restoreEBSMetaHelper) close() {
-	if h.mgr != nil {
-		h.mgr.Close()
+	if h.pdc != nil {
+		h.pdc.Close()
 	}
 }
 
@@ -192,15 +217,15 @@ func (h *restoreEBSMetaHelper) restore() error {
 
 func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Progress) (int64, error) {
 	log.Info("mark recovering")
-	if err := h.mgr.MarkRecovering(ctx); err != nil {
+	if err := h.pdc.MarkRecovering(ctx); err != nil {
 		return 0, errors.Trace(err)
 	}
 	log.Info("recover base alloc id", zap.Uint64("alloc id", h.metaInfo.ClusterInfo.MaxAllocID))
-	if err := h.mgr.RecoverBaseAllocID(ctx, h.metaInfo.ClusterInfo.MaxAllocID); err != nil {
+	if err := h.pdc.RecoverBaseAllocID(ctx, h.metaInfo.ClusterInfo.MaxAllocID); err != nil {
 		return 0, errors.Trace(err)
 	}
 	log.Info("set pd ts = max(resolved_ts, current pd ts)", zap.Uint64("resolved ts", h.metaInfo.ClusterInfo.ResolvedTS))
-	if err := h.mgr.ResetTS(ctx, h.metaInfo.ClusterInfo.ResolvedTS); err != nil {
+	if err := h.pdc.ResetTS(ctx, h.metaInfo.ClusterInfo.ResolvedTS); err != nil {
 		return 0, errors.Trace(err)
 	}
 

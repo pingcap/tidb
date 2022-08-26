@@ -64,7 +64,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20220804022843-f006036b1277
+	github.com/pingcap/kvproto v0.0.0-20220705053936-aa9c2d20cd2a
 	github.com/pingcap/log v1.1.0
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -242,6 +242,6 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
 	// TODO: require PR https://github.com/pingcap/kvproto/pull/961 to merged
-	github.com/pingcap/kvproto => github.com/pingcap/kvproto v0.0.0-20220715031039-4828b45b9157
+	github.com/pingcap/kvproto => github.com/fengou1/kvproto v0.0.0-20220826072152-e8d34f1249e4
 	github.com/pingcap/tidb/parser => ./parser
 )

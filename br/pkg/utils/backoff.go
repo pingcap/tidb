@@ -27,8 +27,8 @@ const (
 	downloadSSTMaxWaitInterval = 4 * time.Second
 
 	resetTSRetryTime       = 16
-	resetTSWaitInterval    = 50 * time.Millisecond
-	resetTSMaxWaitInterval = 500 * time.Millisecond
+	resetTSWaitInterval    = 500 * time.Millisecond
+	resetTSMaxWaitInterval = 50000 * time.Millisecond // temp boost the value
 )
 
 // RetryState is the mutable state needed for retrying.
