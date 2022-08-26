@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testkit
+package testutil
 
 import (
 	"crypto/tls"
@@ -23,12 +23,14 @@ import (
 
 // MockSessionManager is a mocked session manager which is used for test.
 type MockSessionManager struct {
-	PS []*util.ProcessInfo
+	PS      []*util.ProcessInfo
+	SerID   uint64
+	TxnInfo []*txninfo.TxnInfo
 }
 
 // ShowTxnList is to show txn list.
 func (msm *MockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	return nil
+	return msm.TxnInfo
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
@@ -64,7 +66,7 @@ func (msm *MockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
 
 // ServerID get server id.
 func (msm *MockSessionManager) ServerID() uint64 {
-	return 1
+	return msm.SerID
 }
 
 // StoreInternalSession is to store internal session.
