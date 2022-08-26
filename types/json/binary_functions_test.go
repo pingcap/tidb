@@ -49,3 +49,57 @@ func BenchmarkMergeBinary(b *testing.B) {
 		_ = MergeBinary([]BinaryJSON{valueA, valueB})
 	}
 }
+
+func TestBinaryCompare(t *testing.T) {
+	tests := []struct {
+		left   BinaryJSON
+		right  BinaryJSON
+		result int
+	}{
+		{
+			CreateBinary("a"),
+			CreateBinary("b"),
+			-1,
+		},
+		{
+			CreateBinary(Opaque{
+				TypeCode: 0,
+				Buf:      []byte{0, 1, 2, 3},
+			}),
+			CreateBinary(Opaque{
+				TypeCode: 0,
+				Buf:      []byte{0, 1, 2},
+			}),
+			1,
+		},
+		{
+			CreateBinary(Opaque{
+				TypeCode: 0,
+				Buf:      []byte{0, 1, 2, 3},
+			}),
+			CreateBinary(Opaque{
+				TypeCode: 0,
+				Buf:      []byte{0, 2, 1},
+			}),
+			-1,
+		},
+		{
+			CreateBinary("test"),
+			CreateBinary(Opaque{
+				TypeCode: 0,
+				Buf:      []byte{0, 2, 1},
+			}),
+			-1,
+		},
+	}
+
+	compareMsg := map[int]string{
+		1:  "greater than",
+		0:  "equal with",
+		-1: "smaller than",
+	}
+
+	for _, test := range tests {
+		require.Equal(t, test.result, CompareBinary(test.left, test.right), "%s should be %s %s", test.left.String(), compareMsg[test.result], test.right.String())
+	}
+}
