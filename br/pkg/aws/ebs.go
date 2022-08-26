@@ -3,8 +3,10 @@
 package aws
 
 import (
+	"context"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -15,16 +17,20 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type EC2Session struct {
 	ec2 ec2iface.EC2API
+	// aws operation concurrency
+	concurrency uint
 }
 
 type VolumeAZs map[string]string
 
-func NewEC2Session() (*EC2Session, error) {
+func NewEC2Session(concurrency uint) (*EC2Session, error) {
 	// aws-sdk has builtin exponential backoff retry mechanism, see:
 	// https://github.com/aws/aws-sdk-go/blob/db4388e8b9b19d34dcde76c492b17607cd5651e2/aws/client/default_retryer.go#L12-L16
 	// with default retryer & max-retry=9, we will wait for at least 30s in total
@@ -37,7 +43,7 @@ func NewEC2Session() (*EC2Session, error) {
 		return nil, errors.Trace(err)
 	}
 	ec2Session := ec2.New(sess)
-	return &EC2Session{ec2: ec2Session}, nil
+	return &EC2Session{ec2: ec2Session, concurrency: concurrency}, nil
 }
 
 // CreateSnapshots is the mainly steps to control the data volume snapshots.
@@ -47,7 +53,18 @@ func NewEC2Session() (*EC2Session, error) {
 func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[string]string, VolumeAZs, error) {
 	snapIDMap := make(map[string]string)
 	volumeIDs := []*string{}
-	for _, store := range backupInfo.TiKVComponent.Stores {
+
+	var mutex sync.Mutex
+	eg, _ := errgroup.WithContext(context.Background())
+	fillResult := func(snap *ec2.Snapshot, volume *config.EBSVolume) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		snapIDMap[volume.ID] = *snap.SnapshotId
+	}
+
+	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshot")
+	for i := range backupInfo.TiKVComponent.Stores {
+		store := backupInfo.TiKVComponent.Stores[i]
 		volumes := store.Volumes
 		if len(volumes) > 1 {
 			// if one store has multiple volume, we should respect the order
@@ -69,28 +86,34 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			})
 		}
 
-		for _, volume := range volumes {
-			// TODO: build concurrent requests here.
-			log.Debug("starts snapshot", zap.Any("volume", volume))
-			resp, err := e.ec2.CreateSnapshot(&ec2.CreateSnapshotInput{
-				VolumeId: &volume.ID,
-				TagSpecifications: []*ec2.TagSpecification{
-					{
-						ResourceType: aws.String(ec2.ResourceTypeSnapshot),
-						Tags: []*ec2.Tag{
-							ec2Tag("TiDBCluster-BR", "old"),
+		for j := range volumes {
+			volume := volumes[j]
+			volumeIDs = append(volumeIDs, &volume.ID)
+			workerPool.ApplyOnErrorGroup(eg, func() error {
+				log.Debug("starts snapshot", zap.Any("volume", volume))
+				resp, err := e.ec2.CreateSnapshot(&ec2.CreateSnapshotInput{
+					VolumeId: &volume.ID,
+					TagSpecifications: []*ec2.TagSpecification{
+						{
+							ResourceType: aws.String(ec2.ResourceTypeSnapshot),
+							Tags: []*ec2.Tag{
+								ec2Tag("TiDBCluster-BR", "old"),
+							},
 						},
 					},
-				},
+				})
+				if err != nil {
+					return errors.Trace(err)
+				}
+				log.Info("snapshot creating", zap.Stringer("snap", resp))
+				fillResult(resp, volume)
+				return nil
 			})
-			if err != nil {
-				// todo: consider remove the exists starts snapshots outside.
-				return snapIDMap, nil, errors.Trace(err)
-			}
-			log.Info("snapshot creating", zap.Stringer("snap", resp))
-			snapIDMap[volume.ID] = *resp.SnapshotId
-			volumeIDs = append(volumeIDs, &volume.ID)
 		}
+	}
+
+	if err := eg.Wait(); err != nil {
+		return snapIDMap, nil, err
 	}
 
 	volAZs := make(map[string]string)
@@ -156,16 +179,27 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 		pendingSnaps = append(pendingSnaps, &snapID)
 	}
 
-	for _, snapID := range pendingSnaps {
-		// todo: concurrent delete
-		_, err2 := e.ec2.DeleteSnapshot(&ec2.DeleteSnapshotInput{
-			SnapshotId: snapID,
+	var deletedCnt int
+	eg, _ := errgroup.WithContext(context.Background())
+	workerPool := utils.NewWorkerPool(e.concurrency, "delete snapshot")
+	for i := range pendingSnaps {
+		snapID := pendingSnaps[i]
+		workerPool.ApplyOnErrorGroup(eg, func() error {
+			_, err2 := e.ec2.DeleteSnapshot(&ec2.DeleteSnapshotInput{
+				SnapshotId: snapID,
+			})
+			if err2 != nil {
+				log.Error("failed to delete snapshot", zap.Error(err2), zap.Stringp("snap-id", snapID))
+				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
+				// we don't return error if it fails to make sure all snapshot got chance to delete.
+			} else {
+				deletedCnt++
+			}
+			return nil
 		})
-		if err2 != nil {
-			log.Error("failed to delete snapshot", zap.Error(err2))
-			// todo: we can only retry for a few times, might fail still, need to handle error from outside.
-		}
 	}
+	_ = eg.Wait()
+	log.Info("delete snapshot end", zap.Int("need-to-del", len(snapIDMap)), zap.Int("deleted", deletedCnt))
 }
 
 // CreateVolumes create volumes from snapshots
@@ -191,22 +225,34 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	}
 
 	newVolumeIDMap := make(map[string]string)
-	for _, store := range meta.TiKVComponent.Stores {
-		for _, oldVol := range store.Volumes {
-			// TODO: build concurrent requests here.
-			log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
-			req := template
-			req.SetSnapshotId(oldVol.SnapshotID)
-			req.SetAvailabilityZone(oldVol.VolumeAZ)
-			resp, err := e.ec2.CreateVolume(&req)
-			if err != nil {
-				return newVolumeIDMap, errors.Trace(err)
-			}
-			log.Info("new volume creating", zap.Stringer("snap", resp))
-			newVolumeIDMap[oldVol.ID] = *resp.VolumeId
+	var mutex sync.Mutex
+	eg, _ := errgroup.WithContext(context.Background())
+	fillResult := func(newVol *ec2.Volume, oldVol *config.EBSVolume) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		newVolumeIDMap[oldVol.ID] = *newVol.VolumeId
+	}
+	workerPool := utils.NewWorkerPool(e.concurrency, "create volume")
+	for i := range meta.TiKVComponent.Stores {
+		store := meta.TiKVComponent.Stores[i]
+		for j := range store.Volumes {
+			oldVol := store.Volumes[j]
+			workerPool.ApplyOnErrorGroup(eg, func() error {
+				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
+				req := template
+				req.SetSnapshotId(oldVol.SnapshotID)
+				req.SetAvailabilityZone(oldVol.VolumeAZ)
+				newVol, err := e.ec2.CreateVolume(&req)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				log.Info("new volume creating", zap.Stringer("vol", newVol))
+				fillResult(newVol, oldVol)
+				return nil
+			})
 		}
 	}
-	return newVolumeIDMap, nil
+	return newVolumeIDMap, eg.Wait()
 }
 
 func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress glue.Progress) (int64, error) {
@@ -253,16 +299,27 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 		pendingVolumes = append(pendingVolumes, &volumeID)
 	}
 
-	for _, volID := range pendingVolumes {
-		// todo: concurrent delete
-		_, err2 := e.ec2.DeleteVolume(&ec2.DeleteVolumeInput{
-			VolumeId: volID,
+	var deletedCnt int
+	eg, _ := errgroup.WithContext(context.Background())
+	workerPool := utils.NewWorkerPool(e.concurrency, "delete volume")
+	for i := range pendingVolumes {
+		volID := pendingVolumes[i]
+		workerPool.ApplyOnErrorGroup(eg, func() error {
+			_, err2 := e.ec2.DeleteVolume(&ec2.DeleteVolumeInput{
+				VolumeId: volID,
+			})
+			if err2 != nil {
+				log.Error("failed to delete volume", zap.Error(err2), zap.Stringp("volume-id", volID))
+				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
+				// we don't return error if it fails to make sure all volume got chance to delete.
+			} else {
+				deletedCnt++
+			}
+			return nil
 		})
-		if err2 != nil {
-			log.Error("failed to delete volume", zap.Error(err2))
-			// todo: we can only retry for a few times, might fail still, need to handle error from outside.
-		}
 	}
+	_ = eg.Wait()
+	log.Info("delete volume end", zap.Int("need-to-del", len(volumeIDMap)), zap.Int("deleted", deletedCnt))
 }
 
 func ec2Tag(key, val string) *ec2.Tag {

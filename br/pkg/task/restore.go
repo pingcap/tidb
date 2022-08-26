@@ -72,7 +72,7 @@ const (
 	PointRestoreCmd = "Point Restore"
 	RawRestoreCmd   = "Raw Restore"
 
-	EBSMetaRestoreCmd = "EBS meta restore"
+	EBSMetaRestoreCmd = "EBS Meta Restore"
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
