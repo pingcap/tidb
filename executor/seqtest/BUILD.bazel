@@ -2,13 +2,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "seqtest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "prepared_test.go",
         "seq_executor_test.go",
     ],
     flaky = True,
+    shard_count = 39,
     deps = [
         "//config",
         "//ddl/testutil",
@@ -16,7 +17,6 @@ go_test(
         "//errno",
         "//executor",
         "//expression",
-        "//infoschema",
         "//kv",
         "//meta/autoid",
         "//metrics",
@@ -25,8 +25,8 @@ go_test(
         "//parser/mysql",
         "//parser/terror",
         "//planner/core",
+        "//server",
         "//session",
-        "//session/txninfo",
         "//sessionctx/variable",
         "//statistics/handle",
         "//store/copr",
@@ -35,7 +35,6 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "//testkit/testutil",
-        "//util",
         "//util/gcutil",
         "//util/kvcache",
         "@com_github_pingcap_errors//:errors",

@@ -300,6 +300,22 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		terror.Call(pointExecutor.Close)
 		return nil, err
 	}
+
+	sctx := a.Ctx
+	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
+	cmd := byte(cmd32)
+	var pi processinfoSetter
+	if raw, ok := sctx.(processinfoSetter); ok {
+		pi = raw
+		sql := a.OriginText()
+		maxExecutionTime := getMaxExecutionTime(sctx)
+		// Update processinfo, ShowProcess() will use it.
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
+			sctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		}
+	}
+
 	return &recordSet{
 		executor:   pointExecutor,
 		stmt:       a,
@@ -596,6 +612,9 @@ type chunkRowRecordSet struct {
 }
 
 func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
+	if c.fields == nil {
+		c.fields = colNames2ResultFields(c.e.Schema(), c.execStmt.OutputNames, c.execStmt.Ctx.GetSessionVars().CurrentDB)
+	}
 	return c.fields
 }
 
@@ -655,8 +674,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 			break
 		}
 		if req.NumRows() == 0 {
-			fields := colNames2ResultFields(e.Schema(), a.OutputNames, a.Ctx.GetSessionVars().CurrentDB)
-			return &chunkRowRecordSet{rows: rows, fields: fields, e: e, execStmt: a}, nil
+			return &chunkRowRecordSet{rows: rows, e: e, execStmt: a}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
@@ -988,46 +1006,78 @@ var (
 	execCommitWaitLatch    = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatch, "0")
 	execCommitWaitBinlog   = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitBinlog, "0")
 	execWriteResponse      = metrics.ExecPhaseDuration.WithLabelValues(phaseWriteResponse, "0")
+	execUnknown            = metrics.ExecPhaseDuration.WithLabelValues("unknown", "0")
+
+	// pre-define observers for internal queries
+	execBuildLockingInternal       = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildLocking, "1")
+	execOpenLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenLocking, "1")
+	execNextLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseNextLocking, "1")
+	execLockLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseLockLocking, "1")
+	execBuildFinalInternal         = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildFinal, "1")
+	execOpenFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenFinal, "1")
+	execNextFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseNextFinal, "1")
+	execLockFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseLockFinal, "1")
+	execCommitPrewriteInternal     = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitPrewrite, "1")
+	execCommitCommitInternal       = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitCommit, "1")
+	execCommitWaitCommitTSInternal = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitCommitTS, "1")
+	execCommitWaitLatestTSInternal = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatestTS, "1")
+	execCommitWaitLatchInternal    = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatch, "1")
+	execCommitWaitBinlogInternal   = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitBinlog, "1")
+	execWriteResponseInternal      = metrics.ExecPhaseDuration.WithLabelValues(phaseWriteResponse, "1")
+	execUnknownInternal            = metrics.ExecPhaseDuration.WithLabelValues("unknown", "1")
 )
+
+var phaseDurationObserverMap map[string]prometheus.Observer
+var phaseDurationObserverMapInternal map[string]prometheus.Observer
+
+func init() {
+	phaseDurationObserverMap = map[string]prometheus.Observer{
+		phaseBuildLocking:       execBuildLocking,
+		phaseOpenLocking:        execOpenLocking,
+		phaseNextLocking:        execNextLocking,
+		phaseLockLocking:        execLockLocking,
+		phaseBuildFinal:         execBuildFinal,
+		phaseOpenFinal:          execOpenFinal,
+		phaseNextFinal:          execNextFinal,
+		phaseLockFinal:          execLockFinal,
+		phaseCommitPrewrite:     execCommitPrewrite,
+		phaseCommitCommit:       execCommitCommit,
+		phaseCommitWaitCommitTS: execCommitWaitCommitTS,
+		phaseCommitWaitLatestTS: execCommitWaitLatestTS,
+		phaseCommitWaitLatch:    execCommitWaitLatch,
+		phaseCommitWaitBinlog:   execCommitWaitBinlog,
+		phaseWriteResponse:      execWriteResponse,
+	}
+	phaseDurationObserverMapInternal = map[string]prometheus.Observer{
+		phaseBuildLocking:       execBuildLockingInternal,
+		phaseOpenLocking:        execOpenLockingInternal,
+		phaseNextLocking:        execNextLockingInternal,
+		phaseLockLocking:        execLockLockingInternal,
+		phaseBuildFinal:         execBuildFinalInternal,
+		phaseOpenFinal:          execOpenFinalInternal,
+		phaseNextFinal:          execNextFinalInternal,
+		phaseLockFinal:          execLockFinalInternal,
+		phaseCommitPrewrite:     execCommitPrewriteInternal,
+		phaseCommitCommit:       execCommitCommitInternal,
+		phaseCommitWaitCommitTS: execCommitWaitCommitTSInternal,
+		phaseCommitWaitLatestTS: execCommitWaitLatestTSInternal,
+		phaseCommitWaitLatch:    execCommitWaitLatchInternal,
+		phaseCommitWaitBinlog:   execCommitWaitBinlogInternal,
+		phaseWriteResponse:      execWriteResponseInternal,
+	}
+}
 
 func getPhaseDurationObserver(phase string, internal bool) prometheus.Observer {
 	if internal {
-		return metrics.ExecPhaseDuration.WithLabelValues(phase, "1")
+		if ob, found := phaseDurationObserverMapInternal[phase]; found {
+			return ob
+		}
+		return execUnknownInternal
 	}
-	switch phase {
-	case phaseBuildLocking:
-		return execBuildLocking
-	case phaseOpenLocking:
-		return execOpenLocking
-	case phaseNextLocking:
-		return execNextLocking
-	case phaseLockLocking:
-		return execLockLocking
-	case phaseBuildFinal:
-		return execBuildFinal
-	case phaseOpenFinal:
-		return execOpenFinal
-	case phaseNextFinal:
-		return execNextFinal
-	case phaseLockFinal:
-		return execLockFinal
-	case phaseCommitPrewrite:
-		return execCommitPrewrite
-	case phaseCommitCommit:
-		return execCommitCommit
-	case phaseCommitWaitCommitTS:
-		return execCommitWaitCommitTS
-	case phaseCommitWaitLatestTS:
-		return execCommitWaitLatestTS
-	case phaseCommitWaitLatch:
-		return execCommitWaitLatch
-	case phaseCommitWaitBinlog:
-		return execCommitWaitBinlog
-	case phaseWriteResponse:
-		return execWriteResponse
-	default:
-		return metrics.ExecPhaseDuration.WithLabelValues(phase, "0")
+	if ob, found := phaseDurationObserverMap[phase]; found {
+		return ob
 	}
+	return execUnknown
 }
 
 func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.CommitDetails) {
@@ -1246,7 +1296,16 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
+		StatsLoadStatus:   convertStatusIntoString(a.Ctx, stmtCtx.StatsLoadStatus),
+		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 	}
+	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			if !slowItems.IsSyncStatsFailed {
+				panic("isSyncStatsFailed should be true")
+			}
+		}
+	})
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
@@ -1608,4 +1667,42 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 		planDigest = d.Bytes()
 	}
 	return sqlDigest, planDigest
+}
+
+func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) map[string]map[string]string {
+	if len(statsLoadStatus) < 1 {
+		return nil
+	}
+	is := domain.GetDomain(sctx).InfoSchema()
+	// tableName -> name -> status
+	r := make(map[string]map[string]string)
+	for item, status := range statsLoadStatus {
+		t, ok := is.TableByID(item.TableID)
+		if !ok {
+			t, _, _ = is.FindTableByPartitionID(item.TableID)
+		}
+		if t == nil {
+			logutil.BgLogger().Warn("record table item load status failed due to not finding table",
+				zap.Int64("tableID", item.TableID))
+			continue
+		}
+		tableName := t.Meta().Name.O
+		itemName := ""
+		if item.IsIndex {
+			itemName = t.Meta().FindIndexNameByID(item.ID)
+		} else {
+			itemName = t.Meta().FindColumnNameByID(item.ID)
+		}
+		if itemName == "" {
+			logutil.BgLogger().Warn("record table item load status failed due to not finding item",
+				zap.Int64("tableID", item.TableID),
+				zap.Int64("id", item.ID), zap.Bool("isIndex", item.IsIndex))
+			continue
+		}
+		if r[tableName] == nil {
+			r[tableName] = make(map[string]string)
+		}
+		r[tableName][itemName] = status
+	}
+	return r
 }

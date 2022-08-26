@@ -52,8 +52,7 @@ type ProcessInfo struct {
 	StatsInfo             func(interface{}) map[string]uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
-	MaxExecutionTime uint64
-
+	MaxExecutionTime          uint64
 	State                     uint16
 	Command                   byte
 	ExceedExpensiveTimeThresh bool
@@ -180,11 +179,11 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
-	// Put the internal session pointer to the map in the SessionManager
+	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
 	StoreInternalSession(se interface{})
-	// Delete the internal session pointer from the map in the SessionManager
+	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.
 	DeleteInternalSession(se interface{})
-	// Get all startTS of every transactions running in the current internal sessions
+	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
 	GetInternalSessionStartTSList() []uint64
 }
 
@@ -204,10 +203,10 @@ type SessionManager interface {
  +-----------------------------+------+
 */
 type GlobalConnID struct {
+	ServerIDGetter func() uint64
 	ServerID       uint64
 	LocalConnID    uint64
 	Is64bits       bool
-	ServerIDGetter func() uint64
 }
 
 // NewGlobalConnID creates GlobalConnID with serverID

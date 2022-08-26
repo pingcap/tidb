@@ -192,6 +192,14 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
+// OnLocalTemporaryTableCreated is the hook that should be called when a temporary table created.
+// The provider will update its state then
+func (m *txnManager) OnLocalTemporaryTableCreated() {
+	if m.ctxProvider != nil {
+		m.ctxProvider.OnLocalTemporaryTableCreated()
+	}
+}
+
 func (m *txnManager) AdviseWarmup() error {
 	if m.ctxProvider != nil {
 		return m.ctxProvider.AdviseWarmup()
