@@ -979,6 +979,7 @@ func TestPreparedStatements(t *testing.T) {
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+		conn1.Context().Session.GetSessionVars().User = nil
 		var param any
 		if tt.setFunc != nil {
 			param = tt.setFunc(tk1, conn1)
@@ -1362,6 +1363,7 @@ func TestShowStateFail(t *testing.T) {
 	})
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
+		conn1.Context().Session.GetSessionVars().User = nil
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 		tt.setFunc(tk1, conn1)
 		if tt.showErr == 0 {
