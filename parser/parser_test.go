@@ -2146,7 +2146,8 @@ func TestBuiltin(t *testing.T) {
 		{"select NeXt vAluE for seQuEncE2", true, "SELECT NEXTVAL(`seQuEncE2`)"},
 
 		// Test regexp functions
-		{"select regexp_like('aBc', 'abc', 'im')", true, "select regexp_like('aBc', 'abc', 'im')"},
+		{"select regexp_like('aBc', 'abc', 'im');", true, "select regexp_like('aBc', 'abc', 'im');"},
+		{"select regexp_substr('aBc', 'abc', 1, 1, 'im');", true, "select regexp_substr('aBc', 'abc', 1, 1, 'im');"},
 	}
 	RunTest(t, table, false)
 
