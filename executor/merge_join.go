@@ -322,6 +322,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 	innerIter := e.innerTable.groupRowsIter
 	outerIter := e.outerTable.groupRowsIter
 	for !req.IsFull() {
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if innerIter.Current() == innerIter.End() {
 			if err := e.innerTable.fetchNextInnerGroup(ctx, e); err != nil {
 				return err

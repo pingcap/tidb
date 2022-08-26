@@ -1515,39 +1515,42 @@ func TestRandomPanicConsume(t *testing.T) {
 	}()
 
 	sqls := []string{
-		"select /*+ HASH_AGG() */ count(a) from t group by a",                 // HashAgg Paralleled
-		"select /*+ HASH_AGG() */ count(distinct a) from t",                   // HashAgg Unparalleled
-		"select /*+ STREAM_AGG() */ count(a) from t",                          // StreamAgg
-		"select a * a, a / a, a + a , a - a from t",                           // Projection
-		"select /*+ HASH_JOIN(t1) */ * from t t1 join t t2 on t1.a=t2.a",      // HashJoin
-		"select /*+ MERGE_JOIN(t1) */ * from t t1 join t t2 on t1.a=t2.a",     // MergeJoin
-		"select /*+ INL_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;",      // Index Join
-		"select /*+ INL_HASH_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;", // Index Hash Join
+		// Without index
+		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t) */ count(a) from t group by a",                                  // HashAgg Paralleled
+		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t) */ count(distinct a) from t",                                    // HashAgg Unparalleled
+		"select /*+ STREAM_AGG() */ /*+ USE_INDEX(t) */ count(a) from t",                                           // StreamAgg
+		"select /*+ USE_INDEX(t) */ a * a, a / a, a + a , a - a from t",                                            // Projection
+		"select /*+ HASH_JOIN(t1) */ /*+ USE_INDEX(t1) */ /*+ USE_INDEX(t2) */* from t t1 join t t2 on t1.a=t2.a",  // HashJoin
+		"select /*+ MERGE_JOIN(t1) */ /*+ USE_INDEX(t1) */ /*+ USE_INDEX(t2) */* from t t1 join t t2 on t1.a=t2.a", // MergeJoin
+
+		// With index
+		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t,idx) */ count(a) from t group by a",                                       // HashAgg Paralleled
+		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t,idx) */ count(distinct a) from t",                                         // HashAgg Unparalleled
+		"select /*+ STREAM_AGG() */ /*+ USE_INDEX(t,idx) */ count(a) from t",                                                // StreamAgg
+		"select /*+ USE_INDEX(t,idx) */ a * a, a / a, a + a , a - a from t",                                                 // Projection
+		"select /*+ HASH_JOIN(t1) */ /*+ USE_INDEX(t1,idx) */ /*+ USE_INDEX(t2,idx) */ * from t t1 join t t2 on t1.a=t2.a",  // HashJoin
+		"select /*+ MERGE_JOIN(t1) */ /*+ USE_INDEX(t1,idx) */ /*+ USE_INDEX(t2,idx) */ * from t t1 join t t2 on t1.a=t2.a", // MergeJoin
+		"select /*+ INL_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;",                                                    // Index Join
+		"select /*+ INL_HASH_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;",                                               // Index Hash Join
 	}
 
 	// Test 10 times panic for each Executor.
 	var res sqlexec.RecordSet
 	for _, sql := range sqls {
-		for i := 1; i <= 1000; i++ {
+		for i := 1; i <= 10; i++ {
 			concurrency := rand.Int31n(4) + 1 // test 1~5 concurrency randomly
 			tk.MustExec(fmt.Sprintf("set @@tidb_executor_concurrency=%v", concurrency))
+			tk.MustExec(fmt.Sprintf("set @@tidb_merge_join_concurrency=%v", concurrency))
+			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%v", concurrency))
 			var err error
-			times := 10
 			for err == nil {
 				res, err = tk.Exec(sql)
 				if err == nil {
 					_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
 					require.NoError(t, res.Close())
-					times--
-				}
-				if times == 0 {
-					t.Log("All Success")
-					break
 				}
 			}
-			if times > 0 {
-				require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
-			}
+			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 		}
 	}
 }
