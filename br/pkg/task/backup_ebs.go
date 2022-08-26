@@ -180,12 +180,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.New("invalid cluster version")
 	}
 
-	//TODO: alloc id shall removed since we restore allocate id from region meta
-	var allocID uint64 = 1000
-
-	log.Info("get pd cluster info", zap.Stringer("cluster version", normalizedVer),
-		zap.Uint64("alloc-id", allocID))
-
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
 
@@ -197,20 +191,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 	snapIDMap := make(map[string]string)
-
-	defer func() {
-		if ctx.Err() != nil {
-			log.Warn("context canceled, doing clean work with background context")
-			ctx = context.Background()
-		}
-		// snapshot already taken, means resume scheduler had done before
-		if len(snapIDMap) == 0 {
-			if restoreE := restoreFunc(ctx); restoreE != nil {
-				log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-			}
-		}
-	}()
-
 	var volAZs aws.VolumeAZs
 	if !cfg.SkipAWS {
 		defer func() {
@@ -253,7 +233,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// NOTE: maybe define the meta file in kvproto in the future.
 	// but for now json is enough.
 	backupInfo.SetClusterVersion(normalizedVer.String())
-	backupInfo.SetAllocID(allocID)
 	backupInfo.SetResolvedTS(resolvedTs)
 	backupInfo.SetSnapshotIDs(snapIDMap)
 	backupInfo.SetVolumeAZs(volAZs)
