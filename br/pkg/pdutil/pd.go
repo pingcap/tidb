@@ -114,7 +114,7 @@ var (
 		"shuffle-region-scheduler":     {},
 		"shuffle-hot-region-scheduler": {},
 	}
-	expectPDCfg = map[string]pauseConfigGenerator{
+	expectPDCfgGenerators = map[string]pauseConfigGenerator{
 		"max-merge-region-keys": zeroPauseConfig,
 		"max-merge-region-size": zeroPauseConfig,
 		// TODO "leader-schedule-limit" and "region-schedule-limit" don't support ttl for now,
@@ -196,6 +196,14 @@ func pdRequestRetryInterval() time.Duration {
 		}
 	})
 	return time.Second
+}
+
+func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
+	clone := make(map[string]pauseConfigGenerator, len(expectPDCfgGenerators))
+	for k := range expectPDCfgGenerators {
+		clone[k] = expectPDCfgGenerators[k]
+	}
+	return clone
 }
 
 // PdController manage get/update config from pd.
@@ -585,13 +593,13 @@ func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interf
 	return p.doUpdatePDScheduleConfig(ctx, cfg, post, prefix)
 }
 
-func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig) error {
+func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig, configsNeedRestore map[string]pauseConfigGenerator) error {
 	if err := pd.ResumeSchedulers(ctx, clusterCfg.Schedulers); err != nil {
 		return errors.Annotate(err, "fail to add PD schedulers")
 	}
 	log.Info("restoring config", zap.Any("config", clusterCfg.ScheduleCfg))
 	mergeCfg := make(map[string]interface{})
-	for cfgKey := range expectPDCfg {
+	for cfgKey := range configsNeedRestore {
 		value := clusterCfg.ScheduleCfg[cfgKey]
 		if value == nil {
 			// Ignore non-exist config.
@@ -614,8 +622,13 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 
 // MakeUndoFunctionByConfig return an UndoFunc based on specified ClusterConfig
 func (p *PdController) MakeUndoFunctionByConfig(config ClusterConfig) UndoFunc {
+	return p.GenRestoreSchedulerFunc(config, expectPDCfgGenerators)
+}
+
+func (p *PdController) GenRestoreSchedulerFunc(config ClusterConfig, configsNeedRestore map[string]pauseConfigGenerator) UndoFunc {
+	// todo: we only need config names, not a map[string]pauseConfigGenerator
 	restore := func(ctx context.Context) error {
-		return restoreSchedulers(ctx, p, config)
+		return restoreSchedulers(ctx, p, config, configsNeedRestore)
 	}
 	return restore
 }
@@ -636,6 +649,11 @@ func (p *PdController) RemoveSchedulers(ctx context.Context) (undo UndoFunc, err
 
 // RemoveSchedulersWithOrigin pause and remove br related schedule configs and return the origin and modified configs
 func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin ClusterConfig, modified ClusterConfig, err error) {
+	return p.RemoveSchedulersWithConfigGenerator(ctx, expectPDCfgGenerators)
+}
+
+func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context, pdConfigGenerators map[string]pauseConfigGenerator) (
+	origin ClusterConfig, modified ClusterConfig, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -652,9 +670,9 @@ func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin C
 	if err != nil {
 		return originCfg, removedCfg, err
 	}
-	disablePDCfg := make(map[string]interface{}, len(expectPDCfg))
-	originPDCfg := make(map[string]interface{}, len(expectPDCfg))
-	for cfgKey, cfgValFunc := range expectPDCfg {
+	disablePDCfg := make(map[string]interface{}, len(pdConfigGenerators))
+	originPDCfg := make(map[string]interface{}, len(pdConfigGenerators))
+	for cfgKey, cfgValFunc := range pdConfigGenerators {
 		value, ok := scheduleCfg[cfgKey]
 		if !ok {
 			// Ignore non-exist config.
