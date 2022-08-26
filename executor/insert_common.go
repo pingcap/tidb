@@ -1276,7 +1276,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	}
 	if !vars.StmtCtx.BatchCheck {
 		for _, fkc := range e.fkChecks {
-			err = fkc.addRowNeedToCheck(vars.StmtCtx, row)
+			err = fkc.insertRowNeedToCheck(vars.StmtCtx, row)
 			if err != nil {
 				return err
 			}

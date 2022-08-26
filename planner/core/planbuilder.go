@@ -3554,7 +3554,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 
-	insertPlan.FKChecks, err = buildOnModifyChildForeignKeyChecks(b.ctx, b.is, tn.DBInfo.Name.L, insertPlan.Table.Meta())
+	insertPlan.FKChecks, err = insertPlan.buildOnModifyChildForeignKeyChecks(b.ctx, b.is, tn.DBInfo.Name.L)
 	return insertPlan, err
 }
 

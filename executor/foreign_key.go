@@ -87,6 +87,23 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 	}, nil
 }
 
+func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
+	return fkc.addRowNeedToCheck(sc, row)
+}
+
+func (fkc *FKCheckExec) deleteRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
+	return fkc.addRowNeedToCheck(sc, row)
+}
+
+func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
+	if fkc.FK != nil {
+		return fkc.addRowNeedToCheck(sc, newRow)
+	} else if fkc.ReferredFK != nil {
+		return fkc.addRowNeedToCheck(sc, oldRow)
+	}
+	return nil
+}
+
 func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
 	vals, err := fkc.fetchFKValuesWithCheck(sc, row)
 	if err != nil || len(vals) == 0 {
@@ -100,15 +117,6 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 		fkc.toBeCheckedPrefixKeys = append(fkc.toBeCheckedPrefixKeys, key)
 	} else {
 		fkc.toBeCheckedKeys = append(fkc.toBeCheckedKeys, key)
-	}
-	return nil
-}
-
-func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
-	if fkc.FK != nil {
-		return fkc.addRowNeedToCheck(sc, newRow)
-	} else if fkc.ReferredFK != nil {
-		return fkc.addRowNeedToCheck(sc, oldRow)
 	}
 	return nil
 }

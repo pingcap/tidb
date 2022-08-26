@@ -22,11 +22,28 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
-func buildOnModifyChildForeignKeyChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) ([]*FKCheck, error) {
+func (p *Insert) buildOnModifyChildForeignKeyChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil, nil
 	}
+	tblInfo := p.Table.Meta()
 	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
+	updateCols := p.buildOnDuplicateUpdateColumns()
+	if len(updateCols) > 0 {
+		referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
+		for _, referredFK := range referredFKs {
+			if !isMapContainAnyCols(updateCols, referredFK.Cols...) {
+				continue
+			}
+			fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
+			if err != nil {
+				return nil, err
+			}
+			if fkCheck != nil {
+				fkChecks = append(fkChecks, fkCheck)
+			}
+		}
+	}
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.Version < 1 {
 			continue
@@ -36,10 +53,19 @@ func buildOnModifyChildForeignKeyChecks(ctx sessionctx.Context, is infoschema.In
 		if err != nil {
 			return nil, err
 		}
-
-		fkChecks = append(fkChecks, fkCheck)
+		if fkCheck != nil {
+			fkChecks = append(fkChecks, fkCheck)
+		}
 	}
 	return fkChecks, nil
+}
+
+func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
+	m := make(map[string]struct{})
+	for _, assign := range p.OnDuplicate {
+		m[assign.ColName.L] = struct{}{}
+	}
+	return m
 }
 
 func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) (map[int64][]*FKCheck, error) {
@@ -67,7 +93,9 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 			if err != nil {
 				return nil, err
 			}
-			fkChecks[tid] = append(fkChecks[tid], fkCheck)
+			if fkCheck != nil {
+				fkChecks[tid] = append(fkChecks[tid], fkCheck)
+			}
 		}
 		for _, fk := range tblInfo.ForeignKeys {
 			if fk.Version < 1 {
@@ -81,13 +109,15 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 			if err != nil {
 				return nil, err
 			}
-			fkChecks[tid] = append(fkChecks[tid], fkCheck)
+			if fkCheck != nil {
+				fkChecks[tid] = append(fkChecks[tid], fkCheck)
+			}
 		}
 	}
 	return fkChecks, nil
 }
 
-func isMapContainAnyCols(colsMap map[string]*model.ColumnInfo, cols ...model.CIStr) bool {
+func isMapContainAnyCols(colsMap map[string]struct{}, cols ...model.CIStr) bool {
 	for _, col := range cols {
 		_, exist := colsMap[col.L]
 		if exist {
@@ -97,7 +127,7 @@ func isMapContainAnyCols(colsMap map[string]*model.ColumnInfo, cols ...model.CIS
 	return false
 }
 
-func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]*model.ColumnInfo {
+func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
 	colsInfo := make([]*model.ColumnInfo, len(updt.SelectPlan.Schema().Columns))
 	for _, content := range updt.TblColPosInfos {
 		tbl := updt.tblID2Table[content.TblID]
@@ -105,15 +135,15 @@ func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]*model.ColumnI
 			colsInfo[content.Start+i] = c.ColumnInfo
 		}
 	}
-	tblID2UpdateColumns := make(map[int64]map[string]*model.ColumnInfo)
+	tblID2UpdateColumns := make(map[int64]map[string]struct{})
 	for tid := range updt.tblID2Table {
-		tblID2UpdateColumns[tid] = make(map[string]*model.ColumnInfo)
+		tblID2UpdateColumns[tid] = make(map[string]struct{})
 	}
 	for _, assign := range updt.OrderedList {
 		col := colsInfo[assign.Col.Index]
 		for _, content := range updt.TblColPosInfos {
 			if assign.Col.Index >= content.Start && assign.Col.Index < content.End {
-				tblID2UpdateColumns[content.TblID][col.Name.L] = col
+				tblID2UpdateColumns[content.TblID][col.Name.L] = struct{}{}
 				break
 			}
 		}
@@ -129,7 +159,7 @@ func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]*model.ColumnI
 			}
 			for depCol := range col.Dependences {
 				if _, ok := updateCols[depCol]; ok {
-					tblID2UpdateColumns[tid][col.Name.L] = col.ColumnInfo
+					tblID2UpdateColumns[tid][col.Name.L] = struct{}{}
 				}
 			}
 		}
