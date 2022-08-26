@@ -715,7 +715,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	bfProcess := pickBackfillProcess(w, job, indexInfo)
+	bfProcess := pickBackfillProcess(w, job)
 	if bfProcess == model.ReorgTypeTxn {
 		return runReorgJobAndHandleAddIndexErr(w, d, t, job, tbl, indexInfo)
 	}
