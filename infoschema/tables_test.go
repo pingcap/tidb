@@ -15,7 +15,6 @@
 package infoschema_test
 
 import (
-	"crypto/tls"
 	"fmt"
 	"math"
 	"os"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
@@ -47,7 +47,7 @@ import (
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
 }
 
@@ -57,7 +57,7 @@ func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
 }
 
@@ -120,7 +120,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{
 		Username: "xxx",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -128,14 +128,14 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1), nil}
-	sm.processInfoMap[1] = &util.ProcessInfo{
+	sm := &testutil.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
 		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
-	}
+	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
 
@@ -287,42 +287,6 @@ func TestCurrentTimestampAsDefault(t *testing.T) {
 	tk.MustExec("DROP DATABASE default_time_test")
 }
 
-type mockSessionManager struct {
-	processInfoMap map[uint64]*util.ProcessInfo
-	txnInfo        []*txninfo.TxnInfo
-}
-
-func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	return sm.txnInfo
-}
-
-func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	return sm.processInfoMap
-}
-
-func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	rs, ok := sm.processInfoMap[id]
-	return rs, ok
-}
-
-func (sm *mockSessionManager) Kill(_ uint64, _ bool) {}
-
-func (sm *mockSessionManager) KillAllConnections() {}
-
-func (sm *mockSessionManager) UpdateTLSConfig(_ *tls.Config) {}
-
-func (sm *mockSessionManager) ServerID() uint64 { return 1 }
-
-func (sm *mockSessionManager) StoreInternalSession(se interface{}) {
-}
-
-func (sm *mockSessionManager) DeleteInternalSession(se interface{}) {
-}
-
-func (sm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
-
 func TestSomeTables(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -330,8 +294,8 @@ func TestSomeTables(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
-	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2), nil}
-	sm.processInfoMap[1] = &util.ProcessInfo{
+	sm := &testutil.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
 		Host:    "localhost",
@@ -342,8 +306,8 @@ func TestSomeTables(t *testing.T) {
 		State:   1,
 		Info:    "do something",
 		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
-	}
-	sm.processInfoMap[2] = &util.ProcessInfo{
+	})
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      2,
 		User:    "user-2",
 		Host:    "localhost",
@@ -354,8 +318,8 @@ func TestSomeTables(t *testing.T) {
 		State:   2,
 		Info:    strings.Repeat("x", 101),
 		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
-	}
-	sm.processInfoMap[3] = &util.ProcessInfo{
+	})
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      3,
 		User:    "user-3",
 		Host:    "127.0.0.1",
@@ -366,7 +330,7 @@ func TestSomeTables(t *testing.T) {
 		State:   1,
 		Info:    "check port",
 		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
-	}
+	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
@@ -387,8 +351,8 @@ func TestSomeTables(t *testing.T) {
 			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
-	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2), nil}
-	sm.processInfoMap[1] = &util.ProcessInfo{
+	sm = &testutil.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
 		Host:    "localhost",
@@ -396,8 +360,8 @@ func TestSomeTables(t *testing.T) {
 		Command: byte(1),
 		Digest:  "abc1",
 		State:   1,
-	}
-	sm.processInfoMap[2] = &util.ProcessInfo{
+	})
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:            2,
 		User:          "user-2",
 		Host:          "localhost",
@@ -406,7 +370,7 @@ func TestSomeTables(t *testing.T) {
 		State:         2,
 		Info:          strings.Repeat("x", 101),
 		CurTxnStartTS: 410090409861578752,
-	}
+	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
@@ -1394,7 +1358,7 @@ func TestInfoSchemaClientErrors(t *testing.T) {
 	errno.IncrementError(1365, "root", "localhost")
 
 	tk.MustExec("CREATE USER 'infoschematest'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil))
 
 	err := tk.QueryToErr("SELECT * FROM information_schema.client_errors_summary_global")
 	require.Equal(t, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation", err.Error())
@@ -1418,8 +1382,8 @@ func TestTiDBTrx(t *testing.T) {
 	// by digest.
 	tk.MustExec("update test_tidb_trx set i = i + 1")
 	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
-	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 2)}
-	sm.txnInfo[0] = &txninfo.TxnInfo{
+	sm := &testutil.MockSessionManager{TxnInfo: make([]*txninfo.TxnInfo, 2)}
+	sm.TxnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
@@ -1430,7 +1394,7 @@ func TestTiDBTrx(t *testing.T) {
 		CurrentDB:        "test",
 	}
 	blockTime2 := time.Date(2021, 05, 20, 13, 18, 30, 123456000, time.Local)
-	sm.txnInfo[1] = &txninfo.TxnInfo{
+	sm.TxnInfo[1] = &txninfo.TxnInfo{
 		StartTS:          425070846483628033,
 		CurrentSQLDigest: "",
 		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
@@ -1439,8 +1403,8 @@ func TestTiDBTrx(t *testing.T) {
 		Username:         "user1",
 		CurrentDB:        "db1",
 	}
-	sm.txnInfo[1].BlockStartTime.Valid = true
-	sm.txnInfo[1].BlockStartTime.Time = blockTime2
+	sm.TxnInfo[1].BlockStartTime.Valid = true
+	sm.TxnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Session().SetSessionManager(sm)
 
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
@@ -1492,7 +1456,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 
 	tk := newTestKitWithRoot(t, store)
 	tk.MustExec("create user 'testuser'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -1503,7 +1467,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 	tk = newTestKitWithRoot(t, store)
 	tk.MustExec("create user 'testuser2'@'localhost'")
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil))

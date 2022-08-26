@@ -998,18 +998,19 @@ func TestTiFlashBatchUnsupported(t *testing.T) {
 
 func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
+	tiflash := s.tiflash
 	defer teardown()
 	_ = testkit.NewTestKit(t, s.store)
 	timeout := time.Now().Add(10 * time.Second)
 	errMsg := "time out"
 	for time.Now().Before(timeout) {
 		time.Sleep(100 * time.Millisecond)
-		if s.tiflash.GroupIndex != 0 {
+		if tiflash.GetRuleGroupIndex() != 0 {
 			errMsg = "invalid group index"
 			break
 		}
 	}
-	require.Equal(t, placement.RuleIndexTiFlash, s.tiflash.GroupIndex, errMsg)
-	require.Greater(t, s.tiflash.GroupIndex, placement.RuleIndexTable)
-	require.Greater(t, s.tiflash.GroupIndex, placement.RuleIndexPartition)
+	require.Equal(t, placement.RuleIndexTiFlash, tiflash.GetRuleGroupIndex(), errMsg)
+	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexTable)
+	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexPartition)
 }

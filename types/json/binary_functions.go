@@ -211,7 +211,7 @@ func quoteString(s string) string {
 		ret.WriteString(s[start:])
 	}
 
-	if hasEscaped {
+	if hasEscaped || !isEcmascriptIdentifier(s) {
 		ret.WriteByte('"')
 		return ret.String()
 	}
