@@ -1045,7 +1045,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 }
 
 // pushTopNDownToDynamicPartition is a temp solution for partition table. It actually does the same thing as DataSource's isMatchProp.
-//  We need to support a more enhanced read strategy in the execution phase. So that we can achieve Limit(TiDB)->Reader(TiDB)->Limit(TiKV/TiFlash)->Scan(TiKV/TiFlash).
+// We need to support a more enhanced read strategy in the execution phase. So that we can achieve Limit(TiDB)->Reader(TiDB)->Limit(TiKV/TiFlash)->Scan(TiKV/TiFlash).
 // Before that is done, we use this logic to provide a way to keep the order property when reading from TiKV, so that we can use the orderliness of index to speed up the query.
 // Here we can change the execution plan to TopN(TiDB)->Reader(TiDB)->Limit(TiKV)->Scan(TiKV).(TiFlash is not supported).
 func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bool) {
@@ -1139,7 +1139,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
 		pushedLimit.cost = copTsk.cost()
 	} else if copTsk.indexPlan == nil {
-
 		if tblScan.Table.GetPartitionInfo() == nil {
 			return nil, false
 		}
