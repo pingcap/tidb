@@ -47,6 +47,7 @@ func testRenameTable(
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaID, tblInfo.Name, oldSchemaName},
+		CtxVars:    []interface{}{[]int64{oldSchemaID, newSchemaID}, []int64{tblInfo.ID}},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJob(ctx, job))
@@ -63,6 +64,7 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.DDL, oldSchema
 		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames, oldTableNames},
+		CtxVars:    []interface{}{append(oldSchemaIDs, newSchemaIDs...), oldTableIDs},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJob(ctx, job))
@@ -164,8 +166,7 @@ func testGetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Tab
 }
 
 func TestTable(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	d := domain.DDL()
 	dbInfo, err := testSchemaInfo(store, "test_table")
@@ -293,8 +294,7 @@ func testAlterNoCacheTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, newS
 }
 
 func TestRenameTables(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	d := domain.DDL()
 
@@ -330,8 +330,7 @@ func TestRenameTables(t *testing.T) {
 }
 
 func TestCreateTables(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	d := domain.DDL()
 

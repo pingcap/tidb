@@ -264,6 +264,16 @@ func newSession(options *SessionOptions, logger log.Logger) *session {
 	vars.SQLMode = sqlMode
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {
+			// since 6.3(current master) tidb checks whether we can set a system variable
+			// lc_time_names is a read-only variable for now, but might be implemented later,
+			// so we not remove it from defaultImportantVariables and check it in below way.
+			if sv := variable.GetSysVar(k); sv == nil {
+				logger.DPanic("unknown system var", zap.String("key", k))
+				continue
+			} else if sv.ReadOnly {
+				logger.Debug("skip read-only variable", zap.String("key", k))
+				continue
+			}
 			if err := vars.SetSystemVar(k, v); err != nil {
 				logger.DPanic("new session: failed to set system var",
 					log.ShortError(err),

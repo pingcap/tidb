@@ -2,10 +2,12 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "graceshutdown_test",
+    timeout = "short",
     srcs = [
         "graceshutdown_test.go",
         "main_test.go",
     ],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_go_sql_driver_mysql//:mysql",

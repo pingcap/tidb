@@ -33,6 +33,7 @@ go_library(
 
 go_test(
     name = "checkpoints_test",
+    timeout = "short",
     srcs = [
         "checkpoints_file_test.go",
         "checkpoints_sql_test.go",
@@ -40,6 +41,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":checkpoints"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/checkpoints/checkpointspb",
         "//br/pkg/lightning/config",

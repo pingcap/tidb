@@ -118,7 +118,7 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 		// If NeedReverseDriverSide is true, we stop using the order of the slice and switch to recursively
 		// call encodeFlatPlanTree to keep build side before probe side.
 		if op.NeedReverseDriverSide {
-			buildSide := flatTree[op.ChildrenIdx[1]-offset:]
+			buildSide := flatTree[op.ChildrenIdx[1]-offset : op.ChildrenEndIdx-offset]
 			probeSide := flatTree[op.ChildrenIdx[0]-offset : op.ChildrenIdx[1]-offset]
 			encodeFlatPlanTree(buildSide, op.ChildrenIdx[1], buf)
 			encodeFlatPlanTree(probeSide, op.ChildrenIdx[0], buf)

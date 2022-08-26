@@ -538,7 +538,6 @@ func TestCopyTo(t *testing.T) {
 			cmpFunc := GetCompareFunc(allTypes[i])
 			require.Zero(t, cmpFunc(row, i, r1, i))
 		}
-
 	}
 }
 

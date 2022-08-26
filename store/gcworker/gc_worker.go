@@ -309,12 +309,31 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return nil
 	}
 
-	ok, safePoint, err := w.prepare(ctx)
-	if err != nil || !ok {
-		if err != nil {
-			metrics.GCJobFailureCounter.WithLabelValues("prepare").Inc()
-		}
+	concurrency, err := w.getGCConcurrency(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Info("[gc worker] failed to get gc concurrency.",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
 		return errors.Trace(err)
+	}
+
+	ok, safePoint, err := w.prepare(ctx)
+	if err != nil {
+		metrics.GCJobFailureCounter.WithLabelValues("prepare").Inc()
+		return errors.Trace(err)
+	} else if !ok {
+		// If skip gc, it still needs to resolve locks with expired TTL, in order not to block log backup.
+		if w.logBackupEnabled {
+			tryResolveLocksTS, err := w.getTryResolveLocksTS()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// Set 0 to safepoint, which means resolving locks with expired TTL only.
+			if err = w.legacyResolveLocks(ctx, 0, tryResolveLocksTS, concurrency); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
 	}
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
@@ -322,14 +341,6 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		logutil.Logger(ctx).Info("[gc worker] another gc job has just finished, skipped.",
 			zap.String("leaderTick on ", w.uuid))
 		return nil
-	}
-
-	concurrency, err := w.getGCConcurrency(ctx)
-	if err != nil {
-		logutil.Logger(ctx).Info("[gc worker] failed to get gc concurrency.",
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		return errors.Trace(err)
 	}
 
 	w.gcIsRunning = true
@@ -1339,10 +1350,10 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 					delete(stores, store)
 				}
 				// The store is checked and has been resolved before.
+				// If the store is checked and not resolved, we can retry to resolve it again, so leave it in dirtyStores.
 				if _, ok := dirtyStores[store]; !ok {
 					delete(stores, store)
 				}
-				// If the store is checked and not resolved, we can retry to resolve it again, so leave it in dirtyStores.
 			} else if _, ok := registeredStores[store]; ok {
 				// The store has been registered and it's dirty due to too many collected locks. Fall back to legacy mode.
 				// We can't remove the lock observer from the store and retry the whole procedure because if the store

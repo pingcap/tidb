@@ -16,12 +16,14 @@ go_library(
 
 go_test(
     name = "store_test",
+    timeout = "short",
     srcs = [
         "batch_coprocessor_test.go",
         "main_test.go",
         "store_test.go",
     ],
     embed = [":store"],
+    flaky = True,
     deps = [
         "//domain",
         "//kv",

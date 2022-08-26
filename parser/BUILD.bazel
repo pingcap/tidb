@@ -29,6 +29,7 @@ go_library(
 
 go_test(
     name = "parser_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "consistent_test.go",
@@ -40,6 +41,7 @@ go_test(
     ],
     data = glob(["**"]),
     embed = [":parser"],
+    flaky = True,
     deps = [
         "//parser/ast",
         "//parser/charset",

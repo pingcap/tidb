@@ -21,11 +21,13 @@ go_library(
 
 go_test(
     name = "rtree_test",
+    timeout = "short",
     srcs = [
         "logging_test.go",
         "main_test.go",
         "rtree_test.go",
     ],
+    flaky = True,
     deps = [
         ":rtree",
         "//testkit/testsetup",

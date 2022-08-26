@@ -95,6 +95,7 @@ func (c *storeCollector) begin(ctx context.Context) {
 
 func (c *storeCollector) recvLoop(ctx context.Context) (err error) {
 	defer utils.PanicToErr(&err)
+	log.Debug("Begin recv loop", zap.Uint64("store", c.storeID))
 	for {
 		select {
 		case <-ctx.Done():
@@ -179,6 +180,7 @@ func (c *storeCollector) spawn(ctx context.Context) func(context.Context) (Store
 
 func (c *storeCollector) sendPendingRequests(ctx context.Context) error {
 	log.Debug("sending batch", zap.Int("size", len(c.currentRequest.Regions)), zap.Uint64("store", c.storeID))
+	defer log.Debug("sending batch done", zap.Uint64("store", c.storeID))
 	cli, err := c.service.GetLogBackupClient(ctx, c.storeID)
 	if err != nil {
 		return err
@@ -192,8 +194,16 @@ func (c *storeCollector) sendPendingRequests(ctx context.Context) error {
 	for _, checkpoint := range cps.Checkpoints {
 		if checkpoint.Err != nil {
 			log.Debug("failed to get region checkpoint", zap.Stringer("err", checkpoint.Err))
+			if checkpoint.Err.EpochNotMatch != nil {
+				metrics.RegionCheckpointFailure.WithLabelValues("epoch-not-match").Inc()
+			}
+			if checkpoint.Err.NotLeader != nil {
+				metrics.RegionCheckpointFailure.WithLabelValues("not-leader").Inc()
+			}
+			metrics.RegionCheckpointRequest.WithLabelValues("fail").Inc()
 			c.inconsistent = append(c.inconsistent, c.regionMap[checkpoint.Region.Id])
 		} else {
+			metrics.RegionCheckpointRequest.WithLabelValues("success").Inc()
 			if c.onSuccess != nil {
 				c.onSuccess(checkpoint.Checkpoint, c.regionMap[checkpoint.Region.Id])
 			}
@@ -213,19 +223,21 @@ type runningStoreCollector struct {
 
 // clusterCollector is the controller for collecting region checkpoints for the cluster.
 // It creates multi store collectors.
-//                             ┌──────────────────────┐ Requesting   ┌────────────┐
-//                          ┌─►│ StoreCollector[id=1] ├─────────────►│ TiKV[id=1] │
-//                          │  └──────────────────────┘              └────────────┘
-//                          │
-//                          │Owns
-// ┌──────────────────┐     │  ┌──────────────────────┐ Requesting   ┌────────────┐
-// │ ClusterCollector ├─────┼─►│ StoreCollector[id=4] ├─────────────►│ TiKV[id=4] │
-// └──────────────────┘     │  └──────────────────────┘              └────────────┘
-//                          │
-//                          │
-//                          │  ┌──────────────────────┐ Requesting   ┌────────────┐
-//                          └─►│ StoreCollector[id=5] ├─────────────►│ TiKV[id=5] │
-//                             └──────────────────────┘              └────────────┘
+/*
+                             ┌──────────────────────┐ Requesting   ┌────────────┐
+                          ┌─►│ StoreCollector[id=1] ├─────────────►│ TiKV[id=1] │
+                          │  └──────────────────────┘              └────────────┘
+                          │
+                          │Owns
+ ┌──────────────────┐     │  ┌──────────────────────┐ Requesting   ┌────────────┐
+ │ ClusterCollector ├─────┼─►│ StoreCollector[id=4] ├─────────────►│ TiKV[id=4] │
+ └──────────────────┘     │  └──────────────────────┘              └────────────┘
+                          │
+                          │
+                          │  ┌──────────────────────┐ Requesting   ┌────────────┐
+                          └─►│ StoreCollector[id=5] ├─────────────►│ TiKV[id=5] │
+                             └──────────────────────┘              └────────────┘
+*/
 type clusterCollector struct {
 	mu         sync.Mutex
 	collectors map[uint64]runningStoreCollector

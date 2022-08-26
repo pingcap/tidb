@@ -258,6 +258,9 @@ type MultiSchemaInfo struct {
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
 
+	// SkipVersion is used to control whether generating a new schema version for a sub-job.
+	SkipVersion bool `json:"-"`
+
 	AddColumns    []CIStr `json:"-"`
 	DropColumns   []CIStr `json:"-"`
 	ModifyColumns []CIStr `json:"-"`
@@ -289,6 +292,7 @@ type SubJob struct {
 	RowCount    int64           `json:"row_count"`
 	Warning     *terror.Error   `json:"warning"`
 	CtxVars     []interface{}   `json:"-"`
+	SchemaVer   int64           `json:"schema_version"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -342,7 +346,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 }
 
 // FromProxyJob converts a proxy job to a sub-job.
-func (sub *SubJob) FromProxyJob(proxyJob *Job) {
+func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
@@ -350,6 +354,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job) {
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
+	sub.SchemaVer = ver
 }
 
 // Job is for a DDL operation.
@@ -454,9 +459,11 @@ func (job *Job) Clone() *Job {
 		clone.Args = make([]interface{}, len(job.Args))
 		copy(clone.Args, job.Args)
 	}
-	for i, sub := range job.MultiSchemaInfo.SubJobs {
-		clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
-		copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
+	if job.MultiSchemaInfo != nil {
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
+			copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
+		}
 	}
 	return &clone
 }
@@ -464,7 +471,7 @@ func (job *Job) Clone() *Job {
 // TSConvert2Time converts timestamp to time.
 func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
-	return time.Unix(t/1e3, (t%1e3)*1e6)
+	return time.UnixMilli(t)
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
@@ -578,6 +585,63 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 				return true, nil
 			}
 		}
+		if job.Type == ActionExchangeTablePartition {
+			var (
+				defID          int64
+				ptSchemaID     int64
+				ptID           int64
+				partName       string
+				withValidation bool
+			)
+			if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+				return false, errors.Trace(err)
+			}
+			if other.SchemaID == ptSchemaID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
+	if job.Type == ActionExchangeTablePartition {
+		var (
+			defID          int64
+			ptSchemaID     int64
+			ptID           int64
+			partName       string
+			withValidation bool
+		)
+
+		if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+			return false, errors.Trace(err)
+		}
+		if ptID == other.TableID || defID == other.TableID {
+			return true, nil
+		}
+
+		if other.Type == ActionExchangeTablePartition {
+			var (
+				otherDefID          int64
+				otherPtSchemaID     int64
+				otherPtID           int64
+				otherPartName       string
+				otherWithValidation bool
+			)
+			if err := other.DecodeArgs(&otherDefID, &otherPtSchemaID, &otherPtID, &otherPartName, &otherWithValidation); err != nil {
+				return false, errors.Trace(err)
+			}
+			if job.TableID == other.TableID || job.TableID == otherPtID || job.TableID == otherDefID {
+				return true, nil
+			}
+			if ptID == other.TableID || ptID == otherPtID || ptID == otherDefID {
+				return true, nil
+			}
+			if defID == other.TableID || defID == otherPtID || defID == otherDefID {
+				return true, nil
+			}
+		}
 	}
 	return false, nil
 }
@@ -599,6 +663,14 @@ func (job *Job) IsDependentOn(other *Job) (bool, error) {
 	// TODO: If a job is ActionRenameTable, we need to check table name.
 	if other.TableID == job.TableID {
 		return true, nil
+	}
+	isDependent, err = job.hasDependentTableForExchangePartition(other)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
+	}
+	isDependent, err = other.hasDependentTableForExchangePartition(job)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
 	}
 	return false, nil
 }

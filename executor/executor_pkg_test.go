@@ -24,7 +24,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -437,10 +436,6 @@ func TestLoadDataWithDifferentEscapeChar(t *testing.T) {
 }
 
 func TestSortSpillDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))
@@ -515,7 +510,7 @@ func TestSortSpillDisk(t *testing.T) {
 	err = exec.Close()
 	require.NoError(t, err)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 24000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 28000)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	require.NoError(t, err)

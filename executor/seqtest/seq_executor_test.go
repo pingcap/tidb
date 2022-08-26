@@ -60,11 +60,10 @@ import (
 
 func TestEarlyClose(t *testing.T) {
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -128,8 +127,7 @@ func (s stats) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
 }
 
 func TestShow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -283,7 +281,7 @@ func TestShow(t *testing.T) {
 		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
 		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
 		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|`id` * 2 + 1|NO",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>||BTREE| |YES|`id` * 2 + 1|NO",
 	))
 
 	// For show like with escape
@@ -329,7 +327,7 @@ func TestShow(t *testing.T) {
 	))
 	testSQL = "show create database if not exists show_test_DB;"
 	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
-		"show_test_DB|CREATE DATABASE /*!32312 IF NOT EXISTS*/ `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+		"show_test_DB|CREATE DATABASE IF NOT EXISTS `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
 	tk.MustExec("use show_test_DB")
@@ -603,8 +601,7 @@ func TestShow(t *testing.T) {
 }
 
 func TestShowStatsHealthy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -638,8 +635,7 @@ func TestShowStatsHealthy(t *testing.T) {
 // TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
 // leak. For testing distsql with multiple regions, we need to manually split a mock TiKV.
 func TestIndexDoubleReadClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	if _, ok := store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
@@ -675,8 +671,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 // TestIndexMergeReaderClose checks that when a partial index worker failed to start, the goroutine doesn't
 // leak.
 func TestIndexMergeReaderClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -694,8 +689,7 @@ func TestIndexMergeReaderClose(t *testing.T) {
 }
 
 func TestParallelHashAggClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -722,8 +716,7 @@ func TestParallelHashAggClose(t *testing.T) {
 }
 
 func TestUnparallelHashAggClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -756,8 +749,7 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func TestAdminShowNextID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	HelperTestAdminShowNextID(t, store, `admin show `)
 	HelperTestAdminShowNextID(t, store, `show table `)
@@ -812,6 +804,10 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int auto_increment primary key nonclustered, b int);")
+	tk.MustQuery("show table t next_row_id;").Check(testkit.Rows("test1 t _tidb_rowid 1 AUTO_INCREMENT"))
+
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	// Test for a table with auto_random primary key.
@@ -847,9 +843,10 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 }
 
 func TestNoHistoryWhenDisableRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists history")
@@ -887,8 +884,7 @@ func TestNoHistoryWhenDisableRetry(t *testing.T) {
 }
 
 func TestPrepareMaxParamCountCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -915,8 +911,7 @@ func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
 }
 
 func TestCartesianProduct(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -933,15 +928,14 @@ func TestCartesianProduct(t *testing.T) {
 }
 
 func TestBatchInsertDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	defer func() {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5600)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5700)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1091,8 +1085,10 @@ func (c *checkPrioClient) SendRequest(ctx context.Context, addr string, req *tik
 	if c.mu.checkPrio {
 		switch req.Type {
 		case tikvrpc.CmdCop:
-			if c.getCheckPriority() != req.Priority {
-				return nil, errors.New("fail to set priority")
+			if ctx.Value(c) != nil {
+				if c.getCheckPriority() != req.Priority {
+					return nil, errors.New("fail to set priority")
+				}
 			}
 		}
 	}
@@ -1101,11 +1097,12 @@ func (c *checkPrioClient) SendRequest(ctx context.Context, addr string, req *tik
 
 func TestCoprocessorPriority(t *testing.T) {
 	cli := &checkPrioClient{}
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
+	store := testkit.CreateMockStore(t, mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
 		cli.Client = c
 		return cli
 	}))
-	defer clean()
+
+	ctx := context.WithValue(context.Background(), cli, 42)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1125,18 +1122,18 @@ func TestCoprocessorPriority(t *testing.T) {
 	cli.mu.Unlock()
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
+	tk.MustQueryWithContext(ctx, "select id from t where id = 1")
+	tk.MustQueryWithContext(ctx, "select * from t1 where id = 1")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("update t set id = 3")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t select * from t limit 2")
-	tk.MustExec("delete from t")
+	tk.MustQueryWithContext(ctx, "select count(*) from t")
+	tk.MustExecWithContext(ctx, "update t set id = 3")
+	tk.MustExecWithContext(ctx, "delete from t")
+	tk.MustExecWithContext(ctx, "insert into t select * from t limit 2")
+	tk.MustExecWithContext(ctx, "delete from t")
 
 	// Insert some data to make sure plan build IndexLookup for t.
-	tk.MustExec("insert into t values (1), (2)")
+	tk.MustExecWithContext(ctx, "insert into t values (1), (2)")
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -1144,55 +1141,53 @@ func TestCoprocessorPriority(t *testing.T) {
 	})
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
-	tk.MustExec("delete from t where id = 2")
-	tk.MustExec("update t set id = 2 where id = 1")
+	tk.MustQueryWithContext(ctx, "select id from t where id = 1")
+	tk.MustQueryWithContext(ctx, "select * from t1 where id = 1")
+	tk.MustExecWithContext(ctx, "delete from t where id = 2")
+	tk.MustExecWithContext(ctx, "update t set id = 2 where id = 1")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (3)")
+	tk.MustQueryWithContext(ctx, "select count(*) from t")
+	tk.MustExecWithContext(ctx, "delete from t")
+	tk.MustExecWithContext(ctx, "insert into t values (3)")
 
 	// Test priority specified by SQL statement.
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustQuery("select HIGH_PRIORITY * from t")
+	tk.MustQueryWithContext(ctx, "select HIGH_PRIORITY * from t")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
+	tk.MustQueryWithContext(ctx, "select LOW_PRIORITY id from t where id = 1")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustExec("set tidb_force_priority = 'HIGH_PRIORITY'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'HIGH_PRIORITY'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("3"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustExec("set tidb_force_priority = 'LOW_PRIORITY'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("4"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'LOW_PRIORITY'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("4"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
-	tk.MustExec("set tidb_force_priority = 'DELAYED'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("5"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'DELAYED'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("5"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustExec("set tidb_force_priority = 'NO_PRIORITY'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("6"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
-
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("6"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 	cli.mu.Lock()
 	cli.mu.checkPrio = false
 	cli.mu.Unlock()
 }
 
 func TestShowForNewCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	expectRows := testkit.Rows(
@@ -1213,8 +1208,7 @@ func TestShowForNewCollations(t *testing.T) {
 }
 
 func TestForbidUnsupportedCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	mustGetUnsupportedCollation := func(sql string, coll string) {
@@ -1233,9 +1227,10 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 }
 
 func TestAutoIncIDInRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -1256,8 +1251,7 @@ func TestAutoIncIDInRetry(t *testing.T) {
 }
 
 func TestPessimisticConflictRetryAutoID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1293,8 +1287,7 @@ func TestPessimisticConflictRetryAutoID(t *testing.T) {
 }
 
 func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1345,9 +1338,10 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 }
 
 func TestAutoRandIDRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create database if not exists auto_random_retry")
@@ -1391,8 +1385,7 @@ func TestAutoRandIDRetry(t *testing.T) {
 }
 
 func TestAutoRandRecoverTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
@@ -1443,8 +1436,7 @@ func TestAutoRandRecoverTable(t *testing.T) {
 }
 
 func TestMaxDeltaSchemaCount(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1472,8 +1464,7 @@ func TestMaxDeltaSchemaCount(t *testing.T) {
 }
 
 func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1490,8 +1481,7 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 }
 
 func TestIssue18744(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1540,8 +1530,7 @@ func TestIssue18744(t *testing.T) {
 }
 
 func TestIssue19410(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1565,8 +1554,7 @@ func TestIssue19410(t *testing.T) {
 }
 
 func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1575,6 +1563,8 @@ func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/distsql/mockNextRawError", `return(true)`))
-	err := tk.ExecToErr("analyze table t1")
-	require.EqualError(t, err, "mockNextRawError")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/distsql/mockNextRawError"))
+	}()
+	tk.MustGetErrMsg("analyze table t1", "mockNextRawError")
 }
