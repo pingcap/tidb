@@ -258,3 +258,70 @@ func TestLRUPCDeleteAll(t *testing.T) {
 		require.Equal(t, 0, int(lru.size))
 	}
 }
+
+func TestLRUPCSetCapacity(t *testing.T) {
+	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
+	lru, err := NewLRUPlanCache(5, pickFromBucket)
+	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
+		maxMemDroppedKv[key] = value
+	}
+	require.NoError(t, err)
+	require.Equal(t, uint(5), lru.capacity)
+
+	keys := make([]*mockCacheKey, 5)
+	vals := make([]*fakePlan, 5)
+	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
+	}
+
+	// one key corresponding to multi values
+	for i := 0; i < 5; i++ {
+		keys[i] = newMockHashKey(1)
+		vals[i] = &fakePlan{
+			plan: int64(i),
+			tps:  pTypes[i],
+		}
+		lru.Put(keys[i], vals[i], pTypes[i])
+	}
+	require.Equal(t, lru.size, lru.capacity)
+	require.Equal(t, uint(5), lru.size)
+
+	err = lru.SetCapacity(3)
+	require.NoError(t, err)
+
+	// test for non-existent elements
+	require.Len(t, maxMemDroppedKv, 2)
+	for i := 0; i < 2; i++ {
+		bucket, exist := lru.buckets[string(hack.String(keys[i].Hash()))]
+		require.True(t, exist)
+		for element := range bucket {
+			require.NotEqual(t, vals[i], element.Value.(*planCacheEntry).PlanValue)
+		}
+		require.Equal(t, vals[i], maxMemDroppedKv[keys[i]])
+	}
+
+	// test for existent elements
+	root := lru.lruList.Front()
+	require.NotNil(t, root)
+	for i := 4; i >= 2; i-- {
+		entry, ok := root.Value.(*planCacheEntry)
+		require.True(t, ok)
+		require.NotNil(t, entry)
+
+		// test value
+		value, ok := entry.PlanValue.(*fakePlan)
+		require.True(t, ok)
+		require.Equal(t, vals[i], value)
+
+		root = root.Next()
+	}
+
+	// test for end of double-linked list
+	require.Nil(t, root)
+
+	err = lru.SetCapacity(0)
+	require.Error(t, err, "capacity of lru cache should be at least 1")
+}
