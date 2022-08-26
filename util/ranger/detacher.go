@@ -778,16 +778,10 @@ type DetachRangeResult struct {
 }
 
 // DetachCondAndBuildRangeForIndex will detach the index filters from table filters.
+// When rangeMemQuota is 0, there is no memory limit for building ranges.
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
 func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) (*DetachRangeResult, error) {
-	// When InPreparedPlanBuilding is true, we don't need to restrict range memory usage because it uses the cached plan's AccessCondition
-	// to build range. Though parameter values can affect range memory usage, parameter values usually have similar sizes and its effect
-	// to range memory usage is small.
-	var rangeMemQuota int64
-	if !sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
-		rangeMemQuota = sctx.GetSessionVars().OptimizerMemQuota
-	}
+	lengths []int, rangeMemQuota int64) (*DetachRangeResult, error) {
 	d := &rangeDetacher{
 		sctx:             sctx,
 		allConds:         conditions,

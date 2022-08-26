@@ -1286,7 +1286,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		return nil
 	}
 	if len(path.IdxCols) != 0 {
-		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens, ds.ctx.GetSessionVars().OptimizerMemQuota)
 		if err != nil {
 			return err
 		}
@@ -1440,7 +1440,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 		}
 	}
 	if len(path.IdxCols) != 0 {
-		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens, ds.ctx.GetSessionVars().OptimizerMemQuota)
 		if err != nil {
 			return err
 		}
