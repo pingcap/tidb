@@ -31,6 +31,7 @@ const (
 	// it's expected to be unchangeable within the current transaction.
 	flagAssertExists
 	flagAssertNotExists
+	// the flag indicates the conflict and constraint check of the key should be postponed (to the next pessimistic lock or prewrite).
 	flagNeedConflictCheckInPrewrite
 )
 
@@ -85,7 +86,7 @@ const (
 	SetAssertUnknown
 	// SetAssertNone marks the associated key without any assert.
 	SetAssertNone
-	// SetNeedConflictCheckInPrewrite indicates the prewrite should check write conflict for this key.
+	// SetNeedConflictCheckInPrewrite sets the flag flagNeedConflictCheckInPrewrite
 	SetNeedConflictCheckInPrewrite
 )
 

@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"os"
@@ -691,12 +692,15 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 
 func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation, req *kvrpcpb.PrewriteRequest) error {
 	startTS := req.StartVersion
+	reader := reqCtx.getDBReader()
+	txn := reader.GetTxn()
 	for i, m := range mutations {
 		if m.Op == kvrpcpb.Op_CheckNotExists {
 			return kverrors.ErrInvalidOp{Op: m.Op}
 		}
 		lock := store.getLock(reqCtx, m.Key)
 		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i] == kvrpcpb.PessimisticLockType_PessimisticLocked
+		isNeedConflictCheck := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i] == kvrpcpb.PessimisticLockType_NeedConflictCheck
 		lockExists := lock != nil
 		lockMatch := lockExists && lock.StartTS == startTS
 		if isPessimisticLock {
@@ -711,6 +715,23 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 			// Do not overwrite lock ttl if prewrite ttl smaller than pessimisitc lock ttl
 			if uint64(lock.TTL) > req.LockTtl {
 				req.LockTtl = uint64(lock.TTL)
+			}
+		} else if isNeedConflictCheck {
+			item, err := txn.Get(m.Key)
+			if err != nil && err != badger.ErrKeyNotFound {
+				return errors.Trace(err)
+			}
+			// check conflict
+			if item != nil {
+				userMeta := mvcc.DBUserMeta(item.UserMeta())
+				if userMeta.CommitTS() > startTS {
+					return &kverrors.ErrConflict{
+						StartTS:          startTS,
+						ConflictTS:       userMeta.StartTS(),
+						ConflictCommitTS: userMeta.CommitTS(),
+						Key:              item.KeyCopy(nil),
+					}
+				}
 			}
 		} else {
 			// non pessimistic lock in pessimistic transaction, e.g. non-unique index.
@@ -772,6 +793,7 @@ func (store *MVCCStore) prewriteMutations(reqCtx *requestCtx, mutations []*kvrpc
 	batch := store.dbWriter.NewWriteBatch(req.StartVersion, 0, reqCtx.rpcCtx)
 
 	for i, m := range mutations {
+		println("mockstore prewriteMutations, key:", hex.EncodeToString(m.Key), "op:", m.Op)
 		if m.Op == kvrpcpb.Op_CheckNotExists {
 			continue
 		}

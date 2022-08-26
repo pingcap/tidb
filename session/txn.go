@@ -17,6 +17,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"runtime/trace"
 	"strings"
@@ -461,6 +462,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 		}
 		keys = append(keys, k)
 	})
+
 	return keys, nil
 }
 
@@ -489,6 +491,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 }
 
 func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
+	println("checking key, keys:", hex.EncodeToString(k), "Defer:", flags.HasNeedConflictCheckInPrewrite(), "PNE:", flags.HasPresumeKeyNotExists())
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.
