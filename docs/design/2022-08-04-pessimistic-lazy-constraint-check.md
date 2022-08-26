@@ -101,7 +101,7 @@ Consider the following scenario (from @cfzjywxk):
 
 The `INSERT` statement puts the row with `id = 1` in the transaction write buffer of TiDB without checking the constraint. The later `SELECT FOR UPDATE` will read and lock the row with `id = 1` in TiKV. If the `SELECT FOR UPDATE` succeeded, it would be difficult to decide the result set. Returning `(1, 1), (1, 2)` breaks the unique constraint, while returning `(1, 1)` or `(1, 2)` may be all strange semantically. Using the wrong result set for following operations may even cause data inconsistency.
 
-So, we choose to do the missing constraint check and locking whenever a key that skipped constraint check before is read from the transaction buffer. In union scan or point get executors, if we involve any key in the buffer with a `NeedConflictCheckInPrewrite` flag, we will reset the flag and add it again to the staging buffer. Later, we can acquire locks and check the constraints for these keys. In this way, the result set will not break any constraint.
+So, we choose to do the missing constraint check and locking whenever a key that skipped constraint check before is read from the transaction buffer. In union scan or point get executors, if we involve any key in the buffer with a `NeedConstraintCheckInPrewrite` flag, we will reset the flag and add it again to the staging buffer. Later, we can acquire locks and check the constraints for these keys. In this way, the result set will not break any constraint.
 
 This means the read-only statements like the `SELECT FOR UPDATE` above will throw a "duplicate entry" error in the case above. It may be strange that a read-only statement raises errors like this. We should make the user aware of the behavior.
 

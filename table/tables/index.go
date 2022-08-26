@@ -191,7 +191,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		if lazyCheck {
 			flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 			if vars.SkipInsertLock && vars.TxnCtx.IsPessimistic {
-				flags = append(flags, kv.SetNeedConflictCheckInPrewrite)
+				flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 			}
 			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, flags...)
 		} else {

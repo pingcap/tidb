@@ -187,7 +187,7 @@ func sortMutations(mutations []*kvrpcpb.Mutation) []*kvrpcpb.Mutation {
 }
 
 func sortPrewrite(req *kvrpcpb.PrewriteRequest) []*kvrpcpb.Mutation {
-	if len(req.IsPessimisticLock) == 0 {
+	if len(req.PessimisticActions) == 0 {
 		return sortMutations(req.Mutations)
 	}
 	sorter := pessimisticPrewriteSorter{PrewriteRequest: req}
@@ -212,7 +212,7 @@ func (sorter pessimisticPrewriteSorter) Len() int {
 
 func (sorter pessimisticPrewriteSorter) Swap(i, j int) {
 	sorter.Mutations[i], sorter.Mutations[j] = sorter.Mutations[j], sorter.Mutations[i]
-	sorter.IsPessimisticLock[i], sorter.IsPessimisticLock[j] = sorter.IsPessimisticLock[j], sorter.IsPessimisticLock[i]
+	sorter.PessimisticActions[i], sorter.PessimisticActions[j] = sorter.PessimisticActions[j], sorter.PessimisticActions[i]
 }
 
 func sortKeys(keys [][]byte) [][]byte {
@@ -699,8 +699,8 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 			return kverrors.ErrInvalidOp{Op: m.Op}
 		}
 		lock := store.getLock(reqCtx, m.Key)
-		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i] == kvrpcpb.PessimisticLockType_PessimisticLocked
-		isNeedConflictCheck := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i] == kvrpcpb.PessimisticLockType_NeedConflictCheck
+		isPessimisticLock := len(req.PessimisticActions) > 0 && req.PessimisticActions[i] == kvrpcpb.PrewriteRequest_DO_PESSIMISTIC_CHECK
+		needConstraintCheck := len(req.PessimisticActions) > 0 && req.PessimisticActions[i] == kvrpcpb.PrewriteRequest_DO_CONSTRAINT_CHECK
 		lockExists := lock != nil
 		lockMatch := lockExists && lock.StartTS == startTS
 		if isPessimisticLock {
@@ -716,7 +716,7 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 			if uint64(lock.TTL) > req.LockTtl {
 				req.LockTtl = uint64(lock.TTL)
 			}
-		} else if isNeedConflictCheck {
+		} else if needConstraintCheck {
 			item, err := txn.Get(m.Key)
 			if err != nil && err != badger.ErrKeyNotFound {
 				return errors.Trace(err)

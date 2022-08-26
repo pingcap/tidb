@@ -32,7 +32,7 @@ const (
 	flagAssertExists
 	flagAssertNotExists
 	// the flag indicates the conflict and constraint check of the key should be postponed (to the next pessimistic lock or prewrite).
-	flagNeedConflictCheckInPrewrite
+	flagNeedConstraintCheckInPrewrite
 )
 
 // HasPresumeKeyNotExists returns whether the associated key use lazy check.
@@ -65,9 +65,9 @@ func (f KeyFlags) HasAssertionFlags() bool {
 	return f&flagAssertExists != 0 || f&flagAssertNotExists != 0
 }
 
-// HasNeedConflictCheckInPrewrite returns whether the key needs to do conflict check in prewrite.
-func (f KeyFlags) HasNeedConflictCheckInPrewrite() bool {
-	return f&flagNeedConflictCheckInPrewrite != 0
+// HasNeedConstraintCheckInPrewrite returns whether the key needs to do constraint and conflict check in prewrite.
+func (f KeyFlags) HasNeedConstraintCheckInPrewrite() bool {
+	return f&flagNeedConstraintCheckInPrewrite != 0
 }
 
 // FlagsOp describes KeyFlags modify operation.
@@ -86,8 +86,8 @@ const (
 	SetAssertUnknown
 	// SetAssertNone marks the associated key without any assert.
 	SetAssertNone
-	// SetNeedConflictCheckInPrewrite sets the flag flagNeedConflictCheckInPrewrite
-	SetNeedConflictCheckInPrewrite
+	// SetNeedConstraintCheckInPrewrite sets the flag flagNeedConstraintCheckInPrewrite
+	SetNeedConstraintCheckInPrewrite
 )
 
 // ApplyFlagsOps applys flagspos to origin.
@@ -107,8 +107,8 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 		case SetAssertUnknown:
 			origin |= flagAssertExists
 			origin |= flagAssertNotExists
-		case SetNeedConflictCheckInPrewrite:
-			origin |= flagNeedConflictCheckInPrewrite
+		case SetNeedConstraintCheckInPrewrite:
+			origin |= flagNeedConstraintCheckInPrewrite
 		}
 	}
 	return origin

@@ -3129,10 +3129,12 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		future = txnFailFuture{}
 	})
 
+	enableTempFlags := s.GetSessionVars().SkipInsertLock
 	s.txn.changeToPending(&txnFuture{
-		future:   future,
-		store:    s.store,
-		txnScope: scope,
+		future:               future,
+		store:                s.store,
+		txnScope:             scope,
+		enableTemporaryFlags: enableTempFlags,
 	})
 	return nil
 }

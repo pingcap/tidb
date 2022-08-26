@@ -480,15 +480,16 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 }
 
 func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
-	println("checking key, keys:", hex.EncodeToString(k), "Defer:", flags.HasNeedConflictCheckInPrewrite(), "PNE:", flags.HasPresumeKeyNotExists())
+	println("checking key, keys:", hex.EncodeToString(k), "Defer:", flags.HasNeedConstraintCheckInPrewrite(), "PNE:", flags.HasPresumeKeyNotExists())
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.
 		return true
 	}
 
-	// a pessimistic locking is skipped, perform the conflict check and constraint check (i.e. PresumeKeyNotExist) in prewrite
-	if flags.HasNeedConflictCheckInPrewrite() {
+	// a pessimistic locking is skipped, perform the conflict check and
+	// constraint check (more accurately, PresumeKeyNotExist) in prewrite
+	if flags.HasNeedConstraintCheckInPrewrite() {
 		return false
 	}
 
@@ -541,9 +542,10 @@ func (txnFailFuture) Wait() (uint64, error) {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future   oracle.Future
-	store    kv.Storage
-	txnScope string
+	future               oracle.Future
+	store                kv.Storage
+	txnScope             string
+	enableTemporaryFlags bool
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {

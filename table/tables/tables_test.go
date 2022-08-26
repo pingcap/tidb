@@ -945,8 +945,7 @@ func TestTxnAssertion(t *testing.T) {
 }
 
 func TestInsertNotLock(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -954,6 +953,7 @@ func TestInsertNotLock(t *testing.T) {
 	tk.MustExec("create table t(id int primary key, v int)")
 
 	tk.MustExec("set @@tidb_skip_insert_lock = 1")
+	// tk.MustExec("set @@tidb_enable_mutation_checker = 0")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t values(1, 0)")
 	tk2.MustExec("begin pessimistic")
@@ -968,8 +968,7 @@ func TestInsertNotLock(t *testing.T) {
 }
 
 func TestDeferConstraintCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -997,14 +996,12 @@ func TestDeferConstraintCheck(t *testing.T) {
 	println("txn start")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (2, 1)")
-	println("after insert")
 	// this read breaks constraint, so the txn should not commit
-	// tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
-	tk.MustExec("delete from t2 where id = 1")
+	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
+	_, err := tk.Exec("delete from t2 where id = 1")
+	require.NotNil(t, err)
 	tk.MustExec("commit")
-	// _, err := tk.Exec("commit")
-	// require.NotNil(t, err)
-	// println(err.Error())
+	println(err.Error())
 	// tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
 }
