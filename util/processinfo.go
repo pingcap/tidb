@@ -31,24 +31,23 @@ import (
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID               uint64
-	User             string
-	Host             string
-	Port             string
-	DB               string
-	Digest           string
-	Plan             interface{}
-	PlanExplainRows  [][]string
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	Time             time.Time
-	Info             string
-	CurTxnStartTS    uint64
+	Plan             interface{}
 	StmtCtx          *stmtctx.StatementContext
 	StatsInfo        func(interface{}) map[string]uint64
+	RuntimeStatsColl *execdetails.RuntimeStatsColl
+	DB               string
+	Digest           string
+	Host             string
+	User             string
+	Info             string
+	Port             string
+	PlanExplainRows  [][]string
+	CurTxnStartTS    uint64
+	ID               uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
-	MaxExecutionTime uint64
-
+	MaxExecutionTime          uint64
 	State                     uint16
 	Command                   byte
 	ExceedExpensiveTimeThresh bool
@@ -199,10 +198,10 @@ type SessionManager interface {
  +-----------------------------+------+
 */
 type GlobalConnID struct {
+	ServerIDGetter func() uint64
 	ServerID       uint64
 	LocalConnID    uint64
 	Is64bits       bool
-	ServerIDGetter func() uint64
 }
 
 // NewGlobalConnID creates GlobalConnID with serverID
