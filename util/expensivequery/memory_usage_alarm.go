@@ -292,7 +292,7 @@ func (record *memoryUsageAlarm) getRelevantSystemVariableBuf() string {
 func (record *memoryUsageAlarm) getCurrentAnalyzePlan(info *util.ProcessInfo) string {
 	var buf strings.Builder
 	rows := info.CurrentAnalyzeRows(info.Plan, info.RuntimeStatsColl)
-	buf.WriteString(fmt.Sprintf("%v/r%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/n", "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"))
+	buf.WriteString(fmt.Sprintf("%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/n", "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"))
 	for _, row := range rows {
 		buf.WriteString(fmt.Sprintf("%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/n", row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]))
 	}
