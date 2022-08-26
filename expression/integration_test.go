@@ -7435,3 +7435,25 @@ func TestIssue36358(t *testing.T) {
 	tk.MustQuery("select extract(day_microsecond from cast('2001-01-01 02:03:04.050607' as datetime(6))) from t").Check(testkit.Rows("1020304050607"))
 	tk.MustQuery("select extract(day_microsecond from c) from t").Check(testkit.Rows("1020304050607"))
 }
+
+func TestIssue31648(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("SET @@timestamp=UNIX_TIMESTAMP('2001-01-01 00:00:00')")
+	tk.MustQuery("SELECT CAST(CAST('00:00:00.123456' AS TIME(6)) + INTERVAL 1 DAY AS DATETIME(6))").Check(testkit.Rows("2001-01-02 00:00:00.123456"))
+	tk.MustExec("use test")
+
+	tk.MustExec("SET @@timestamp=UNIX_TIMESTAMP('2008-01-03 10:20:30.1')")
+	tk.MustExec("CREATE TABLE t1 (a DATETIME(6))")
+	tk.MustExec("INSERT INTO t1 VALUES (TIME'08:00:00.123456'), (TIME'240:00:00.000001')")
+	tk.MustExec("INSERT INTO t1 VALUES (TIME'-10:00:00.000001'), (TIME'-240:00:00.000001')")
+	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("2008-01-03 08:00:00.123456", "2008-01-13 00:00:00.000001", "2008-01-02 13:59:59.999999", "2007-12-23 23:59:59.999999"))
+
+	tk.MustExec("SET timestamp=UNIX_TIMESTAMP('2011-12-31 15:44:00')")
+	tk.MustExec("CREATE TABLE t2 (a YEAR)")
+	tk.MustExec("INSERT INTO t2 VALUES (TIME'15:44:00')")
+	tk.MustExec("INSERT INTO t2 VALUES (TIME'25:00:00')")
+	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("2011", "2012"))
+}

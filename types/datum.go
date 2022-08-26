@@ -1540,6 +1540,13 @@ func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 			ret.SetInt64(0)
 			return ret, errors.Trace(err)
 		}
+	case KindMysqlDuration:
+		dt, err := d.GetMysqlDuration().ConvertToTime(sc, mysql.TypeDatetime)
+		if err != nil {
+			ret.SetInt64(0)
+			return ret, errors.Trace(err)
+		}
+		y = int64(dt.Year())
 	default:
 		ret, err = d.convertToInt(sc, NewFieldType(mysql.TypeLonglong))
 		if err != nil {

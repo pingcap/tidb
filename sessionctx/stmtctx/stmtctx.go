@@ -190,7 +190,9 @@ type StatementContext struct {
 	MaxRowID  int64
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone         *time.Location
+	TimeZone *time.Location
+	// Copied from System Timestamp.
+	Timestamp        time.Time
 	Priority         mysql.PriorityEnum
 	NotFillCache     bool
 	MemTracker       *memory.Tracker

@@ -1479,18 +1479,7 @@ func (d Duration) ToNumber() *MyDecimal {
 // ConvertToTime converts duration to Time.
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
 func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
-	year, month, day := gotime.Now().In(sc.TimeZone).Date()
-	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
-	mixDateAndDuration(&datePart, d)
-
-	t := NewTime(datePart, mysql.TypeDatetime, d.Fsp)
-	return t.Convert(sc, tp)
-}
-
-// ConvertToTimeWithTimestamp converts duration to Time by system timestamp.
-// Tp is TypeDatetime, TypeTimestamp and TypeDate.
-func (d Duration) ConvertToTimeWithTimestamp(sc *stmtctx.StatementContext, tp uint8, ts gotime.Time) (Time, error) {
-	year, month, day := ts.In(sc.TimeZone).Date()
+	year, month, day := sc.Timestamp.Date()
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
 	mixDateAndDuration(&datePart, d)
 
