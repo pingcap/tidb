@@ -391,7 +391,11 @@ func (pe PathExpression) String() string {
 			}
 		case pathLegKey:
 			s.WriteString(".")
-			s.WriteString(quoteString(leg.dotKey))
+			if leg.dotKey == "*" {
+				s.WriteString(leg.dotKey)
+			} else {
+				s.WriteString(quoteString(leg.dotKey))
+			}
 		case pathLegDoubleAsterisk:
 			s.WriteString("**")
 		}
