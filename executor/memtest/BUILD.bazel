@@ -10,7 +10,6 @@ go_test(
     flaky = True,
     deps = [
         "//config",
-        "//executor",
         "//meta/autoid",
         "//testkit",
         "@com_github_stretchr_testify//require",
