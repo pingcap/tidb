@@ -755,10 +755,13 @@ func spawnAddIndexWorker(sessCtx sessionctx.Context, seq int, job *model.Job, t 
 			return nil, errors.Trace(errors.New(lightning.LitErrCreateEngineFail))
 		}
 		idxWorker, err := newAddIndexWorkerLit(sessCtx, seq, t, decodeColMap, reorgInfo, jc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 		return idxWorker.backfillWorker, nil
 	default:
-		return nil, errors.New(fmt.Sprintf("unknown reorg type %v", job.ReorgMeta.ReorgTp))
+		return nil, fmt.Errorf("unknown reorg type %v", job.ReorgMeta.ReorgTp)
 	}
 }
 
