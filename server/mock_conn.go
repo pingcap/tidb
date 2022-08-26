@@ -114,7 +114,8 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 	server.clients[cc.connectionID] = cc
 	cc.server.rwlock.Unlock()
 	tc.Session.SetSessionManager(server)
-	tc.Session.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil)
+	err = tc.Session.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil)
+	require.NoError(t, err)
 	return &mockConn{
 		clientConn: cc,
 		t:          t,
