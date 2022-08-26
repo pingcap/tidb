@@ -35,6 +35,13 @@ func getStringConstant(value string) *Constant {
 	}
 }
 
+func getIntConstant(num int64) *Constant {
+	return &Constant{
+		Value:   types.NewIntDatum(num),
+		RetType: types.NewFieldType(mysql.TypeLong),
+	}
+}
+
 func getVecExprBenchCaseForRegexpLike(inputs ...[]string) vecExprBenchCase {
 	gens := make([]dataGenerator, 0, 3)
 	paramTypes := make([]types.EvalType, 0, 3)
@@ -172,7 +179,7 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 	copy(matchTypeConstCase.constants, constants)
 	constants[2] = nil
 
-	// Prepare data: pattern and matchType are constant
+	// Prepare data: Memorization
 	constants[0] = nil
 	constants[1] = getStringConstant("abc")
 	constants[2] = getStringConstant("imn")
@@ -454,15 +461,59 @@ func TestRegexpSubstrVec(t *testing.T) {
 	}
 
 	// Prepare data: expr is constant
+	constants[0] = getStringConstant("好的 好滴 好~")
+	exprConstCase := getVecExprBenchCaseForRegexpSubstr(args...)
+	exprConstCase.constants = make([]*Constant, 5)
+	copy(exprConstCase.constants, constants)
+	constants[0] = nil
+
 	// Prepare data: pattern is constant
+	constants[1] = getStringConstant("aB.")
+	patConstCase := getVecExprBenchCaseForRegexpSubstr(args...)
+	patConstCase.constants = make([]*Constant, 5)
+	copy(patConstCase.constants, constants)
+	constants[1] = nil
+
 	// Prepare data: position is constant
+	constants[2] = getIntConstant(2)
+	posConstCase := getVecExprBenchCaseForRegexpSubstr(args...)
+	posConstCase.constants = make([]*Constant, 5)
+	copy(posConstCase.constants, constants)
+	constants[2] = nil
+
 	// Prepare data: occurrence is constant
+	constants[3] = getIntConstant(2)
+	occurConstCase := getVecExprBenchCaseForRegexpSubstr(args...)
+	occurConstCase.constants = make([]*Constant, 5)
+	copy(occurConstCase.constants, constants)
+	constants[3] = nil
+
 	// Prepare data: match type is constant
+	constants[4] = getStringConstant("mni")
+	matchTpConstCase := getVecExprBenchCaseForRegexpSubstr(args...)
+	matchTpConstCase.constants = make([]*Constant, 5)
+	copy(matchTpConstCase.constants, constants)
+	constants[4] = nil
+
+	// TODO test memorization
+	constants[1] = getStringConstant("aB.")
+	constants[4] = getStringConstant("mni")
+	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexpSubstr(args...)
+	patAndMatchTypeConstCase.constants = make([]*Constant, 5)
+	copy(patAndMatchTypeConstCase.constants, constants)
+	constants[1] = nil
+	constants[4] = nil
 
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpSubstrCases = map[string][]vecExprBenchCase{
 		ast.RegexpSubstr: {
 			getVecExprBenchCaseForRegexpSubstr(args...),
+			exprConstCase,
+			patConstCase,
+			posConstCase,
+			occurConstCase,
+			matchTpConstCase,
+			patAndMatchTypeConstCase,
 		},
 	}
 

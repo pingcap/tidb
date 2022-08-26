@@ -438,7 +438,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 //
 // return true: need, false: needless
 func (re *regexpSubstrFuncSig) needMemorization() bool {
-	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) == 5 || re.args[4].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) == 5 && re.args[4].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
@@ -498,7 +498,7 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		re.initMemoizedRegexp(re.compile, params[1].getCol(), n)
 	}
 
-	result.ResizeInt64(n, false)
+	result.ReserveString(n)
 	buffers := getBuffers(params)
 
 	// Start to calculate
