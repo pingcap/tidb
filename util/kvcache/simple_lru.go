@@ -228,3 +228,17 @@ func (l *SimpleLRUCache) RemoveOldest() (key Key, value Value, ok bool) {
 	}
 	return nil, nil, false
 }
+
+// memoryControl control the memory by quota and guard
+// todo: add quota, guard in lruPlanCache
+func (l *SimpleLRUCache) memoryControl() {
+	if l.quota == 0 {
+		return
+	}
+
+	memUsed, _ := memory.InstanceMemUsed()
+	for memUsed > uint64(float64(l.quota)*(1.0-l.guard)) {
+		l.RemoveOldest()
+		memUsed, _ = memory.InstanceMemUsed()
+	}
+}
