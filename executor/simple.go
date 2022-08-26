@@ -793,8 +793,22 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return err
 	}
 
+	lockAccount := false
+	if len(s.PasswordOrLockOptions) > 0 {
+		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
+		// the last declaration takes effect.
+		for i := len(s.PasswordOrLockOptions) - 1; i >= 0; i-- {
+			if s.PasswordOrLockOptions[i].Type == ast.Lock {
+				lockAccount = true
+				break
+			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
+				break
+			}
+		}
+	}
+
 	sql := new(strings.Builder)
-	if s.IsCreateRole {
+	if s.IsCreateRole || lockAccount {
 		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
 	} else {
 		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES `, mysql.SystemDB, mysql.UserTable)
@@ -844,7 +858,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		if s.IsCreateRole {
+		if s.IsCreateRole || lockAccount {
 			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, "Y")
 		} else {
 			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin)
@@ -910,6 +924,21 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			AuthOpt: s.CurrentAuth,
 		}
 		s.Specs = []*ast.UserSpec{spec}
+	}
+
+	lockAccount := ""
+	if len(s.PasswordOrLockOptions) > 0 {
+		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
+		// the last declaration takes effect.
+		for i := len(s.PasswordOrLockOptions) - 1; i >= 0; i-- {
+			if s.PasswordOrLockOptions[i].Type == ast.Lock {
+				lockAccount = "Y"
+				break
+			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
+				lockAccount = "N"
+				break
+			}
+		}
 	}
 
 	privData, err := tlsOption2GlobalPriv(s.TLSOptions)
@@ -993,6 +1022,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				`UPDATE %n.%n SET authentication_string=%?, plugin=%? WHERE Host=%? and User=%?;`,
 				mysql.SystemDB, mysql.UserTable, pwd, spec.AuthOpt.AuthPlugin, strings.ToLower(spec.User.Hostname), spec.User.Username,
 			)
+			if err != nil {
+				failedUsers = append(failedUsers, spec.User.String())
+			}
+		}
+
+		if len(lockAccount) != 0 {
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil,
+				`UPDATE %n.%n SET account_locked=%? WHERE Host=%? and User=%?;`,
+				mysql.SystemDB, mysql.UserTable, lockAccount, spec.User.Hostname, spec.User.Username)
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
 			}
