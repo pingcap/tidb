@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 )
 
-// CacheEntry wraps Key and Value. It's the value of list.Element.
-type CacheEntry struct {
+// planCacheEntry wraps Key and Value. It's the value of list.Element.
+type planCacheEntry struct {
 	PlanKey   kvcache.Key
 	PlanValue kvcache.Value
 }
@@ -70,7 +70,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
-			return element.Value.(*CacheEntry).PlanValue, true
+			return element.Value.(*planCacheEntry).PlanValue, true
 		}
 	}
 	return nil, false
@@ -86,7 +86,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	// bucket exist
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
-			element.Value.(*CacheEntry).PlanValue = value
+			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
 			return
 		}
@@ -94,7 +94,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 		l.buckets[hash] = make(map[*list.Element]struct{}, 1)
 	}
 
-	newCacheEntry := &CacheEntry{
+	newCacheEntry := &planCacheEntry{
 		PlanKey:   key,
 		PlanValue: value,
 	}
@@ -161,7 +161,7 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 func (l *LRUPlanCache) removeOldest() {
 	lru := l.lruList.Back()
 	if l.onEvict != nil {
-		l.onEvict(lru.Value.(*CacheEntry).PlanKey, lru.Value.(*CacheEntry).PlanValue)
+		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
 
 	l.lruList.Remove(lru)
@@ -171,6 +171,6 @@ func (l *LRUPlanCache) removeOldest() {
 
 // removeFromBucket remove element from bucket
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
-	bucket := l.buckets[string(hack.String(element.Value.(*CacheEntry).PlanKey.Hash()))]
+	bucket := l.buckets[string(hack.String(element.Value.(*planCacheEntry).PlanKey.Hash()))]
 	delete(bucket, element)
 }

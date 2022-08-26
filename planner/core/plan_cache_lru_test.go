@@ -53,7 +53,7 @@ type fakePlan struct {
 
 func pickFromBucket(bucket map[*list.Element]struct{}, ptypes []*types.FieldType) (*list.Element, bool) {
 	for element := range bucket {
-		itemsA := element.Value.(*CacheEntry).PlanValue.(*fakePlan).tps
+		itemsA := element.Value.(*planCacheEntry).PlanValue.(*fakePlan).tps
 		flag := true
 		for j := 0; j < len(itemsA); j++ {
 			if itemsA[j] != ptypes[j] {
@@ -109,7 +109,7 @@ func TestLRUPCPut(t *testing.T) {
 		bucket, exist := lru.buckets[string(hack.String(keys[i].Hash()))]
 		require.True(t, exist)
 		for element := range bucket {
-			require.NotEqual(t, vals[i], element.Value.(*CacheEntry).PlanValue)
+			require.NotEqual(t, vals[i], element.Value.(*planCacheEntry).PlanValue)
 		}
 		require.Equal(t, vals[i], maxMemDroppedKv[keys[i]])
 	}
@@ -118,7 +118,7 @@ func TestLRUPCPut(t *testing.T) {
 	root := lru.lruList.Front()
 	require.NotNil(t, root)
 	for i := 4; i >= 2; i-- {
-		entry, ok := root.Value.(*CacheEntry)
+		entry, ok := root.Value.(*planCacheEntry)
 		require.True(t, ok)
 		require.NotNil(t, entry)
 
@@ -186,7 +186,7 @@ func TestLRUPCGet(t *testing.T) {
 		root := lru.lruList.Front()
 		require.NotNil(t, root)
 
-		entry, ok := root.Value.(*CacheEntry)
+		entry, ok := root.Value.(*planCacheEntry)
 		require.True(t, ok)
 		require.Equal(t, keys[i], entry.PlanKey)
 
