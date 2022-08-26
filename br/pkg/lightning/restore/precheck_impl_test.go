@@ -51,7 +51,6 @@ func (s *precheckImplSuite) SetupTest() {
 	s.cfg = config.NewConfig()
 	s.cfg.TikvImporter.Backend = config.BackendLocal
 	s.Require().NoError(s.setMockImportData(nil))
-
 }
 
 func (s *precheckImplSuite) setMockImportData(mockDataMap map[string]*mock.MockDBSourceData) error {
@@ -60,7 +59,7 @@ func (s *precheckImplSuite) setMockImportData(mockDataMap map[string]*mock.MockD
 	if err != nil {
 		return err
 	}
-	s.preInfoGetter, err = NewPreRestoreInfoGetter(s.cfg, s.mockSrc.GetAllDBFileMetas(), s.mockSrc.GetStorage(), s.mockTarget, nil, nil)
+	s.preInfoGetter, err = NewPreRestoreInfoGetter(s.cfg, s.mockSrc.GetAllDBFileMetas(), s.mockSrc.GetStorage(), s.mockTarget, nil, nil, WithIgnoreDBNotExist(true))
 	if err != nil {
 		return err
 	}

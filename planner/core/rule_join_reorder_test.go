@@ -33,7 +33,7 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
 		Warning []string
 	}
 	joinReorderSuiteData := plannercore.GetJoinReorderSuiteData()
-	joinReorderSuiteData.GetTestCasesByName(name, t, &input, &output)
+	joinReorderSuiteData.LoadTestCasesByName(name, t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -47,8 +47,7 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
 }
 
 func TestStraightJoinHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -62,8 +61,7 @@ func TestStraightJoinHint(t *testing.T) {
 }
 
 func TestLeadingJoinHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -85,8 +83,7 @@ func TestLeadingJoinHint(t *testing.T) {
 }
 
 func TestJoinOrderHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -169,8 +166,7 @@ func TestJoinOrderHint(t *testing.T) {
 }
 
 func TestJoinOrderHintWithBinding(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -218,8 +214,7 @@ func TestJoinOrderHintWithBinding(t *testing.T) {
 }
 
 func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -233,12 +228,12 @@ func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
 	tk.MustExec(`create table t6(a int, b int) partition by hash(b) partitions 3`)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode="static"`)
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4StaticPartitionTable")
 }
 
 func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -252,12 +247,12 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 	tk.MustExec(`create table t6(a int, b int) partition by hash(b) partitions 3`)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DynamicPartitionTable")
 }
 
 func TestJoinOrderHint4DifferentJoinType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -271,13 +266,13 @@ func TestJoinOrderHint4DifferentJoinType(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DifferentJoinType")
 }
 
 func TestJoinOrderHint4TiFlash(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1, t2, t3;")
@@ -288,6 +283,7 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 	tk.MustExec("create table t4(a int, b int, key(a));")
 	tk.MustExec("create table t5(a int, b int, key(a));")
 	tk.MustExec("create table t6(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -309,8 +305,7 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 }
 
 func TestJoinOrderHint4Subquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -331,8 +326,7 @@ func TestJoinOrderHint4Subquery(t *testing.T) {
 }
 
 func TestLeadingJoinHint4OuterJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -346,5 +340,57 @@ func TestLeadingJoinHint4OuterJoin(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestLeadingJoinHint4OuterJoin")
+}
+
+func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `t1` (`data_status` tinyint(1) DEFAULT '0',`part` tinyint(255) unsigned DEFAULT NULL);")
+	tk.MustExec("CREATE TABLE `t2` (`id` bigint(20) NOT NULL AUTO_INCREMENT,`routing_rule_switch` tinyint(1) DEFAULT '0',PRIMARY KEY (`id`));")
+	tk.MustExec("CREATE TABLE `t3` (`fk_id` bigint(20) DEFAULT NULL,`offer_pbu_id` varchar(255) DEFAULT NULL ,`market_id` smallint(6) DEFAULT NULL ,`te_partition` tinyint(255) DEFAULT NULL ,UNIQUE KEY `t_pbu_partition_id` (`offer_pbu_id`,`market_id`,`te_partition`));")
+	tk.MustExec("insert into t1 values(1,1);")
+	tk.MustExec("insert into t2 values(1,0);")
+	tk.MustExec("insert into t3 values(8,'a',3,6);")
+
+	sql := `
+SELECT tt.market_id,
+	tt.offer_pbu_id
+FROM   t3 tt
+	RIGHT JOIN (SELECT pp.offer_pbu_id,
+			   pp.market_id,
+			   t.partition_no
+		    FROM   (SELECT p.offer_pbu_id,
+				   p.market_id
+			    FROM   t3 p
+				   INNER JOIN t2 e
+					   ON p.fk_id = e.id
+					      AND e.routing_rule_switch = 1) pp,
+			   (SELECT part AS partition_no
+			    FROM   t1) t) o
+		ON tt.market_id = o.market_id
+		   AND tt.offer_pbu_id = o.offer_pbu_id
+		   AND tt.te_partition = o.partition_no;`
+	tk.MustQuery(sql).Check(testkit.Rows())
+	tk.MustQuery("explain format=brief" + sql).Check(testkit.Rows(
+		"Projection 155781.72 root  test.t3.market_id, test.t3.offer_pbu_id",
+		"└─HashJoin 155781.72 root  right outer join, equal:[eq(test.t3.market_id, test.t3.market_id) eq(test.t3.offer_pbu_id, test.t3.offer_pbu_id) eq(test.t3.te_partition, test.t1.part)]",
+		"  ├─IndexReader(Build) 9970.03 root  index:Selection",
+		"  │ └─Selection 9970.03 cop[tikv]  not(isnull(test.t3.market_id)), not(isnull(test.t3.te_partition))",
+		"  │   └─IndexFullScan 9990.00 cop[tikv] table:tt, index:t_pbu_partition_id(offer_pbu_id, market_id, te_partition) keep order:false, stats:pseudo",
+		"  └─HashJoin(Probe) 125000.00 root  CARTESIAN inner join",
+		"    ├─HashJoin(Build) 12.50 root  inner join, equal:[eq(test.t2.id, test.t3.fk_id)]",
+		"    │ ├─TableReader(Build) 10.00 root  data:Selection",
+		"    │ │ └─Selection 10.00 cop[tikv]  eq(test.t2.routing_rule_switch, 1)",
+		"    │ │   └─TableFullScan 10000.00 cop[tikv] table:e keep order:false, stats:pseudo",
+		"    │ └─TableReader(Probe) 9990.00 root  data:Selection",
+		"    │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.fk_id))",
+		"    │     └─TableFullScan 10000.00 cop[tikv] table:p keep order:false, stats:pseudo",
+		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
 }

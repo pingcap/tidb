@@ -15,12 +15,17 @@ package restore
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	mysql_sql_driver "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -121,44 +126,39 @@ func TestGetPreInfoHasDefault(t *testing.T) {
 
 func TestGetPreInfoAutoRandomBits(t *testing.T) {
 	subCases := []struct {
-		ColDef               string
-		ExpectAutoRandomBits uint64
+		ColDef                    string
+		ExpectAutoRandomBits      uint64
+		ExpectAutoRandomRangeBits uint64
 	}{
 		{
-			ColDef:               "varchar(16)",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "varchar(16)",
+			ExpectAutoRandomBits:      0,
+			ExpectAutoRandomRangeBits: 0,
 		},
 		{
-			ColDef:               "varchar(16) AUTO_RANDOM",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM",
+			ExpectAutoRandomBits:      5,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "INTEGER PRIMARY KEY AUTO_RANDOM",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(3)",
+			ExpectAutoRandomBits:      3,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM AUTO_INCREMENT",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM",
+			ExpectAutoRandomBits:      5,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM(3)",
-			ExpectAutoRandomBits: 3,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(5, 64)",
+			ExpectAutoRandomBits:      5,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM",
-			ExpectAutoRandomBits: 5,
-		},
-		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM(20)",
-			ExpectAutoRandomBits: 0,
-		},
-		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM(0)",
-			ExpectAutoRandomBits: 0,
-		},
-		{
-			ColDef:               "BIGINT AUTO_RANDOM",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(2, 32)",
+			ExpectAutoRandomBits:      2,
+			ExpectAutoRandomRangeBits: 32,
 		},
 	}
 	for _, subCase := range subCases {
@@ -166,6 +166,7 @@ func TestGetPreInfoAutoRandomBits(t *testing.T) {
 		tblInfo, err := newTableInfo(createTblSQL, 1)
 		require.Nil(t, err)
 		require.Equal(t, subCase.ExpectAutoRandomBits, tblInfo.AutoRandomBits, subCase.ColDef)
+		require.Equal(t, subCase.ExpectAutoRandomRangeBits, tblInfo.AutoRandomRangeBits, subCase.ColDef)
 	}
 }
 
@@ -222,7 +223,7 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 	tblStructMap, err := ig.GetAllTableStructures(ctx)
 	require.Nil(t, err)
@@ -395,7 +396,7 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 	mockTarget := mock.NewMockTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 
 	mdDBMeta := mockSrc.GetAllDBFileMetas()[0]
@@ -485,7 +486,7 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 	mockTarget := mock.NewMockTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 
 	sizeResult, err := ig.EstimateSourceDataSize(ctx)
@@ -494,4 +495,49 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 	require.GreaterOrEqual(t, sizeResult.SizeWithIndex, sizeResult.SizeWithoutIndex)
 	require.Equal(t, int64(len(testData)), sizeResult.SizeWithoutIndex)
 	require.False(t, sizeResult.HasUnsortedBigTables)
+}
+
+func TestGetPreInfoIsTableEmpty(t *testing.T) {
+	ctx := context.TODO()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	lnConfig := config.NewConfig()
+	lnConfig.TikvImporter.Backend = config.BackendLocal
+	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db)
+	require.NoError(t, err)
+	require.Equal(t, lnConfig, targetGetter.cfg)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnError(&mysql_sql_driver.MySQLError{
+			Number:  errno.ErrNoSuchTable,
+			Message: "Table 'test_db.test_tbl' doesn't exist",
+		})
+	pIsEmpty, err := targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.NoError(t, err)
+	require.NotNil(t, pIsEmpty)
+	require.Equal(t, true, *pIsEmpty)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnRows(
+			sqlmock.NewRows([]string{"1"}).
+				RowError(0, sql.ErrNoRows),
+		)
+	pIsEmpty, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.NoError(t, err)
+	require.NotNil(t, pIsEmpty)
+	require.Equal(t, true, *pIsEmpty)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnRows(
+			sqlmock.NewRows([]string{"1"}).AddRow(1),
+		)
+	pIsEmpty, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.NoError(t, err)
+	require.NotNil(t, pIsEmpty)
+	require.Equal(t, false, *pIsEmpty)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnError(errors.New("some dummy error"))
+	_, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.Error(t, err)
 }

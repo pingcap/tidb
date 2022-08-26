@@ -22,8 +22,7 @@ import (
 )
 
 func TestTraceExec(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `create table trace (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -51,6 +50,10 @@ func TestTraceExec(t *testing.T) {
 	require.Greater(t, len(rows), 1)
 	require.True(t, rowsOrdered(rows))
 
+	rows = tk.MustQuery("trace format='row' analyze table trace").Rows()
+	require.Greater(t, len(rows), 1)
+	require.True(t, rowsOrdered(rows))
+
 	tk.MustExec("trace format='log' insert into trace (c1, c2, c3) values (1, 2, 3)")
 	rows = tk.MustQuery("trace format='log' select * from trace where id = 0;").Rows()
 	require.GreaterOrEqual(t, len(rows), 1)
@@ -72,8 +75,7 @@ func rowsOrdered(rows [][]interface{}) bool {
 }
 
 func TestTracePlanStmt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tp123(id int);")

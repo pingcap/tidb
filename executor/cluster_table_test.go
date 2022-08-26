@@ -63,8 +63,7 @@ func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 }
 
 func TestClusterTableSlowQuery(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
@@ -172,8 +171,7 @@ select 7;`
 }
 
 func TestIssue20236(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
@@ -272,8 +270,7 @@ select 10;`
 }
 
 func TestSQLDigestTextRetriever(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
@@ -286,7 +283,7 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("insert into test_sql_digest_text_retriever values (1, 1)")
 
 	insertNormalized, insertDigest := parser.NormalizeDigest("insert into test_sql_digest_text_retriever values (1, 1)")
@@ -304,14 +301,13 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 }
 
 func TestFunctionDecodeSQLDigests(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 	tk.MustExec("drop table if exists test_func_decode_sql_digests")
@@ -365,27 +361,26 @@ func TestFunctionDecodeSQLDigests(t *testing.T) {
 }
 
 func TestFunctionDecodeSQLDigestsPrivilege(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
 	dropUserTk := testkit.NewTestKit(t, store)
-	require.True(t, dropUserTk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, dropUserTk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("create user 'testuser'@'localhost'")
 	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil))
 	tk.MustGetErrMsg("select tidb_decode_sql_digests('[\"aa\"]')", "[expression:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
 	tk = testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("create user 'testuser2'@'localhost'")
 	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser2", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser2", Hostname: "localhost"}, nil, nil))
 	tk.MustExec("select tidb_decode_sql_digests('[\"aa\"]')")
 }
 

@@ -50,12 +50,12 @@ import (
 )
 
 var (
-	// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
-	RunWorker = true
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = atomicutil.NewInt32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
+
+	mockDDLErrOnce = int64(0)
 )
 
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
@@ -294,7 +294,9 @@ func (d *ddl) limitDDLJobs() {
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
 	var err error
-	if variable.EnableConcurrentDDL.Load() {
+	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
+	toTable := variable.EnableConcurrentDDL.Load() && !variable.DDLForce2Queue.Load()
+	if toTable {
 		err = d.addBatchDDLJobs2Table(tasks)
 	} else {
 		err = d.addBatchDDLJobs2Queue(tasks)
@@ -309,7 +311,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs), zap.Bool("table", toTable))
 	}
 }
 
@@ -402,7 +404,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		sess, err1 := d.sessPool.get()
 		if err1 == nil {
 			sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			err1 = insertDDLJobs2Table(newSession(sess), jobTasks, true)
+			err1 = insertDDLJobs2Table(newSession(sess), true, jobTasks...)
 			d.sessPool.put(sess)
 		}
 		err = err1
@@ -700,7 +702,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 	}
 	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
 		if val.(bool) {
-			time.Sleep(time.Duration(rand.Intn(5)) * time.Second) // #nosec G404
+			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
 		}
 	})
 	txn, err := w.sess.txn()
@@ -781,6 +783,15 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 		time.Sleep(GetWaitTimeWhenErrorOccurred())
 	}
+
+	failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+		if val.(bool) {
+			if mockDDLErrOnce == 0 {
+				mockDDLErrOnce = schemaVer
+				failpoint.Return(errors.New("mock for ddl down"))
+			}
+		}
+	})
 
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
@@ -875,9 +886,11 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			if once {
-				w.waitSchemaSynced(d, job, waitTime)
-				once = false
-				return nil
+				err = w.waitSchemaSynced(d, job, waitTime)
+				if err == nil {
+					once = false
+				}
+				return err
 			}
 
 			if job.IsDone() || job.IsRollbackDone() {
@@ -1283,7 +1296,6 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
-		d.schemaSyncer.NotifyCleanExpiredPaths()
 		// Wait until timeout.
 		<-ctx.Done()
 		return
@@ -1300,19 +1312,34 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 // but in this case we don't wait enough 2 * lease time to let other servers update the schema.
 // So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
 // in a cluster, or to wait for 2 * lease time.
-func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) {
+func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
-		return
+		return nil
 	}
 	ctx, cancelFunc := context.WithTimeout(w.ctx, waitTime)
 	defer cancelFunc()
 
-	latestSchemaVersion, err := d.schemaSyncer.MustGetGlobalVersion(ctx)
+	ver, _ := w.store.CurrentVersion(kv.GlobalTxnScope)
+	snapshot := w.store.GetSnapshot(ver)
+	m := meta.NewSnapshotMeta(snapshot)
+	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		logutil.Logger(w.logCtx).Warn("[ddl] get global version failed", zap.Error(err))
-		return
+		return err
 	}
+
+	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+		if val.(bool) {
+			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
+				panic("check down before update global version failed")
+			} else {
+				mockDDLErrOnce = -1
+			}
+		}
+	})
+
 	w.waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
+	return nil
 }
 
 func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOption {
