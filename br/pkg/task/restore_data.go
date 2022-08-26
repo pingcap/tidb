@@ -68,7 +68,7 @@ func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64,
 	return metaInfo.GetResolvedTS(), metaInfo.TiKVComponent.Replicas, nil
 }
 
-func removeSchedulersForDataPhase(ctx context.Context, p *pdutil.PdController) (undo pdutil.UndoFunc, err error) {
+func removeAllPDSchedulers(ctx context.Context, p *pdutil.PdController) (undo pdutil.UndoFunc, err error) {
 	undo = pdutil.Nop
 
 	// during phase-2, pd is fresh and in recovering-mode(recovering-mark=true), there's no leader
@@ -154,7 +154,7 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 
 	// stop scheduler before recover data
 	log.Info("starting to remove some PD schedulers")
-	restoreFunc, e := removeSchedulersForDataPhase(ctx, mgr.PdController)
+	restoreFunc, e := removeAllPDSchedulers(ctx, mgr.PdController)
 	if e != nil {
 		return errors.Trace(err)
 	}
