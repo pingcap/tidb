@@ -15,9 +15,11 @@
 package util
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"go.uber.org/zap"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -31,20 +33,23 @@ import (
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID               uint64
-	User             string
-	Host             string
-	Port             string
-	DB               string
-	Digest           string
-	Plan             interface{}
-	PlanExplainRows  [][]string
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
-	Time             time.Time
-	Info             string
-	CurTxnStartTS    uint64
-	StmtCtx          *stmtctx.StatementContext
-	StatsInfo        func(interface{}) map[string]uint64
+	ID                    uint64
+	User                  string
+	Host                  string
+	Port                  string
+	DB                    string
+	Digest                string
+	Plan                  interface{}
+	PlanExplainRows       [][]string
+	CurrentAnalyzeRows    func(interface{}, *execdetails.RuntimeStatsColl) [][]string
+	RuntimeStatsColl      *execdetails.RuntimeStatsColl
+	Time                  time.Time
+	Info                  string
+	CurTxnStartTS         uint64
+	ctx                   context.Context
+	StmtCtx               *stmtctx.StatementContext
+	OomAlarmVariablesInfo []zap.Field
+	StatsInfo             func(interface{}) map[string]uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime uint64

@@ -133,7 +133,8 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	if recordToS3 := config.GetGlobalConfig().S3.EnableUploadOOMRecord; recordToS3 {
 		record.initS3Config()
 	}
-	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
+	record.memoryUsageAlarmRatio = 0.01
+	//record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
 	record.memoryUsageAlarmDesensitizationEnable = variable.MemoryUsageAlarmDesensitizationEnable.Load()
 	record.memoryUsageAlarmTruncationEnable = variable.MemoryUsageAlarmTruncationEnable.Load()
 	record.autoGcRatio = variable.AutoGcMemoryRatio.Load()
@@ -278,13 +279,25 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 }
 
-func (record *memoryUsageAlarm) getRelevantSystemVariableBuf() strings.Builder {
+func (record *memoryUsageAlarm) getRelevantSystemVariableBuf() string {
 	var buf strings.Builder
 	buf.WriteString(fmt.Sprintf("System variables : \n"))
 	buf.WriteString(fmt.Sprintf("oom-action: %v \n", config.GetGlobalConfig().OOMAction))
 	buf.WriteString(fmt.Sprintf("mem-quota-query : %v \n", config.GetGlobalConfig().MemQuotaQuery))
 	buf.WriteString(fmt.Sprintf("server-memory-quota : %v \n", config.GetGlobalConfig().Performance.ServerMemoryQuota))
-	return buf
+	buf.WriteString("\n")
+	return buf.String()
+}
+
+func (record *memoryUsageAlarm) getCurrentAnalyzePlan(info *util.ProcessInfo) string {
+	var buf strings.Builder
+	buf.WriteString("current_analyze_plan:\n")
+	rows := info.CurrentAnalyzeRows(info.Plan, info.RuntimeStatsColl)
+	buf.WriteString(fmt.Sprintf("%v/r%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/n", "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"))
+	for _, row := range rows {
+		buf.WriteString(fmt.Sprintf("%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/n", row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]))
+	}
+	return buf.String()
 }
 
 func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error) {
@@ -297,6 +310,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 	}
 
 	fileName := filepath.Join(record.tmpDir, "running_sql"+record.lastCheckTime.Format(time.RFC3339))
+	println(fileName)
 	record.lastLogFileName = append(record.lastLogFileName, fileName)
 	f, err := os.Create(fileName)
 	if err != nil {
@@ -310,11 +324,9 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 		}
 	}()
 
-	buf := record.getRelevantSystemVariableBuf()
-	if _, err = f.WriteString(buf.String()); err != nil {
+	if _, err = f.WriteString(record.getRelevantSystemVariableBuf()); err != nil {
 		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
 	}
-	buf.WriteString("\n")
 
 	printTop10 := func(cmp func(i, j *util.ProcessInfo) bool) {
 		slices.SortFunc(pinfo, cmp)
@@ -326,6 +338,8 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 		for i, info := range list {
 			buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
 			fields := genLogFields(record.lastCheckTime.Sub(info.Time), info, record.memoryUsageAlarmTruncationEnable, record.memoryUsageAlarmDesensitizationEnable)
+			fields = append(fields, info.OomAlarmVariablesInfo...)
+			fields = append(fields, zap.String("current_analyze_plan", record.getCurrentAnalyzePlan(info)))
 			for _, field := range fields {
 				switch field.Type {
 				case zapcore.StringType:
@@ -334,9 +348,12 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 					buf.WriteString(fmt.Sprintf("%v: %v", field.Key, uint64(field.Integer)))
 				case zapcore.Int8Type, zapcore.Int16Type, zapcore.Int32Type, zapcore.Int64Type:
 					buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer))
+				case zapcore.BoolType:
+					buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer == 1))
 				}
 				buf.WriteString("\n")
 			}
+			buf.WriteString(record.getCurrentAnalyzePlan(info))
 		}
 		buf.WriteString("\n")
 		if _, err = f.WriteString(buf.String()); err != nil {
