@@ -1914,7 +1914,7 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		handleCol = tbInfo.GetPkColInfo()
 	}
 	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < 1 {
+		if fk.Version < model.FKVersion1 {
 			continue
 		}
 		if handleCol != nil && len(fk.Cols) == 1 && handleCol.Name.L == fk.Cols[0].L {
@@ -1923,8 +1923,9 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		if model.FindIndexByColumns(tbInfo, fk.Cols...) != nil {
 			continue
 		}
+		idxName := fk.Name
 		for _, idx := range tbInfo.Indices {
-			if idx.Name.L == fk.Name.L {
+			if idx.Name.L == idxName.L {
 				return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", fk.Name.O)
 			}
 		}
@@ -1932,10 +1933,10 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		for _, col := range fk.Cols {
 			keys = append(keys, &ast.IndexPartSpecification{
 				Column: &ast.ColumnName{Name: col},
-				Length: -1,
+				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, fk.Name, false, false, false, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, idxName, false, false, false, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -6124,7 +6125,7 @@ func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPa
 		Cols:      make([]model.CIStr, len(keys)),
 	}
 	if variable.EnableForeignKey.Load() {
-		fkInfo.Version = 1
+		fkInfo.Version = model.FKVersion1
 	}
 
 	for i, key := range keys {

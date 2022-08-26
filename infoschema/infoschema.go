@@ -431,7 +431,7 @@ func (is *infoSchema) deletePolicy(name string) {
 
 func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < 1 {
+		if fk.Version < model.FKVersion1 {
 			continue
 		}
 		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
@@ -471,7 +471,7 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 
 func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < 1 {
+		if fk.Version < model.FKVersion1 {
 			continue
 		}
 		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}

@@ -127,7 +127,7 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 	}
 	fkCheck := sctx.GetSessionVars().ForeignKeyChecks
 	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < 1 {
+		if fk.Version < model.FKVersion1 {
 			continue
 		}
 		err := checkTableForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
@@ -195,7 +195,7 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, t
 		return true, errors.New("need wait owner to load latest schema")
 	}
 	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < 1 {
+		if fk.Version < model.FKVersion1 {
 			continue
 		}
 		var referTableInfo *model.TableInfo

@@ -1478,6 +1478,15 @@ type FKInfo struct {
 	Version   int         `json:"version"`
 }
 
+const (
+	// FKVersion0 indicate the FKInfo version is 0.
+	// In FKVersion0, TiDB only supported syntax of foreign key, but the foreign key constraint doesn't take effect.
+	FKVersion0 = 0
+	// FKVersion1 indicate the FKInfo version is 1.
+	// In FKVersion1, TiDB start to supported foreign key constrain.
+	FKVersion1 = 1
+)
+
 // ReferredFKInfo provides the cited foreign key in the child table.
 type ReferredFKInfo struct {
 	Cols        []CIStr `json:"cols"`
