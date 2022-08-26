@@ -341,6 +341,7 @@ func (re *regexpSubstrFuncSig) Clone() builtinFunc {
 	newSig := &regexpSubstrFuncSig{}
 	newSig.cloneFrom(&re.baseBuiltinFunc)
 	newSig.clone(&re.regexpBaseFuncSig)
+	newSig.isBinCollation = re.isBinCollation
 	return newSig
 }
 
