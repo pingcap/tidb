@@ -190,8 +190,8 @@ func TestOOMAction(t *testing.T) {
 	require.False(t, action1.called)
 	require.False(t, action2.called)
 	tracker.Consume(10000)
-	require.True(t, action1.called)
-	require.False(t, action2.called)
+	require.True(t, action2.called)
+	require.False(t, action1.called)
 	tracker.Consume(10000)
 	require.True(t, action1.called)
 	require.True(t, action2.called)
@@ -201,20 +201,20 @@ func TestOOMAction(t *testing.T) {
 	action1 = &mockAction{}
 	action2 = &mockAction{}
 	action3 := &mockAction{}
-	tracker.FallbackOldAndSetNewActionForSoftLimit(action1)
+	tracker.SetActionOnExceed(action1)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
-	tracker.SetActionOnExceed(action3)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action3)
+	require.False(t, action3.called)
+	require.False(t, action2.called)
 	require.False(t, action1.called)
-	require.False(t, action2.called)
-	require.False(t, action3.called)
 	tracker.Consume(80)
-	require.True(t, action1.called)
+	require.True(t, action3.called)
 	require.False(t, action2.called)
-	require.False(t, action3.called)
+	require.False(t, action1.called)
 	tracker.Consume(20)
-	require.True(t, action1.called)
+	require.True(t, action3.called)
 	require.True(t, action2.called) // SoftLimit fallback
-	require.True(t, action3.called) // HardLimit
+	require.True(t, action1.called) // HardLimit
 
 	// test fallback
 	action1 = &mockAction{}
@@ -227,13 +227,13 @@ func TestOOMAction(t *testing.T) {
 	tracker.FallbackOldAndSetNewAction(action3)
 	tracker.FallbackOldAndSetNewAction(action4)
 	tracker.FallbackOldAndSetNewAction(action5)
-	require.Equal(t, action1, tracker.actionMuForHardLimit.actionOnExceed)
-	require.Equal(t, action2, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
-	action2.SetFinished()
+	require.Equal(t, action5, tracker.actionMuForHardLimit.actionOnExceed)
+	require.Equal(t, action4, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action4.SetFinished()
 	require.Equal(t, action3, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
 	action3.SetFinished()
-	action4.SetFinished()
-	require.Equal(t, action5, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action2.SetFinished()
+	require.Equal(t, action1, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
 }
 
 type mockAction struct {
