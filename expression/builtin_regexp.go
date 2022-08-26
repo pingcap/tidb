@@ -63,6 +63,8 @@ func (re *regexpBaseFuncSig) clone(from *regexpBaseFuncSig) {
 		re.memorizedRegexp = from.memorizedRegexp.Copy()
 	}
 	re.memorizedErr = from.memorizedErr
+	re.compile = from.compile
+	re.cloneFrom(&from.baseBuiltinFunc)
 }
 
 // Convert mysql match type format to re2 format
@@ -314,7 +316,6 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	sig := regexpSubstrFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
-	sig.cloneFrom(&bf)
 
 	if bf.collation == charset.CollationBin {
 		sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrSig)
@@ -328,7 +329,6 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 }
 
 type regexpSubstrFuncSig struct {
-	baseBuiltinFunc
 	regexpBaseFuncSig
 	isBinCollation bool
 }
@@ -361,6 +361,10 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	matchType := ""
 	arg_num := len(re.args)
 	var bexpr []byte
+
+	if re.isBinCollation {
+		bexpr = []byte(expr)
+	}
 
 	if arg_num >= 3 {
 		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
