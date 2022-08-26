@@ -1021,11 +1021,11 @@ const (
 	DefTiDBEnableGeneralPlanCache                  = false
 	DefTiDBGeneralPlanCacheSize                    = 100
 	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize           int32  = 10240
-	MinDDLReorgBatchSize           int32  = 32
-	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	DefAutoBuildStatsConcurrency                   = 1
-	DefTiDBSysProcScanConcurrency                  = 1
+	MaxDDLReorgBatchSize             int32  = 10240
+	MinDDLReorgBatchSize             int32  = 32
+	MinExpensiveQueryTimeThreshold   uint64 = 10 // 10s
+	DefTiDBAutoBuildStatsConcurrency        = 1
+	DefTiDBSysProcScanConcurrency           = 1
 )
 
 // Process global variables.

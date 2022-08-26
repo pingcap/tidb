@@ -453,8 +453,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			concurrency, err3 := strconv.ParseInt(sVal, 10, 64)
 			terror.Log(err3)
 			sctx.GetSessionVars().SetDistSQLScanConcurrency(int(concurrency))
-			sctx.GetSessionVars().SetIndexSerialScanConcurrency(int(concurrency))
 		}
+		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
 			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
