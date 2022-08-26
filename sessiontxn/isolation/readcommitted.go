@@ -121,9 +121,7 @@ func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
 	disableWarmup := false
 	sessionVars := sctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 &&
-		(sessionVars.RcInsertUseLastTso || sessionVars.RcPointLockReadUseLastTso) &&
-		sessionVars.InTxn() {
+	if sessionVars.ConnectionID > 0 && sessionVars.RcWriteCheckTS && sessionVars.InTxn() {
 		realNode := node
 		if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
 			// In fact, Optimize hasn't called `txnManager.AdviseWarmup()` for `ExecuteStmt` any more if
@@ -140,16 +138,16 @@ func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
 		// statements which makes tso wait time a little more for text protocol sql
 		switch v := realNode.(type) {
 		case *ast.InsertStmt:
-			disableWarmup = v.Select == nil && sessionVars.RcInsertUseLastTso
+			disableWarmup = v.Select == nil && sessionVars.RcWriteCheckTS
 		case *ast.UpdateStmt:
-			disableWarmup = sessionVars.RcPointLockReadUseLastTso
+			disableWarmup = sessionVars.RcWriteCheckTS
 		case *ast.DeleteStmt:
-			disableWarmup = sessionVars.RcPointLockReadUseLastTso
+			disableWarmup = sessionVars.RcWriteCheckTS
 		case *ast.SelectStmt:
 			if v.LockInfo != nil && (v.LockInfo.LockType == ast.SelectLockForUpdate ||
 				v.LockInfo.LockType == ast.SelectLockForUpdateNoWait ||
 				v.LockInfo.LockType == ast.SelectLockForUpdateWaitN) {
-				disableWarmup = sessionVars.RcPointLockReadUseLastTso
+				disableWarmup = sessionVars.RcWriteCheckTS
 			}
 		}
 	}
@@ -287,7 +285,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
-		return sctx.GetSessionVars().RcPointLockReadUseLastTso && (v.Lock || inLockOrWriteStmt)
+		return sctx.GetSessionVars().RcWriteCheckTS && (v.Lock || inLockOrWriteStmt)
 	case plannercore.PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false

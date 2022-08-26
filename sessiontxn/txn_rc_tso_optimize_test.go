@@ -43,8 +43,7 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = true")
-	tk.MustExec("set global tidb_rc_insert_use_last_tso = true")
+	tk.MustExec("set global tidb_rc_write_check_ts = true")
 	tk.RefreshSession()
 	sctx := tk.Session()
 
@@ -96,8 +95,7 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(198), count)
 
-	tk.MustExec("set session tidb_rc_point_lock_read_use_last_tso = false")
-	tk.MustExec("set session tidb_rc_insert_use_last_tso = false")
+	tk.MustExec("set session tidb_rc_write_check_ts = false")
 	tk.MustExec("delete from t1")
 	tk.MustExec("delete from t2")
 	tk.MustExec("insert into t1 values (1, 1, 1)")
@@ -146,8 +144,7 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = true")
-	tk.MustExec("set global tidb_rc_insert_use_last_tso = true")
+	tk.MustExec("set global tidb_rc_write_check_ts = true")
 	tk.RefreshSession()
 	sctx := tk.Session()
 
@@ -368,9 +365,8 @@ func TestRcTSOCmdCountForTextSQLExecute(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = true")
-	tk.MustExec("set global tidb_rc_insert_use_last_tso = true")
+	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set global tidb_rc_write_check_ts = true")
 	tk.RefreshSession()
 	sctx := tk.Session()
 
@@ -403,8 +399,7 @@ func TestRcTSOCmdCountForTextSQLExecute(t *testing.T) {
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(297), count)
 
-	tk.MustExec("set session tidb_rc_point_lock_read_use_last_tso = false")
-	tk.MustExec("set session tidb_rc_insert_use_last_tso = false")
+	tk.MustExec("set session tidb_rc_write_check_ts = false")
 	tk.MustExec("delete from t1")
 	tk.MustExec("delete from t2")
 	tk.MustExec("insert into t1 values (1, 1, 1)")
@@ -459,9 +454,8 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set global tidb_rc_point_lock_read_use_last_tso = true")
-	tk.MustExec("set global tidb_rc_insert_use_last_tso = true")
+	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set global tidb_rc_write_check_ts = true")
 	tk.RefreshSession()
 	sctx := tk.Session()
 

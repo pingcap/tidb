@@ -1181,10 +1181,8 @@ type SessionVars struct {
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
 	RcReadCheckTS bool
-	// RcPointLockReadUseLastTso indicates whether point-lock-read doesn't get latest tso from PD at RC
-	RcPointLockReadUseLastTso bool
-	// RcInsertUseLastTso indicates wthether insert sqls doesn't get latest tso from PD at RC
-	RcInsertUseLastTso bool
+	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
+	RcWriteCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.

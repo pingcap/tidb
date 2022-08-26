@@ -1701,12 +1701,8 @@ var defaultSysVars = []*SysVar{
 		s.RcReadCheckTS = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPointLockReadUseLastTso, Type: TypeBool, Value: BoolToOnOff(DefTiDBPointLockReadUseLastTso), SetSession: func(s *SessionVars, val string) error {
-		s.RcPointLockReadUseLastTso = TiDBOptOn(val)
-		return nil
-	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBInsertUseLastTso, Type: TypeBool, Value: BoolToOnOff(DefTiDBInsertUseLastTso), SetSession: func(s *SessionVars, val string) error {
-		s.RcInsertUseLastTso = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRcCheckTs, Type: TypeBool, Value: BoolToOnOff(DefTiDBWriteCheckTs), SetSession: func(s *SessionVars, val string) error {
+		s.RcWriteCheckTS = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRemoveOrderbyInSubquery, Value: BoolToOnOff(DefTiDBRemoveOrderbyInSubquery), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {

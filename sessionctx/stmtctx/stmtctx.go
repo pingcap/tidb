@@ -309,6 +309,8 @@ type StatementContext struct {
 
 	// See the detail in function `NeedDisableWarmupInOptimizer`.
 	// If DisableWarmupInOptimizer is true, Optimizer doesn't call txnManger.AdviseWarmup() to warmup.
+	// it is used to skip tso request in compile phase for some write statements when tidb_rc_write_check_ts
+	// is on and these statements meet specific scenarios.
 	DisableWarmupInOptimizer bool
 
 	// IsSQLRegistered uses to indicate whether the SQL has been registered for TopSQL.
