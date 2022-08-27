@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "@com_github_fatanugraha_noloopclosure//:go_default_library",
+        "@com_github_fatanugraha_noloopclosure//:noloopclosure",
     ],
 )
