@@ -2293,7 +2293,7 @@ def go_deps():
     )
     go_repository(
         name = "com_github_mattn_go_runewidth",
-        build_file_proto_mode = "disable_global",
+        build_file_proto_mode = "disable",
         importpath = "github.com/mattn/go-runewidth",
         sum = "h1:lTGmDsbAYt5DmK6OnoV7EuIF1wEIFAcxld6ypU4OSgU=",
         version = "v0.0.13",
