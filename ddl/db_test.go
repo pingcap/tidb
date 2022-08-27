@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -1577,7 +1578,7 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 
 	infoSyncer := dom.InfoSyncer()
-	sm := &testkit.MockSessionManager{
+	sm := &testutil.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	infoSyncer.SetSessionManager(sm)
@@ -1713,4 +1714,18 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 		}
 	}
+}
+
+func TestTiDBDownBeforeUpdateGlobalVersion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDownBeforeUpdateGlobalVersion", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkDownBeforeUpdateGlobalVersion", `return(true)`))
+	tk.MustExec("alter table t add column b int")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDownBeforeUpdateGlobalVersion"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkDownBeforeUpdateGlobalVersion"))
 }

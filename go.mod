@@ -27,6 +27,7 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1-0.20220403145359-8e850b710d6d
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/docker/go-units v0.4.0
+	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.13.0
 	github.com/fsouza/fake-gcs-server v1.19.0
 	github.com/go-sql-driver/mysql v1.6.0
@@ -79,7 +80,7 @@ require (
 	github.com/stretchr/testify v1.8.0
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.1-0.20220815094724-025596b7a20a
+	github.com/tikv/client-go/v2 v2.0.1-0.20220818084834-0d0ae0dcfb1f
 	github.com/tikv/pd/client v0.0.0-20220725055910-7187a7ab72db
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3

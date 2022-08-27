@@ -2526,6 +2526,8 @@ const (
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
 	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
+	// SlowLogIsSyncStatsFailed is used to indicate whether any failure happen during sync stats
+	SlowLogIsSyncStatsFailed = "IsSyncStatsFailed"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -2568,6 +2570,9 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
+	// table -> name -> status
+	StatsLoadStatus   map[string]map[string]string
+	IsSyncStatsFailed bool
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2662,6 +2667,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				buf.WriteString(k + ":" + vStr)
 				firstComma = true
 			}
+			if v != 0 && len(logItems.StatsLoadStatus[k]) > 0 {
+				writeStatsLoadStatusItems(&buf, logItems.StatsLoadStatus[k])
+			}
 		}
 		buf.WriteString("\n")
 	}
@@ -2732,6 +2740,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))
+	writeSlowLogItem(&buf, SlowLogIsSyncStatsFailed, strconv.FormatBool(logItems.IsSyncStatsFailed))
 	if s.StmtCtx.WaitLockLeaseTime > 0 {
 		writeSlowLogItem(&buf, SlowLogIsWriteCacheTable, strconv.FormatBool(logItems.IsWriteCacheTable))
 	}
@@ -2744,7 +2753,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.BinaryPlan) != 0 {
 		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
-
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
@@ -2758,7 +2766,24 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
 		buf.WriteString(";")
 	}
+
 	return buf.String()
+}
+
+func writeStatsLoadStatusItems(buf *bytes.Buffer, loadStatus map[string]string) {
+	if len(loadStatus) > 0 {
+		buf.WriteString("[")
+		firstComma := false
+		for name, status := range loadStatus {
+			if firstComma {
+				buf.WriteString("," + name + ":" + status)
+			} else {
+				buf.WriteString(name + ":" + status)
+				firstComma = true
+			}
+		}
+		buf.WriteString("]")
+	}
 }
 
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"

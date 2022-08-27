@@ -333,6 +333,10 @@ partition by range (a)
     partition p0 values less than (200),
     partition p1 values less than (300),
     partition p2 values less than maxvalue)`)
+
+	// Fix https://github.com/pingcap/tidb/issues/35827
+	tk.MustExec(`create table t37 (id tinyint unsigned, idpart tinyint, i varchar(255)) partition by range (idpart) (partition p1 values less than (-1));`)
+	tk.MustGetErrCode(`create table t38 (id tinyint unsigned, idpart tinyint unsigned, i varchar(255)) partition by range (idpart) (partition p1 values less than (-1));`, errno.ErrPartitionConstDomain)
 }
 
 func TestCreateTableWithHashPartition(t *testing.T) {
@@ -2115,6 +2119,10 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	tk.MustExec("alter table e18 exchange partition p0 with table e17")
 	tk.MustQuery("select * /*+ read_from_storage(tiflash[e18]) */ from e18").Check(testkit.Rows("1"))
 	tk.MustQuery("select * /*+ read_from_storage(tiflash[e17]) */ from e17").Check(testkit.Rows("2"))
+
+	tk.MustExec("create table e19 (a int) partition by hash(a) partitions 1")
+	tk.MustExec("create temporary table e20 (a int)")
+	tk.MustGetErrCode("alter table e19 exchange partition p0 with table e20", errno.ErrPartitionExchangeTempTable)
 }
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
@@ -2329,6 +2337,20 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			"create table nt32 (id bigint not null primary key);",
 			"alter table pt32 exchange partition p0 with table nt32;",
 			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			// global temporary table
+			"create table pt33 (id int) partition by hash(id) partitions 1;",
+			"create global temporary table nt33 (id int) on commit delete rows;",
+			"alter table pt33 exchange partition p0 with table nt33;",
+			dbterror.ErrPartitionExchangeTempTable,
+		},
+		{
+			// local temporary table
+			"create table pt34 (id int) partition by hash(id) partitions 1;",
+			"create temporary table nt34 (id int);",
+			"alter table pt34 exchange partition p0 with table nt34;",
+			dbterror.ErrPartitionExchangeTempTable,
 		},
 	}
 

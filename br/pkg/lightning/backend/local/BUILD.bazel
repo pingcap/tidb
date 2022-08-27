@@ -42,6 +42,7 @@ go_library(
         "//parser/mysql",
         "//table",
         "//tablecodec",
+        "//types",
         "//util/codec",
         "//util/engine",
         "//util/hack",
