@@ -2303,8 +2303,8 @@ def go_deps():
         name = "com_github_mattn_go_runewidth",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/mattn/go-runewidth",
-        sum = "h1:Y41i/hVW3Pgwr8gV+J23B9YEY0zxjptBuCWEaxmAOow=",
-        version = "v0.0.12",
+        sum = "h1:lTGmDsbAYt5DmK6OnoV7EuIF1wEIFAcxld6ypU4OSgU=",
+        version = "v0.0.13",
     )
     go_repository(
         name = "com_github_mattn_goveralls",
@@ -2968,8 +2968,8 @@ def go_deps():
         name = "com_github_rivo_uniseg",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/rivo/uniseg",
-        sum = "h1:S1pD9weZBuJdFmowNwbpi7BJ8TNftyUImj/0WQi72jY=",
-        version = "v0.2.0",
+        sum = "h1:3Z3Eu6FGHZWSfNKJTOUiPatWwfc7DzJRU04jFUqJODw=",
+        version = "v0.3.4",
     )
     go_repository(
         name = "com_github_rlmcpherson_s3gof3r",
@@ -4295,8 +4295,8 @@ def go_deps():
         name = "org_golang_x_sys",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sys",
-        sum = "h1:2QkjZIsXupsJbJIdSjjUOgWK3aEtzyuh2mPt3l/CkeU=",
-        version = "v0.0.0-20220811171246-fbc7d0a398ab",
+        sum = "h1:UiNENfZ8gDvpiWw7IpOMQ27spWmThO1RwwdQVbJahJM=",
+        version = "v0.0.0-20220825204002-c680a09ffe64",
     )
     go_repository(
         name = "org_golang_x_term",
