@@ -44,16 +44,3 @@ diff -urN a/errcheck/analyzer.go b/errcheck/analyzer.go
  		excludes, err := ReadExcludes(argExcludeFile)
  		if err != nil {
  			return nil, fmt.Errorf("Could not read exclude file: %v\n", err)
---- a/errcheck/analyzer.go
-+++ b/errcheck/analyzer.go
-@@ -65,8 +65,9 @@ func runAnalyzer(pass *analysis.Pass) (interface{}, error) {
- 		ast.Walk(v, f)
- 
- 		for _, err := range v.errors {
-+			fsetFile := pass.Fset.File(f.Pos())
- 			pass.Report(analysis.Diagnostic{
--				Pos:     token.Pos(int(f.Pos()) + err.Pos.Offset),
-+				Pos:     fsetFile.Pos(err.Pos.Offset),
- 				Message: "unchecked error",
- 			})
- 		}
