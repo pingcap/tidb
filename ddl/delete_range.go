@@ -334,19 +334,12 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			physicalIDs = partitionIDs
 		}
 		// Determine the index IDs to be added.
-		originID := tablecodec.IndexIDMask & indexID
-		hasTmpIdx := originID != indexID // Whether this job experiences the backfill-merge process.
-		isRollBackDone := job.State == model.JobStateRollbackDone
+		tempIdxID := tablecodec.TempIndexPrefix | indexID
 		var indexIDs []int64
-		switch {
-		case hasTmpIdx && isRollBackDone:
-			indexIDs = []int64{originID, indexID}
-		case hasTmpIdx && !isRollBackDone:
-			indexIDs = []int64{indexID}
-		case !hasTmpIdx && isRollBackDone:
-			indexIDs = []int64{originID}
-		case !hasTmpIdx && !isRollBackDone:
-			indexIDs = nil
+		if job.State == model.JobStateRollbackDone {
+			indexIDs = []int64{indexID, tempIdxID}
+		} else {
+			indexIDs = []int64{tempIdxID}
 		}
 		for _, pid := range physicalIDs {
 			for _, iid := range indexIDs {

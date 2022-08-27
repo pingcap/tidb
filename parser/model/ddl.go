@@ -223,7 +223,6 @@ type DDLReorgMeta struct {
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
 	ReorgTp       ReorgType                        `json:"reorg_tp"`
-	Started       bool                             `json:"started"`
 }
 
 // ReorgType indicates which process is used for the data reorganization.

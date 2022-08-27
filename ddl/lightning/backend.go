@@ -37,6 +37,7 @@ type BackendContext struct {
 	cfg     *config.Config
 	EngMgr  engineManager
 	sysVars map[string]string
+	done    bool
 }
 
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
@@ -99,4 +100,14 @@ func (bc *BackendContext) Flush(engineKey string) error {
 		}
 	}
 	return nil
+}
+
+// Done returns true if the lightning backfill is done.
+func (bc *BackendContext) Done() bool {
+	return bc.done
+}
+
+// SetDone sets the done flag.
+func (bc *BackendContext) SetDone() {
+	bc.done = true
 }

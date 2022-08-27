@@ -45,9 +45,9 @@ func (m *backendCtxManager) init(memRoot MemRoot) {
 }
 
 // Register creates a new backend and registers it to the backend context.
-func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int64, _ mysql.SQLMode) error {
+func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int64, _ mysql.SQLMode) (*BackendContext, error) {
 	// Firstly, get backend context from backend cache.
-	_, exist := m.Load(jobID)
+	bc, exist := m.Load(jobID)
 	// If bc not exist, build a new backend for reorg task, otherwise reuse exist backend
 	// to continue the task.
 	if !exist {
@@ -57,25 +57,26 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.Int64("backend key", jobID),
 				zap.String("Current Memory Usage:", strconv.FormatInt(m.MemRoot.CurrentUsage(), 10)),
 				zap.String("Memory limitation:", strconv.FormatInt(m.MemRoot.MaxMemoryQuota(), 10)))
-			return errors.New(LitErrOutMaxMem)
+			return nil, errors.New(LitErrOutMaxMem)
 		}
 		cfg, err := generateLightningConfig(m.MemRoot, jobID, unique)
 		if err != nil {
 			logutil.BgLogger().Warn(LitErrAllocMemFail, zap.Int64("backend key", jobID),
 				zap.String("Generate config for lightning error:", err.Error()))
-			return err
+			return nil, err
 		}
 		bd, err := createLocalBackend(ctx, cfg, glueLit{})
 		if err != nil {
 			logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Int64("backend key", jobID),
 				zap.String("Error", err.Error()), zap.Stack("stack trace"))
-			return err
+			return nil, err
 		}
 
 		// Init important variables
 		sysVars := obtainImportantVariables()
 
-		m.Store(jobID, newBackendContext(ctx, jobID, &bd, cfg, sysVars, m.MemRoot))
+		bcCtx := newBackendContext(ctx, jobID, &bd, cfg, sysVars, m.MemRoot)
+		m.Store(jobID, bcCtx)
 
 		// Count memory usage.
 		m.MemRoot.Consume(StructSizeBackendCtx)
@@ -83,8 +84,9 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 			zap.String("Current Memory Usage:", strconv.FormatInt(m.MemRoot.CurrentUsage(), 10)),
 			zap.String("Memory limitation:", strconv.FormatInt(m.MemRoot.MaxMemoryQuota(), 10)),
 			zap.String("Unique Index:", strconv.FormatBool(unique)))
+		return bcCtx, nil
 	}
-	return nil
+	return bc, nil
 }
 
 // Load loads a backend context.

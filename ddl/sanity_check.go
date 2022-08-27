@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -117,11 +116,9 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			}
 			return 0, errors.Trace(err)
 		}
-		idxIDNumFactor := 1
-		if (indexID&tablecodec.IndexIDMask) != indexID && job.State == model.JobStateRollbackDone {
-			// This is a temporary index and the job rollback.
-			// We need to add the temporary index & the original index to the delete-range table.
-			idxIDNumFactor = 2
+		idxIDNumFactor := 1 // Add temporary index to del-range table.
+		if job.State == model.JobStateRollbackDone {
+			idxIDNumFactor = 2 // Add origin index to del-range table.
 		}
 		return mathutil.Max(len(partitionIDs)*idxIDNumFactor, idxIDNumFactor), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:

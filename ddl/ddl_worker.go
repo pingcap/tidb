@@ -501,10 +501,7 @@ func jobNeedGC(job *model.Job) bool {
 		}
 		switch job.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			if job.State == model.JobStateRollbackDone {
-				return true
-			}
-			return addIdxJobHasArgsForDelRange(job)
+			return true
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn:
 			return true
@@ -520,20 +517,6 @@ func jobNeedGC(job *model.Job) bool {
 		}
 	}
 	return false
-}
-
-// addIdxJobHasArgsForDelRange checks whether the add-index job has index IDs to remove.
-// The first argument is not bool means the job arguments is reconstructed for GC delete ranges.
-func addIdxJobHasArgsForDelRange(job *model.Job) bool {
-	if len(job.RawArgs) == 0 {
-		return false
-	}
-	origin := job.Args
-	var unique bool
-	err := job.DecodeArgs(&unique)
-	// Restore the job args to prevent the side effect of DecodeArgs.
-	job.Args = origin
-	return err != nil
 }
 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.

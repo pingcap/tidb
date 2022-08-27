@@ -598,6 +598,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
+		if pickBackfillProcess(w, job).NeedMergeProcess() {
+			indexInfo.BackfillState = model.BackfillStateRunning
+		}
 		indexInfo.State = model.StateDeleteOnly
 		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != indexInfo.State)
@@ -661,6 +664,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		job.Args = []interface{}{indexInfo.ID, false /*if exists*/, getPartitionIDs(tbl.Meta())}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
@@ -672,7 +676,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 // pickBackfillProcess determines which backfill process will be used.
 func pickBackfillProcess(w *worker, job *model.Job) model.ReorgType {
-	if job.ReorgMeta.Started {
+	if job.SnapshotVer != 0 {
 		// The backfill task has been started.
 		// Don't switch the backfill process.
 		return job.ReorgMeta.ReorgTp
@@ -698,6 +702,7 @@ func pickBackfillProcess(w *worker, job *model.Job) model.ReorgType {
 func fallbackToTxnMerge(job *model.Job, err error) {
 	logutil.BgLogger().Info("fallback to txn-merge backfill process", zap.Error(err))
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
+	job.SnapshotVer = 0
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -716,9 +721,11 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	bfProcess := pickBackfillProcess(w, job)
-	if bfProcess == model.ReorgTypeTxn {
+	if !bfProcess.NeedMergeProcess() {
 		return runReorgJobAndHandleAddIndexErr(w, d, t, job, tbl, indexInfo)
 	}
+	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
+	elem := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 	switch indexInfo.BackfillState {
 	case model.BackfillStateInapplicable:
 		indexInfo.BackfillState = model.BackfillStateRunning
@@ -728,18 +735,20 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		logutil.BgLogger().Info("Lightning backfill state running")
 		switch bfProcess {
 		case model.ReorgTypeLitMerge:
-			rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-			elem := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-			if _, ok := lightning.BackCtxMgr.Load(job.ID); !ok && job.ReorgMeta.Started {
+			bc, ok := lightning.BackCtxMgr.Load(job.ID)
+			if ok && bc.Done() {
+				break
+			}
+			if !ok && job.SnapshotVer != 0 {
 				// The owner is crashed or changed, we need to restart the backfill.
 				err = rh.RemoveDDLReorgHandle(job, elem)
 				if err != nil {
 					logutil.BgLogger().Warn("unable to remove ddl reorg handle", zap.Error(err))
 				}
-				job.ReorgMeta.Started = false
+				job.SnapshotVer = 0
 				return false, ver, nil
 			}
-			err = lightning.BackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
+			bc, err = lightning.BackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
 			if err != nil {
 				fallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
@@ -765,11 +774,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				lightning.BackCtxMgr.Unregister(job.ID)
 				return false, ver, errors.Trace(err)
 			}
-			err = rh.RemoveDDLReorgHandle(job, elem)
-			if err != nil {
-				logutil.BgLogger().Warn("Lightning: [DDL] remove reorg handle error", zap.Error(err))
-			}
-			lightning.BackCtxMgr.Unregister(job.ID)
+			bc.SetDone()
 		case model.ReorgTypeTxnMerge:
 			done, ver, err = runReorgJobAndHandleAddIndexErr(w, d, t, job, tbl, indexInfo)
 			if !done {
@@ -784,6 +789,13 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	case model.BackfillStateReadyToMerge:
 		logutil.BgLogger().Info("Lightning backfill state merge Sync")
 		indexInfo.BackfillState = model.BackfillStateMerging
+		if bfProcess == model.ReorgTypeLitMerge {
+			lightning.BackCtxMgr.Unregister(job.ID)
+			err = rh.RemoveDDLReorgHandle(job, elem)
+			if err != nil {
+				logutil.BgLogger().Info("Lightning: [DDL] remove reorg handle", zap.Error(err))
+			}
+		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
@@ -794,9 +806,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, job.TableName).Set(100)
 		indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
-		// Add the temporary index ID to the delete-range table.
-		tmpIndexID := tablecodec.TempIndexPrefix | indexInfo.ID
-		job.Args = []interface{}{tmpIndexID, false /*if exists*/, getPartitionIDs(tbl.Meta())}
 		return true, ver, nil
 	default:
 		return false, 0, errors.New("Lightning go fast path wrong sub states: should not happened")
@@ -814,7 +823,6 @@ func runReorgJobAndHandleAddIndexErr(w *worker, d *ddlCtx, t *meta.Meta, job *mo
 	if reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
-		job.ReorgMeta.Started = true
 		return false, ver, nil
 	}
 	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
@@ -852,7 +860,6 @@ func runReorgJobAndHandleMergeIndexErr(w *worker, d *ddlCtx, t *meta.Meta, job *
 	if reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
-		job.ReorgMeta.Started = true
 		return false, ver, nil
 	}
 	logutil.BgLogger().Info("Lightning start merge the increment part of adding index")
@@ -943,13 +950,8 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 		// Finish this job.
 		if job.IsRollingback() {
+			job.Args[0] = indexInfo.ID
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			if indexInfo.BackfillState == model.BackfillStateInapplicable {
-				job.Args[0] = indexInfo.ID
-			} else {
-				// If go through new backfill flow, set temp index id as index id.
-				job.Args[0] = tablecodec.TempIndexPrefix | indexInfo.ID
-			}
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
