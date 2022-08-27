@@ -48,7 +48,7 @@ type jsonObject struct {
 
 var defaultRules = []lint.Rule{
 	//&rule.VarDeclarationsRule{},
-	&rule.PackageCommentsRule{},
+	//&rule.PackageCommentsRule{},
 	&rule.DotImportsRule{},
 	&rule.BlankImportsRule{},
 	&rule.ExportedRule{},
