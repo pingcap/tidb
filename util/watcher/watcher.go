@@ -39,16 +39,14 @@ var (
 //  3. Rename / Move
 //  4. Create / Remove
 type Watcher struct {
-	Events chan Event
-	Errors chan error
-
-	running atomic.Int32
+	Events  chan Event
+	Errors  chan error
 	closed  chan struct{}
+	names   map[string]struct{}    // original added names needed to watch
+	files   map[string]os.FileInfo // all latest watching files
 	wg      sync.WaitGroup
+	running atomic.Int32
 	mu      sync.Mutex
-
-	names map[string]struct{}    // original added names needed to watch
-	files map[string]os.FileInfo // all latest watching files
 }
 
 // NewWatcher creates a new Watcher instance

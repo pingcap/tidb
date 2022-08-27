@@ -112,9 +112,9 @@ func (es *entryStore) get(addr entryAddr) entry {
 // A given key can store multiple values.
 // It is not thread-safe, should only be used in one goroutine.
 type MVMap struct {
+	hashTable  map[uint64]entryAddr
 	entryStore entryStore
 	dataStore  dataStore
-	hashTable  map[uint64]entryAddr
 	length     int
 }
 

@@ -327,18 +327,19 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	require.True(t, ok)
 
 	doChange := func(changes ...func(m *meta.Meta, builder *infoschema.Builder)) infoschema.InfoSchema {
-		builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos([]*model.DBInfo{db}, nil, is.SchemaMetaVersion())
-		require.NoError(t, err)
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-		err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		curIs := is
+		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
+				builder := infoschema.NewBuilder(store, nil).InitWithOldInfoSchema(curIs)
 				change(m, builder)
+				curIs = builder.Build()
 			}
 			return nil
 		})
 		require.NoError(t, err)
-		return builder.Build()
+		return curIs
 	}
 
 	createGlobalTemporaryTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
@@ -347,6 +348,18 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 				ID:            tblID,
 				TempTableType: model.TempTableGlobal,
 				State:         model.StatePublic,
+			})
+			require.NoError(t, err)
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID})
+			require.NoError(t, err)
+		}
+	}
+
+	createNormalTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
+		return func(m *meta.Meta, builder *infoschema.Builder) {
+			err := m.CreateTableOrView(db.ID, &model.TableInfo{
+				ID:    tblID,
+				State: model.StatePublic,
 			})
 			require.NoError(t, err)
 			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID})
@@ -436,6 +449,16 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		createGlobalTemporaryTableChange(tbID),
 		createGlobalTemporaryTableChange(tbID2),
 		dropTableChange(tbID),
+	).HasTemporaryTable())
+
+	// create temporary and then create normal
+	tbID, err = genGlobalID(store)
+	require.NoError(t, err)
+	tbID2, err = genGlobalID(store)
+	require.NoError(t, err)
+	require.True(t, doChange(
+		createGlobalTemporaryTableChange(tbID),
+		createNormalTableChange(tbID2),
 	).HasTemporaryTable())
 }
 
@@ -568,7 +591,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 		return tbl
 	}
 
-	assertTableByName := func(sc *infoschema.LocalTemporaryTables, schemaName, tableName string, schema *model.DBInfo, tb table.Table) {
+	assertTableByName := func(sc *infoschema.SessionTables, schemaName, tableName string, schema *model.DBInfo, tb table.Table) {
 		got, ok := sc.TableByName(model.NewCIStr(schemaName), model.NewCIStr(tableName))
 		if tb == nil {
 			require.Nil(t, schema)
@@ -581,12 +604,12 @@ func TestLocalTemporaryTables(t *testing.T) {
 		}
 	}
 
-	assertTableExists := func(sc *infoschema.LocalTemporaryTables, schemaName, tableName string, exists bool) {
+	assertTableExists := func(sc *infoschema.SessionTables, schemaName, tableName string, exists bool) {
 		got := sc.TableExists(model.NewCIStr(schemaName), model.NewCIStr(tableName))
 		require.Equal(t, exists, got)
 	}
 
-	assertTableByID := func(sc *infoschema.LocalTemporaryTables, tbID int64, schema *model.DBInfo, tb table.Table) {
+	assertTableByID := func(sc *infoschema.SessionTables, tbID int64, schema *model.DBInfo, tb table.Table) {
 		got, ok := sc.TableByID(tbID)
 		if tb == nil {
 			require.Nil(t, schema)
@@ -599,7 +622,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 		}
 	}
 
-	assertSchemaByTable := func(sc *infoschema.LocalTemporaryTables, db *model.DBInfo, tb *model.TableInfo) {
+	assertSchemaByTable := func(sc *infoschema.SessionTables, db *model.DBInfo, tb *model.TableInfo) {
 		got, ok := sc.SchemaByTable(tb)
 		if db == nil {
 			require.Nil(t, got)
@@ -611,7 +634,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 		}
 	}
 
-	sc := infoschema.NewLocalTemporaryTables()
+	sc := infoschema.NewSessionTables()
 	db1 := createNewSchemaInfo("db1")
 	tb11 := createNewTable(db1.ID, "tb1", model.TempTableLocal)
 	tb12 := createNewTable(db1.ID, "Tb2", model.TempTableLocal)
@@ -714,14 +737,14 @@ func TestLocalTemporaryTables(t *testing.T) {
 	assertSchemaByTable(sc, nil, tb22.Meta())
 	assertSchemaByTable(sc, nil, nil)
 
-	// test TemporaryTableAttachedInfoSchema
+	// test SessionExtendedInfoSchema
 	dbTest := createNewSchemaInfo("test")
 	tmpTbTestA := createNewTable(dbTest.ID, "tba", model.TempTableLocal)
 	normalTbTestA := createNewTable(dbTest.ID, "tba", model.TempTableNone)
 	normalTbTestB := createNewTable(dbTest.ID, "tbb", model.TempTableNone)
 	normalTbTestC := createNewTable(db1.ID, "tbc", model.TempTableNone)
 
-	is := &infoschema.TemporaryTableAttachedInfoSchema{
+	is := &infoschema.SessionExtendedInfoSchema{
 		InfoSchema:           infoschema.MockInfoSchema([]*model.TableInfo{normalTbTestA.Meta(), normalTbTestB.Meta()}),
 		LocalTemporaryTables: sc,
 	}

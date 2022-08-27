@@ -555,7 +555,7 @@ func ConvertJSONToInt64(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigne
 // ConvertJSONToInt casts JSON into int by type.
 func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool, tp byte) (int64, error) {
 	switch j.TypeCode {
-	case json.TypeCodeObject, json.TypeCodeArray:
+	case json.TypeCodeObject, json.TypeCodeArray, json.TypeCodeOpaque:
 		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
@@ -615,7 +615,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 // ConvertJSONToFloat casts JSON into float64.
 func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float64, error) {
 	switch j.TypeCode {
-	case json.TypeCodeObject, json.TypeCodeArray:
+	case json.TypeCodeObject, json.TypeCodeArray, json.TypeCodeOpaque:
 		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
@@ -644,7 +644,7 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 	var err error = nil
 	res := new(MyDecimal)
 	switch j.TypeCode {
-	case json.TypeCodeObject, json.TypeCodeArray:
+	case json.TypeCodeObject, json.TypeCodeArray, json.TypeCodeOpaque:
 		err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", j.String())
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
