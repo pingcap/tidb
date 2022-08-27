@@ -2958,7 +2958,7 @@ def go_deps():
     )
     go_repository(
         name = "com_github_rivo_uniseg",
-        build_file_proto_mode = "disable_global",
+        build_file_proto_mode = "disable",
         importpath = "github.com/rivo/uniseg",
         sum = "h1:3Z3Eu6FGHZWSfNKJTOUiPatWwfc7DzJRU04jFUqJODw=",
         version = "v0.3.4",
