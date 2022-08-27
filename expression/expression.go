@@ -1106,6 +1106,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
 			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
 			return function.GetArgs()[0].GetType().GetType() != mysql.TypeYear
+		case tipb.ScalarFuncSig_CastTimeAsDuration:
+			return retType.GetType() == mysql.TypeDuration
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {

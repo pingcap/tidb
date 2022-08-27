@@ -3460,7 +3460,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	require.NoError(t, err)
 	sessionVars := tk.Session().GetSessionVars()
 	sessVarsTempTable := sessionVars.LocalTemporaryTables
-	localTemporaryTable := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+	localTemporaryTable := sessVarsTempTable.(*infoschema.SessionTables)
 	tbl, exist := localTemporaryTable.TableByName(model.NewCIStr("test"), model.NewCIStr("a_local_temp_table_7"))
 	require.True(t, exist)
 	tblInfo := tbl.Meta()
@@ -3719,7 +3719,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
 
 	// truncate temporary table will clear session data
-	localTemporaryTables := tk.Session().GetSessionVars().LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+	localTemporaryTables := tk.Session().GetSessionVars().LocalTemporaryTables.(*infoschema.SessionTables)
 	tb1, exist := localTemporaryTables.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	tbl1Info := tb1.Meta()
 	tablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID)
@@ -3801,8 +3801,15 @@ func TestCreateTempTableInTxn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("begin")
-	tk.MustExec("create temporary table t1(id int)")
-	tk.MustQuery("select * from t1")
+	// new created temporary table should be visible
+	tk.MustExec("create temporary table t1(id int primary key, v int)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	// new inserted data should be visible
+	tk.MustExec("insert into t1 values(123, 456)")
+	tk.MustQuery("select * from t1 where id=123").Check(testkit.Rows("123 456"))
+	// truncate table will clear data but table still visible
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from t1 where id=123").Check(testkit.Rows())
 	tk.MustExec("commit")
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -3812,6 +3819,16 @@ func TestCreateTempTableInTxn(t *testing.T) {
 	tk1.MustExec("create temporary table t1(id int)")
 	tk1.MustExec("insert into tt select * from t1")
 	tk1.MustExec("drop table tt")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("create table t2(id int primary key, v int)")
+	tk2.MustExec("insert into t2 values(234, 567)")
+	tk2.MustExec("begin")
+	// create a new temporary table with the same name will override physical table
+	tk2.MustExec("create temporary table t2(id int primary key, v int)")
+	tk2.MustQuery("select * from t2 where id=234").Check(testkit.Rows())
+	tk2.MustExec("commit")
 }
 
 // See https://github.com/pingcap/tidb/issues/29327

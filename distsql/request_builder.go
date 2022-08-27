@@ -158,12 +158,12 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 }
 
 // SetAnalyzeRequest sets the request type to "ReqTypeAnalyze" and construct request data.
-func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestBuilder {
+func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq, isoLevel kv.IsoLevel) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeAnalyze
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
-		builder.Request.IsolationLevel = kv.RC
+		builder.Request.IsolationLevel = isoLevel
 		builder.Request.Priority = kv.PriorityLow
 	}
 

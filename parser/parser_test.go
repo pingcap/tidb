@@ -3492,6 +3492,8 @@ func TestDDL(t *testing.T) {
 		{"create table t (a bigint auto_random primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM PRIMARY KEY,`b` VARCHAR(255))"},
 		{"create table t (a bigint primary key auto_random(4), b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT PRIMARY KEY AUTO_RANDOM(4),`b` VARCHAR(255))"},
 		{"create table t (a bigint primary key auto_random(3) primary key unique, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT PRIMARY KEY AUTO_RANDOM(3) PRIMARY KEY UNIQUE KEY,`b` VARCHAR(255))"},
+		{"create table t (a bigint auto_random(5, 53) primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM(5, 53) PRIMARY KEY,`b` VARCHAR(255))"},
+		{"create table t (a bigint auto_random(15, 32) primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM(15, 32) PRIMARY KEY,`b` VARCHAR(255))"},
 
 		// for auto_id_cache
 		{"create table t (a int) auto_id_cache=1", true, "CREATE TABLE `t` (`a` INT) AUTO_ID_CACHE = 1"},
@@ -6559,6 +6561,55 @@ func TestHelp(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
+}
+
+func TestWithoutCharsetFlags(t *testing.T) {
+	type testCaseWithFlag struct {
+		src     string
+		ok      bool
+		restore string
+		flag    RestoreFlags
+	}
+
+	flag := RestoreStringSingleQuotes | RestoreSpacesAroundBinaryOperation | RestoreBracketAroundBinaryOperation | RestoreNameBackQuotes
+	cases := []testCaseWithFlag{
+		{"select 'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8mb4'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8 X'D0B1'", true, "SELECT x'd0b1'", flag | RestoreStringWithoutCharset},
+
+		{"select _utf8mb4'a'", true, "SELECT 'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8'a'", true, "SELECT _utf8'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8'a'", true, "SELECT _utf8'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8 X'D0B1'", true, "SELECT _utf8 x'd0b1'", flag | RestoreStringWithoutDefaultCharset},
+	}
+
+	p := parser.New()
+	p.EnableWindowFunc(false)
+	for _, tbl := range cases {
+		stmts, _, err := p.Parse(tbl.src, "", "")
+		if !tbl.ok {
+			require.Error(t, err)
+			continue
+		}
+		require.NoError(t, err)
+		// restore correctness test
+		var sb strings.Builder
+		restoreSQLs := ""
+		for _, stmt := range stmts {
+			sb.Reset()
+			ctx := NewRestoreCtx(tbl.flag, &sb)
+			ctx.DefaultDB = "test"
+			err = stmt.Restore(ctx)
+			require.NoError(t, err)
+			restoreSQL := sb.String()
+			if restoreSQLs != "" {
+				restoreSQLs += "; "
+			}
+			restoreSQLs += restoreSQL
+		}
+		require.Equal(t, tbl.restore, restoreSQLs)
+	}
 }
 
 func TestRestoreBinOpWithBrackets(t *testing.T) {

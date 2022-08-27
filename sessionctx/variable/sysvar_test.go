@@ -362,6 +362,7 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprint(GlobalLogMaxDays.Load()), val)
 }
+
 func TestSecureAuth(t *testing.T) {
 	sv := GetSysVar(SecureAuth)
 	vars := NewSessionVars()
@@ -434,6 +435,24 @@ func TestTimestamp(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, "", val)
 	require.NotEqual(t, "10", val)
+
+	// Test validating a value that less than the minimum one.
+	sv := GetSysVar(Timestamp)
+	_, err = sv.Validate(vars, "-5", ScopeSession)
+	require.NoError(t, err)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect timestamp value: '-5'", warn.Error())
+
+	// Test validating values that larger than the maximum one.
+	_, err = sv.Validate(vars, "3147483698", ScopeSession)
+	require.Equal(t, "[variable:1231]Variable 'timestamp' can't be set to the value of '3147483698'", err.Error())
+
+	_, err = sv.Validate(vars, "2147483648", ScopeSession)
+	require.Equal(t, "[variable:1231]Variable 'timestamp' can't be set to the value of '2147483648'", err.Error())
+
+	// Test validating the maximum value.
+	_, err = sv.Validate(vars, "2147483647", ScopeSession)
+	require.NoError(t, err)
 }
 
 func TestIdentity(t *testing.T) {
@@ -621,4 +640,80 @@ func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryDebugModeAlarmRatio)
 	require.NoError(t, err)
 	require.Equal(t, val, "0")
+}
+
+func TestSetTIDBFastDDL(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	fastDDL := GetSysVar(TiDBDDLEnableFastReorg)
+
+	// Default off
+	require.Equal(t, fastDDL.Value, Off)
+
+	// Set to On
+	err := mock.SetGlobalSysVar(TiDBDDLEnableFastReorg, On)
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBDDLEnableFastReorg)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+
+	// Set to off
+	err = mock.SetGlobalSysVar(TiDBDDLEnableFastReorg, Off)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBDDLEnableFastReorg)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
+}
+
+func TestSetTIDBDiskQuota(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	diskQuota := GetSysVar(TiDBDDLDiskQuota)
+	var (
+		gb  int64 = 1024 * 1024 * 1024
+		pb  int64 = 1024 * 1024 * 1024 * 1024 * 1024
+		err error
+		val string
+	)
+	// Default 100 GB
+	require.Equal(t, diskQuota.Value, strconv.FormatInt(100*gb, 10))
+
+	// MinValue is 100 GB, set to 50 Gb is not allowed
+	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(50*gb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(100*gb, 10), val)
+
+	// Set to 100 GB
+	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(100*gb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(100*gb, 10), val)
+
+	// Set to 200 GB
+	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(200*gb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(200*gb, 10), val)
+
+	// Set to 1 Pb
+	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(pb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(pb, 10), val)
+
+	// MaxValue is 1 PB, set to 2 Pb is not allowed, it will set back to 1 PB max allowed value.
+	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(2*pb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(pb, 10), val)
 }
