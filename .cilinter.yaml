@@ -3,9 +3,7 @@ run:
 linters:
   disable-all: true
   enable:
-    - varcheck
-    - structcheck
-    - deadcode
+    - unused
     - rowserrcheck
     - prealloc
 
