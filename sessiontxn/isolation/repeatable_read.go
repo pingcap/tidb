@@ -53,7 +53,7 @@ func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsisten
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.RepeatableRead
 			},
-			onTxnActive: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
@@ -168,7 +168,9 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point session
 
 // AdviseOptimizeWithPlan optimizes for update point get related execution.
 // Use case: In for update point get related operations, we do not fetch ts from PD but use the last ts we fetched.
-//     We expect that the data that the point get acquires has not been changed.
+//
+//	We expect that the data that the point get acquires has not been changed.
+//
 // Benefit: Save the cost of acquiring ts from PD.
 // Drawbacks: If the data has been changed since the ts we used, we need to retry.
 // One exception is insert operation, when it has no select plan, we do not fetch the latest ts immediately. We only update ts
@@ -241,8 +243,12 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("lockTS", deadlock.LockTs),
 			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
-
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+		// Always update forUpdateTS by getting a new timestamp from PD.
+		// If we use the conflict commitTS as the new forUpdateTS and async commit
+		// is used, the commitTS of this transaction may exceed the max timestamp
+		// that PD allocates. Then, the change may be invisible to a new transaction,
+		// which means linearizability is broken.
 		errStr := lockErr.Error()
 		forUpdateTS := txnCtx.GetForUpdateTS()
 
@@ -250,11 +256,6 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("forUpdateTS", forUpdateTS),
 			zap.String("err", errStr))
-		// Always update forUpdateTS by getting a new timestamp from PD.
-		// If we use the conflict commitTS as the new forUpdateTS and async commit
-		// is used, the commitTS of this transaction may exceed the max timestamp
-		// that PD allocates. Then, the change may be invisible to a new transaction,
-		// which means linearizability is broken.
 	} else {
 		// This branch: if err is not nil, always update forUpdateTS to avoid problem described below.
 		// For nowait, when ErrLock happened, ErrLockAcquireFailAndNoWaitSet will be returned, and in the same txn

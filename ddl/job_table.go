@@ -185,12 +185,12 @@ func (d *ddl) startDispatchLoop() {
 		case <-d.ctx.Done():
 			return
 		}
-		d.getDDLJobAndRun(sess, d.generalDDLWorkerPool, d.getGeneralJob)
-		d.getDDLJobAndRun(sess, d.reorgWorkerPool, d.getReorgJob)
+		d.loadDDLJobAndRun(sess, d.generalDDLWorkerPool, d.getGeneralJob)
+		d.loadDDLJobAndRun(sess, d.reorgWorkerPool, d.getReorgJob)
 	}
 }
 
-func (d *ddl) getDDLJobAndRun(sess *session, pool *workerPool, getJob func(*session) (*model.Job, error)) {
+func (d *ddl) loadDDLJobAndRun(sess *session, pool *workerPool, getJob func(*session) (*model.Job, error)) {
 	wk, err := pool.get()
 	if err != nil || wk == nil {
 		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
@@ -230,8 +230,14 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 		// we should wait 2 * d.lease time to guarantee all TiDB server have finished the schema change.
 		// see waitSchemaSynced for more details.
 		if !d.isSynced(job) || d.once.Load() {
-			wk.waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
-			d.once.Store(false)
+			err := wk.waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
+			if err == nil {
+				d.once.Store(false)
+			} else {
+				logutil.BgLogger().Warn("[ddl] wait ddl job sync failed", zap.Error(err), zap.String("job", job.String()))
+				time.Sleep(time.Second)
+				return
+			}
 		}
 		if err := wk.HandleDDLJobTable(d.ddlCtx, job); err != nil {
 			logutil.BgLogger().Info("[ddl] handle ddl job failed", zap.Error(err), zap.String("job", job.String()))
@@ -250,7 +256,7 @@ const (
 	updateDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
 )
 
-func insertDDLJobs2Table(sess *session, jobs []*model.Job, updateRawArgs bool) error {
+func insertDDLJobs2Table(sess *session, updateRawArgs bool, jobs ...*model.Job) error {
 	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
@@ -432,7 +438,7 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 }
 
 // MoveJobFromQueue2Table move existing DDLs in queue to table.
-func (d *ddl) MoveJobFromQueue2Table(force bool) error {
+func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
 	sess, err := d.sessPool.get()
 	if err != nil {
 		return err
@@ -445,7 +451,11 @@ func (d *ddl) MoveJobFromQueue2Table(force bool) error {
 		}
 		t := meta.NewMeta(txn)
 		isConcurrentDDL, err := t.IsConcurrentDDL()
-		if !force && (isConcurrentDDL || err != nil) {
+		if !inBootstrap && (isConcurrentDDL || err != nil) {
+			return errors.Trace(err)
+		}
+		systemDBID, err := t.GetSystemDBID()
+		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, tp := range []workerType{addIdxWorker, generalWorker} {
@@ -454,15 +464,19 @@ func (d *ddl) MoveJobFromQueue2Table(force bool) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = insertDDLJobs2Table(se, jobs, false)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if tp == generalWorker {
-				// general job do not have reorg info.
-				continue
-			}
 			for _, job := range jobs {
+				// In bootstrap, we can ignore the internal DDL.
+				if inBootstrap && job.SchemaID == systemDBID {
+					continue
+				}
+				err = insertDDLJobs2Table(se, false, job)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if tp == generalWorker {
+					// General job do not have reorg info.
+					continue
+				}
 				element, start, end, pid, err := t.GetDDLReorgHandle(job)
 				if meta.ErrDDLReorgElementNotExist.Equal(err) {
 					continue

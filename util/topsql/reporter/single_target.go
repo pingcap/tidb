@@ -38,15 +38,13 @@ const (
 
 // SingleTargetDataSink reports data to grpc servers.
 type SingleTargetDataSink struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	curRPCAddr string
+	ctx        context.Context
+	registerer DataSinkRegisterer
+	cancel     context.CancelFunc
 	conn       *grpc.ClientConn
 	sendTaskCh chan sendTask
-
 	registered *atomic.Bool
-	registerer DataSinkRegisterer
+	curRPCAddr string
 }
 
 // NewSingleTargetDataSink returns a new SingleTargetDataSink

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/encrypt"
 )
 
+//revive:disable:defer
 func (b *builtinAesDecryptSig) vectorized() bool {
 	return true
 }
@@ -618,6 +619,7 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		}
 
 		buffer := allocByteSlice(resultLength)
+		//nolint: revive
 		defer deallocateByteSlice(buffer)
 		buffer = buffer[:resultLength]
 

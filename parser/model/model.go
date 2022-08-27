@@ -430,6 +430,8 @@ type TableInfo struct {
 	MaxShardRowIDBits uint64 `json:"max_shard_row_id_bits"`
 	// AutoRandomBits is used to set the bit number to shard automatically when PKIsHandle.
 	AutoRandomBits uint64 `json:"auto_random_bits"`
+	// AutoRandomRangeBits represents the bit number of the int primary key that will be used by TiDB.
+	AutoRandomRangeBits uint64 `json:"auto_random_range_bits"`
 	// PreSplitRegions specify the pre-split region when create table.
 	// The pre-split region num is 2^(PreSplitRegions-1).
 	// And the PreSplitRegions should less than or equal to ShardRowIDBits.
@@ -773,12 +775,22 @@ func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 	return nil
 }
 
+// FindPublicColumnByName finds the public column by name.
+func (t *TableInfo) FindPublicColumnByName(colNameL string) *ColumnInfo {
+	for _, col := range t.Cols() {
+		if col.Name.L == colNameL {
+			return col
+		}
+	}
+	return nil
+}
+
 // IsLocked checks whether the table was locked.
 func (t *TableInfo) IsLocked() bool {
 	return t.Lock != nil && len(t.Lock.Sessions) > 0
 }
 
-// MoveColumnInfo moves a column to another offset.
+// MoveColumnInfo moves a column to another offset. It maintains the offsets of all affects columns and index columns,
 func (t *TableInfo) MoveColumnInfo(from, to int) {
 	if from == to {
 		return
@@ -1019,8 +1031,9 @@ func (v *ViewCheckOption) String() string {
 	}
 }
 
-//revive:disable:exported
 // ViewInfo provides meta data describing a DB view.
+//
+//revive:disable:exported
 type ViewInfo struct {
 	Algorithm   ViewAlgorithm      `json:"view_algorithm"`
 	Definer     *auth.UserIdentity `json:"view_definer"`
@@ -1100,7 +1113,7 @@ type PartitionInfo struct {
 	Expr    string        `json:"expr"`
 	Columns []CIStr       `json:"columns"`
 
-	// User may already creates table with partition but table partition is not
+	// User may already create table with partition but table partition is not
 	// yet supported back then. When Enable is true, write/read need use tid
 	// rather than pid.
 	Enable bool `json:"enable"`
@@ -1250,7 +1263,7 @@ func (i *IndexColumn) Clone() *IndexColumn {
 }
 
 // PrimaryKeyType is the type of primary key.
-// Available values are 'clustered', 'nonclustered', and ''(default).
+// Available values are "clustered", "nonclustered", and ""(default).
 type PrimaryKeyType int8
 
 func (p PrimaryKeyType) String() string {
@@ -1343,6 +1356,22 @@ func (index *IndexInfo) HasColumnInIndexColumns(tblInfo *TableInfo, colID int64)
 		}
 	}
 	return false
+}
+
+// FindColumnByName finds the index column with the specified name.
+func (index *IndexInfo) FindColumnByName(nameL string) *IndexColumn {
+	_, ret := FindIndexColumnByName(index.Columns, nameL)
+	return ret
+}
+
+// FindIndexColumnByName finds IndexColumn by name. When IndexColumn is not found, returns (-1, nil).
+func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexColumn) {
+	for i, ic := range indexCols {
+		if ic.Name.L == nameL {
+			return i, ic
+		}
+	}
+	return -1, nil
 }
 
 // ConstraintInfo provides meta data describing check-expression constraint.

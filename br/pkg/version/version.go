@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/engine"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -148,6 +149,18 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 		}
 	}
 
+	return nil
+}
+
+// CheckVersionForDDL checks whether we use queue or table to execute ddl during restore.
+func CheckVersionForDDL(s *metapb.Store, tikvVersion *semver.Version) error {
+	// use tikvVersion instead of tidbVersion since br doesn't have mysql client to connect tidb.
+	requireVersion := semver.New("6.2.0-alpha")
+	if tikvVersion.Compare(*requireVersion) < 0 {
+		log.Info("detected the old version of tidb cluster. set enable concurrent ddl to false")
+		variable.EnableConcurrentDDL.Store(false)
+		return nil
+	}
 	return nil
 }
 
@@ -374,16 +387,14 @@ func ParseServerInfo(src string) ServerInfo {
 	var err error
 	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
 	if err != nil {
-		log.L().Warn("fail to parse version",
+		log.L().Warn("fail to parse version, fallback to 0.0.0",
 			zap.String("version", versionStr))
+		serverInfo.ServerVersion = semver.New("0.0.0")
 	}
-	var version string
-	if serverInfo.ServerVersion != nil {
-		version = serverInfo.ServerVersion.String()
-	}
+
 	log.L().Info("detect server version",
 		zap.String("type", serverInfo.ServerType.String()),
-		zap.String("version", version))
+		zap.String("version", serverInfo.ServerVersion.String()))
 
 	return serverInfo
 }

@@ -48,8 +48,8 @@ var (
 // `modified` means which columns are really modified. It's used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 // The return values:
-//     1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
-//     2. err (error) : error in the update.
+//  1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
+//  2. err (error) : error in the update.
 func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool, t table.Table,
 	onDup bool, memTracker *memory.Tracker) (bool, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -213,7 +213,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			}
 			return false, err
 		}
-
 	}
 	if onDup {
 		sc.AddAffectedRows(2)
@@ -238,9 +237,9 @@ func rebaseAutoRandomValue(ctx context.Context, sctx sessionctx.Context, t table
 	if recordID < 0 {
 		return nil
 	}
-	layout := autoid.NewShardIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
+	shardFmt := autoid.NewShardIDFormat(&col.FieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	// Set bits except incremental_bits to zero.
-	recordID = recordID & (1<<layout.IncrementalBits - 1)
+	recordID = recordID & shardFmt.IncrementalMask()
 	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
 }
 

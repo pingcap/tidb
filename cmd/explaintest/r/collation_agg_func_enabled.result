@@ -145,8 +145,17 @@ StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.a)->Column#6
     └─TopN	1.00	cop[tikv]		collation_agg_func.tt.a, offset:0, count:1
       └─Selection	9990.00	cop[tikv]		not(isnull(collation_agg_func.tt.a))
         └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-select min(a) from tt;
-min(a)
+desc format='brief' select lower(min(a)) from tt;
+id	estRows	task	access object	operator info
+Projection	1.00	root		lower(Column#6)->Column#7
+└─StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.a)->Column#6
+  └─TopN	1.00	root		collation_agg_func.tt.a, offset:0, count:1
+    └─TableReader	1.00	root		data:TopN
+      └─TopN	1.00	cop[tikv]		collation_agg_func.tt.a, offset:0, count:1
+        └─Selection	9990.00	cop[tikv]		not(isnull(collation_agg_func.tt.a))
+          └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+select lower(min(a)) from tt;
+lower(min(a))
 a
 desc format='brief' select min(a collate utf8mb4_bin) from tt;
 id	estRows	task	access object	operator info
@@ -249,9 +258,19 @@ select min(d) from tt;
 min(d)
 {"A": "A"}
 desc format='brief' select min(d collate utf8mb4_bin) from tt;
-Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
+└─Projection	1.00	root		cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8
+  └─Projection	1.00	root		collation_agg_func.tt.d
+    └─TopN	1.00	root		Column#7, offset:0, count:1
+      └─Projection	1.00	root		collation_agg_func.tt.d, cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#7
+        └─TableReader	1.00	root		data:TopN
+          └─TopN	1.00	cop[tikv]		cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), offset:0, count:1
+            └─Selection	8000.00	cop[tikv]		not(isnull(cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)))
+              └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(d collate utf8mb4_bin) from tt;
-Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
+min(d collate utf8mb4_bin)
+{"A": "A"}
 desc format='brief' select max(d) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(collation_agg_func.tt.d)->Column#6
@@ -264,8 +283,18 @@ select max(d) from tt;
 max(d)
 {"c": "c"}
 desc format='brief' select max(d collate utf8mb4_bin) from tt;
-Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:max(Column#8)->Column#6
+└─Projection	1.00	root		cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8
+  └─Projection	1.00	root		collation_agg_func.tt.d
+    └─TopN	1.00	root		Column#7:desc, offset:0, count:1
+      └─Projection	1.00	root		collation_agg_func.tt.d, cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#7
+        └─TableReader	1.00	root		data:TopN
+          └─TopN	1.00	cop[tikv]		cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin):desc, offset:0, count:1
+            └─Selection	8000.00	cop[tikv]		not(isnull(cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)))
+              └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select max(d collate utf8mb4_bin) from tt;
-Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
+max(d collate utf8mb4_bin)
+{"c": "c"}
 drop database collation_agg_func;
 use test

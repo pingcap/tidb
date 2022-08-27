@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -56,7 +57,7 @@ func TestSetSystemVariable(t *testing.T) {
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			mtx.Lock()
-			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
+			err := v.SetSystemVar(tc.key, tc.value)
 			mtx.Unlock()
 			if tc.err {
 				require.Error(t, err)
@@ -165,7 +166,12 @@ func TestSlowLogFormat(t *testing.T) {
 		},
 	}
 	statsInfos := make(map[string]uint64)
-	statsInfos["t1"] = 0
+	statsInfos["t1"] = 123
+	loadStatus := make(map[string]map[string]string)
+	loadStatus["t1"] = map[string]string{
+		"col1": "unInitialized",
+	}
+
 	copTasks := &stmtctx.CopTasksDetails{
 		NumCopTasks:       10,
 		AvgProcessTime:    time.Second,
@@ -211,7 +217,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
 # Digest: 01d00e6e93b28184beae487ac05841145d2a2f6a7b16de32a763bed27967e83d
-# Stats: t1:pseudo
+# Stats: t1:123[col1:unInitialized]
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
 # Cop_wait_avg: 0.01 Cop_wait_p90: 0.02 Cop_wait_max: 0.03 Cop_wait_addr: 10.6.131.79
@@ -231,6 +237,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Result_rows: 12345
 # Succ: true
 # IsExplicitTxn: true
+# IsSyncStatsFailed: false
 # IsWriteCacheTable: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
@@ -268,6 +275,7 @@ func TestSlowLogFormat(t *testing.T) {
 		ExecRetryTime:     5*time.Second + time.Millisecond*100,
 		IsExplicitTxn:     true,
 		IsWriteCacheTable: true,
+		StatsLoadStatus:   loadStatus,
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
@@ -382,4 +390,21 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	succ = tc.DeleteSavepoint("s1")
 	require.True(t, succ)
 	require.Equal(t, 0, len(tc.Savepoints))
+}
+
+func TestGeneralPlanCacheStmt(t *testing.T) {
+	sessVars := variable.NewSessionVars()
+	sessVars.GeneralPlanCacheSize = 100
+	sql1 := "select * from t where a>?"
+	sql2 := "select * from t where a<?"
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+
+	sessVars.AddGeneralPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+
+	sessVars.AddGeneralPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
 }

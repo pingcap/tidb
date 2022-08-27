@@ -40,8 +40,7 @@ func TestPredefinedTables(t *testing.T) {
 }
 
 func TestPerfSchemaTables(t *testing.T) {
-	store, clean := newMockStore(t)
-	defer clean()
+	store := newMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use performance_schema")
@@ -52,8 +51,7 @@ func TestPerfSchemaTables(t *testing.T) {
 }
 
 func TestSessionVariables(t *testing.T) {
-	store, clean := newMockStore(t)
-	defer clean()
+	store := newMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	res := tk.MustQuery("select variable_value from performance_schema.session_variables order by variable_name limit 10;")
@@ -61,8 +59,7 @@ func TestSessionVariables(t *testing.T) {
 }
 
 func TestTiKVProfileCPU(t *testing.T) {
-	store, clean := newMockStore(t)
-	defer clean()
+	store := newMockStore(t)
 
 	router := http.NewServeMux()
 	mockServer := httptest.NewServer(router)
@@ -187,20 +184,19 @@ func TestTiKVProfileCPU(t *testing.T) {
 	require.Lenf(t, accessed, 5, "expect all HTTP API had been accessed, but found: %v", accessed)
 }
 
-func newMockStore(t *testing.T) (store kv.Storage, clean func()) {
-	var err error
-	store, err = mockstore.NewMockStore()
+func newMockStore(t *testing.T) kv.Storage {
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	session.DisableStats4Test()
 
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
-	clean = func() {
+	t.Cleanup(func() {
 		dom.Close()
 		err := store.Close()
 		require.NoError(t, err)
-	}
+	})
 
-	return
+	return store
 }

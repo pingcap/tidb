@@ -389,7 +389,7 @@ func TestConvertToString(t *testing.T) {
 		sc := new(stmtctx.StatementContext)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if tt.input != tt.output {
-			require.True(t, ErrDataTooLong.Equal(err))
+			require.True(t, ErrDataTooLong.Equal(err), "flen: %d, charset: %s, input: %s, output: %s", tt.flen, tt.charset, tt.input, tt.output)
 		} else {
 			require.NoError(t, err)
 		}
@@ -904,7 +904,7 @@ func TestGetValidInt(t *testing.T) {
 		if tt.warning {
 			require.Lenf(t, warnings, warningCount+1, "%d", i)
 			require.True(t, terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal))
-			warningCount += 1
+			warningCount++
 		} else {
 			require.Len(t, warnings, warningCount)
 		}

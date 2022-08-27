@@ -30,6 +30,7 @@ go_library(
 
 go_test(
     name = "checksum_test",
+    timeout = "short",
     srcs = [
         "executor_test.go",
         "main_test.go",

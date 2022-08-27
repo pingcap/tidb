@@ -221,7 +221,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 			if !rg.LowExclude && !rg.HighExclude {
 				// In this case, the row count is at most 1.
 				if pkIsHandle {
-					rowCount += 1
+					rowCount++
 					continue
 				}
 				var cnt float64
@@ -346,6 +346,13 @@ func (c *Column) dropTopN() {
 	}
 }
 
+func (c *Column) dropHist() {
+	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
+	c.Histogram.Buckets = make([]Bucket, 0)
+	c.Histogram.scalars = make([]scalar, 0)
+	c.evictedStatus = allEvicted
+}
+
 // IsAllEvicted indicates whether all stats evicted
 func (c *Column) IsAllEvicted() bool {
 	return c.statsInitialized && c.evictedStatus >= allEvicted
@@ -448,4 +455,22 @@ func (c *Column) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum, lowE
 		return histBetweenCnt
 	}
 	return float64(c.TopN.BetweenCount(lowEncoded, highEncoded)) + histBetweenCnt
+}
+
+// StatusToString gets the string info of StatsLoadedStatus
+func (s StatsLoadedStatus) StatusToString() string {
+	if !s.statsInitialized {
+		return "unInitialized"
+	}
+	switch s.evictedStatus {
+	case allLoaded:
+		return "allLoaded"
+	case onlyCmsEvicted:
+		return "onlyCmsEvicted"
+	case onlyHistRemained:
+		return "onlyHistRemained"
+	case allEvicted:
+		return "allEvicted"
+	}
+	return "unknown"
 }
