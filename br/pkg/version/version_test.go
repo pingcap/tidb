@@ -541,7 +541,7 @@ func TestFetchVersionWithCommitID(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	tidbVersionWithValideReleaseVersion := `Release Version: v5.2.1
+	tidbVersionWithValidReleaseVersion := `Release Version: v5.2.1
 Edition: Community
 Git Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445
 Git Branch: heads/refs/tags/v5.2.1
@@ -563,10 +563,10 @@ Check Table Before Drop: false`
 	ctx := context.Background()
 
 	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.
-		NewRows([]string{""}).AddRow(tidbVersionWithValideReleaseVersion))
+		NewRows([]string{""}).AddRow(tidbVersionWithValidReleaseVersion))
 	versionStr, err := FetchVersion(ctx, db)
 	require.NoError(t, err)
-	require.Equal(t, tidbVersionWithValideReleaseVersion, versionStr)
+	require.Equal(t, tidbVersionWithValidReleaseVersion, versionStr)
 
 	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.
 		NewRows([]string{""}).AddRow(tidbVersionWithCommitInReleaseVersion))
