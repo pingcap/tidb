@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -401,8 +402,18 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency()
 		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
-		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
-		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
+		autoConcurrency, err1 := variable.GetSessionOrGlobalSystemVar(sctx.GetSessionVars(), variable.TiDBAutoBuildStatsConcurrency)
+		terror.Log(err1)
+		if err1 == nil {
+			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, autoConcurrency))
+		}
+		sVal, err2 := variable.GetSessionOrGlobalSystemVar(sctx.GetSessionVars(), variable.TiDBSysProcScanConcurrency)
+		terror.Log(err2)
+		if err2 == nil {
+			concurrency, err3 := strconv.ParseInt(sVal, 10, 64)
+			terror.Log(err3)
+			sctx.GetSessionVars().SetDistSQLScanConcurrency(int(concurrency))
+		}
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
