@@ -359,10 +359,12 @@ func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 
 // GetSchemaVersionWithNonEmptyDiff gets current global schema version, if diff is nil, we should return version - 1.
 // Consider the following scenario:
+/*
 //             t1            		t2			      t3             t4
 //             |					|				   |
 //    update schema version         |              set diff
 //                             stale read ts
+*/
 // At the first time, t2 reads the schema version v10, but the v10's diff is not set yet, so it loads v9 infoSchema.
 // But at t4 moment, v10's diff has been set and been cached in the memory, so stale read on t2 will get v10 schema from cache,
 // and inconsistency happen.
@@ -544,17 +546,12 @@ func (m *Meta) SetDDLTables() error {
 
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
-	dbs, err := m.ListDatabases()
-	if err != nil {
-		return 0, err
-	}
-	for _, db := range dbs {
-		if db.Name.L == mysql.SystemDB {
-			return db.ID, nil
-		}
+	id, err := m.GetSystemDBID()
+	if id != 0 || err != nil {
+		return id, err
 	}
 
-	id, err := m.GenGlobalID()
+	id, err = m.GenGlobalID()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -567,6 +564,20 @@ func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	}
 	err = m.CreateDatabase(&db)
 	return db.ID, err
+}
+
+// GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.
+func (m *Meta) GetSystemDBID() (int64, error) {
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return 0, err
+	}
+	for _, db := range dbs {
+		if db.Name.L == mysql.SystemDB {
+			return db.ID, nil
+		}
+	}
+	return 0, nil
 }
 
 // CheckDDLTableExists check if the tables related to concurrent DDL exists.
@@ -1148,6 +1159,18 @@ type LastJobIterator interface {
 // GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
 func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
+	if err != nil {
+		return nil, err
+	}
+	return &HLastJobIterator{
+		iter: iter,
+	}, nil
+}
+
+// GetHistoryDDLJobsIterator gets the jobs iterator begin with startJobID.
+func (m *Meta) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, error) {
+	field := m.jobIDKey(startJobID)
+	iter, err := structure.NewHashReverseIterBeginWithField(m.txn, mDDLJobHistoryKey, field)
 	if err != nil {
 		return nil, err
 	}

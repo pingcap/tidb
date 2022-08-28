@@ -2,6 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "memtest_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "mem_test.go",
@@ -9,7 +10,6 @@ go_test(
     flaky = True,
     deps = [
         "//config",
-        "//executor",
         "//meta/autoid",
         "//testkit",
         "@com_github_stretchr_testify//require",

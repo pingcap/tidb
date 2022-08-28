@@ -3169,7 +3169,6 @@ func (du *baseDateArithmetical) vecGetDateFromString(b *baseBuiltinFunc, input *
 		} else {
 			dates[i] = date
 		}
-
 	}
 	return nil
 }
@@ -6085,7 +6084,6 @@ func (c *timestampAddFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	sig := &builtinTimestampAddSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimestampAdd)
 	return sig, nil
-
 }
 
 type builtinTimestampAddSig struct {
@@ -6543,12 +6541,12 @@ func CalAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 }
 
 // For a SafeTS t and a time range [t1, t2]:
-//   1. If t < t1, we will use t1 as the result,
-//      and with it, a read request may fail because it's an unreached SafeTS.
-//   2. If t1 <= t <= t2, we will use t as the result, and with it,
-//      a read request won't fail.
-//   2. If t2 < t, we will use t2 as the result,
-//      and with it, a read request won't fail because it's bigger than the latest SafeTS.
+//  1. If t < t1, we will use t1 as the result,
+//     and with it, a read request may fail because it's an unreached SafeTS.
+//  2. If t1 <= t <= t2, we will use t as the result, and with it,
+//     a read request won't fail.
+//  2. If t2 < t, we will use t2 as the result,
+//     and with it, a read request won't fail because it's bigger than the latest SafeTS.
 func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 	if minSafeTime.Before(minTime) || minSafeTime.After(maxTime) {
 		logutil.BgLogger().Warn("calAppropriateTime",

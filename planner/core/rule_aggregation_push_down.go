@@ -322,8 +322,8 @@ func (a *aggregationPushDownSolver) checkAllArgsColumn(fun *aggregation.AggFuncD
 }
 
 // TODO:
-//   1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
-//   2. remove this method and use splitPartialAgg instead for clean code.
+//  1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
+//  2. remove this method and use splitPartialAgg instead for clean code.
 func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc,
 	gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{
@@ -509,8 +509,8 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						p = proj
 					}
 				}
-				// push aggregation across projection
 			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
+				// push aggregation across projection
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
 				noSideEffects := true

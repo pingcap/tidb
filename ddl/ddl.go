@@ -36,7 +36,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -179,7 +181,7 @@ type DDL interface {
 	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
 	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
-	SchemaSyncer() util.SchemaSyncer
+	SchemaSyncer() syncer.SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -267,7 +269,7 @@ type ddlCtx struct {
 	uuid         string
 	store        kv.Storage
 	ownerManager owner.Manager
-	schemaSyncer util.SchemaSyncer
+	schemaSyncer syncer.SchemaSyncer
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
@@ -512,16 +514,16 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	id := uuid.New().String()
 	var manager owner.Manager
-	var syncer util.SchemaSyncer
+	var schemaSyncer syncer.SchemaSyncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(ctx, id)
-		syncer = NewMockSchemaSyncer()
+		schemaSyncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
+		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -540,7 +542,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		lease:                      opt.Lease,
 		ddlJobDoneCh:               make(chan struct{}, 1),
 		ownerManager:               manager,
-		schemaSyncer:               syncer,
+		schemaSyncer:               schemaSyncer,
 		binlogCli:                  binloginfo.GetPumpsClient(),
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
@@ -565,6 +567,9 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
+	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
+	variable.EnableDDL = d.EnableDDL
+	variable.DisableDDL = d.DisableDDL
 	variable.SwitchConcurrentDDL = d.SwitchConcurrentDDL
 
 	return d
@@ -638,37 +643,34 @@ func (d *ddl) prepareWorkers4legacyDDL() {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
+	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
-	// If RunWorker is true, we need campaign owner and do DDL job.
-	// Otherwise, we needn't do that.
-	if RunWorker {
-		d.ownerManager.SetBeOwnerHook(func() {
-			var err error
-			d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
-			if err != nil {
-				logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
-			}
-		})
-
-		err := d.ownerManager.CampaignOwner()
+	d.ownerManager.SetBeOwnerHook(func() {
+		var err error
+		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
 		if err != nil {
-			return errors.Trace(err)
+			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
+	})
 
-		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
-		d.prepareWorkers4ConcurrencyDDL()
-		d.prepareWorkers4legacyDDL()
+	d.prepareWorkers4ConcurrencyDDL()
+	d.prepareWorkers4legacyDDL()
 
-		go d.schemaSyncer.StartCleanWork()
-		if config.TableLockEnabled() {
-			d.wg.Add(1)
-			go d.startCleanDeadTableLock()
+	if config.TableLockEnabled() {
+		d.wg.Add(1)
+		go d.startCleanDeadTableLock()
+	}
+
+	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
+	// Otherwise, we needn't do that.
+	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
+		if err := d.EnableDDL(); err != nil {
+			return err
 		}
-		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 
 	variable.RegisterStatistics(d)
@@ -678,6 +680,35 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
+	return nil
+}
+
+// EnableDDL enable this node to execute ddl.
+// Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
+// we should make sure that before invoking EnableDDL(), ddl is DISABLE.
+func (d *ddl) EnableDDL() error {
+	err := d.ownerManager.CampaignOwner()
+	return errors.Trace(err)
+}
+
+// DisableDDL disable this node to execute ddl.
+// We should make sure that before invoking DisableDDL(), ddl is ENABLE.
+func (d *ddl) DisableDDL() error {
+	if d.ownerManager.IsOwner() {
+		// If there is only one node, we should NOT disable ddl.
+		serverInfo, err := infosync.GetAllServerInfo(d.ctx)
+		if err != nil {
+			logutil.BgLogger().Error("[ddl] error when GetAllServerInfo", zap.Error(err))
+			return err
+		}
+		if len(serverInfo) <= 1 {
+			return dbterror.ErrDDLSetting.GenWithStackByArgs("can not disable ddl when there is only one instance")
+		}
+		// FIXME: if possible, when this node is the only node with DDL, ths setting of DisableDDL should fail.
+	}
+
+	// disable campaign by interrupting campaignLoop
+	d.ownerManager.CampaignCancel()
 	return nil
 }
 
@@ -777,7 +808,7 @@ func (d *ddl) genPlacementPolicyID() (int64, error) {
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
-func (d *ddl) SchemaSyncer() util.SchemaSyncer {
+func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
 	return d.schemaSyncer
 }
 
@@ -830,7 +861,7 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 
 func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	// If the workers don't run, we needn't notify workers.
-	if !RunWorker {
+	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		return
 	}
 	if variable.EnableConcurrentDDL.Load() {
@@ -1651,6 +1682,26 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		return i.ID < j.ID
 	})
 	return allJobs, nil
+}
+
+// ScanHistoryDDLJobs get some of the done DDL jobs.
+// When the DDL history is quite large, GetAllHistoryDDLJobs() API can't work well, because it makes the server OOM.
+// The result is in descending order by job ID.
+func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job, error) {
+	var iter meta.LastJobIterator
+	var err error
+	if startJobID == 0 {
+		iter, err = m.GetLastHistoryDDLJobsIterator()
+	} else {
+		if limit == 0 {
+			return nil, errors.New("when 'start_job_id' is specified, it must work with a 'limit'")
+		}
+		iter, err = m.GetHistoryDDLJobsIterator(startJobID)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.GetLastJobs(limit, nil)
 }
 
 // GetHistoryJobByID return history DDL job by ID.

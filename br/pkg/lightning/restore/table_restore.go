@@ -708,15 +708,10 @@ func (tr *TableRestore) postProcess(
 		tblInfo := tr.tableInfo.Core
 		var err error
 		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
-			var maxAutoRandom, autoRandomTotalBits uint64
-			autoRandomTotalBits = 64
-			autoRandomBits := tblInfo.AutoRandomBits // range from (0, 15]
-			if !tblInfo.IsAutoRandomBitColUnsigned() {
-				// if auto_random is signed, leave one extra bit
-				autoRandomTotalBits = 63
-			}
-			maxAutoRandom = 1<<(autoRandomTotalBits-autoRandomBits) - 1
-			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxAutoRandom)
+			ft := &tblInfo.GetPkColInfo().FieldType
+			shardFmt := autoid.NewShardIDFormat(ft, tblInfo.AutoRandomBits, tblInfo.AutoRandomRangeBits)
+			maxCap := shardFmt.IncrementalBitsCapacity()
+			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle
 			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)
@@ -766,9 +761,8 @@ func (tr *TableRestore) postProcess(
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 				return false, err
-			} else {
-				hasDupe = hasLocalDupe
 			}
+			hasDupe = hasLocalDupe
 		}
 
 		needChecksum, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
@@ -785,9 +779,9 @@ func (tr *TableRestore) postProcess(
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
 				return false, e
-			} else {
-				hasDupe = hasDupe || hasRemoteDupe
 			}
+			hasDupe = hasDupe || hasRemoteDupe
+
 			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
 				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
 				return false, err

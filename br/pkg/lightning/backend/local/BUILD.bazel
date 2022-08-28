@@ -32,7 +32,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/membuf",
         "//br/pkg/pdutil",
-        "//br/pkg/restore",
+        "//br/pkg/restore/split",
         "//br/pkg/utils",
         "//br/pkg/version",
         "//distsql",
@@ -42,6 +42,7 @@ go_library(
         "//parser/mysql",
         "//table",
         "//tablecodec",
+        "//types",
         "//util/codec",
         "//util/engine",
         "//util/hack",
@@ -81,6 +82,7 @@ go_library(
 
 go_test(
     name = "local_test",
+    timeout = "short",
     srcs = [
         "engine_test.go",
         "iterator_test.go",
@@ -91,6 +93,7 @@ go_test(
     embed = [":local"],
     flaky = True,
     deps = [
+        "//br/pkg/errors",
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
@@ -100,7 +103,7 @@ go_test(
         "//br/pkg/membuf",
         "//br/pkg/mock",
         "//br/pkg/pdutil",
-        "//br/pkg/restore",
+        "//br/pkg/restore/split",
         "//br/pkg/utils",
         "//kv",
         "//parser/mysql",

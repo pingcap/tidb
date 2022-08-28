@@ -380,14 +380,10 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		},
 		{
 			AllocType:  autoid.AutoRandomType,
-			CreateStmt: "create table t (id integer primary key auto_random(3));",
+			CreateStmt: "create table t (id bigint primary key auto_random(3));",
 		},
 	} {
 		tblInfo := mockTableInfo(t, testTblInfo.CreateStmt)
-		if testTblInfo.AllocType == autoid.AutoRandomType {
-			// seems parser can't parse auto_random properly.
-			tblInfo.AutoRandomBits = 3
-		}
 		tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 		require.NoError(t, err)
 
@@ -431,7 +427,6 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		require.NoError(t, err)
 		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
 		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder)).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
-
 	}
 }
 
@@ -448,8 +443,6 @@ func mockTableInfo(t *testing.T, createSQL string) *model.TableInfo {
 
 func TestDefaultAutoRandoms(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (id bigint unsigned NOT NULL auto_random primary key clustered, a varchar(100));")
-	// seems parser can't parse auto_random properly.
-	tblInfo.AutoRandomBits = 5
 	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
 	encoder, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
