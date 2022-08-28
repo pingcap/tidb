@@ -790,6 +790,10 @@ const (
 	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
 	// when a single SQL statement exceeds the memory quota specified by the memory quota.
 	TiDBEnableTmpStorageOnOOM = "tidb_enable_tmp_storage_on_oom"
+	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
+	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
+	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
+	TiDBSysProcScanConcurrency = "tidb_sysproc_scan_concurrency"
 )
 
 // TiDB intentional limits
@@ -1004,6 +1008,8 @@ const (
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
+	DefTiDBAutoBuildStatsConcurrency               = 1
+	DefTiDBSysProcScanConcurrency                  = 1
 )
 
 // Process global variables.
