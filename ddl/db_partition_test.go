@@ -1342,7 +1342,7 @@ func TestAlterTableDropPartitionByList(t *testing.T) {
 	);`)
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	tk.MustExec(`alter table t drop partition p1`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "5", "<nil>"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil>", "1", "5"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1860,7 +1860,7 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	// test disable exchange partition
 	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it"))
-	tk.MustQuery("select * from e").Check(testkit.Rows("16", "1669", "337", "2005"))
+	tk.MustQuery("select * from e order by id").Check(testkit.Rows("16", "337", "1669", "2005"))
 	tk.MustQuery("select * from e2").Check(testkit.Rows())
 
 	// enable exchange partition

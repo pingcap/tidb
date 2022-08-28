@@ -4104,17 +4104,16 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 	return pids, ret, nil
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error) {
-	//nolint: prealloc
-	var ret []kv.KeyRange
-	for _, p := range h.partitions {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([][]kv.KeyRange, error) {
+	ret := make([][]kv.KeyRange, len(h.partitions))
+	for i, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
 		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
 		if err != nil {
 			return nil, err
 		}
-		ret = append(ret, kvRange...)
+		ret[i] = append(ret[i], kvRange...)
 	}
 	return ret, nil
 }

@@ -187,6 +187,12 @@ func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBui
 	return builder
 }
 
+// SetPartitionKeyRanges sets the "KeyRangesWithPartition" for "kv.Request".
+func (builder *RequestBuilder) SetPartitionKeyRanges(keyRanges [][]kv.KeyRange) *RequestBuilder {
+	builder.Request.KeyRangesWithPartition = keyRanges
+	return builder
+}
+
 // SetStartTS sets "StartTS" for "kv.Request".
 func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
 	builder.Request.StartTs = startTS
@@ -323,6 +329,16 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 			visitPhysicalTableID[tableID] = struct{}{}
 		} else {
 			return errors.New("requestBuilder can't decode tableID from keyRange")
+		}
+	}
+	for _, partKeyRanges := range builder.Request.KeyRangesWithPartition {
+		for _, keyRange := range partKeyRanges {
+			tableID := tablecodec.DecodeTableID(keyRange.StartKey)
+			if tableID > 0 {
+				visitPhysicalTableID[tableID] = struct{}{}
+			} else {
+				return errors.New("requestBuilder can't decode tableID from keyRange")
+			}
 		}
 	}
 

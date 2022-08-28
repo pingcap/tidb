@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"time"
 
@@ -56,7 +57,7 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 }
 
 type kvRangeBuilder interface {
-	buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error)
+	buildKeyRange(ranges []*ranger.Range) ([][]kv.KeyRange, error)
 	buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error)
 }
 
@@ -200,13 +201,25 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+		if len(kvReq.KeyRanges) > 0 {
+			e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+		} else {
+			for _, kr := range kvReq.KeyRangesWithPartition {
+				e.kvRanges = append(e.kvRanges, kr...)
+			}
+		}
 		if len(secondPartRanges) != 0 {
 			kvReq, err = e.buildKVReq(ctx, secondPartRanges)
 			if err != nil {
 				return err
 			}
-			e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+			if len(kvReq.KeyRanges) > 0 {
+				e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+			} else {
+				for _, kr := range kvReq.KeyRangesWithPartition {
+					e.kvRanges = append(e.kvRanges, kr...)
+				}
+			}
 		}
 		return nil
 	}
@@ -309,7 +322,19 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
-	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+	if len(kvReq.KeyRanges) > 0 {
+		slices.SortFunc(kvReq.KeyRanges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
+		e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+	} else {
+		for _, kr := range kvReq.KeyRangesWithPartition {
+			slices.SortFunc(kr, func(i, j kv.KeyRange) bool {
+				return bytes.Compare(i.StartKey, j.StartKey) < 0
+			})
+			e.kvRanges = append(e.kvRanges, kr...)
+		}
+	}
 
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
@@ -401,7 +426,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		if err != nil {
 			return nil, err
 		}
-		reqBuilder = builder.SetKeyRanges(kvRange)
+		reqBuilder = builder.SetPartitionKeyRanges(kvRange)
 	} else {
 		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
 	}
