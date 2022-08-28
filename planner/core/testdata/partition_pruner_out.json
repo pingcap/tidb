@@ -847,9 +847,9 @@
       {
         "SQL": "select * from t7 where a is null or a > 0 order by a;",
         "Result": [
-          "<nil>",
           "1",
-          "2"
+          "2",
+          "<nil>"
         ],
         "Plan": [
           "Sort 3343.33 root  test_partition.t7.a",
@@ -866,8 +866,8 @@
       {
         "SQL": "select * from t1 order by id,a",
         "Result": [
-          "<nil> 10 <nil>",
           "1 1 1",
+          "10 10 10",
           "2 2 2",
           "3 3 3",
           "4 4 4",
@@ -876,7 +876,7 @@
           "7 7 7",
           "8 8 8",
           "9 9 9",
-          "10 10 10"
+          "<nil> 10 <nil>"
         ],
         "Plan": [
           "Sort 10000.00 root  test_partition.t1.id, test_partition.t1.a",
@@ -1341,8 +1341,8 @@
       {
         "SQL": "select * from t1 where a = 1 or true order by id,a",
         "Result": [
-          "<nil> 10 <nil>",
           "1 1 1",
+          "10 10 10",
           "2 2 2",
           "3 3 3",
           "4 4 4",
@@ -1351,7 +1351,7 @@
           "7 7 7",
           "8 8 8",
           "9 9 9",
-          "10 10 10"
+          "<nil> 10 <nil>"
         ],
         "Plan": [
           "Sort 10000.00 root  test_partition.t1.id, test_partition.t1.a",
@@ -1973,13 +1973,13 @@
         "SQL": "select * from t1 where a < 3 or b > 4",
         "Result": [
           "1 1 1",
+          "10 10 10",
           "2 2 2",
           "5 5 5",
           "6 6 6",
           "7 7 7",
           "8 8 8",
-          "9 9 9",
-          "10 10 10"
+          "9 9 9"
         ],
         "Plan": [
           "TableReader 5548.89 root partition:p0,p1 data:Selection",
@@ -2059,11 +2059,11 @@
         "SQL": "select * from t1 where (a<=1 and b<=1) or (a >=6 and b>=6)",
         "Result": [
           "1 1 1",
+          "10 10 10",
           "6 6 6",
           "7 7 7",
           "8 8 8",
-          "9 9 9",
-          "10 10 10"
+          "9 9 9"
         ],
         "Plan": [
           "TableReader 2092.85 root partition:p0,p1 data:Selection",
@@ -2080,6 +2080,7 @@
         "SQL": "select * from t1 where a <= 100 and b <= 100",
         "Result": [
           "1 1 1",
+          "10 10 10",
           "2 2 2",
           "3 3 3",
           "4 4 4",
@@ -2087,8 +2088,7 @@
           "6 6 6",
           "7 7 7",
           "8 8 8",
-          "9 9 9",
-          "10 10 10"
+          "9 9 9"
         ],
         "Plan": [
           "TableReader 1104.45 root partition:p0,p1 data:Selection",
@@ -2126,10 +2126,10 @@
       {
         "SQL": "select * from t1 left join t2 on true where (t1.a <=1 or t1.a <= 3 and (t1.b >=3 and t1.b <= 5)) and (t2.a >= 6 and t2.a <= 8) and t2.b>=7 and t2.id>=7 order by t1.id,t1.a",
         "Result": [
-          "1 1 1 8 8 8",
           "1 1 1 7 7 7",
-          "3 3 3 8 8 8",
-          "3 3 3 7 7 7"
+          "1 1 1 8 8 8",
+          "3 3 3 7 7 7",
+          "3 3 3 8 8 8"
         ],
         "Plan": [
           "Sort 93855.70 root  test_partition.t1.id, test_partition.t1.a",
@@ -2326,8 +2326,8 @@
       {
         "SQL": "select * from t1 where a = 3 or true order by id,a",
         "Result": [
-          "<nil> 10 <nil>",
           "1 1 1",
+          "10 10 10",
           "2 2 2",
           "3 3 3",
           "4 4 4",
@@ -2336,7 +2336,7 @@
           "7 7 7",
           "8 8 8",
           "9 9 9",
-          "10 10 10"
+          "<nil> 10 <nil>"
         ],
         "Plan": [
           "Sort 10000.00 root  test_partition.t1.id, test_partition.t1.a",
@@ -2463,6 +2463,7 @@
         "SQL": "select * from t1 where (a >= 1 and a <= 6) or (a>=3 and b >=3)",
         "Result": [
           "1 1 1",
+          "10 10 10",
           "2 2 2",
           "3 3 3",
           "4 4 4",
@@ -2470,8 +2471,7 @@
           "6 6 6",
           "7 7 7",
           "8 8 8",
-          "9 9 9",
-          "10 10 10"
+          "9 9 9"
         ],
         "Plan": [
           "TableReader 1333.33 root partition:p0,p1 data:Selection",
