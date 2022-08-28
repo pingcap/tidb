@@ -1093,6 +1093,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 	var (
 		idxScan *PhysicalIndexScan
 		tblScan *PhysicalTableScan
+		tblInfo *model.TableInfo
 	)
 	if copTsk.indexPlan != nil {
 		copTsk.indexPlan, err = copTsk.indexPlan.Clone()
@@ -1104,6 +1105,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 			finalIdxScanPlan = finalIdxScanPlan.Children()[0]
 		}
 		idxScan = finalIdxScanPlan.(*PhysicalIndexScan)
+		tblInfo = idxScan.Table
 	}
 	if copTsk.tablePlan != nil {
 		copTsk.tablePlan, err = copTsk.tablePlan.Clone()
@@ -1115,6 +1117,10 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 			finalTblScanPlan = finalTblScanPlan.Children()[0]
 		}
 		tblScan = finalTblScanPlan.(*PhysicalTableScan)
+		tblInfo = tblScan.Table
+	}
+	if tableHasDirtyContent(p.SCtx(), tblInfo) {
+		return nil, false
 	}
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
