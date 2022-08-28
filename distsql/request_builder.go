@@ -332,6 +332,16 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 			return errors.New("requestBuilder can't decode tableID from keyRange")
 		}
 	}
+	for _, partKeyRanges := range builder.Request.KeyRangesWithPartition {
+		for _, keyRange := range partKeyRanges {
+			tableID := tablecodec.DecodeTableID(keyRange.StartKey)
+			if tableID > 0 {
+				visitPhysicalTableID[tableID] = struct{}{}
+			} else {
+				return errors.New("requestBuilder can't decode tableID from keyRange")
+			}
+		}
+	}
 
 	for phyTableID := range visitPhysicalTableID {
 		valid := VerifyTxnScope(txnScope, phyTableID, builder.is)

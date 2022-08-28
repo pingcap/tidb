@@ -538,7 +538,6 @@ func TestOrderByandLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryPartition, "IndexMerge")) // check if indexMerge is used
 		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
-
 }
 
 func TestBatchGetandPointGetwithHashPartition(t *testing.T) {

@@ -1119,15 +1119,17 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		tblScan = finalTblScanPlan.(*PhysicalTableScan)
 		tblInfo = tblScan.Table
 	}
-	if tableHasDirtyContent(p.SCtx(), tblInfo) {
+
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
 		return nil, false
 	}
+	if pi.Type == model.PartitionTypeList {
+		return nil, false
+	}
+
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
-
-		if idxScan.Table.GetPartitionInfo() == nil {
-			return nil, false
-		}
 
 		propMatched := checkIndexMatchProp(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
 		if !propMatched {
@@ -1145,10 +1147,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
 		pushedLimit.cost = copTsk.cost()
 	} else if copTsk.indexPlan == nil {
-		if tblScan.Table.GetPartitionInfo() == nil {
-			return nil, false
-		}
-
 		if tblScan.HandleCols == nil {
 			return nil, false
 		}
