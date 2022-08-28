@@ -231,6 +231,7 @@ func (l *SimpleLRUCache) RemoveOldest() (key Key, value Value, ok bool) {
 
 // memoryControl control the memory by quota and guard
 // todo: add quota, guard in lruPlanCache
+// todo: move this to plancacheLRU
 func (l *SimpleLRUCache) memoryControl() {
 	if l.quota == 0 {
 		return
