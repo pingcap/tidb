@@ -154,15 +154,15 @@ func TestQuoteString(t *testing.T) {
 		raw    string
 		quoted string
 	}{
-		{raw: "3", quoted: `3`},
+		{raw: "3", quoted: `"3"`},
 		{raw: "hello, \"escaped quotes\" world", quoted: `"hello, \"escaped quotes\" world"`},
 		{raw: "你", quoted: `你`},
 		{raw: "true", quoted: `true`},
 		{raw: "null", quoted: `null`},
 		{raw: `"`, quoted: `"\""`},
-		{raw: `'`, quoted: `'`},
-		{raw: `''`, quoted: `''`},
-		{raw: ``, quoted: ``},
+		{raw: `'`, quoted: `"'"`},
+		{raw: `''`, quoted: `"''"`},
+		{raw: ``, quoted: `""`},
 		{raw: "\\ \" \b \f \n \r \t", quoted: `"\\ \" \b \f \n \r \t"`},
 	}
 
