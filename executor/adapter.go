@@ -395,19 +395,17 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency()
 		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
-		autoConcurrency, ok1 := sctx.GetSessionVars().GetSystemVar(variable.TiDBAutoBuildStatsConcurrency)
-		if ok1 {
+		autoConcurrency, err1 := variable.GetGlobalSystemVar(sctx.GetSessionVars(), variable.TiDBAutoBuildStatsConcurrency)
+		terror.Log(err1)
+		if err1 == nil {
 			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, autoConcurrency))
-		} else {
-			logutil.BgLogger().Error("fail to get val for ", zap.String("key", variable.TiDBAutoBuildStatsConcurrency))
 		}
-		sVal, ok2 := sctx.GetSessionVars().GetSystemVar(variable.TiDBSysProcScanConcurrency)
-		if ok2 {
+		sVal, err2 := variable.GetGlobalSystemVar(sctx.GetSessionVars(), variable.TiDBSysProcScanConcurrency)
+		terror.Log(err2)
+		if err2 == nil {
 			concurrency, err3 := strconv.ParseInt(sVal, 10, 64)
 			terror.Log(err3)
 			sctx.GetSessionVars().SetDistSQLScanConcurrency(int(concurrency))
-		} else {
-			logutil.BgLogger().Error("fail to get val for ", zap.String("key", variable.TiDBSysProcScanConcurrency))
 		}
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
