@@ -591,7 +591,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 		return tbl
 	}
 
-	assertTableByName := func(sc *infoschema.LocalTemporaryTables, schemaName, tableName string, schema *model.DBInfo, tb table.Table) {
+	assertTableByName := func(sc *infoschema.SessionTables, schemaName, tableName string, schema *model.DBInfo, tb table.Table) {
 		got, ok := sc.TableByName(model.NewCIStr(schemaName), model.NewCIStr(tableName))
 		if tb == nil {
 			require.Nil(t, schema)
@@ -604,12 +604,12 @@ func TestLocalTemporaryTables(t *testing.T) {
 		}
 	}
 
-	assertTableExists := func(sc *infoschema.LocalTemporaryTables, schemaName, tableName string, exists bool) {
+	assertTableExists := func(sc *infoschema.SessionTables, schemaName, tableName string, exists bool) {
 		got := sc.TableExists(model.NewCIStr(schemaName), model.NewCIStr(tableName))
 		require.Equal(t, exists, got)
 	}
 
-	assertTableByID := func(sc *infoschema.LocalTemporaryTables, tbID int64, schema *model.DBInfo, tb table.Table) {
+	assertTableByID := func(sc *infoschema.SessionTables, tbID int64, schema *model.DBInfo, tb table.Table) {
 		got, ok := sc.TableByID(tbID)
 		if tb == nil {
 			require.Nil(t, schema)
@@ -622,7 +622,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 		}
 	}
 
-	assertSchemaByTable := func(sc *infoschema.LocalTemporaryTables, db *model.DBInfo, tb *model.TableInfo) {
+	assertSchemaByTable := func(sc *infoschema.SessionTables, db *model.DBInfo, tb *model.TableInfo) {
 		got, ok := sc.SchemaByTable(tb)
 		if db == nil {
 			require.Nil(t, got)
@@ -634,7 +634,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 		}
 	}
 
-	sc := infoschema.NewLocalTemporaryTables()
+	sc := infoschema.NewSessionTables()
 	db1 := createNewSchemaInfo("db1")
 	tb11 := createNewTable(db1.ID, "tb1", model.TempTableLocal)
 	tb12 := createNewTable(db1.ID, "Tb2", model.TempTableLocal)
@@ -737,14 +737,14 @@ func TestLocalTemporaryTables(t *testing.T) {
 	assertSchemaByTable(sc, nil, tb22.Meta())
 	assertSchemaByTable(sc, nil, nil)
 
-	// test TemporaryTableAttachedInfoSchema
+	// test SessionExtendedInfoSchema
 	dbTest := createNewSchemaInfo("test")
 	tmpTbTestA := createNewTable(dbTest.ID, "tba", model.TempTableLocal)
 	normalTbTestA := createNewTable(dbTest.ID, "tba", model.TempTableNone)
 	normalTbTestB := createNewTable(dbTest.ID, "tbb", model.TempTableNone)
 	normalTbTestC := createNewTable(db1.ID, "tbc", model.TempTableNone)
 
-	is := &infoschema.TemporaryTableAttachedInfoSchema{
+	is := &infoschema.SessionExtendedInfoSchema{
 		InfoSchema:           infoschema.MockInfoSchema([]*model.TableInfo{normalTbTestA.Meta(), normalTbTestB.Meta()}),
 		LocalTemporaryTables: sc,
 	}
