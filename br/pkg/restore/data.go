@@ -332,7 +332,7 @@ func (recovery *Recovery) WaitApply(ctx context.Context, allStores []*metapb.Sto
 			return errors.Trace(err)
 		}
 		storeId := store.Id
-		log.Debug("iterate  tikv", zap.String("tikv address", storeAddr))
+		log.Debug("iterate tikv", zap.String("tikv address", storeAddr))
 		workers.ApplyOnErrorGroup(eg, func() error {
 			log.Info("send wait apply to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			req := &recovpb.WaitApplyRequest{StoreId: storeId}
