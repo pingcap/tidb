@@ -426,6 +426,16 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCoun
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	return ranges, nil
+}
+
+// buildCNFIndexRange builds the range for index where the top layer is CNF.
+func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
+	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
+	ranges, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessCondition)
+	if err != nil {
+		return nil, err
+	}
 
 	// Take prefix index into consideration.
 	if hasPrefix(d.lengths) {
