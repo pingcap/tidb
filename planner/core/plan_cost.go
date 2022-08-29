@@ -928,7 +928,7 @@ func (p *PhysicalMergeJoin) GetPlanCost(taskType property.TaskType, option *Plan
 }
 
 // GetCost computes cost of hash join operator itself.
-func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint64) float64 {
+func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint64, op *physicalOptimizeOp) float64 {
 	buildCnt, probeCnt := lCnt, rCnt
 	build := p.children[0]
 	// Taking the right as the inner for right join or using the outer to build a hash table.
@@ -946,9 +946,13 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	if isMPP && p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
 		cpuFactor = sessVars.GetTiFlashCPUFactor() // use the dedicated TiFlash CPU Factor on modelVer2
 	}
+	diskFactor := sessVars.GetDiskFactor()
+	memoryFactor := sessVars.GetMemoryFactor()
+	concurrencyFactor := sessVars.GetConcurrencyFactor()
+
 	cpuCost := buildCnt * cpuFactor
-	memoryCost := buildCnt * sessVars.GetMemoryFactor()
-	diskCost := buildCnt * sessVars.GetDiskFactor() * rowSize
+	memoryCost := buildCnt * memoryFactor
+	diskCost := buildCnt * diskFactor * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
 	helper := &fullJoinRowCountHelper{
 		cartesian:     false,
@@ -982,7 +986,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	// Cost of querying hash table is cheap actually, so we just compute the cost of
 	// evaluating `OtherConditions` and joining row pairs.
 	probeCost := numPairs * cpuFactor
-	probeDiskCost := numPairs * sessVars.GetDiskFactor() * rowSize
+	probeDiskCost := numPairs * diskFactor * rowSize
 	// Cost of evaluating outer filter.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		// Input outer count for the above compution should be adjusted by SelectionFactor.
@@ -993,7 +997,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	diskCost += probeDiskCost
 	probeCost /= float64(p.Concurrency)
 	// Cost of additional concurrent goroutines.
-	cpuCost += probeCost + float64(p.Concurrency+1)*sessVars.GetConcurrencyFactor()
+	cpuCost += probeCost + float64(p.Concurrency+1)*concurrencyFactor
 	// Cost of traveling the hash table to resolve missing matched cases when building the hash table from the outer table
 	if p.UseOuterToBuild {
 		if spill {
@@ -1002,13 +1006,19 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 		} else {
 			cpuCost += buildCnt * cpuFactor / float64(p.Concurrency)
 		}
-		diskCost += buildCnt * sessVars.GetDiskFactor() * rowSize
+		diskCost += buildCnt * diskFactor * rowSize
 	}
 
 	if spill {
 		memoryCost *= float64(memQuota) / (rowSize * buildCnt)
 	} else {
 		diskCost = 0
+	}
+	if op != nil {
+		setPhysicalHashJoinCostDetail(p, op, spill, buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
+			cpuCost, probeCost, memoryCost, diskCost, probeDiskCost,
+			diskFactor, memoryFactor, concurrencyFactor,
+			memQuota)
 	}
 	return cpuCost + memoryCost + diskCost
 }
@@ -1027,7 +1037,8 @@ func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, option *PlanC
 		}
 		p.planCost += childCost
 	}
-	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag), taskType == property.MppTaskType, costFlag)
+	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag),
+		taskType == property.MppTaskType, costFlag, option.tracer)
 	p.planCostInit = true
 	return p.planCost, nil
 }

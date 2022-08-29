@@ -40,6 +40,8 @@ const (
 	TypeCodeFloat64 TypeCode = 0x0b
 	// TypeCodeString indicates the JSON is a string.
 	TypeCodeString TypeCode = 0x0c
+	// TypeCodeOpaque indicates the JSON is a opaque
+	TypeCodeOpaque TypeCode = 0x0d
 )
 
 const (

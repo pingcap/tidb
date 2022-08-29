@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"crypto/tls"
 	"runtime"
 	"strconv"
 	"testing"
@@ -31,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannerutil "github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -50,60 +49,6 @@ var (
 	InspectionSummaryRules = inspectionSummaryRules
 	InspectionRules        = inspectionRules
 )
-
-// mockSessionManager is a mocked session manager which is used for test.
-type mockSessionManager struct {
-	PS       []*util.ProcessInfo
-	serverID uint64
-}
-
-func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-// ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
-	for _, item := range msm.PS {
-		ret[item.ID] = item
-	}
-	return ret
-}
-
-func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	for _, item := range msm.PS {
-		if item.ID == id {
-			return item, true
-		}
-	}
-	return &util.ProcessInfo{}, false
-}
-
-// Kill implements the SessionManager.Kill interface.
-func (msm *mockSessionManager) Kill(cid uint64, query bool) {
-}
-
-func (msm *mockSessionManager) KillAllConnections() {
-}
-
-func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
-}
-
-func (msm *mockSessionManager) ServerID() uint64 {
-	return msm.serverID
-}
-
-func (msm *mockSessionManager) SetServerID(serverID uint64) {
-	msm.serverID = serverID
-}
-
-func (msm *mockSessionManager) StoreInternalSession(se interface{}) {}
-
-func (msm *mockSessionManager) DeleteInternalSession(se interface{}) {}
-
-func (msm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
 
 func TestShowProcessList(t *testing.T) {
 	// Compose schema.
@@ -124,7 +69,7 @@ func TestShowProcessList(t *testing.T) {
 		Info:    "",
 	}
 	ps = append(ps, pi)
-	sm := &mockSessionManager{
+	sm := &testutil.MockSessionManager{
 		PS: ps,
 	}
 	sctx := mock.NewContext()
@@ -510,7 +455,7 @@ func TestSortSpillDisk(t *testing.T) {
 	err = exec.Close()
 	require.NoError(t, err)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 24000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 28000)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	require.NoError(t, err)
