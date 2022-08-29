@@ -830,6 +830,7 @@ var funcs = map[string]functionClass{
 	ast.Regexp:             &regexpFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
 	ast.RegexpLike:         &regexpLikeFunctionClass{baseFunctionClass{ast.RegexpLike, 2, 3}},
 	ast.RegexpSubstr:       &regexpSubstrFunctionClass{baseFunctionClass{ast.RegexpSubstr, 2, 5}},
+	ast.RegexpInStr:        &regexpInStrFunctionClass{baseFunctionClass{ast.RegexpInStr, 2, 6}},
 	ast.Case:               &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
 	ast.RowFunc:            &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
 	ast.SetVar:             &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},

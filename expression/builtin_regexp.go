@@ -41,8 +41,9 @@ const (
 )
 
 const (
-	invalidMatchType = "Invalid match type"
-	invalidIndex     = "Index out of bounds in regular expression search"
+	invalidMatchType    = "Invalid match type"
+	invalidIndex        = "Index out of bounds in regular expression search"
+	invalidReturnOption = "Incorrect arguments to regexp_instr: return_option must be 1 or 0"
 )
 
 var validMatchType = map[string]empty{
@@ -580,4 +581,176 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		}
 	}
 	return nil
+}
+
+// ---------------------------------- regexp_instr ----------------------------------
+
+type regexpInStrFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argTp := []types.EvalType{types.ETString, types.ETString}
+	switch len(args) {
+	case 3:
+		argTp = append(argTp, types.ETInt)
+	case 4:
+		argTp = append(argTp, types.ETInt, types.ETInt)
+	case 5:
+		argTp = append(argTp, types.ETInt, types.ETInt, types.ETString)
+	case 6:
+		argTp = append(argTp, types.ETInt, types.ETInt, types.ETInt, types.ETString)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.SetFlen(mysql.MaxIntWidth)
+	sig := regexpInStrFuncSig{
+		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
+	}
+
+	if bf.collation == charset.CollationBin {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrSig)
+		sig.isBinCollation = true
+	} else {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrUTF8Sig)
+		sig.isBinCollation = false
+	}
+
+	return &sig, nil
+}
+
+type regexpInStrFuncSig struct {
+	regexpBaseFuncSig
+	isBinCollation bool
+}
+
+func (re *regexpInStrFuncSig) Clone() builtinFunc {
+	newSig := &regexpLikeFuncSig{}
+	newSig.cloneFrom(&re.baseBuiltinFunc)
+	newSig.clone(&re.regexpBaseFuncSig)
+	return newSig
+}
+
+func (re *regexpInStrFuncSig) vectorized() bool {
+	return true
+}
+
+// Call this function when all args are constant
+func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
+	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+
+	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+
+	pos := int64(1)
+	occurrence := int64(1)
+	returnOption := int64(0)
+	matchType := ""
+	arg_num := len(re.args)
+	var bexpr []byte
+
+	if re.isBinCollation {
+		bexpr = []byte(expr)
+	}
+
+	if arg_num >= 3 {
+		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+
+		// Check position and trim expr
+		if re.isBinCollation {
+			bexpr = []byte(expr)
+			if pos < 1 || pos > int64(len(bexpr)) {
+				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			bexpr = bexpr[pos-1:] // Trim
+		} else {
+			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
+				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimUtf8String(&expr, pos-1) // Trim
+		}
+	}
+
+	if arg_num >= 4 {
+		occurrence, isNull, err = re.args[3].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+
+		if occurrence < 1 {
+			occurrence = 1
+		}
+	}
+
+	if arg_num >= 5 {
+		returnOption, isNull, err = re.args[4].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+
+		if returnOption != 0 || returnOption != 1 {
+			return 0, true, ErrRegexp.GenWithStackByArgs(invalidReturnOption)
+		}
+	}
+
+	if arg_num == 6 {
+		matchType, isNull, err = re.args[5].EvalString(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+	}
+
+	re.compile, err = re.genCompile(matchType)
+	if err != nil {
+		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
+	reg, err := re.compile(pat)
+	if err != nil {
+		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
+	if re.isBinCollation {
+		matches := reg.FindAllIndex(bexpr, -1)
+		length := int64(len(matches))
+		if length == 0 || occurrence > length {
+			return 0, true, nil
+		}
+
+		if returnOption == 0 {
+			return int64(matches[occurrence-1][0]), false, nil
+		} else {
+			return int64(matches[occurrence-1][1]), false, nil
+		}
+	}
+
+	matches := reg.FindAllString(expr, -1)
+	length := int64(len(matches))
+	if length == 0 || occurrence > length {
+		return 0, true, nil
+	}
+
+	return 0, false, nil // TODO
 }
