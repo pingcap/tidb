@@ -973,7 +973,9 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
-	tk.MustExec("set @@tidb_skip_insert_lock=1")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=1")
+
+	// case: success
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t values (1, 1)")
 	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 1"))
@@ -989,18 +991,23 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 
-	// test constraint check failure
+	// case: constraint check failure
 	tk.MustExec("create table t2 (id int primary key, uk int, unique key i1(uk))")
 	tk.MustExec("insert into t2 values (1, 1)")
-	println("txn start")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (2, 1)")
 	// NOTE: this read breaks constraint, but we are not able to return an error here.
 	// We can only guarantee the txn should not commit
 	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
 	err := tk.ExecToErr("commit")
-	println(err.Error())
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
 
+	// case: conflict check failure
+	tk.MustExec("create table t3 (id int primary key, sk int, key i1(sk))")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t3 values (1, 1)")
+	tk2.MustExec("insert into t3 values (1, 2)")
+	err = tk.ExecToErr("commit")
+	require.Error(t, err)
 }
