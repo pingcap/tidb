@@ -568,6 +568,7 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	}
 	return nil
 }
+
 func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo == nil {
 		return
