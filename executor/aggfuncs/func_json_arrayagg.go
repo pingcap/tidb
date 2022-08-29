@@ -85,9 +85,10 @@ func (e *jsonArrayagg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 			return 0, errors.Trace(err)
 		}
 
-		realItem := item.Clone().GetValue()
+		realItem := getRealJSONValue(item, e.args[0].GetType())
+
 		switch x := realItem.(type) {
-		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
+		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, json.Opaque, *types.MyDecimal, []uint8, types.Time, types.Duration:
 			p.entries = append(p.entries, realItem)
 			memDelta += getValMemDelta(realItem)
 		default:

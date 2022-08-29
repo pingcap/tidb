@@ -211,7 +211,7 @@ func quoteString(s string) string {
 		ret.WriteString(s[start:])
 	}
 
-	if hasEscaped {
+	if hasEscaped || !isEcmascriptIdentifier(s) {
 		ret.WriteByte('"')
 		return ret.String()
 	}
@@ -627,7 +627,7 @@ func (bm *binaryModifier) rebuildTo(buf []byte) ([]byte, TypeCode) {
 	}
 	bj := bm.bj
 	switch bj.TypeCode {
-	case TypeCodeLiteral, TypeCodeInt64, TypeCodeUint64, TypeCodeFloat64, TypeCodeString:
+	case TypeCodeLiteral, TypeCodeInt64, TypeCodeUint64, TypeCodeFloat64, TypeCodeString, TypeCodeOpaque:
 		return append(buf, bj.Value...), bj.TypeCode
 	}
 	docOff := len(buf)
@@ -803,10 +803,15 @@ func CompareBinary(left, right BinaryJSON) int {
 				}
 			}
 		case TypeCodeOpaque:
-			cmp = bytes.Compare(left.GetString(), right.GetString())
+			cmp = bytes.Compare(left.GetOpaque().Buf, right.GetOpaque().Buf)
 		}
 	} else {
 		cmp = precedence1 - precedence2
+		if cmp > 0 {
+			cmp = 1
+		} else if cmp < 0 {
+			cmp = -1
+		}
 	}
 	return cmp
 }
@@ -1003,6 +1008,9 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 	case TypeCodeLiteral:
 		n = valTypeSize + 1
 		return
+	case TypeCodeOpaque:
+		bufLen, lenLen := binary.Uvarint(b[valTypeSize+1:])
+		return valTypeSize + 1 + int(bufLen) + lenLen, nil
 	}
 	err = errors.New("Invalid JSON bytes")
 	return
