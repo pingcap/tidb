@@ -175,7 +175,7 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 			if (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) && !fkCheck {
 				return nil
 			}
-			return infoschema.ErrFkCannotOpenParent.GenWithStackByArgs(fk.RefTable.O)
+			return infoschema.ErrForeignKeyCannotOpenParent.GenWithStackByArgs(fk.RefTable.O)
 		}
 		referTblInfo = referTable.Meta()
 	}
@@ -265,7 +265,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	}
 	// check refer columns should have index.
 	if model.FindIndexByColumns(referTblInfo, fkInfo.RefCols...) == nil {
-		return infoschema.ErrFkNoIndexParent.GenWithStackByArgs(fkInfo.Name, fkInfo.RefTable)
+		return infoschema.ErrForeignKeyNoIndexInParent.GenWithStackByArgs(fkInfo.Name, fkInfo.RefTable)
 	}
 	return nil
 }
