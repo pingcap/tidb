@@ -142,6 +142,49 @@
       ".*_/testmain\\.go$": "ignore code"
     }
   },
+  "fieldalignment": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_/testmain\\.go$": "ignore code",
+      ".*_test\\.go$": "ignore test code"
+    },
+    "only_files": {
+      "util/checksum": "util/checksum code",
+      "util/processinfo.go": "util/processinfo.go code",
+      "util/cpuprofile/": "util/cpuprofile/ code",
+      "util/cteutil/": "util/cteutil/ code",
+      "util/dbutil/": "util/dbutil/ code",
+      "util/deadlockhistory/": "util/deadlockhistory/ code",
+      "util/domainutil/": "util/domainutil/ code",
+      "util/encrypt/": "util/encrypt/ code",
+      "util/etcd/": "util/etcd/ code",
+      "util/expensivequery/": "util/expensivequery/ code",
+      "util/filter/": "util/filter/ code",
+      "util/importer/": "util/importer/ code",
+      "util/keydecoder/": "util/keydecoder/ code",
+      "util/kvcache/": "util/kvcache/ code",
+      "util/localpool/": "util/localpool/ code",
+      "util/mathutil/": "util/mathutil/ code",
+      "util/memory/": "util/memory/ code",
+      "util/mock/": "util/mock/ code",
+      "util/mvmap/": "util/mvmap/ code",
+      "util/profile/": "util/profile/ code",
+      "util/ranger/": "util/ranger/ code",
+      "util/regexpr-router/": "util/regexpr-router/ code",
+      "util/schemacmp/": "util/schemacmp/ code",
+      "util/sqlexec/": "util/sqlexec/ code",
+      "util/stringutil/": "util/stringutil/ code",
+      "util/table-router/": "util/table-router/ code",
+      "util/timeutil/": "util/timeutil/ code",
+      "util/topsql/": "util/topsql/ code",
+      "util/tracing/": "util/tracing/ code",
+      "util/trxevents/": "util/trxevents/ code",
+      "util/watcher/": "util/watcher/ code",
+      "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
+      "ddl/util/": "ddl/util code"
+    }
+  },
   "findcall": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -154,6 +197,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "executor/aggregate.go": "executor/aggregate.go",
       "types/json/binary_functions.go": "types/json/binary_functions.go",
       "types/json/binary_test.go": "types/json/binary_test.go",
       "ddl/backfilling.go": "ddl/backfilling.go",
@@ -270,6 +314,18 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "noloopclosure": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "kv/": "kv code",
+      "util/memory": "util/memory",
+      "ddl/": "ddl",
+      "planner/": "planner"
+    }
+  },
   "pkgfact": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -289,6 +345,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "executor/aggregate.go": "executor/aggregate.go",
       "types/json/binary_functions.go": "types/json/binary_functions.go",
       "types/json/binary_test.go": "types/json/binary_test.go",
       "ddl/backfilling.go": "ddl/backfilling.go",
@@ -649,6 +706,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "executor/aggregate.go": "executor/aggregate.go",
       "types/json/binary_functions.go": "types/json/binary_functions.go",
       "types/json/binary_test.go": "types/json/binary_test.go",
       "ddl/": "enable to ddl",

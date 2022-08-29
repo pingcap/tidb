@@ -840,6 +840,7 @@ const (
 	ErrGeneratedColumnNonPrior                               = 3107
 	ErrDependentByGeneratedColumn                            = 3108
 	ErrGeneratedColumnRefAutoInc                             = 3109
+	ErrAccountHasBeenLocked                                  = 3118
 	ErrWarnConflictingHint                                   = 3126
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140

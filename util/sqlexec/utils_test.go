@@ -109,9 +109,9 @@ func TestEscapeSQL(t *testing.T) {
 	type TestCase struct {
 		name   string
 		input  string
-		params []interface{}
 		output string
 		err    string
+		params []interface{}
 	}
 	time2, err := time.Parse("2006-01-02 15:04:05", "2018-01-23 04:03:05")
 	require.NoError(t, err)

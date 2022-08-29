@@ -34,16 +34,15 @@ import (
 )
 
 type memoryUsageAlarm struct {
+	lastCheckTime          time.Time
 	err                    error
-	initialized            bool
-	isServerMemoryQuotaSet bool
+	tmpDir                 string
+	lastLogFileName        []string
+	lastProfileFileName    [][]string
 	serverMemoryQuota      uint64
 	memoryUsageAlarmRatio  float64
-	lastCheckTime          time.Time
-
-	tmpDir              string
-	lastLogFileName     []string
-	lastProfileFileName [][]string // heap, goroutine
+	initialized            bool
+	isServerMemoryQuotaSet bool
 }
 
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
