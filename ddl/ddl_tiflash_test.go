@@ -960,7 +960,7 @@ func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
 			break
 		}
 	}
-	require.Equal(t, placement.RuleIndexTiFlash, s.tiflash.GroupIndex, errMsg)
-	require.Greater(t, s.tiflash.GroupIndex, placement.RuleIndexTable)
-	require.Greater(t, s.tiflash.GroupIndex, placement.RuleIndexPartition)
+	require.Equal(t, placement.RuleIndexTiFlash, tiflash.GetRuleGroupIndex(), errMsg)
+	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexTable)
+	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexPartition)
 }
