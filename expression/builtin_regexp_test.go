@@ -520,3 +520,241 @@ func TestRegexpSubstrVec(t *testing.T) {
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpSubstrCases)
 }
+
+func TestRegexpInStrConst(t *testing.T) {
+	ctx := createContext(t)
+
+	// test regexp_instr(expr, pat)
+	testParam2 := []struct {
+		input    interface{} // string
+		pattern  interface{} // string
+		match    interface{} // int64
+		matchBin interface{} // bin result
+		err      error
+	}{
+		{"abc", "bc", int64(2), int64(2), nil},
+		{"你好", "好", int64(2), int64(4), nil},
+		{"", "^$", int64(1), int64(1), nil},
+		{"abc", nil, nil, nil, nil},
+		{nil, "bc", nil, nil, nil},
+		{nil, nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam2 {
+			fc := funcs[ast.RegexpInStr]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+
+	// test regexp_instr(expr, pat, pos)
+	testParam3 := []struct {
+		input    interface{} // string
+		pattern  interface{} // string
+		pos      interface{} // int64
+		match    interface{} // int64
+		matchBin interface{} // bin result
+		err      error
+	}{
+		{"abc", "bc", int64(2), int64(2), int64(2), nil},
+		{"你好", "好", int64(2), int64(2), int64(4), nil},
+		{"abc", "bc", int64(3), int64(0), int64(0), nil},
+		{"你好啊", "好", int64(3), int64(0), int64(4), nil},
+		{"", "^$", int64(1), 1, 1, nil},
+		// Invalid position index tests
+		{"", "^$", int64(2), 0, 0, ErrRegexp},
+		{"abc", "bc", int64(-1), nil, nil, ErrRegexp},
+		{"abc", "bc", int64(4), nil, nil, ErrRegexp},
+		{"", "bc", int64(0), nil, nil, ErrRegexp},
+		// Some nullable input tests
+		{"", "^$", nil, nil, nil, nil},
+		{nil, "^$", nil, nil, nil, nil},
+		{"", nil, nil, nil, nil, nil},
+		{nil, nil, int64(1), nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam3 {
+			fc := funcs[ast.RegexpInStr]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+
+	// test regexp_instr(expr, pat, pos, occurrence)
+	testParam4 := []struct {
+		input      interface{} // string
+		pattern    interface{} // string
+		pos        interface{} // int64
+		occurrence interface{} // int64
+		match      interface{} // int64
+		matchBin   interface{} // bin result
+		err        error
+	}{
+		{"abc abd abe", "ab.", int64(1), int64(1), 1, 1, nil},
+		{"abc abd abe", "ab.", int64(1), int64(0), 1, 1, nil},
+		{"abc abd abe", "ab.", int64(1), int64(-1), 1, 1, nil},
+		{"abc abd abe", "ab.", int64(1), int64(2), 5, 5, nil},
+		{"abc abd abe", "ab.", int64(3), int64(1), 5, 5, nil},
+		{"abc abd abe", "ab.", int64(3), int64(2), 9, 9, nil}, // index 5
+		{"abc abd abe", "ab.", int64(6), int64(1), 9, 9, nil},
+		{"abc abd abe", "ab.", int64(6), int64(100), 0, 0, nil},
+		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(1), int64(1), 1, 1, nil},
+		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(1), int64(2), 4, 8, nil},
+		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(5), int64(1), 7, 8, nil}, // index 10
+		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(5), int64(2), 0, 15, nil},
+		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(1), int64(100), 0, 0, nil},
+		// Some nullable input tests
+		{"", "^$", int64(1), nil, nil, nil, nil},
+		{nil, "^$", int64(1), nil, nil, nil, nil},
+		{nil, "^$", nil, int64(1), nil, nil, nil}, // index 15
+		{"", nil, nil, int64(1), nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam4 {
+			fc := funcs[ast.RegexpInStr]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+
+	// test regexp_instr(expr, pat, pos, occurrence, return_option)
+	testParam5 := []struct {
+		input      interface{} // string
+		pattern    interface{} // string
+		pos        interface{} // int64
+		occurrence interface{} // int64
+		retOpt     interface{} // int64
+		match      interface{} // int64
+		matchBin   interface{} // bin result
+		err        error
+	}{
+		{"abc abd abe", "ab.", int64(1), int64(1), int64(0), 1, 1, nil},
+		{"abc abd abe", "ab.", int64(1), int64(1), int64(1), 4, 4, nil},
+		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(1), int64(1), int64(0), 1, 1, nil},
+		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(1), int64(1), int64(1), 3, 7, nil},
+		{"", "^$", int64(1), int64(1), int64(0), 1, 1, nil},
+		{"", "^$", int64(1), int64(1), int64(1), 1, 1, nil},
+		// Some nullable input tests
+		{"", "^$", int64(1), nil, nil, nil, nil, nil},
+		{nil, "^$", int64(1), nil, nil, nil, nil, nil},
+		{nil, "^$", nil, int64(1), nil, nil, nil, nil},
+		{"", nil, nil, int64(1), nil, nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam5 {
+			fc := funcs[ast.RegexpInStr]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence, tt.retOpt))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+
+	// test regexp_instr(expr, pat, pos, occurrence, return_option, match_type)
+	testParam6 := []struct {
+		input      interface{} // string
+		pattern    interface{} // string
+		pos        interface{} // int64
+		occurrence interface{} // int64
+		retOpt     interface{} // int64
+		matchType  interface{} // string
+		match      interface{} // int64
+		matchBin   interface{} // bin result
+		err        error
+	}{
+		{"abc", "ab.", int64(1), int64(1), int64(0), "", 1, 1, nil},
+		{"abc", "aB.", int64(1), int64(1), int64(0), "", 0, 0, nil},
+		{"abc", "aB.", int64(1), int64(1), int64(0), "i", 1, 1, nil},
+		{"good\nday", "od", int64(1), int64(1), int64(0), "m", 3, 3, nil},
+		{"\n", ".", int64(1), int64(1), int64(0), "s", 1, 1, nil},
+		// Test invalid matchType
+		{"abc", "ab.", int64(1), int64(1), int64(0), "p", nil, nil, ErrRegexp}, // index 5
+		// Some nullable input tests
+		{"abc", "ab.", int64(1), int64(1), int64(0), nil, nil, nil, nil},
+		{"abc", "ab.", nil, int64(1), int64(0), nil, nil, nil, nil},
+		{nil, "ab.", nil, int64(1), int64(0), nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam6 {
+			fc := funcs[ast.RegexpInStr]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence, tt.retOpt, tt.matchType))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+}

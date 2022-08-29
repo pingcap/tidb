@@ -705,7 +705,7 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 			return 0, true, err
 		}
 
-		if returnOption != 0 || returnOption != 1 {
+		if returnOption != 0 && returnOption != 1 {
 			return 0, true, ErrRegexp.GenWithStackByArgs(invalidReturnOption)
 		}
 	}
@@ -731,21 +731,31 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 		matches := reg.FindAllIndex(bexpr, -1)
 		length := int64(len(matches))
 		if length == 0 || occurrence > length {
-			return 0, true, nil
+			return 0, false, nil
 		}
 
 		if returnOption == 0 {
-			return int64(matches[occurrence-1][0]), false, nil
+			return int64(matches[occurrence-1][0]) + pos, false, nil
 		} else {
-			return int64(matches[occurrence-1][1]), false, nil
+			return int64(matches[occurrence-1][1]) + pos, false, nil
 		}
 	}
 
-	matches := reg.FindAllString(expr, -1)
+	matches := reg.FindAllStringIndex(expr, -1)
 	length := int64(len(matches))
 	if length == 0 || occurrence > length {
-		return 0, true, nil
+		return 0, false, nil
 	}
 
-	return 0, false, nil // TODO
+	if returnOption == 0 {
+		if len(expr) == 0 {
+			return int64(1), false, nil
+		}
+		return int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][0]))) + pos - 1, false, nil
+	} else {
+		if len(expr) == 0 {
+			return int64(1), false, nil
+		}
+		return int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][1]))) + pos - 1, false, nil
+	}
 }
