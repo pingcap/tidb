@@ -16,6 +16,7 @@ package expression
 
 import (
 	"regexp"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
@@ -245,4 +246,10 @@ func trimUtf8String(str *string, trimmedNum int64) {
 		length := utf8Len((*str)[0]) // character length
 		(*str) = (*str)[length:]
 	}
+}
+
+func convertPosInUtf8(str *string, pos int64) int64 {
+	preStr := (*str)[:pos]
+	preStrNum := utf8.RuneCountInString(preStr)
+	return int64(preStrNum + 1)
 }

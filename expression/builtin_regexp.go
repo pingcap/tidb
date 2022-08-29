@@ -37,12 +37,13 @@ const (
 	flag_i = "i"
 	flag_c = "c"
 	flag_m = "m"
-	flag_n = "n"
+	flag_n = "s"
 )
 
 const (
-	invalidMatchType = "Invalid match type"
-	invalidIndex     = "Index out of bounds in regular expression search"
+	invalidMatchType    = "Invalid match type"
+	invalidIndex        = "Index out of bounds in regular expression search"
+	invalidReturnOption = "Incorrect arguments to regexp_instr: return_option must be 1 or 0"
 )
 
 var validMatchType = map[string]empty{
@@ -67,8 +68,6 @@ func (re *regexpBaseFuncSig) clone(from *regexpBaseFuncSig) {
 	re.cloneFrom(&from.baseBuiltinFunc)
 }
 
-// Convert mysql match type format to re2 format
-//
 // If characters specifying contradictory options are specified
 // within match_type, the rightmost one takes precedence.
 func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchType string) (string, error) {
@@ -92,11 +91,6 @@ func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchTyp
 			// re2 is case-sensitive by default, so we only need to delete 'i' flag
 			// to enable the case-sensitive for the regexp
 			delete(matchTypeSet, flag_i)
-			continue
-		}
-
-		if c == "n" {
-			matchTypeSet["s"] = empty{} // convert mysql's match type to the re2
 			continue
 		}
 
@@ -577,6 +571,344 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			}
 
 			result.AppendString(matches[occurrence-1])
+		}
+	}
+	return nil
+}
+
+// ---------------------------------- regexp_instr ----------------------------------
+
+type regexpInStrFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argTp := []types.EvalType{types.ETString, types.ETString}
+	switch len(args) {
+	case 3:
+		argTp = append(argTp, types.ETInt)
+	case 4:
+		argTp = append(argTp, types.ETInt, types.ETInt)
+	case 5:
+		argTp = append(argTp, types.ETInt, types.ETInt, types.ETString)
+	case 6:
+		argTp = append(argTp, types.ETInt, types.ETInt, types.ETInt, types.ETString)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.SetFlen(mysql.MaxIntWidth)
+	sig := regexpInStrFuncSig{
+		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
+	}
+
+	if bf.collation == charset.CollationBin {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrSig)
+		sig.isBinCollation = true
+	} else {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrUTF8Sig)
+		sig.isBinCollation = false
+	}
+
+	return &sig, nil
+}
+
+type regexpInStrFuncSig struct {
+	regexpBaseFuncSig
+	isBinCollation bool
+}
+
+func (re *regexpInStrFuncSig) Clone() builtinFunc {
+	newSig := &regexpLikeFuncSig{}
+	newSig.cloneFrom(&re.baseBuiltinFunc)
+	newSig.clone(&re.regexpBaseFuncSig)
+	return newSig
+}
+
+func (re *regexpInStrFuncSig) vectorized() bool {
+	return true
+}
+
+// Call this function when all args are constant
+func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
+	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+
+	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+
+	pos := int64(1)
+	occurrence := int64(1)
+	returnOption := int64(0)
+	matchType := ""
+	arg_num := len(re.args)
+	var bexpr []byte
+
+	if re.isBinCollation {
+		bexpr = []byte(expr)
+	}
+
+	if arg_num >= 3 {
+		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+
+		// Check position and trim expr
+		if re.isBinCollation {
+			bexpr = []byte(expr)
+			if pos < 1 || pos > int64(len(bexpr)) {
+				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			bexpr = bexpr[pos-1:] // Trim
+		} else {
+			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
+				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimUtf8String(&expr, pos-1) // Trim
+		}
+	}
+
+	if arg_num >= 4 {
+		occurrence, isNull, err = re.args[3].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+
+		if occurrence < 1 {
+			occurrence = 1
+		}
+	}
+
+	if arg_num >= 5 {
+		returnOption, isNull, err = re.args[4].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+
+		if returnOption != 0 && returnOption != 1 {
+			return 0, true, ErrRegexp.GenWithStackByArgs(invalidReturnOption)
+		}
+	}
+
+	if arg_num == 6 {
+		matchType, isNull, err = re.args[5].EvalString(re.ctx, row)
+		if isNull || err != nil {
+			return 0, true, err
+		}
+	}
+
+	re.compile, err = re.genCompile(matchType)
+	if err != nil {
+		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
+	reg, err := re.compile(pat)
+	if err != nil {
+		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
+	if re.isBinCollation {
+		matches := reg.FindAllIndex(bexpr, -1)
+		length := int64(len(matches))
+		if length == 0 || occurrence > length {
+			return 0, false, nil
+		}
+
+		if returnOption == 0 {
+			return int64(matches[occurrence-1][0]) + pos, false, nil
+		} else {
+			return int64(matches[occurrence-1][1]) + pos, false, nil
+		}
+	}
+
+	matches := reg.FindAllStringIndex(expr, -1)
+	length := int64(len(matches))
+	if length == 0 || occurrence > length {
+		return 0, false, nil
+	}
+
+	if returnOption == 0 {
+		return int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][0]))) + pos - 1, false, nil
+	} else {
+		return int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][1]))) + pos - 1, false, nil
+	}
+}
+
+// we need to memorize the regexp when:
+//  1. pattern and match type are constant
+//  2. pattern is const and match type is null
+//
+// return true: need, false: needless
+func (re *regexpInStrFuncSig) needMemorization() bool {
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) == 6 && re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+}
+
+// Call this function when at least one of the args is vector
+// REGEXP_INSTR(expr, pat[, pos[, occurrence[, return_option[, match_type]]]])
+func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	params := make([]*regexpParam, 0, 5)
+
+	for i := 0; i < 2; i++ {
+		param, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
+		if err != nil {
+			return err
+		}
+		params = append(params, param)
+	}
+
+	paramLen := len(re.args)
+
+	// Handle position parameter
+	hasPosition := (paramLen >= 3)
+	param, err := buildIntParam(&re.baseBuiltinFunc, 2, input, !hasPosition, 1)
+	params = append(params, param)
+	defer releaseBuffers(&re.baseBuiltinFunc, params)
+
+	if err != nil {
+		return err
+	}
+
+	// Handle occurrence parameter
+	hasOccur := (paramLen >= 4)
+	param, err = buildIntParam(&re.baseBuiltinFunc, 3, input, !hasOccur, 1)
+	params = append(params, param)
+
+	if err != nil {
+		return err
+	}
+
+	// Handle return_option parameter
+	hasRetOpt := (paramLen >= 5)
+	param, err = buildIntParam(&re.baseBuiltinFunc, 4, input, !hasRetOpt, 0)
+	params = append(params, param)
+
+	if err != nil {
+		return err
+	}
+
+	// Handle match type
+	hasMatchType := (paramLen == 6)
+	param, err = buildStringParam(&re.baseBuiltinFunc, 5, input, !hasMatchType)
+	params = append(params, param)
+
+	if err != nil {
+		return err
+	}
+
+	// Check memorization
+	if re.needMemorization() {
+		// matchType must be const or null
+		matchType := params[5].getStringVal(0)
+
+		re.compile, err = re.genCompile(matchType)
+		if err != nil {
+			return err
+		}
+
+		re.initMemoizedRegexp(re.compile, params[1].getCol(), n)
+	}
+
+	// Start to calculate
+	result.ResizeInt64(n, false)
+	result.MergeNulls(getBuffers(params)...)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		expr := params[0].getStringVal(i)
+		var bexpr []byte
+
+		if re.isBinCollation {
+			bexpr = []byte(expr)
+		}
+
+		// Check position and trim expr
+		pos := params[2].getIntVal(i)
+		if re.isBinCollation {
+			bexpr = []byte(expr)
+			if pos < 1 || pos > int64(len(bexpr)) {
+				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
+					return ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			bexpr = bexpr[pos-1:] // Trim
+		} else {
+			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
+				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+					return ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimUtf8String(&expr, pos-1) // Trim
+		}
+
+		// Get occurrence
+		occurrence := params[3].getIntVal(i)
+		if occurrence < 1 {
+			occurrence = 1
+		}
+
+		returnOption := params[4].getIntVal(i)
+		if returnOption != 0 && returnOption != 1 {
+			return ErrRegexp.GenWithStackByArgs(invalidReturnOption)
+		}
+
+		// Get match type and generate regexp
+		matchType := params[5].getStringVal(i)
+		reg, err := re.genRegexp(params[1].getStringVal(i), matchType)
+		if err != nil {
+			return err
+		}
+
+		// Find index
+		if re.isBinCollation {
+			matches := reg.FindAllIndex(bexpr, -1)
+			length := int64(len(matches))
+			if length == 0 || occurrence > length {
+				i64s[i] = 0
+				continue
+			}
+
+			if returnOption == 0 {
+				i64s[i] = int64(matches[occurrence-1][0]) + pos
+			} else {
+				i64s[i] = int64(matches[occurrence-1][1]) + pos
+			}
+		} else {
+			matches := reg.FindAllStringIndex(expr, -1)
+			length := int64(len(matches))
+			if length == 0 || occurrence > length {
+				i64s[i] = 0
+				continue
+			}
+
+			if returnOption == 0 {
+				i64s[i] = int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][0]))) + pos - 1
+			} else {
+				i64s[i] = int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][1]))) + pos - 1
+			}
 		}
 	}
 	return nil
