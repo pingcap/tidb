@@ -182,7 +182,7 @@ func TestEnterNewTxn(t *testing.T) {
 				require.Equal(t, stalenessTS, txn.StartTS())
 				is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 				require.Equal(t, is1.SchemaMetaVersion(), is.SchemaMetaVersion())
-				_, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema)
+				_, ok := is.(*infoschema.SessionExtendedInfoSchema)
 				require.True(t, ok)
 
 				sessVars := sctx.GetSessionVars()
@@ -567,10 +567,10 @@ func checkNonActiveStalenessTxn(t *testing.T, sctx sessionctx.Context, ts uint64
 }
 
 func checkInfoSchemaVersion(t *testing.T, sctx sessionctx.Context, ver int64) {
-	is1, ok := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.TemporaryTableAttachedInfoSchema)
+	is1, ok := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.SessionExtendedInfoSchema)
 	require.True(t, ok)
 
-	is2 := sctx.GetSessionVars().TxnCtx.InfoSchema.(*infoschema.TemporaryTableAttachedInfoSchema)
+	is2 := sctx.GetSessionVars().TxnCtx.InfoSchema.(*infoschema.SessionExtendedInfoSchema)
 	require.True(t, ok)
 
 	require.Equal(t, ver, is1.SchemaMetaVersion())
