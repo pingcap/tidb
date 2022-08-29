@@ -15,13 +15,13 @@ package core
 
 import (
 	"container/list"
-	"github.com/pingcap/tidb/util/memory"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -337,4 +337,4 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	err = lru.SetCapacity(0)
 	require.Error(t, err, "capacity of lru cache should be at least 1")
 }
- 
+
