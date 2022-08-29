@@ -52,7 +52,7 @@ type LRUPlanCache struct {
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(capacity uint,
+func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)) (*LRUPlanCache, error) {
 	if capacity < 1 {
 		return nil, errors.New("capacity of LRU Cache should be at least 1")
@@ -63,6 +63,8 @@ func NewLRUPlanCache(capacity uint,
 		buckets:        make(map[string]map[*list.Element]struct{}, 1), //Generally one query has one plan
 		lruList:        list.New(),
 		pickFromBucket: pickFromBucket,
+		quota:          quota,
+		guard:          guard,
 	}, nil
 }
 
