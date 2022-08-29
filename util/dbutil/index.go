@@ -27,11 +27,11 @@ import (
 // IndexInfo contains information of table index.
 type IndexInfo struct {
 	Table       string
-	NoneUnique  bool
 	KeyName     string
-	SeqInIndex  int
 	ColumnName  string
+	SeqInIndex  int
 	Cardinality int
+	NoneUnique  bool
 }
 
 // ShowIndex returns result of executing `show index`

@@ -75,9 +75,9 @@ func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is interface{}) {
 	}
 
 	if localTables := sctx.GetSessionVars().LocalTemporaryTables; localTables != nil {
-		got, ok := GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.TemporaryTableAttachedInfoSchema)
+		got, ok := GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.SessionExtendedInfoSchema)
 		if !ok {
-			panic("Expected to be a TemporaryTableAttachedInfoSchema")
+			panic("Expected to be a SessionExtendedInfoSchema")
 		}
 
 		if got.LocalTemporaryTables != localTables {

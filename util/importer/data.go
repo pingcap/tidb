@@ -23,14 +23,12 @@ import (
 var defaultStep int64 = 1
 
 type datum struct {
-	sync.Mutex
-
+	timeValue   time.Time
 	intValue    int64
 	minIntValue int64
 	maxIntValue int64
-	timeValue   time.Time
 	step        int64
-
+	sync.Mutex
 	init     bool
 	useRange bool
 }
