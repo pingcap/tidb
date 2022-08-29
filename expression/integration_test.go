@@ -23,7 +23,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -9682,7 +9681,7 @@ func (s *testIntegrationSuite) TestRedundantColumnResolve(c *C) {
 	tk.MustQuery("select t1.a, t2.a from t1 natural join t2").Check(testkit.Rows("1 1"))
 }
 
-func  (s *testIntegrationSuite) TestIssue37414(c *C) {
+func (s *testIntegrationSuite) TestIssue37414(c *C) {
 	defer s.cleanEnv(c)
 
 	tk := testkit.NewTestKit(c, s.store)
