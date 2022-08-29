@@ -58,6 +58,7 @@ func createAsyncCommitTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 }
 
 // TODO: figure out a stable way to run Test1PCWithSchemaChange
+//
 //nolint:unused
 func create1PCTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
@@ -196,7 +197,7 @@ func TestDeadlock(t *testing.T) {
 
 	// Use the root user so that the statements can be recorded into statements_summary table, which is necessary
 	// for fetching
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk1.MustExec("drop table if exists deadlock")
 	tk1.MustExec("create table deadlock (k int primary key, v int)")
 	tk1.MustExec("insert into deadlock values (1, 1), (2, 1)")
@@ -205,7 +206,7 @@ func TestDeadlock(t *testing.T) {
 	ts1, err := strconv.ParseUint(tk1.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
 	require.NoError(t, err)
 
-	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk2.MustExec("begin pessimistic")
 	ts2, err := strconv.ParseUint(tk2.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
 	require.NoError(t, err)
@@ -490,37 +491,6 @@ func TestLockUnchangedRowKey(t *testing.T) {
 
 	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
 	tk2.MustExec("rollback")
-}
-
-func TestLockUnchangedUniqueKey(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk2.MustExec("use test")
-
-	// ref https://github.com/pingcap/tidb/issues/36438
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (i varchar(10), unique key(i))")
-	tk.MustExec("insert into t values ('a')")
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("update t set i = 'a'")
-
-	errCh := make(chan error, 1)
-	go func() {
-		_, err := tk2.Exec("insert into t values ('a')")
-		errCh <- err
-	}()
-
-	select {
-	case <-errCh:
-		require.Fail(t, "insert is not blocked by update")
-	case <-time.After(500 * time.Millisecond):
-		tk.MustExec("rollback")
-	}
-
-	require.Error(t, <-errCh)
 }
 
 func TestOptimisticConflicts(t *testing.T) {

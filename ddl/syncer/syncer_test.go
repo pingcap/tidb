@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util_test
+package syncer_test
 
 import (
 	"context"
@@ -23,7 +23,8 @@ import (
 
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/tidb/ddl"
-	. "github.com/pingcap/tidb/ddl/util"
+	. "github.com/pingcap/tidb/ddl/syncer"
+	util2 "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -77,22 +78,13 @@ func TestSyncerSimple(t *testing.T) {
 
 	// for init function
 	require.NoError(t, d.SchemaSyncer().Init(ctx))
-	resp, err := cli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
+	resp, err := cli.Get(ctx, util2.DDLAllSchemaVersions, clientv3.WithPrefix())
 	require.NoError(t, err)
 
 	defer d.SchemaSyncer().Close()
 
-	key := DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
+	key := util2.DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
 	checkRespKV(t, 1, key, InitialVersion, resp.Kvs...)
-	// for MustGetGlobalVersion function
-	globalVer, err := d.SchemaSyncer().MustGetGlobalVersion(ctx)
-	require.NoError(t, err)
-	require.Equal(t, InitialVersion, fmt.Sprintf("%d", globalVer))
-
-	childCtx, cancel := context.WithTimeout(ctx, minInterval)
-	defer cancel()
-	_, err = d.SchemaSyncer().MustGetGlobalVersion(childCtx)
-	require.True(t, isTimeoutError(err))
 
 	ic2 := infoschema.NewCache(2)
 	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
@@ -122,7 +114,7 @@ func TestSyncerSimple(t *testing.T) {
 				checkErr = "get chan events count less than 1"
 				return
 			}
-			checkRespKV(t, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
+			checkRespKV(t, 1, util2.DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
 		case <-time.After(3 * time.Second):
 			checkErr = "get update version failed"
 			return
@@ -137,7 +129,7 @@ func TestSyncerSimple(t *testing.T) {
 	require.Equal(t, "", checkErr)
 
 	// for CheckAllVersions
-	childCtx, cancel = context.WithTimeout(ctx, 200*time.Millisecond)
+	childCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	require.Error(t, d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer))
 	cancel()
 

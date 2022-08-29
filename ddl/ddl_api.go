@@ -19,6 +19,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -63,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -1732,44 +1734,39 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 			}
 
-			autoRandBits, err := extractAutoRandomBitsFromColDef(col)
+			shardBits, rangeBits, err := extractAutoRandomBitsFromColDef(col)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			tbInfo.AutoRandomBits = shardBits
+			tbInfo.AutoRandomRangeBits = rangeBits
 
-			layout := autoid.NewShardIDLayout(col.Tp, autoRandBits)
-			if autoRandBits == 0 {
-				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-			} else if autoRandBits > autoid.MaxAutoRandomBits {
-				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
-					autoid.MaxAutoRandomBits, autoRandBits, col.Name.Name.O)
-				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+			shardFmt := autoid.NewShardIDFormat(col.Tp, shardBits, rangeBits)
+			if shardFmt.IncrementalBits < autoid.AutoRandomIncBitsMin {
+				return dbterror.ErrInvalidAutoRandom.FastGenByArgs(autoid.AutoRandomIncrementalBitsTooSmall)
 			}
-			tbInfo.AutoRandomBits = autoRandBits
-
-			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, layout.IncrementalBitsCapacity())
+			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, shardFmt.IncrementalBitsCapacity())
 			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
 		}
 	}
 	return nil
 }
 
-func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (uint64, error) {
+func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBits uint64, err error) {
 	for _, op := range colDef.Options {
 		if op.Tp == ast.ColumnOptionAutoRandom {
-			return convertAutoRandomBitsToUnsigned(op.AutoRandomBitLength)
+			shardBits, err = autoid.AutoRandomShardBitsNormalize(op.AutoRandOpt.ShardBits, colDef.Name.Name.O)
+			if err != nil {
+				return 0, 0, err
+			}
+			rangeBits, err = autoid.AutoRandomRangeBitsNormalize(op.AutoRandOpt.RangeBits)
+			if err != nil {
+				return 0, 0, err
+			}
+			return shardBits, rangeBits, nil
 		}
 	}
-	return 0, nil
-}
-
-func convertAutoRandomBitsToUnsigned(autoRandomBits int) (uint64, error) {
-	if autoRandomBits == types.UnspecifiedLength {
-		return autoid.DefaultAutoRandomBits, nil
-	} else if autoRandomBits < 0 {
-		return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-	}
-	return uint64(autoRandomBits), nil
+	return 0, 0, nil
 }
 
 // BuildTableInfo creates a TableInfo.
@@ -3093,12 +3090,16 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			err = d.AddColumn(sctx, ident, spec)
-		case ast.AlterTableAddPartitions:
+		case ast.AlterTableAddPartitions, ast.AlterTableAddLastPartition:
 			err = d.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizePartition:
 			err = errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+		case ast.AlterTableReorganizeFirstPartition:
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("MERGE FIRST PARTITION")
+		case ast.AlterTableReorganizeLastPartition:
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("SPLIT LAST PARTITION")
 		case ast.AlterTableCheckPartitions:
 			err = errors.Trace(dbterror.ErrUnsupportedCheckPartition)
 		case ast.AlterTableRebuildPartition:
@@ -3117,7 +3118,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.dropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(sctx, ident, spec)
-		case ast.AlterTableDropPartition:
+		case ast.AlterTableDropPartition, ast.AlterTableDropFirstPartition:
 			err = d.DropTablePartition(sctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
 			err = d.TruncateTablePartition(sctx, ident, spec)
@@ -3236,8 +3237,6 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
-		case ast.AlterTableSetTiFlashMode:
-			err = d.AlterTableSetTiFlashMode(sctx, ident, spec.TiFlashMode)
 		case ast.AlterTableOrderByColumns:
 			err = d.OrderByColumns(sctx, ident)
 		case ast.AlterTableIndexInvisible:
@@ -3264,8 +3263,11 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.AlterTableCache(sctx, ident)
 		case ast.AlterTableNoCache:
 			err = d.AlterTableNoCache(sctx, ident)
+		case ast.AlterTableDisableKeys, ast.AlterTableEnableKeys:
+			// Nothing to do now, see https://github.com/pingcap/tidb/issues/1051
+			// MyISAM specific
 		default:
-			// Nothing to do now.
+			err = errors.Trace(dbterror.ErrUnsupportedAlterTableSpec)
 		}
 
 		if err != nil {
@@ -3292,19 +3294,13 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	switch tp {
 	case autoid.AutoRandomType:
 		tbInfo := t.Meta()
-		if tbInfo.AutoRandomBits == 0 {
+		pkCol := tbInfo.GetPkColInfo()
+		if tbInfo.AutoRandomBits == 0 || pkCol == nil {
 			return errors.Trace(dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
 		}
-		var autoRandColTp types.FieldType
-		for _, c := range tbInfo.Columns {
-			if mysql.HasPriKeyFlag(c.GetFlag()) {
-				autoRandColTp = c.FieldType
-				break
-			}
-		}
-		layout := autoid.NewShardIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
-		if layout.IncrementalMask()&newBase != newBase {
-			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
+		shardFmt := autoid.NewShardIDFormat(&pkCol.FieldType, tbInfo.AutoRandomBits, tbInfo.AutoRandomRangeBits)
+		if shardFmt.IncrementalMask()&newBase != newBase {
+			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, shardFmt.IncrementalBitsCapacity())
 			return errors.Trace(dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
 		}
 		actionType = model.ActionRebaseAutoRandomBase
@@ -3624,6 +3620,20 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		Args:       []interface{}{partInfo},
 	}
 
+	if spec.Tp == ast.AlterTableAddLastPartition && spec.Partition != nil {
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			sqlMode := ctx.GetSessionVars().SQLMode
+			var buf bytes.Buffer
+			AppendPartitionDefs(partInfo, &buf, sqlMode)
+
+			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
+			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "ADD PARTITION (" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
+			defer ctx.SetValue(sessionctx.QueryString, query)
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
 	err = d.DoDDLJob(ctx, job)
 	if dbterror.ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3743,6 +3753,54 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	if spec.Tp == ast.AlterTableDropFirstPartition {
+		intervalOptions := getPartitionIntervalFromTable(ctx, meta)
+		if intervalOptions == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, does not seem like an INTERVAL partitioned table")
+		}
+		if len(spec.Partition.Definitions) != 0 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, table info already contains partition definitions")
+		}
+		spec.Partition.Interval = intervalOptions
+		err = GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
+		if err != nil {
+			return err
+		}
+		pNullOffset := 0
+		if intervalOptions.NullPart {
+			pNullOffset = 1
+		}
+		if len(spec.Partition.Definitions) == 0 ||
+			len(spec.Partition.Definitions) >= len(meta.Partition.Definitions)-pNullOffset {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, number of partitions does not match")
+		}
+		if len(spec.PartitionNames) != 0 || len(spec.Partition.Definitions) <= 1 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, given value does not generate a list of partition names to be dropped")
+		}
+		for i := range spec.Partition.Definitions {
+			spec.PartitionNames = append(spec.PartitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
+		}
+		// Use the last generated partition as First, i.e. do not drop the last name in the slice
+		spec.PartitionNames = spec.PartitionNames[:len(spec.PartitionNames)-1]
+
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			partNames := make([]string, 0, len(spec.PartitionNames))
+			sqlMode := ctx.GetSessionVars().SQLMode
+			for i := range spec.PartitionNames {
+				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
+			}
+			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
+			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "DROP PARTITION " + strings.Join(partNames, ", ") + query[syntacticStart+len(syntacticSugar):]
+			defer ctx.SetValue(sessionctx.QueryString, query)
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
 	partNames := make([]string, len(spec.PartitionNames))
 	for i, partCIName := range spec.PartitionNames {
 		partNames[i] = partCIName.L
@@ -3823,8 +3881,14 @@ func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *mod
 }
 
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
+	// check temp table
+	if target.TempTableType != model.TempTableNone {
+		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(target.Name))
+	}
+
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits ||
+		source.AutoRandomRangeBits != target.AutoRandomRangeBits ||
 		source.Charset != target.Charset ||
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
@@ -3927,6 +3991,13 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	ptMeta := pt.Meta()
 
 	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+
+	// We should check local temporary here using session's info schema because the local temporary tables are only stored in session.
+	ntLocalTempTable, err := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().TableByName(ntIdent.Schema, ntIdent.Name)
+	if err == nil && ntLocalTempTable.Meta().TempTableType == model.TempTableLocal {
+		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(ntLocalTempTable.Meta().Name))
+	}
+
 	ntSchema, nt, err := d.getSchemaAndTableByIdent(ctx, ntIdent)
 	if err != nil {
 		return errors.Trace(err)
@@ -4542,38 +4613,39 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 }
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
-	var oldRandBits uint64
+	var oldShardBits, oldRangeBits uint64
 	if originCol.IsPKHandleColumn(tableInfo) {
-		oldRandBits = tableInfo.AutoRandomBits
+		oldShardBits = tableInfo.AutoRandomBits
+		oldRangeBits = tableInfo.AutoRandomRangeBits
 	}
-	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
+	newShardBits, newRangeBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	switch {
-	case oldRandBits == newRandBits:
-	case oldRandBits < newRandBits:
-		addingAutoRandom := oldRandBits == 0
+	case oldShardBits == newShardBits:
+	case oldShardBits < newShardBits:
+		addingAutoRandom := oldShardBits == 0
 		if addingAutoRandom {
 			convFromAutoInc := mysql.HasAutoIncrementFlag(originCol.GetFlag()) && originCol.IsPKHandleColumn(tableInfo)
 			if !convFromAutoInc {
 				return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterChangeFromAutoInc)
 			}
 		}
-		if autoid.MaxAutoRandomBits < newRandBits {
+		if autoid.AutoRandomShardBitsMax < newShardBits {
 			errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
-				autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
+				autoid.AutoRandomShardBitsMax, newShardBits, specNewColumn.Name.Name.O)
 			return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 		}
 		// increasing auto_random shard bits is allowed.
-	case oldRandBits > newRandBits:
-		if newRandBits == 0 {
+	case oldShardBits > newShardBits:
+		if newShardBits == 0 {
 			return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
 		}
 		return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomDecreaseBitErrMsg)
 	}
 
-	modifyingAutoRandCol := oldRandBits > 0 || newRandBits > 0
+	modifyingAutoRandCol := oldShardBits > 0 || newShardBits > 0
 	if modifyingAutoRandCol {
 		// Disallow changing the column field type.
 		if originCol.GetType() != specNewColumn.Tp.GetType() {
@@ -4591,7 +4663,20 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 			return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 		}
 	}
-	return newRandBits, nil
+	if rangeBitsIsChanged(oldRangeBits, newRangeBits) {
+		return 0, dbterror.ErrInvalidAutoRandom.FastGenByArgs(autoid.AutoRandomUnsupportedAlterRangeBits)
+	}
+	return newShardBits, nil
+}
+
+func rangeBitsIsChanged(oldBits, newBits uint64) bool {
+	if oldBits == 0 {
+		oldBits = autoid.AutoRandomRangeBitsDefault
+	}
+	if newBits == 0 {
+		newBits = autoid.AutoRandomRangeBitsDefault
+	}
+	return oldBits != newBits
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,
@@ -4962,42 +5047,6 @@ func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
 	}
 
 	return nil
-}
-
-func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, mode model.TiFlashMode) error {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if mode != model.TiFlashModeNormal && mode != model.TiFlashModeFast {
-		return fmt.Errorf("unsupported TiFlash mode %s", mode)
-	}
-
-	err = isTableTiFlashSupported(schema, tb)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Prompt warning when there is no TiFlash replica, as TiFlash mode will
-	// only take effect when executing in TiFlash.
-	tbReplicaInfo := tb.Meta().TiFlashReplica
-	if tbReplicaInfo == nil || tbReplicaInfo.Count == 0 {
-		ctx.GetSessionVars().StmtCtx.AppendNote(dbterror.ErrAlterTiFlashModeForTableWithoutTiFlashReplica)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionSetTiFlashMode,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{mode},
-	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
@@ -6263,9 +6312,21 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	switch meta.Partition.Type {
-	case model.PartitionTypeRange, model.PartitionTypeList:
+	case model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
+		}
+	case model.PartitionTypeRange:
+		if spec.Tp == ast.AlterTableAddLastPartition {
+			err := buildAddedPartitionDefs(ctx, meta, spec)
+			if err != nil {
+				return nil, err
+			}
+			spec.PartDefinitions = spec.Partition.Definitions
+		} else {
+			if len(spec.PartDefinitions) == 0 {
+				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
+			}
 		}
 	default:
 		// we don't support ADD PARTITION for all other partition types yet.
@@ -6286,6 +6347,24 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 
 	part.Definitions = defs
 	return part, nil
+}
+
+func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) error {
+	partInterval := getPartitionIntervalFromTable(ctx, meta)
+	if partInterval == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"LAST PARTITION, does not seem like an INTERVAL partitioned table")
+	}
+	if partInterval.MaxValPart {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
+	}
+
+	spec.Partition.Interval = partInterval
+
+	if len(spec.PartDefinitions) > 0 {
+		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
+	}
+	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
 }
 
 func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {

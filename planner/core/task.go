@@ -329,7 +329,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	p.SetChildren(lTask.plan(), rTask.plan())
 	task := &rootTask{
 		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count(), false, 0),
+		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count(), false, 0, nil),
 	}
 	p.cost = task.cost()
 	return task
@@ -550,7 +550,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		outerTask = rTask
 	}
 	task := &mppTask{
-		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count(), false, 0),
+		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count(), false, 0, nil),
 		p:        p,
 		partTp:   outerTask.partTp,
 		hashCols: outerTask.hashCols,
@@ -581,7 +581,7 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...task) task {
 		tblColHists:       rTask.tblColHists,
 		indexPlanFinished: true,
 		tablePlan:         p,
-		cst:               lCost + rCost + p.GetCost(lTask.count(), rTask.count(), false, 0),
+		cst:               lCost + rCost + p.GetCost(lTask.count(), rTask.count(), false, 0, nil),
 	}
 	p.cost = task.cst
 	return task
@@ -990,7 +990,8 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 
 // canPushToIndexPlan checks if this TopN can be pushed to the index side of copTask.
 // It can be pushed to the index side when all columns used by ByItems are available from the index side and
-//   there's no prefix index column.
+//
+//	there's no prefix index column.
 func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
 	schema := indexPlan.Schema()
 	for _, col := range byItemCols {

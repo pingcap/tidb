@@ -4,6 +4,7 @@ go_library(
     name = "testutil",
     srcs = [
         "handle.go",
+        "mocksessionmanager.go",
         "require.go",
     ],
     importpath = "github.com/pingcap/tidb/testkit/testutil",
@@ -11,8 +12,10 @@ go_library(
     deps = [
         "//kv",
         "//parser/mysql",
+        "//session/txninfo",
         "//sessionctx/stmtctx",
         "//types",
+        "//util",
         "//util/codec",
         "//util/collate",
         "@com_github_stretchr_testify//require",

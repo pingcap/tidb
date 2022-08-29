@@ -70,6 +70,15 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+// NewMockDomain is only used for test
+func NewMockDomain() *Domain {
+	do := &Domain{
+		infoCache: infoschema.NewCache(1),
+	}
+	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 1)
+	return do
+}
+
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
@@ -324,7 +333,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica, model.ActionSetTiFlashMode:
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
 		return true
 	}
 	return false
@@ -332,11 +341,6 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 
 // InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
-	if do.infoCache == nil {
-		// Return nil is for test purpose where domain is not well initialized in session context.
-		// In real implementation, the code will not reach here.
-		return nil
-	}
 	return do.infoCache.GetLatest()
 }
 

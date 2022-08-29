@@ -61,7 +61,7 @@ func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
 
 	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*core.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*core.PlanCacheStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -436,7 +436,7 @@ func TestPrepareCache(t *testing.T) {
 
 	// user u_tp
 	userSess := newSession(t, store, "test")
-	require.True(t, userSess.Auth(&auth.UserIdentity{Username: "u_tp", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, userSess.Auth(&auth.UserIdentity{Username: "u_tp", Hostname: "localhost"}, nil, nil))
 	mustExec(t, userSess, `prepare ps_stp_r from 'select * from tp where c1 > ?'`)
 	mustExec(t, userSess, `set @p2 = 2`)
 	tk.SetSession(userSess)
@@ -690,9 +690,9 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 		require.True(t, ok)
 		err = executor.ResetContextOfStmt(tk.Session(), stmt)
 		require.NoError(t, err)
-		err = execPlan.OptimizePreparedPlan(ctx, tk.Session(), is)
+		plan, _, err := core.GetPlanFromSessionPlanCache(ctx, tk.Session(), false, is, execPlan.PrepStmt, execPlan.Params)
 		require.NoError(t, err)
-		planStr[i] = core.ToString(execPlan.Plan)
+		planStr[i] = core.ToString(plan)
 		require.Regexpf(t, expectedPattern, planStr[i], "for %dth %s", i, sql1)
 		pb := &dto.Metric{}
 		err = counter.Write(pb)
@@ -1799,7 +1799,7 @@ func TestIssue18066(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.RefreshConnectionID()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
