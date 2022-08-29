@@ -58,20 +58,22 @@ func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 
 // points2Ranges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
-func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType) (Ranges, error) {
+// When rangeMemQuota is 0, there is no memory limit for building ranges.
+// If the second return value is true, it means that the memory usage of ranges exceeds rangeMemQuota and it falls back to full range.
+func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMemQuota int64) (Ranges, bool, error) {
 	ranges := make(Ranges, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sctx, rangePoints[i], tp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		endPoint, err := convertPoint(sctx, rangePoints[i+1], tp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		less, err := validInterval(sctx, startPoint, endPoint)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		if !less {
 			continue
@@ -88,9 +90,13 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 			HighExclude: endPoint.excl,
 			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
 		}
+		if len(ranges) == 0 && rangeMemQuota > 0 && ran.MemUsage()*int64(len(rangePoints))/2 > rangeMemQuota {
+			// TODO: collator of full range?
+			return FullRange(), true, nil
+		}
 		ranges = append(ranges, ran)
 	}
-	return ranges, nil
+	return ranges, false, nil
 }
 
 func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*point, error) {
@@ -177,8 +183,29 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 // The additional column ranges can only be appended to point ranges.
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
+// When rangeMemQuota is 0, there is no memory limit for building ranges.
+// If the second return value is true, it means that the memory usage of ranges exceeds rangeMemQuota and it rejects appending points to ranges.
 func appendPoints2Ranges(sctx sessionctx.Context, origin Ranges, rangePoints []*point,
-	ft *types.FieldType) (Ranges, error) {
+	ft *types.FieldType, rangeMemQuota int64) (Ranges, bool, error) {
+	// Estimate whether rangeMemQuota will be exceeded first before appending points to ranges.
+	if rangeMemQuota > 0 && len(origin) > 0 && len(rangePoints) > 0 {
+		startPoint, err := convertPoint(sctx, rangePoints[0], ft)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		endPoint, err := convertPoint(sctx, rangePoints[1], ft)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		ran := &Range{
+			LowVal:    append(origin[0].LowVal, startPoint.value),
+			HighVal:   append(origin[0].HighVal, endPoint.value),
+			Collators: append(origin[0].Collators, collate.GetCollator(ft.GetCollate())),
+		}
+		if ran.MemUsage()*int64(len(origin))*int64(len(rangePoints))/2 > rangeMemQuota {
+			return origin, true, nil
+		}
+	}
 	var newIndexRanges Ranges
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
@@ -383,8 +410,9 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	// TODO: handle prefix when building ranges
 	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	var (
-		ranges Ranges
-		err    error
+		ranges     Ranges
+		reachQuota bool
+		err        error
 	)
 	lastRanges := FullRange()
 	for i := 0; i < eqAndInCount; i++ {
@@ -394,18 +422,17 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
 		if i == 0 {
-			ranges, err = points2Ranges(d.sctx, point, newTp[i])
+			ranges, reachQuota, err = points2Ranges(d.sctx, point, newTp[i], d.rangeMemQuota)
 		} else {
-			ranges, err = appendPoints2Ranges(d.sctx, ranges, point, newTp[i])
+			ranges, reachQuota, err = appendPoints2Ranges(d.sctx, ranges, point, newTp[i], d.rangeMemQuota)
 		}
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
-		if d.rangeMemQuota > 0 && ranges.MemUsage() > d.rangeMemQuota {
+		if reachQuota {
 			d.reachRangeMemQuota = true
-			return lastRanges, accessConds[:i], accessConds[i:], nil
+			return ranges, accessConds[:i], accessConds[i:], nil
 		}
-		lastRanges = ranges
 	}
 	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
@@ -417,14 +444,14 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		}
 	}
 	if eqAndInCount == 0 {
-		ranges, err = points2Ranges(d.sctx, rangePoints, newTp[0])
+		ranges, reachQuota, err = points2Ranges(d.sctx, rangePoints, newTp[0], d.rangeMemQuota)
 	} else if eqAndInCount < len(accessConds) {
-		ranges, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, newTp[eqAndInCount])
+		ranges, reachQuota, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, newTp[eqAndInCount], d.rangeMemQuota)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	if d.rangeMemQuota > 0 && ranges.MemUsage() > d.rangeMemQuota {
+	if reachQuota {
 		d.reachRangeMemQuota = true
 		return lastRanges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
 	}

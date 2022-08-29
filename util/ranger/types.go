@@ -52,10 +52,10 @@ func (Ranges) Rebuild() error {
 }
 
 func (rs Ranges) MemUsage() (sum int64) {
-	for _, ran := range rs {
-		sum += ran.MemUsage()
+	if len(rs) == 0 {
+		return
 	}
-	return sum
+	return rs[0].MemUsage() * int64(len(rs))
 }
 
 // Range represents a range generated in physical plan building phase.
@@ -234,7 +234,7 @@ func (ran *Range) MemUsage() (sum int64) {
 	for _, val := range ran.HighVal {
 		sum += val.MemUsage() - types.EmptyDatumSize
 	}
-	// TODO: Consider collator size? It seems small and can be ignored.
+	// We ignore size of collator currently.
 	return sum
 }
 
