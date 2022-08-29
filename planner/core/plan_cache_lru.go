@@ -83,7 +83,6 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 
 	hash := string(key.Hash())
 	bucket, bucketExist := l.buckets[hash]
-	// bucket exist
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			element.Value.(*planCacheEntry).PlanValue = value
