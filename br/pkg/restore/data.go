@@ -427,7 +427,7 @@ func (recovery *Recovery) makeRecoveryPlan() {
 	for _, v := range recovery.recoveryMetas {
 		storeId := v.storeId
 		maxId := storeId
-		for _, m := range v.recoveryMeta {
+		for _, m := range v.regionMeta {
 			if regions[m.RegionId] == nil {
 				regions[m.RegionId] = make([]Regions, 0, recovery.totalStores)
 			}
