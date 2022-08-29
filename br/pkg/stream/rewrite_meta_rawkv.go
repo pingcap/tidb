@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -499,8 +498,8 @@ func (sr *SchemasReplace) rewriteValue(
 func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, error) {
 	// skip mDDLJob
 
-	if !strings.HasPrefix(string(e.Key), "mDB") {
-		if cf == DefaultCF && strings.HasPrefix(string(e.Key), "mDDLJobH") { // mDDLJobHistory
+	if IsMetaDBKey(e.Key) {
+		if cf == DefaultCF && IsMetaDDLJobHistoryKey(e.Key) { // mDDLJobHistory
 			job := &model.Job{}
 			if err := job.Decode(e.Value); err != nil {
 				log.Debug("failed to decode the job", zap.String("error", err.Error()), zap.String("job", string(e.Value)))

@@ -2286,7 +2286,7 @@ func (rc *Client) readAllEntries(
 			continue
 		}
 
-		if !strings.HasPrefix(string(txnEntry.Key), "mD") {
+		if stream.MaybeDBOrDDLJobHistoryKey(txnEntry.Key) {
 			// only restore mDB and mDDLHistory
 			continue
 		}
