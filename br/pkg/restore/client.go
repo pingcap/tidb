@@ -1778,6 +1778,7 @@ func (rc *Client) ReadStreamDataFiles(
 
 	for _, m := range metas {
 		for _, ds := range m.FileGroups {
+			metaRef := 0
 			for _, d := range ds.DataFilesInfo {
 				if d.MinTs > rc.restoreTS {
 					continue
@@ -1794,6 +1795,7 @@ func (rc *Client) ReadStreamDataFiles(
 
 				if d.IsMeta {
 					mFiles = append(mFiles, d)
+					metaRef += 1
 				} else {
 					dFiles = append(dFiles, d)
 				}
@@ -1801,7 +1803,7 @@ func (rc *Client) ReadStreamDataFiles(
 			}
 			// metadatav1 doesn't use cache
 			if m.MetaVersion == backuppb.MetaVersion_V2 {
-				rc.helper.InitCacheEntry(ds.Path, len(ds.DataFilesInfo))
+				rc.helper.InitCacheEntry(ds.Path, metaRef)
 			}
 		}
 	}
