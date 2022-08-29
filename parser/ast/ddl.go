@@ -533,9 +533,9 @@ type ColumnOption struct {
 	// Stored is only for ColumnOptionGenerated, default is false.
 	Stored bool
 	// Refer is used for foreign key.
-	Refer               *ReferenceDef
-	StrValue            string
-	AutoRandomBitLength int
+	Refer       *ReferenceDef
+	StrValue    string
+	AutoRandOpt AutoRandomOption
 	// Enforced is only for Check, default is true.
 	Enforced bool
 	// Name is only used for Check Constraint name.
@@ -631,8 +631,13 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 	case ColumnOptionAutoRandom:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAutoRandom, func() error {
 			ctx.WriteKeyWord("AUTO_RANDOM")
-			if n.AutoRandomBitLength != types.UnspecifiedLength {
-				ctx.WritePlainf("(%d)", n.AutoRandomBitLength)
+			opt := n.AutoRandOpt
+			if opt.ShardBits != types.UnspecifiedLength {
+				if opt.RangeBits != types.UnspecifiedLength {
+					ctx.WritePlainf("(%d, %d)", opt.ShardBits, opt.RangeBits)
+				} else {
+					ctx.WritePlainf("(%d)", opt.ShardBits)
+				}
 			}
 			return nil
 		})
@@ -657,6 +662,14 @@ func (n *ColumnOption) Accept(v Visitor) (Node, bool) {
 		n.Expr = node.(ExprNode)
 	}
 	return v.Leave(n)
+}
+
+// AutoRandomOption contains the length of shard bits and range bits.
+type AutoRandomOption struct {
+	// ShardBits is the number of bits used to store the shard.
+	ShardBits int
+	// RangeBits is the number of int primary key bits that will be used by TiDB.
+	RangeBits int
 }
 
 // IndexVisibility is the option for index visibility.
@@ -2574,8 +2587,6 @@ const (
 	AlterTableCache
 	AlterTableNoCache
 	AlterTableStatsOptions
-	// AlterTableSetTiFlashMode uses to alter the table mode of TiFlash.
-	AlterTableSetTiFlashMode
 	AlterTableDropFirstPartition
 	AlterTableAddLastPartition
 	AlterTableReorganizeLastPartition
@@ -2676,7 +2687,6 @@ type AlterTableSpec struct {
 	Num              uint64
 	Visibility       IndexVisibility
 	TiFlashReplica   *TiFlashReplicaSpec
-	TiFlashMode      model.TiFlashMode
 	Writeable        bool
 	Statistics       *StatisticsSpec
 	AttributesSpec   *AttributesSpec
@@ -2739,9 +2749,6 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteString(v)
 		}
-	case AlterTableSetTiFlashMode:
-		ctx.WriteKeyWord("SET TIFLASH MODE ")
-		ctx.WriteKeyWord(n.TiFlashMode.String())
 	case AlterTableAddStatistics:
 		ctx.WriteKeyWord("ADD STATS_EXTENDED ")
 		if n.IfNotExists {

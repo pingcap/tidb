@@ -1550,3 +1550,64 @@ func TestCastConstAsDecimalFieldType(t *testing.T) {
 		require.Equal(t, tc.resultDecimal, expr.GetType().GetDecimal())
 	}
 }
+
+func TestCastBinaryStringAsJSONSig(t *testing.T) {
+	ctx := createContext(t)
+	sc := ctx.GetSessionVars().StmtCtx
+	originIgnoreTruncate := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = originIgnoreTruncate
+	}()
+
+	// BINARY STRING will be converted to a JSON opaque
+	// and yield "base64:typeXX:<base64 encoded value>" finally
+	var tests = []struct {
+		str       string
+		tp        *types.FieldType
+		result    json.BinaryJSON
+		resultStr string
+	}{
+		{
+			"a",
+			types.NewFieldTypeWithCollation(mysql.TypeVarString, charset.CollationBin, 4),
+			json.BinaryJSON{TypeCode: json.TypeCodeOpaque, Value: []byte{0xfd, 1, 'a'}},
+			`"base64:type253:YQ=="`,
+		},
+		{
+			"test",
+			types.NewFieldTypeWithCollation(mysql.TypeVarString, charset.CollationBin, 4),
+			json.BinaryJSON{TypeCode: json.TypeCodeOpaque, Value: []byte{0xfd, 4, 't', 'e', 's', 't'}},
+			`"base64:type253:dGVzdA=="`,
+		},
+		{
+			"a",
+			types.NewFieldTypeWithCollation(mysql.TypeString, charset.CollationBin, 4),
+			json.BinaryJSON{TypeCode: json.TypeCodeOpaque, Value: []byte{0xfe, 4, 'a', 0, 0, 0}},
+			`"base64:type254:YQAAAA=="`,
+		},
+		{
+			"a",
+			types.NewFieldTypeWithCollation(mysql.TypeBlob, charset.CollationBin, 4),
+			json.BinaryJSON{TypeCode: json.TypeCodeOpaque, Value: []byte{0xfc, 1, 'a'}},
+			`"base64:type252:YQ=="`,
+		},
+	}
+	for _, tt := range tests {
+		args := []Expression{&Column{RetType: tt.tp, Index: 0}}
+		tp := types.NewFieldType(mysql.TypeJSON)
+		tp.SetDecimal(types.DefaultFsp)
+		jsonFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
+		require.NoError(t, err)
+		sig := &builtinCastStringAsJSONSig{jsonFunc}
+
+		row := chunk.MutRowFromDatums(
+			[]types.Datum{types.NewCollationStringDatum(tt.str, charset.CollationBin)},
+		)
+		res, isNull, err := sig.evalJSON(row.ToRow())
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, tt.result, res)
+		require.Equal(t, tt.resultStr, res.String())
+	}
+}

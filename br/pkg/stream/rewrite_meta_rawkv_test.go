@@ -19,15 +19,6 @@ func mockGenGenGlobalID(ctx context.Context) (int64, error) {
 	return increaseID, nil
 }
 
-func ProduceValue(tableName string, dbID int64) ([]byte, error) {
-	tableInfo := model.TableInfo{
-		ID:   dbID,
-		Name: model.NewCIStr(tableName),
-	}
-
-	return json.Marshal(tableInfo)
-}
-
 func MockEmptySchemasReplace(midr *mockInsertDeleteRange) *SchemasReplace {
 	dbMap := make(map[OldID]*DBReplace)
 	if midr == nil {
@@ -103,6 +94,13 @@ func TestRewriteValueForTable(t *testing.T) {
 	require.Nil(t, err)
 
 	sr := MockEmptySchemasReplace(nil)
+	tableCount := 0
+	sr.AfterTableRewritten = func(deleted bool, tableInfo *model.TableInfo) {
+		tableCount++
+		tableInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count: 1,
+		}
+	}
 	newValue, needRewrite, err := sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)
 	require.True(t, needRewrite)
@@ -110,6 +108,7 @@ func TestRewriteValueForTable(t *testing.T) {
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
+	require.EqualValues(t, tableInfo.TiFlashReplica.Count, 1)
 
 	newID := sr.DbMap[dbId].TableMap[tableID].NewTableID
 	newValue, needRewrite, err = sr.rewriteTableInfo(value, dbId)
@@ -120,6 +119,7 @@ func TestRewriteValueForTable(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
 	require.Equal(t, newID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
+	require.EqualValues(t, tableCount, 2)
 }
 
 func TestRewriteValueForPartitionTable(t *testing.T) {
@@ -209,6 +209,107 @@ func TestRewriteValueForPartitionTable(t *testing.T) {
 		sr.DbMap[dbId].TableMap[tableID].PartitionMap[pt2ID],
 	)
 	require.Equal(t, tableInfo.Partition.Definitions[1].ID, newID2)
+}
+
+func TestRewriteValueForExchangePartition(t *testing.T) {
+	var (
+		dbID1      int64 = 100
+		tableID1   int64 = 101
+		pt1ID      int64 = 102
+		pt2ID      int64 = 103
+		tableName1       = "t1"
+		pt1Name          = "pt1"
+		pt2Name          = "pt2"
+
+		dbID2      int64 = 105
+		tableID2   int64 = 106
+		tableName2       = "t2"
+		tableInfo  model.TableInfo
+	)
+
+	// construct the partition table t1
+	pt1 := model.PartitionDefinition{
+		ID:   pt1ID,
+		Name: model.NewCIStr(pt1Name),
+	}
+	pt2 := model.PartitionDefinition{
+		ID:   pt2ID,
+		Name: model.NewCIStr(pt2Name),
+	}
+
+	pi := model.PartitionInfo{
+		Enable:      true,
+		Definitions: make([]model.PartitionDefinition, 0),
+	}
+	pi.Definitions = append(pi.Definitions, pt1, pt2)
+	t1 := model.TableInfo{
+		ID:        tableID1,
+		Name:      model.NewCIStr(tableName1),
+		Partition: &pi,
+	}
+	db1 := model.DBInfo{
+		ID: dbID1,
+	}
+
+	// construct the no partition table t2
+	t2 := model.TableInfo{
+		ID:   tableID2,
+		Name: model.NewCIStr(tableName2),
+	}
+	db2 := model.DBInfo{
+		ID: dbID2,
+	}
+
+	// construct the SchemaReplace
+	dbMap := make(map[OldID]*DBReplace)
+	dbMap[dbID1] = NewDBReplace(&db1, dbID1+100)
+	dbMap[dbID1].TableMap[tableID1] = NewTableReplace(&t1, tableID1+100)
+	dbMap[dbID1].TableMap[tableID1].PartitionMap[pt1ID] = pt1ID + 100
+	dbMap[dbID1].TableMap[tableID1].PartitionMap[pt2ID] = pt2ID + 100
+
+	dbMap[dbID2] = NewDBReplace(&db2, dbID2+100)
+	dbMap[dbID2].TableMap[tableID2] = NewTableReplace(&t2, tableID2+100)
+
+	sr := NewSchemasReplace(
+		dbMap,
+		0,
+		filter.All(),
+		mockGenGenGlobalID,
+		nil,
+		nil,
+		nil,
+	)
+	require.Equal(t, len(sr.globalTableIdMap), 4)
+
+	//exchange parition, t1 parition0 with the t2
+	t1Copy := t1.Clone()
+	t1Copy.Partition = t1.Partition.Clone()
+	t2Copy := t2.Clone()
+
+	t1Copy.Partition.Definitions[0].ID = tableID2
+	t2Copy.ID = pt1ID
+
+	// rewrite partition table
+	value, err := json.Marshal(&t1Copy)
+	require.Nil(t, err)
+	value, needRewrite, err := sr.rewriteTableInfo(value, dbID1)
+	require.Nil(t, err)
+	require.True(t, needRewrite)
+	err = json.Unmarshal(value, &tableInfo)
+	require.Nil(t, err)
+	require.Equal(t, tableInfo.ID, tableID1+100)
+	require.Equal(t, tableInfo.Partition.Definitions[0].ID, tableID2+100)
+	require.Equal(t, tableInfo.Partition.Definitions[1].ID, pt2ID+100)
+
+	// rewrite no partition table
+	value, err = json.Marshal(&t2Copy)
+	require.Nil(t, err)
+	value, needRewrite, err = sr.rewriteTableInfo(value, dbID2)
+	require.Nil(t, err)
+	require.True(t, needRewrite)
+	err = json.Unmarshal(value, &tableInfo)
+	require.Nil(t, err)
+	require.Equal(t, tableInfo.ID, pt1ID+100)
 }
 
 // db:70->80 -

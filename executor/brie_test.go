@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
@@ -78,7 +79,7 @@ func TestFetchShowBRIE(t *testing.T) {
 		Info:    "",
 	}
 	ps = append(ps, pi)
-	sm := &mockSessionManager{
+	sm := &testutil.MockSessionManager{
 		PS: ps,
 	}
 
