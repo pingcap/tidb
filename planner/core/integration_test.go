@@ -3228,8 +3228,7 @@ func TestReversePushDownToTiFlash(t *testing.T) {
 }
 
 func TestSpacePushDownToTiFlash(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
