@@ -496,6 +496,7 @@ func TestRegexpSubstrVec(t *testing.T) {
 	copy(matchTpConstCase.constants, constants)
 	constants[4] = nil
 
+	// Prepare data: test memorization
 	constants[1] = getStringConstant("aB.")
 	constants[4] = getStringConstant("mni")
 	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexpSubstr(args...)
