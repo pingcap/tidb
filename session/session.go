@@ -796,13 +796,13 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessionData := sessVars.TemporaryTableData
 	var (
 		stage           kv.StagingHandle
-		localTempTables *infoschema.LocalTemporaryTables
+		localTempTables *infoschema.SessionTables
 	)
 
 	if sessVars.LocalTemporaryTables != nil {
-		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.SessionTables)
 	} else {
-		localTempTables = new(infoschema.LocalTemporaryTables)
+		localTempTables = new(infoschema.SessionTables)
 	}
 
 	defer func() {
@@ -3473,7 +3473,7 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 	// Data in local temporary tables is hard to encode, so we do not support it.
 	// Check temporary tables here to avoid circle dependency.
 	if s.sessionVars.LocalTemporaryTables != nil {
-		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.SessionTables)
 		if localTempTables.Count() > 0 {
 			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
 		}
