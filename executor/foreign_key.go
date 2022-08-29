@@ -205,8 +205,17 @@ func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction) error
 	if err != nil {
 		return err
 	}
+	if fkc.CheckExist {
+		for _, k := range fkc.toBeCheckedKeys {
+			err = fkc.checkKeyExist(ctx, txn, k)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	for _, k := range fkc.toBeCheckedKeys {
-		err = fkc.checkKey(ctx, txn, k)
+		err = fkc.checkKeyNotExist(ctx, txn, k)
 		if err != nil {
 			return err
 		}
@@ -215,18 +224,30 @@ func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction) error
 }
 
 func (fkc *FKCheckExec) checkKey(ctx context.Context, txn kv.Transaction, k kv.Key) error {
+	if fkc.CheckExist {
+		return fkc.checkKeyExist(ctx, txn, k)
+	}
+	return fkc.checkKeyNotExist(ctx, txn, k)
+}
+
+func (fkc *FKCheckExec) checkKeyExist(ctx context.Context, txn kv.Transaction, k kv.Key) error {
 	_, err := txn.Get(ctx, k)
 	if err == nil {
-		if !fkc.CheckExist {
-			return fkc.FailedErr
-		}
 		fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, k)
 		return nil
 	}
 	if kv.IsErrNotFound(err) {
-		if fkc.CheckExist {
-			return fkc.FailedErr
-		}
+		return fkc.FailedErr
+	}
+	return err
+}
+
+func (fkc *FKCheckExec) checkKeyNotExist(ctx context.Context, txn kv.Transaction, k kv.Key) error {
+	_, err := txn.Get(ctx, k)
+	if err == nil {
+		return fkc.FailedErr
+	}
+	if kv.IsErrNotFound(err) {
 		return nil
 	}
 	return err
@@ -242,8 +263,17 @@ func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) 
 	defer func() {
 		snap.SetOption(kv.ScanBatchSize, 256)
 	}()
+	if fkc.CheckExist {
+		for _, key := range fkc.toBeCheckedPrefixKeys {
+			err := fkc.checkPrefixKeyExist(ctx, memBuffer, snap, key)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	for _, key := range fkc.toBeCheckedPrefixKeys {
-		err := fkc.checkPrefixKey(ctx, memBuffer, snap, key)
+		err := fkc.checkPrefixKeyNotExist(ctx, memBuffer, snap, key)
 		if err != nil {
 			return err
 		}
@@ -252,28 +282,42 @@ func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) 
 }
 
 func (fkc *FKCheckExec) checkPrefixKey(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) error {
+	if fkc.CheckExist {
+		return fkc.checkPrefixKeyExist(ctx, memBuffer, snap, key)
+	}
+	return fkc.checkPrefixKeyNotExist(ctx, memBuffer, snap, key)
+}
+
+func (fkc *FKCheckExec) checkPrefixKeyExist(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) error {
 	key, value, err := fkc.getIndexKeyValueInTable(ctx, memBuffer, snap, key)
 	if err != nil {
 		return err
 	}
 	exist := len(value) > 0
-	if !exist && fkc.CheckExist {
+	if !exist {
 		return fkc.FailedErr
 	}
+	if fkc.Idx != nil && fkc.Idx.Meta().Primary && fkc.Tbl.Meta().IsCommonHandle {
+		fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, key)
+	} else {
+		handle, err := tablecodec.DecodeIndexHandle(key, value, len(fkc.Idx.Meta().Columns))
+		if err != nil {
+			return err
+		}
+		handleKey := tablecodec.EncodeRecordKey(fkc.Tbl.RecordPrefix(), handle)
+		fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, handleKey)
+	}
+	return nil
+}
+
+func (fkc *FKCheckExec) checkPrefixKeyNotExist(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) error {
+	key, value, err := fkc.getIndexKeyValueInTable(ctx, memBuffer, snap, key)
+	if err != nil {
+		return err
+	}
+	exist := len(value) > 0
 	if exist {
-		if !fkc.CheckExist {
-			return fkc.FailedErr
-		}
-		if fkc.Idx != nil && fkc.Idx.Meta().Primary && fkc.Tbl.Meta().IsCommonHandle {
-			fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, key)
-		} else {
-			handle, err := tablecodec.DecodeIndexHandle(key, value, len(fkc.Idx.Meta().Columns))
-			if err != nil {
-				return err
-			}
-			handleKey := tablecodec.EncodeRecordKey(fkc.Tbl.RecordPrefix(), handle)
-			fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, handleKey)
-		}
+		return fkc.FailedErr
 	}
 	return nil
 }

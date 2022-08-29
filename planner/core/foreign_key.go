@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
-func (p *Insert) buildOnModifyChildForeignKeyChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
+func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil, nil
 	}
