@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -9681,14 +9682,10 @@ func (s *testIntegrationSuite) TestRedundantColumnResolve(c *C) {
 	tk.MustQuery("select t1.a, t2.a from t1 natural join t2").Check(testkit.Rows("1 1"))
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
+func  (s *testIntegrationSuite) TestIssue37414(c *C) {
 	defer s.cleanEnv(c)
-=======
-func TestIssue37414(t *testing.T) {
-	store := testkit.CreateMockStore(t)
 
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists foo")
 	tk.MustExec("drop table if exists bar")
@@ -9698,10 +9695,8 @@ func TestIssue37414(t *testing.T) {
 	tk.MustExec("insert into foo select if(b>0, if(a/b>1, 1, 2), null) from bar;")
 }
 
-func TestControlFunctionWithEnumOrSet(t *testing.T) {
-	// issue 23114
-	store := testkit.CreateMockStore(t)
->>>>>>> 636d27287... expression: resize the result for IfXXSig (#37417)
+func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
+	defer s.cleanEnv(c)
 
 	// issue 23114
 	tk := testkit.NewTestKit(c, s.store)
