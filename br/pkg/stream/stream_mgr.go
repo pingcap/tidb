@@ -261,6 +261,14 @@ func (*MetadataHelper) ParseToMetadataHard(rawMetaData []byte) (*backuppb.Metada
 func (*MetadataHelper) Marshal(meta *backuppb.Metadata) ([]byte, error) {
 	// the field `Files` doen't changed
 	if meta.MetaVersion == backuppb.MetaVersion_V1 {
+		if len(meta.FileGroups) != len(meta.Files) {
+			// some files are deleted
+			files := make([]*backuppb.DataFileInfo, 0, len(meta.FileGroups))
+			for _, g := range meta.FileGroups {
+				files = append(files, g.DataFilesInfo...)
+			}
+			meta.Files = files
+		}
 		meta.FileGroups = nil
 	}
 	return meta.Marshal()

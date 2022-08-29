@@ -65,13 +65,11 @@ func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalSto
 	return ms.LoadUntil(ctx, s, math.MaxUint64)
 }
 
-func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
+func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileGroup) (shouldBreak bool)) {
 	for _, m := range ms.metadata {
-		for _, ds := range m.FileGroups {
-			for _, d := range ds.DataFilesInfo {
-				if f(d) {
-					return
-				}
+		for _, d := range m.FileGroups {
+			if f(d) {
+				return
 			}
 		}
 	}
@@ -100,8 +98,8 @@ func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
 //	                               |-file2--------------| <- File contains any record out of this won't be found.
 //
 // This function would call the `f` over file1 only.
-func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
-	ms.iterateDataFiles(func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *backuppb.DataFileGroup) (shouldBreak bool)) {
+	ms.iterateDataFiles(func(d *backuppb.DataFileGroup) (shouldBreak bool) {
 		if d.MaxTs >= before {
 			return false
 		}

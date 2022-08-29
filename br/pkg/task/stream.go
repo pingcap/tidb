@@ -903,10 +903,12 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		shiftUntilTS        = metas.CalculateShiftTS(cfg.Until)
 	)
 
-	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
 		fileCount++
 		totalSize += d.Length
-		kvCount += d.NumberOfEntries
+		for _, f := range d.DataFilesInfo {
+			kvCount += f.NumberOfEntries
+		}
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",

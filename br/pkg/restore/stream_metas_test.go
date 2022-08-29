@@ -134,8 +134,8 @@ func TestTruncateLog(t *testing.T) {
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
 
-	fs := []*backuppb.DataFileInfo{}
-	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+	fs := []*backuppb.DataFileGroup{}
+	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
 		fs = append(fs, d)
 		require.Less(t, d.MaxTs, uint64(17))
 		return false
@@ -159,7 +159,7 @@ func TestTruncateLog(t *testing.T) {
 	require.ElementsMatch(t, modifiedFiles, []string{"v1/backupmeta/0003.meta"})
 
 	require.NoError(t, s.LoadFrom(ctx, l))
-	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
 		t.Errorf("some of log files still not truncated, it is %#v", d)
 		return true
 	})
@@ -189,13 +189,13 @@ func TestTruncateLogV2(t *testing.T) {
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
 
-	fs := []*backuppb.DataFileInfo{}
-	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+	fs := []*backuppb.DataFileGroup{}
+	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
 		fs = append(fs, d)
 		require.Less(t, d.MaxTs, uint64(17))
 		return false
 	})
-	require.Len(t, fs, 15)
+	require.Len(t, fs, 7)
 
 	s.RemoveDataBefore(17)
 	deletedFiles := []string{}
@@ -214,12 +214,9 @@ func TestTruncateLogV2(t *testing.T) {
 	require.ElementsMatch(t, modifiedFiles, []string{"v1/backupmeta/0003.meta"})
 
 	require.NoError(t, s.LoadFrom(ctx, l))
-	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
-		if d.Path != "3" {
-			t.Errorf("some of log files still not truncated, it is %#v", d)
-			return true
-		}
-		return false
+	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
+		t.Errorf("some of log files still not truncated, it is %#v", d)
+		return true
 	})
 
 	l.WalkDir(ctx, &storage.WalkOption{
