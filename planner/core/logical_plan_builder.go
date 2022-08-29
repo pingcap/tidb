@@ -567,43 +567,6 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	}
 	return nil
 }
-
-func (p *LogicalJoin) setPreferredHJBuildAndProbeSide(hintInfo *tableHintInfo) {
-	if hintInfo == nil {
-		return
-	}
-
-	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
-	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
-	hjSide := uint(0)
-	if hintInfo.ifPreferHJBuild(lhsAlias) {
-		hjSide |= preferLeftAsHJBuild
-	}
-	if hintInfo.ifPreferHJBuild(rhsAlias) {
-		hjSide |= preferRightAsHJBuild
-	}
-	if hintInfo.ifPreferHJProbe(lhsAlias) {
-		hjSide |= preferLeftAsHJProbe
-	}
-	if hintInfo.ifPreferHJProbe(rhsAlias) {
-		hjSide |= preferRightAsHJProbe
-	}
-	hasConflict := false
-	if (hjSide&preferLeftAsHJBuild) > 0 && (hjSide&preferLeftAsHJProbe) > 0 {
-		hasConflict = true
-	}
-	if (hjSide&preferRightAsHJBuild) > 0 && (hjSide&preferRightAsHJProbe) > 0 {
-		hasConflict = true
-	}
-	if hasConflict {
-		errMsg := "HASH_BUILD and HASH_PROBE hints are conflict, please check the hints"
-		warning := ErrInternal.GenWithStack(errMsg)
-		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-	} else {
-		p.hashJoinSide |= hjSide
-	}
-}
-
 func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo == nil {
 		return
@@ -638,19 +601,30 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
 	}
+	if hintInfo.ifPreferHJBuild(lhsAlias) {
+		p.preferJoinType |= preferLeftAsHJBuild
+	}
+	if hintInfo.ifPreferHJBuild(rhsAlias) {
+		p.preferJoinType |= preferRightAsHJBuild
+	}
+	if hintInfo.ifPreferHJProbe(lhsAlias) {
+		p.preferJoinType |= preferLeftAsHJProbe
+	}
+	if hintInfo.ifPreferHJProbe(rhsAlias) {
+		p.preferJoinType |= preferRightAsHJProbe
+	}
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
-	p.setPreferredHJBuildAndProbeSide(hintInfo)
 	// set the join order
 	if hintInfo.leadingJoinOrder != nil {
 		p.preferJoinOrder = hintInfo.matchTableName([]*hintTableInfo{lhsAlias, rhsAlias}, hintInfo.leadingJoinOrder)
 	}
 	// set hintInfo for further usage if this hint info can be used.
-	if p.preferJoinType != 0 || p.preferJoinOrder || p.hashJoinSide != 0 {
+	if p.preferJoinType != 0 || p.preferJoinOrder {
 		p.hintInfo = hintInfo
 	}
 }
@@ -5083,24 +5057,36 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
 	if b.TableHints() != nil {
+		hintInfo := b.TableHints()
 		outerAlias := extractTableAlias(outerPlan, joinPlan.blockOffset)
 		innerAlias := extractTableAlias(innerPlan, joinPlan.blockOffset)
-		if b.TableHints().ifPreferMergeJoin(outerAlias, innerAlias) {
+		if hintInfo.ifPreferMergeJoin(outerAlias, innerAlias) {
 			joinPlan.preferJoinType |= preferMergeJoin
 		}
-		if b.TableHints().ifPreferHashJoin(outerAlias, innerAlias) {
+		if hintInfo.ifPreferHashJoin(outerAlias, innerAlias) {
 			joinPlan.preferJoinType |= preferHashJoin
 		}
-		if b.TableHints().ifPreferINLJ(innerAlias) {
+		if hintInfo.ifPreferINLJ(innerAlias) {
 			joinPlan.preferJoinType = preferRightAsINLJInner
 		}
-		if b.TableHints().ifPreferINLHJ(innerAlias) {
+		if hintInfo.ifPreferINLHJ(innerAlias) {
 			joinPlan.preferJoinType = preferRightAsINLHJInner
 		}
-		if b.TableHints().ifPreferINLMJ(innerAlias) {
+		if hintInfo.ifPreferINLMJ(innerAlias) {
 			joinPlan.preferJoinType = preferRightAsINLMJInner
 		}
-		joinPlan.setPreferredHJBuildAndProbeSide(b.TableHints())
+		if hintInfo.ifPreferHJBuild(outerAlias) {
+			joinPlan.preferJoinType |= preferLeftAsHJBuild
+		}
+		if hintInfo.ifPreferHJBuild(innerAlias) {
+			joinPlan.preferJoinType |= preferRightAsHJBuild
+		}
+		if hintInfo.ifPreferHJProbe(outerAlias) {
+			joinPlan.preferJoinType |= preferLeftAsHJProbe
+		}
+		if hintInfo.ifPreferHJProbe(innerAlias) {
+			joinPlan.preferJoinType |= preferRightAsHJProbe
+		}
 		// If there're multiple join hints, they're conflict.
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
 			return nil, errors.New("Join hints are conflict, you can only specify one type of join")
@@ -6729,8 +6715,10 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
 	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner
 	inlmjMask := preferRightAsINLMJInner ^ preferLeftAsINLMJInner
+	hjRightBuildMask := preferRightAsHJBuild ^ preferLeftAsHJProbe
+	hjLeftBuildMask := preferLeftAsHJBuild ^ preferRightAsHJProbe
 
-	mask := inlMask ^ inlhjMask ^ inlmjMask
+	mask := inlMask ^ inlhjMask ^ inlmjMask ^ hjRightBuildMask ^ hjLeftBuildMask
 	onesCount := bits.OnesCount(preferJoinType & ^mask)
 	if onesCount > 1 || onesCount == 1 && preferJoinType&mask > 0 {
 		return true
@@ -6744,6 +6732,12 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 		cnt++
 	}
 	if preferJoinType&inlmjMask > 0 {
+		cnt++
+	}
+	if preferJoinType&hjLeftBuildMask > 0 {
+		cnt++
+	}
+	if preferJoinType&hjRightBuildMask > 0 {
 		cnt++
 	}
 	return cnt > 1

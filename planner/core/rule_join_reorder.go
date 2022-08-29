@@ -42,7 +42,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		// We need to return the hint information to warn
 		hintInfo = append(hintInfo, join.hintInfo)
 	}
-	if !isJoin || join.preferJoinType > uint(0) || join.hashJoinSide > uint(0) || join.StraightJoin ||
+	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
 		if hintInfo != nil {

@@ -115,18 +115,15 @@ const (
 	preferLeftAsINLMJInner
 	preferRightAsINLMJInner
 	preferHashJoin
+	preferLeftAsHJBuild
+	preferRightAsHJBuild
+	preferLeftAsHJProbe
+	preferRightAsHJProbe
 	preferMergeJoin
 	preferBCJoin
 	preferRewriteSemiJoin
 	preferHashAgg
 	preferStreamAgg
-)
-
-const (
-	preferLeftAsHJBuild uint = 1 << iota
-	preferRightAsHJBuild
-	preferLeftAsHJProbe
-	preferRightAsHJProbe
 )
 
 const (
@@ -147,7 +144,6 @@ type LogicalJoin struct {
 	hintInfo        *tableHintInfo
 	preferJoinType  uint
 	preferJoinOrder bool
-	hashJoinSide    uint
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
