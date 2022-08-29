@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -1011,6 +1012,10 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	}
 	needPushDown := len(cols) > 0
 	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
+		newTask, changed := p.pushTopNDownToDynamicPartition(copTask)
+		if changed {
+			return newTask
+		}
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1033,6 +1038,145 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	rootTask.addCost(p.GetCost(rootTask.count(), true))
 	p.cost = rootTask.cost()
 	return attachPlan2Task(p, rootTask)
+}
+
+// pushTopNDownToDynamicPartition is a temp solution for partition table. It actually does the same thing as DataSource's isMatchProp.
+// We need to support a more enhanced read strategy in the execution phase. So that we can achieve Limit(TiDB)->Reader(TiDB)->Limit(TiKV/TiFlash)->Scan(TiKV/TiFlash).
+// Before that is done, we use this logic to provide a way to keep the order property when reading from TiKV, so that we can use the orderliness of index to speed up the query.
+// Here we can change the execution plan to TopN(TiDB)->Reader(TiDB)->Limit(TiKV)->Scan(TiKV).(TiFlash is not supported).
+func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bool) {
+	var err error
+	copTsk = copTsk.copy().(*copTask)
+	if err != nil {
+		return nil, false
+	}
+	if len(copTsk.rootTaskConds) > 0 {
+		return nil, false
+	}
+	colsProp, ok := GetPropByOrderByItems(p.ByItems)
+	if !ok {
+		return nil, false
+	}
+	allSameOrder, isDesc := colsProp.AllSameOrder()
+	if !allSameOrder {
+		return nil, false
+	}
+	checkIndexMatchProp := func(idxCols []*expression.Column, idxColLens []int, constColsByCond []bool, colsProp *property.PhysicalProperty) bool {
+		// If the number of the by-items is bigger than the index columns. We cannot push down since it must not keep order.
+		if len(idxCols) < len(colsProp.SortItems) {
+			return false
+		}
+		idxPos := 0
+		for _, byItem := range colsProp.SortItems {
+			found := false
+			for ; idxPos < len(idxCols); idxPos++ {
+				if idxColLens[idxPos] == types.UnspecifiedLength && idxCols[idxPos].Equal(p.SCtx(), byItem.Col) {
+					found = true
+					idxPos++
+					break
+				}
+				if len(constColsByCond) == 0 || idxPos > len(constColsByCond) || !constColsByCond[idxPos] {
+					found = false
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	}
+	var (
+		idxScan *PhysicalIndexScan
+		tblScan *PhysicalTableScan
+		tblInfo *model.TableInfo
+	)
+	if copTsk.indexPlan != nil {
+		copTsk.indexPlan, err = copTsk.indexPlan.Clone()
+		if err != nil {
+			return nil, false
+		}
+		finalIdxScanPlan := copTsk.indexPlan
+		for len(finalIdxScanPlan.Children()) > 0 && finalIdxScanPlan.Children()[0] != nil {
+			finalIdxScanPlan = finalIdxScanPlan.Children()[0]
+		}
+		idxScan = finalIdxScanPlan.(*PhysicalIndexScan)
+		tblInfo = idxScan.Table
+	}
+	if copTsk.tablePlan != nil {
+		copTsk.tablePlan, err = copTsk.tablePlan.Clone()
+		if err != nil {
+			return nil, false
+		}
+		finalTblScanPlan := copTsk.tablePlan
+		if len(finalTblScanPlan.Children()) > 0 {
+			finalTblScanPlan = finalTblScanPlan.Children()[0]
+		}
+		tblScan = finalTblScanPlan.(*PhysicalTableScan)
+		tblInfo = tblScan.Table
+	}
+
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return nil, false
+	}
+	if pi.Type == model.PartitionTypeList {
+		return nil, false
+	}
+
+	if !copTsk.indexPlanFinished {
+		// If indexPlan side isn't finished, there's no selection on the table side.
+
+		propMatched := checkIndexMatchProp(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
+		if !propMatched {
+			return nil, false
+		}
+
+		idxScan.Desc = isDesc
+		childProfile := copTsk.plan().statsInfo()
+		newCount := p.Offset + p.Count
+		stats := deriveLimitStats(childProfile, float64(newCount))
+		pushedLimit := PhysicalLimit{
+			Count: newCount,
+		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		pushedLimit.SetSchema(copTsk.indexPlan.Schema())
+		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
+		pushedLimit.cost = copTsk.cost()
+	} else if copTsk.indexPlan == nil {
+		if tblScan.HandleCols == nil {
+			return nil, false
+		}
+
+		if tblScan.HandleCols.IsInt() {
+			pk := tblScan.HandleCols.GetCol(0)
+			if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx(), pk) {
+				return nil, false
+			}
+		} else {
+			idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblScan.Columns, tblScan.Schema().Columns, tables.FindPrimaryIndex(tblScan.Table))
+			matched := checkIndexMatchProp(idxCols, idxColLens, nil, colsProp)
+			if !matched {
+				return nil, false
+			}
+		}
+		tblScan.Desc = isDesc
+		childProfile := copTsk.plan().statsInfo()
+		newCount := p.Offset + p.Count
+		stats := deriveLimitStats(childProfile, float64(newCount))
+		pushedLimit := PhysicalLimit{
+			Count: newCount,
+		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		pushedLimit.SetSchema(copTsk.tablePlan.Schema())
+		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
+		pushedLimit.cost = copTsk.cost()
+	} else {
+		return nil, false
+	}
+
+	rootTask := copTsk.convertToRootTask(p.ctx)
+	rootTask.addCost(p.GetCost(rootTask.count(), true))
+	p.cost = rootTask.cost()
+	return attachPlan2Task(p, rootTask), true
 }
 
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
