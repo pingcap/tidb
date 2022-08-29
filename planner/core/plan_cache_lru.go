@@ -118,7 +118,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 			l.lruList.Remove(element)
 			l.size--
 		}
-		l.buckets[string(hash)] = make(map[*list.Element]struct{}, 1)
+		delete(l.buckets, string(hash))
 	}
 }
 
