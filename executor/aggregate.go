@@ -288,6 +288,7 @@ func (e *HashAggExec) Close() error {
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
+		e.parallelExecInitialized = false
 	}
 	return e.baseExecutor.Close()
 }
