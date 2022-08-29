@@ -801,16 +801,13 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 	case *ast.BRIEStmt:
 		return b.buildBRIE(s, v.Schema())
 	case *ast.CreateUserStmt, *ast.AlterUserStmt:
-		var (
-			lockOptions []*ast.PasswordOrLockOption
-			ok          bool
-		)
+		var lockOptions []*ast.PasswordOrLockOption
 		if stmt, ok := v.Statement.(*ast.CreateUserStmt); ok {
 			lockOptions = stmt.PasswordOrLockOptions
 		} else if stmt, ok := v.Statement.(*ast.AlterUserStmt); ok {
 			lockOptions = stmt.PasswordOrLockOptions
 		}
-		if ok && len(lockOptions) > 0 {
+		if len(lockOptions) > 0 {
 			for i := len(lockOptions) - 1; i >= 0; i-- {
 				if lockOptions[i].Type == ast.Lock {
 					if b.Ti.AccountLockTelemetry == nil {
