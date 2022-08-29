@@ -31,7 +31,8 @@ const (
 	// it's expected to be unchangeable within the current transaction.
 	flagAssertExists
 	flagAssertNotExists
-	// the flag indicates the conflict and constraint check of the key should be postponed (to the next pessimistic lock or prewrite).
+	// the flag indicates the conflict and constraint check of the key should be postponed
+	// to the next pessimistic lock or prewrite request.
 	flagNeedConstraintCheckInPrewrite
 )
 

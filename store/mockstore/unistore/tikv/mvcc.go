@@ -18,7 +18,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"os"
@@ -793,7 +792,6 @@ func (store *MVCCStore) prewriteMutations(reqCtx *requestCtx, mutations []*kvrpc
 	batch := store.dbWriter.NewWriteBatch(req.StartVersion, 0, reqCtx.rpcCtx)
 
 	for i, m := range mutations {
-		println("mockstore prewriteMutations, key:", hex.EncodeToString(m.Key), "op:", m.Op)
 		if m.Op == kvrpcpb.Op_CheckNotExists {
 			continue
 		}

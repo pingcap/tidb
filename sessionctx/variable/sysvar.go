@@ -1780,9 +1780,9 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptInt64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipInsertLock, Value: BoolToOnOff(DefTiDBSkipInsertLock), Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(DefTiDBConstraintCheckInPlacePessimistic), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
-			s.SkipInsertLock = TiDBOptOn(val)
+			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
 			return nil
 		}},
 }
@@ -2093,6 +2093,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
-	//SQLRequirePrimaryKey is the name of `sql_require_primary_key` system variable.
+	// SQLRequirePrimaryKey is the name of `sql_require_primary_key` system variable.
 	SQLRequirePrimaryKey = "sql_require_primary_key"
 )

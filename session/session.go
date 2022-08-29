@@ -3129,12 +3129,12 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		future = txnFailFuture{}
 	})
 
-	enableTempFlags := s.GetSessionVars().SkipInsertLock
+	// TODO: for now we disable the "compensate lock on read" behavior.
 	s.txn.changeToPending(&txnFuture{
 		future:               future,
 		store:                s.store,
 		txnScope:             scope,
-		enableTemporaryFlags: enableTempFlags,
+		enableTemporaryFlags: false,
 	})
 	return nil
 }

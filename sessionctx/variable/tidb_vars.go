@@ -728,8 +728,8 @@ const (
 	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
 	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
 
-	// TiDBSkipInsertLock is used in pessimistic transaction to skip the locking of simple insert statements.
-	TiDBSkipInsertLock = "tidb_skip_insert_lock"
+	// TiDBConstraintCheckInPlacePessimistic is used in pessimistic transaction to skip the locking of simple insert statements.
+	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
 )
 
 // TiDB vars that have only global scope
@@ -1020,10 +1020,10 @@ const (
 	DefTiDBEnableGeneralPlanCache                  = false
 	DefTiDBGeneralPlanCacheSize                    = 100
 	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize           int32  = 10240
-	MinDDLReorgBatchSize           int32  = 32
-	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	DefTiDBSkipInsertLock                          = false
+	MaxDDLReorgBatchSize                     int32  = 10240
+	MinDDLReorgBatchSize                     int32  = 32
+	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
+	DefTiDBConstraintCheckInPlacePessimistic        = false
 )
 
 // Process global variables.

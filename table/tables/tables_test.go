@@ -989,9 +989,9 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 
+	// test constraint check failure
 	tk.MustExec("create table t2 (id int primary key, uk int, unique key i1(uk))")
 	tk.MustExec("insert into t2 values (1, 1)")
-	tk.MustExec("set @@tidb_txn_assertion_level=off")
 	println("txn start")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (2, 1)")
@@ -1002,4 +1002,5 @@ func TestDeferConstraintCheck(t *testing.T) {
 	println(err.Error())
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
+
 }

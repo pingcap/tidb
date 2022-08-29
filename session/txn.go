@@ -17,7 +17,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"runtime/trace"
 	"strings"
@@ -480,7 +479,6 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 }
 
 func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
-	println("checking key, keys:", hex.EncodeToString(k), "Defer:", flags.HasNeedConstraintCheckInPrewrite(), "PNE:", flags.HasPresumeKeyNotExists())
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.
@@ -488,7 +486,7 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	}
 
 	// a pessimistic locking is skipped, perform the conflict check and
-	// constraint check (more accurately, PresumeKeyNotExist) in prewrite
+	// constraint check (more accurately, PresumeKeyNotExist) in prewrite (or later pessimistic locking)
 	if flags.HasNeedConstraintCheckInPrewrite() {
 		return false
 	}
