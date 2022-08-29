@@ -6347,7 +6347,7 @@ func TestControlFunctionWithEnumOrSet(t *testing.T) {
 	tk.MustQuery("select e from e where elt(1,e)").Check(testkit.Rows("a"))
 
 	// test set type
-	tk.MustExec("drop table if expression/integration_test.go:6285exists s;")
+	tk.MustExec("drop table if exists s;")
 	tk.MustExec("create table s(s set('c', 'b', 'a'));")
 	tk.MustExec("insert into s values ('a'),('b'),('a'),('b');")
 	tk.MustQuery("select s from s where if(s>1, s, s);").Sort().Check(
