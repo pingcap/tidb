@@ -373,24 +373,26 @@ var ForceUseOuterBuild4Test = atomic.NewBool(false)
 // TODO: use hint and remove this variable
 var ForcedHashLeftJoin4Test = atomic.NewBool(false)
 
-func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
+func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []PhysicalPlan, forced bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
-		return nil
+		return
 	}
-	forceLeftToBuild := ((p.hashJoinSide & preferLeftAsHJBuild) > 0) || ((p.hashJoinSide & preferRightAsHJProbe) > 0)
-	forceRightToBuild := ((p.hashJoinSide & preferRightAsHJBuild) > 0) || ((p.hashJoinSide & preferLeftAsHJProbe) > 0)
+	forceLeftToBuild := ((p.preferJoinType & preferLeftAsHJBuild) > 0) || ((p.preferJoinType & preferRightAsHJProbe) > 0)
+	forceRightToBuild := ((p.preferJoinType & preferRightAsHJBuild) > 0) || ((p.preferJoinType & preferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Some HASH_BUILD and HASH_PROBE hints are conflicts, please check the hints"))
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
-	joins := make([]PhysicalPlan, 0, 2)
+	joins = make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
 			// Do not support specifying the build side.
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(fmt.Sprintf("We can't use the ORDERED_HASH_JOIN hint for %s, please check the hint", p.JoinType)))
+			forceLeftToBuild = false
+			forceRightToBuild = false
 		}
 	case LeftOuterJoin:
 		if ForceUseOuterBuild4Test.Load() {
@@ -428,7 +430,8 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 			}
 		}
 	}
-	return joins
+	forced = (p.preferJoinType&preferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
+	return
 }
 
 func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
@@ -1857,8 +1860,8 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	}
 	joins = append(joins, indexJoins...)
 
-	hashJoins := p.getHashJoins(prop)
-	if (p.preferJoinType&preferHashJoin) > 0 && len(hashJoins) > 0 {
+	hashJoins, forced := p.getHashJoins(prop)
+	if forced && len(hashJoins) > 0 {
 		return hashJoins, true, nil
 	}
 	joins = append(joins, hashJoins...)

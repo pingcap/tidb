@@ -99,8 +99,8 @@ type tableHintInfo struct {
 	limitHints          limitHintInfo
 	MergeHints          MergeHintInfo
 	leadingJoinOrder    []hintTableInfo
-	hashBuildTables     []hintTableInfo
-	hashProbeTables     []hintTableInfo
+	hjBuildTables       []hintTableInfo
+	hjProbeTables       []hintTableInfo
 }
 
 type limitHintInfo struct {
@@ -220,11 +220,11 @@ func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 }
 
 func (info *tableHintInfo) ifPreferHJBuild(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.hashBuildTables)
+	return info.matchTableName(tableNames, info.hjBuildTables)
 }
 
 func (info *tableHintInfo) ifPreferHJProbe(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.hashProbeTables)
+	return info.matchTableName(tableNames, info.hjProbeTables)
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {
