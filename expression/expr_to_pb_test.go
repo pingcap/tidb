@@ -1148,7 +1148,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-
 	// ScalarFuncSig_LeftShift
 	function, err = NewFunction(mock.NewContext(), ast.LeftShift, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
 	require.NoError(t, err)
