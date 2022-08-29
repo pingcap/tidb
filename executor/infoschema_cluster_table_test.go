@@ -33,9 +33,9 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
@@ -74,16 +74,16 @@ func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Serve
 	require.NoError(t, err)
 
 	// Fix issue 9836
-	sm := &mockSessionManager{
-		processInfoMap: make(map[uint64]*util.ProcessInfo, 1),
-		serverID:       1,
+	sm := &testutil.MockSessionManager{
+		PS:    make([]*util.ProcessInfo, 1),
+		SerID: 1,
 	}
-	sm.processInfoMap[1] = &util.ProcessInfo{
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
-	}
+	})
 	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
@@ -167,48 +167,6 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		}, nil
 	}))
 	return srv, mockAddr
-}
-
-type mockSessionManager struct {
-	processInfoMap map[uint64]*util.ProcessInfo
-	serverID       uint64
-}
-
-func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	return sm.processInfoMap
-}
-
-func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	rs, ok := sm.processInfoMap[id]
-	return rs, ok
-}
-
-func (sm *mockSessionManager) StoreInternalSession(_ interface{}) {
-}
-
-func (sm *mockSessionManager) DeleteInternalSession(_ interface{}) {
-}
-
-func (sm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
-
-func (sm *mockSessionManager) Kill(_ uint64, _ bool) {}
-
-func (sm *mockSessionManager) KillAllConnections() {}
-
-func (sm *mockSessionManager) UpdateTLSConfig(_ *tls.Config) {}
-
-func (sm *mockSessionManager) ServerID() uint64 {
-	return sm.serverID
-}
-
-func (sm *mockSessionManager) SetServerID(serverID uint64) {
-	sm.serverID = serverID
 }
 
 type mockStore struct {
