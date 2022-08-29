@@ -997,11 +997,13 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (2, 1)")
 	// this read breaks constraint, so the txn should not commit
-	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
-	_, err := tk.Exec("delete from t2 where id = 1")
+	// FIXME: this query should fail.
+	err := tk.QueryToErr("select * from t2 use index(primary) for update")
+	require.Error(t, err)
+	_, err = tk.Exec("delete from t2 where id = 1")
 	require.NotNil(t, err)
 	tk.MustExec("commit")
 	println(err.Error())
-	// tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
 }
