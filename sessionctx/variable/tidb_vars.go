@@ -231,6 +231,9 @@ const (
 
 	// RequireSecureTransport indicates the secure mode for data transport
 	RequireSecureTransport = "require_secure_transport"
+
+	// TiFlashFastScan indicates whether use fast scan in tiflash .
+	TiFlashFastScan = "tiflash_fastscan"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1012,6 +1015,7 @@ const (
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
 	DefTiDBDDLEnableFastReorg                      = false
+	DefTiFlashFastScan                             = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableGeneralPlanCache                  = false
