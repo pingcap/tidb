@@ -134,23 +134,26 @@ func GetCTECounter() CTEUsageCounter {
 
 // AccountLockCounter records the number of lock users/roles
 type AccountLockCounter struct {
-	LockUser   int64 `json:"lockUser"`
-	UnlockUser int64 `json:"unlockUser"`
+	LockUser          int64 `json:"lockUser"`
+	UnlockUser        int64 `json:"unlockUser"`
+	CreateOrAlterUser int64 `json:"createOrAlterUser"`
 }
 
 // Sub returns the difference of two counters.
 func (c AccountLockCounter) Sub(rhs AccountLockCounter) AccountLockCounter {
 	return AccountLockCounter{
-		LockUser:   c.LockUser - rhs.LockUser,
-		UnlockUser: c.UnlockUser - rhs.UnlockUser,
+		LockUser:          c.LockUser - rhs.LockUser,
+		UnlockUser:        c.UnlockUser - rhs.UnlockUser,
+		CreateOrAlterUser: c.CreateOrAlterUser - rhs.CreateOrAlterUser,
 	}
 }
 
 // GetAccountLockCounter gets the AccountLockCounter
 func GetAccountLockCounter() AccountLockCounter {
 	return AccountLockCounter{
-		LockUser:   readCounter(TelemetryAccountLockCnt.With(prometheus.Labels{LblAccountLock: "lockUser"})),
-		UnlockUser: readCounter(TelemetryAccountLockCnt.With(prometheus.Labels{LblAccountLock: "unlockUser"})),
+		LockUser:          readCounter(TelemetryAccountLockCnt.With(prometheus.Labels{LblAccountLock: "lockUser"})),
+		UnlockUser:        readCounter(TelemetryAccountLockCnt.With(prometheus.Labels{LblAccountLock: "unlockUser"})),
+		CreateOrAlterUser: readCounter(TelemetryAccountLockCnt.With(prometheus.Labels{LblAccountLock: "createOrAlterUser"})),
 	}
 }
 

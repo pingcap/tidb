@@ -802,6 +802,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		return b.buildBRIE(s, v.Schema())
 	case *ast.CreateUserStmt, *ast.AlterUserStmt:
 		var lockOptions []*ast.PasswordOrLockOption
+		if b.Ti.AccountLockTelemetry == nil {
+			b.Ti.AccountLockTelemetry = &AccountLockTelemetryInfo{}
+		}
+		b.Ti.AccountLockTelemetry.CreateOrAlterUser += 1
 		if stmt, ok := v.Statement.(*ast.CreateUserStmt); ok {
 			lockOptions = stmt.PasswordOrLockOptions
 		} else if stmt, ok := v.Statement.(*ast.AlterUserStmt); ok {
@@ -810,16 +814,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		if len(lockOptions) > 0 {
 			for i := len(lockOptions) - 1; i >= 0; i-- {
 				if lockOptions[i].Type == ast.Lock {
-					if b.Ti.AccountLockTelemetry == nil {
-						b.Ti.AccountLockTelemetry = &AccountLockTelemetryInfo{}
-					}
-					b.Ti.AccountLockTelemetry.LockUser = true
+					b.Ti.AccountLockTelemetry.LockUser += 1
 					break
 				} else if lockOptions[i].Type == ast.Unlock {
-					if b.Ti.AccountLockTelemetry == nil {
-						b.Ti.AccountLockTelemetry = &AccountLockTelemetryInfo{}
-					}
-					b.Ti.AccountLockTelemetry.UnlockUser = true
+					b.Ti.AccountLockTelemetry.UnlockUser += 1
 					break
 				}
 			}

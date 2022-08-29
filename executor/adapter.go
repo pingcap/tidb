@@ -210,8 +210,12 @@ type PartitionTelemetryInfo struct {
 
 // AccountLockTelemetryInfo records account lock/unlock information during execution
 type AccountLockTelemetryInfo struct {
-	LockUser   bool
-	UnlockUser bool
+	// The number of CREATE/ALTER USER statements that lock the user
+	LockUser int64
+	// The number of CREATE/ALTER USER statements that unlock the user
+	UnlockUser int64
+	// The number of CREATE/ALTER USER statements
+	CreateOrAlterUser int64
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
