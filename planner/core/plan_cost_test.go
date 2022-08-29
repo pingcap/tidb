@@ -976,6 +976,7 @@ func TestScanOnSmallTable(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
 	tk.MustExec("analyze table t")
 	tk.MustExec(`set @@tidb_cost_model_version=2`)
+	tk.MustExec(`set @@tidb_enable_new_cost_interface=ON`)
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
