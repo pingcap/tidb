@@ -6083,7 +6083,8 @@ func TestRedundantColumnResolve(t *testing.T) {
 }
 
 func TestIssue37414(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
