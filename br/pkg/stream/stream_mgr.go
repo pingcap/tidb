@@ -177,6 +177,9 @@ func NewMetadataHelper() *MetadataHelper {
 }
 
 func (m *MetadataHelper) InitCacheEntry(path string, ref int) {
+	if ref <= 0 {
+		return
+	}
 	m.cache[path] = &ContentRef{
 		ref:  ref,
 		data: nil,
