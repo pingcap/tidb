@@ -953,7 +953,6 @@ func TestInsertNotLock(t *testing.T) {
 	tk.MustExec("create table t(id int primary key, v int)")
 
 	tk.MustExec("set @@tidb_skip_insert_lock = 1")
-	// tk.MustExec("set @@tidb_enable_mutation_checker = 0")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t values(1, 0)")
 	tk2.MustExec("begin pessimistic")
@@ -996,13 +995,10 @@ func TestDeferConstraintCheck(t *testing.T) {
 	println("txn start")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (2, 1)")
-	// this read breaks constraint, so the txn should not commit
-	// FIXME: this query should fail.
-	err := tk.QueryToErr("select * from t2 use index(primary) for update")
-	require.Error(t, err)
-	_, err = tk.Exec("delete from t2 where id = 1")
-	require.NotNil(t, err)
-	tk.MustExec("commit")
+	// NOTE: this read breaks constraint, but we are not able to return an error here.
+	// We can only guarantee the txn should not commit
+	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
+	err := tk.ExecToErr("commit")
 	println(err.Error())
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")

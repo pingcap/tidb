@@ -247,7 +247,7 @@ type ExecStmt struct {
 }
 
 // GetStmtNode returns the stmtNode inside Statement
-func (a ExecStmt) GetStmtNode() ast.StmtNode {
+func (a *ExecStmt) GetStmtNode() ast.StmtNode {
 	return a.StmtNode
 }
 
