@@ -48,7 +48,7 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 
 	recovery.makeRecoveryPlan()
 
-	log.Info("recover base alloc id", zap.Uint64("max alloc id", recovery.maxAllocID))
+	log.Info("recover the alloc id to pd", zap.Uint64("max alloc id", recovery.maxAllocID))
 	if err := recovery.mgr.RecoverBaseAllocID(ctx, recovery.maxAllocID); err != nil {
 		return 0, errors.Trace(err)
 	}
