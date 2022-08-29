@@ -173,6 +173,9 @@ func (bj BinaryJSON) IsZero() bool {
 		isZero = false
 	case TypeCodeObject:
 		isZero = false
+	// FIXME: TiDB always casts the json to double BINARY so this function will never be called.
+	case TypeCodeOpaque:
+		isZero = false
 	}
 	return isZero
 }

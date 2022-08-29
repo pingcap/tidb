@@ -375,21 +375,70 @@ func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*proper
 	return
 }
 
-func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
+// decorrelate eliminate the correlated column with if the col is in schema.
+func (p *LogicalJoin) decorrelate(schema *expression.Schema) {
 	for i, cond := range p.LeftConditions {
-		p.LeftConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+		p.LeftConditions[i] = cond.Decorrelate(schema)
 	}
-
 	for i, cond := range p.RightConditions {
-		p.RightConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+		p.RightConditions[i] = cond.Decorrelate(schema)
+	}
+	for i, cond := range p.OtherConditions {
+		p.OtherConditions[i] = cond.Decorrelate(schema)
+	}
+	for i, cond := range p.EqualConditions {
+		p.EqualConditions[i] = cond.Decorrelate(schema).(*expression.ScalarFunction)
+	}
+}
+
+// columnSubstituteAll is used in projection elimination in apply de-correlation.
+// Substitutions for all conditions should be successful, otherwise, we should keep all conditions unchanged.
+func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []expression.Expression) (hasFail bool) {
+	// make a copy of exprs for convenience of substitution (may change/partially change the expr tree)
+	cpLeftConditions := make(expression.CNFExprs, len(p.LeftConditions))
+	cpRightConditions := make(expression.CNFExprs, len(p.RightConditions))
+	cpOtherConditions := make(expression.CNFExprs, len(p.OtherConditions))
+	cpEqualConditions := make([]*expression.ScalarFunction, len(p.EqualConditions))
+	copy(cpLeftConditions, p.LeftConditions)
+	copy(cpRightConditions, p.RightConditions)
+	copy(cpOtherConditions, p.OtherConditions)
+	copy(cpEqualConditions, p.EqualConditions)
+
+	// try to substitute columns in these condition.
+	for i, cond := range cpLeftConditions {
+		if hasFail, cpLeftConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
+			return
+		}
 	}
 
-	for i, cond := range p.OtherConditions {
-		p.OtherConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	for i, cond := range cpRightConditions {
+		if hasFail, cpRightConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
+			return
+		}
 	}
+
+	for i, cond := range cpOtherConditions {
+		if hasFail, cpOtherConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
+			return
+		}
+	}
+
+	for i, cond := range cpEqualConditions {
+		var tmp expression.Expression
+		if hasFail, tmp = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
+			return
+		}
+		cpEqualConditions[i] = tmp.(*expression.ScalarFunction)
+	}
+
+	// if all substituted, change them atomically here.
+	p.LeftConditions = cpLeftConditions
+	p.RightConditions = cpRightConditions
+	p.OtherConditions = cpOtherConditions
+	p.EqualConditions = cpEqualConditions
 
 	for i := len(p.EqualConditions) - 1; i >= 0; i-- {
-		newCond := expression.ColumnSubstitute(p.EqualConditions[i], schema, exprs).(*expression.ScalarFunction)
+		newCond := p.EqualConditions[i]
 
 		// If the columns used in the new filter all come from the left child,
 		// we can push this filter to it.
@@ -420,6 +469,7 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 
 		p.EqualConditions[i] = newCond
 	}
+	return false
 }
 
 // AttachOnConds extracts on conditions for join and set the `EqualConditions`, `LeftConditions`, `RightConditions` and

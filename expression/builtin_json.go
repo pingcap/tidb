@@ -109,6 +109,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(51) // flen of JSON_TYPE is length of UNSIGNED INTEGER.
+	bf.tp.AddFlag(mysql.BinaryFlag)
 	sig := &builtinJSONTypeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
 	return sig, nil
@@ -212,7 +213,8 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(mysql.MaxFieldVarCharLength)
+	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	bf.tp.AddFlag(mysql.BinaryFlag)
 	DisableParseJSONFlag4Expr(args[0])
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
@@ -1145,6 +1147,8 @@ func (c *jsonPrettyFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
+	bf.tp.AddFlag(mysql.BinaryFlag)
+	bf.tp.SetFlen(mysql.MaxBlobWidth * 4)
 	sig := &builtinJSONSPrettySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonPrettySig)
 	return sig, nil
@@ -1200,6 +1204,8 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 	DisableParseJSONFlag4Expr(args[0])
+	bf.tp.AddFlag(mysql.BinaryFlag)
+	bf.tp.SetFlen(args[0].GetType().GetFlen()*6 + 2)
 	sig := &builtinJSONQuoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonQuoteSig)
 	return sig, nil

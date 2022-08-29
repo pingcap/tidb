@@ -231,6 +231,9 @@ const (
 
 	// RequireSecureTransport indicates the secure mode for data transport
 	RequireSecureTransport = "require_secure_transport"
+
+	// TiFlashFastScan indicates whether use fast scan in tiflash .
+	TiFlashFastScan = "tiflash_fastscan"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -794,7 +797,7 @@ const (
 	// when a single SQL statement exceeds the memory quota specified by the memory quota.
 	TiDBEnableTmpStorageOnOOM = "tidb_enable_tmp_storage_on_oom"
 	// TiDBDDLEnableFastReorg indicates whether to use lighting backfill process for adding index.
-	TiDBDDLEnableFastReorg = "tidb_ddl_fast_reorg"
+	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 )
@@ -1011,6 +1014,7 @@ const (
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
+	DefTiFlashFastScan                             = false
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
