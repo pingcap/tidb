@@ -279,7 +279,7 @@ func TestTableRange(t *testing.T) {
 			conds, filter = ranger.DetachCondsForColumn(sctx, conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", filter))
-			result, err := ranger.BuildTableRange(conds, sctx, col.RetType)
+			result, _, _, err := ranger.BuildTableRange(conds, sctx, col.RetType, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)

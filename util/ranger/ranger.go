@@ -314,16 +314,21 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 }
 
 // buildColumnRange builds range from CNF conditions.
-func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool, colLen int) (ranges Ranges, err error) {
+func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool,
+	colLen int, rangeMemQuota int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		collator := collate.GetCollator(tp.GetCollate())
 		rangePoints = rb.intersection(rangePoints, rb.build(cond, collator), collator)
 		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
+			return nil, nil, nil, errors.Trace(rb.err)
 		}
 	}
+	var (
+		ranges Ranges
+		err    error
+	)
 	newTp := newFieldType(tp)
 	if tableRange {
 		ranges, err = points2TableRanges(sctx, rangePoints, newTp)
@@ -331,7 +336,10 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		ranges, err = points2Ranges(sctx, rangePoints, newTp)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
+	}
+	if rangeMemQuota > 0 && ranges.MemUsage() > rangeMemQuota {
+		return FullRange(), nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
 		for _, ran := range ranges {
@@ -347,23 +355,27 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		}
 		ranges, err = UnionRanges(sctx, ranges, true)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 	}
-	return ranges, nil
+	return ranges, accessConditions, nil, nil
 }
 
 // BuildTableRange builds range of PK column for PhysicalTableScan.
-func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType) (Ranges, error) {
-	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength)
+// When rangeMemQuota is 0, there is no memory limit for building ranges.
+func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType,
+	rangeMemQuota int64) (Ranges, []expression.Expression, []expression.Expression, error) {
+	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength, rangeMemQuota)
 }
 
 // BuildColumnRange builds range from access conditions for general columns.
-func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int) (Ranges, error) {
+// When rangeMemQuota is 0, there is no memory limit for building ranges.
+func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int,
+	rangeMemQuota int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	if len(conds) == 0 {
-		return FullRange(), nil
+		return FullRange(), nil, nil, nil
 	}
-	return buildColumnRange(conds, sctx, tp, false, colLen)
+	return buildColumnRange(conds, sctx, tp, false, colLen, rangeMemQuota)
 }
 
 func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
@@ -425,16 +437,6 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCoun
 	ranges, newAccessConds, newFilterConds, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessConds)
 	if err != nil {
 		return nil, nil, nil, err
-	}
-	return ranges, nil
-}
-
-// buildCNFIndexRange builds the range for index where the top layer is CNF.
-func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
-	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
-	ranges, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessCondition)
-	if err != nil {
-		return nil, err
 	}
 
 	// Take prefix index into consideration.
