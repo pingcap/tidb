@@ -952,7 +952,7 @@ func TestInsertNotLock(t *testing.T) {
 	tk2.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
 
-	tk.MustExec("set @@tidb_skip_insert_lock = 1")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 1")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t values(1, 0)")
 	tk2.MustExec("begin pessimistic")
@@ -1000,6 +1000,7 @@ func TestDeferConstraintCheck(t *testing.T) {
 	// We can only guarantee the txn should not commit
 	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
 	err := tk.ExecToErr("commit")
+	require.Error(t, err)
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
 

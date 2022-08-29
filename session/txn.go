@@ -540,10 +540,9 @@ func (txnFailFuture) Wait() (uint64, error) {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future               oracle.Future
-	store                kv.Storage
-	txnScope             string
-	enableTemporaryFlags bool
+	future   oracle.Future
+	store    kv.Storage
+	txnScope string
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
