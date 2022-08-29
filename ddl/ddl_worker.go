@@ -319,6 +319,13 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
+		jobID, err := t.GetFlashbackClusterJobID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if jobID != 0 {
+			return errors.Errorf("Can't add to ddl table, cluster is flashing back now")
+		}
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
@@ -383,6 +390,13 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
+		jobID, err := t.GetFlashbackClusterJobID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if jobID != 0 {
+			return errors.Errorf("Can't add to ddl table, cluster is flashing back now")
+		}
 		ids, err = t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
@@ -541,6 +555,8 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	switch job.Type {
 	case model.ActionRecoverTable:
 		err = finishRecoverTable(w, job)
+	case model.ActionFlashbackCluster:
+		err = finishFlashbackCluster(w, job)
 	case model.ActionCreateTables:
 		if job.IsCancelled() {
 			// it may be too large that it can not be added to the history queue, too
@@ -1094,6 +1110,19 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if job.Type != model.ActionMultiSchemaChange {
 		logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	}
+
+	// Should check flashbackClusterJobID.
+	// Some ddl jobs maybe added between check and insert into ddl job table.
+	flashbackJobID, err := t.GetFlashbackClusterJobID()
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, err
+	}
+	if flashbackJobID != 0 && flashbackJobID != job.ID {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("Can't do ddl job, cluster is flashing back now")
+	}
+
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
 		job.RealStartTS = t.StartTS
@@ -1191,8 +1220,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onUnlockTables(d, t, job)
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(d, t, job)
-	case model.ActionSetTiFlashMode:
-		ver, err = w.onSetTiFlashMode(d, t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
 		ver, err = onUpdateFlashReplicaStatus(d, t, job)
 	case model.ActionCreateSequence:

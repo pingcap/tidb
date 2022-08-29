@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
@@ -383,7 +384,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, false))
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, nil))
 
 	for i := 0; i < len(tables); i++ {
 		if i == 0 || i > 2 {
@@ -395,7 +396,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 
-	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, true))
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, tiflashrec.New()))
 	for i := 0; i < len(tables); i++ {
 		require.Nil(t, tables[i].Info.TiFlashReplica)
 	}
