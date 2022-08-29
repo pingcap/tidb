@@ -424,7 +424,7 @@ func (recovery *Recovery) makeRecoveryPlan() {
 	// Group region peer info by region id. find the max allcateId
 	// region [id] [peer[0-n]]
 	var regions = make(map[uint64][]Regions, 0)
-	for _, v := range recovery.regionMetas {
+	for _, v := range recovery.recoveryMetas {
 		storeId := v.storeId
 		maxId := storeId
 		for _, m := range v.recoveryMeta {
