@@ -314,6 +314,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
 		return in, true
+	case *ast.FlashBackDatabaseStmt:
+		if len(node.NewName) > 0 {
+			p.checkFlashbackDatabaseGrammar(node)
+		}
+		return in, true
 	case *ast.RepairTableStmt:
 		p.stmtTp = TypeRepair
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
@@ -785,6 +790,12 @@ func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	if isIncorrectName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+	}
+}
+
+func (p *preprocessor) checkFlashbackDatabaseGrammar(stmt *ast.FlashBackDatabaseStmt) {
+	if isIncorrectName(stmt.NewName) {
+		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.NewName)
 	}
 }
 
