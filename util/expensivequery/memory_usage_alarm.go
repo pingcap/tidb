@@ -274,6 +274,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 		}
 	}
 	tryRemove(&record.lastLogFileName)
+	tryRemove(&record.lastSystemInfoFileName)
 	for i := range record.lastProfileFileName {
 		tryRemove(&record.lastProfileFileName[i])
 	}
