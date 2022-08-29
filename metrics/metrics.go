@@ -174,7 +174,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(HandleSchemaValidate)
 	prometheus.MustRegister(MaxProcs)
 	prometheus.MustRegister(GOGC)
-	prometheus.MustRegister(GOGCTuner)
 	prometheus.MustRegister(ConnIdleDurationHistogram)
 	prometheus.MustRegister(ServerInfo)
 	prometheus.MustRegister(TokenGauge)

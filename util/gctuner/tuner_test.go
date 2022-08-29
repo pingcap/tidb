@@ -18,32 +18,34 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var testHeap []byte
 
 func TestTuner(t *testing.T) {
-	is := assert.New(t)
+	EnableGOGCTuner.Store(true)
 	memLimit := uint64(100 * 1024 * 1024) //100 MB
 	threshold := memLimit / 2
 	tn := newTuner(threshold)
-	is.Equal(tn.threshold, threshold)
-	is.Equal(defaultGCPercent, tn.getGCPercent())
+	require.Equal(t, threshold, tn.threshold.Load())
+	require.Equal(t, defaultGCPercent, tn.getGCPercent())
 
 	// no heap
+	testHeap = make([]byte, 1)
+	runtime.GC()
+	runtime.GC()
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		is.Equal(MaxGCPercent, tn.getGCPercent())
+		require.Equal(t, MaxGCPercent, tn.getGCPercent())
 	}
 
 	// 1/4 threshold
 	testHeap = make([]byte, threshold/4)
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		// ~= 300
-		is.GreaterOrEqual(tn.getGCPercent(), uint32(250))
-		is.LessOrEqual(tn.getGCPercent(), uint32(300))
+		require.GreaterOrEqual(t, tn.getGCPercent(), uint32(100))
+		require.LessOrEqual(t, tn.getGCPercent(), uint32(500))
 	}
 
 	// 1/2 threshold
@@ -51,9 +53,8 @@ func TestTuner(t *testing.T) {
 	runtime.GC()
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		// ~= 100
-		is.GreaterOrEqual(tn.getGCPercent(), uint32(50))
-		is.LessOrEqual(tn.getGCPercent(), uint32(100))
+		require.GreaterOrEqual(t, tn.getGCPercent(), uint32(50))
+		require.LessOrEqual(t, tn.getGCPercent(), uint32(100))
 	}
 
 	// 3/4 threshold
@@ -61,7 +62,7 @@ func TestTuner(t *testing.T) {
 	runtime.GC()
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		is.Equal(MinGCPercent, tn.getGCPercent())
+		require.Equal(t, MinGCPercent, tn.getGCPercent())
 	}
 
 	// out of threshold
@@ -69,25 +70,24 @@ func TestTuner(t *testing.T) {
 	runtime.GC()
 	for i := 0; i < 100; i++ {
 		runtime.GC()
-		is.Equal(MinGCPercent, tn.getGCPercent())
+		require.Equal(t, MinGCPercent, tn.getGCPercent())
 	}
 }
 
 func TestCalcGCPercent(t *testing.T) {
-	is := assert.New(t)
 	const gb = 1024 * 1024 * 1024
 	// use default value when invalid params
-	is.Equal(defaultGCPercent, calcGCPercent(0, 0))
-	is.Equal(defaultGCPercent, calcGCPercent(0, 1))
-	is.Equal(defaultGCPercent, calcGCPercent(1, 0))
+	require.Equal(t, defaultGCPercent, calcGCPercent(0, 0))
+	require.Equal(t, defaultGCPercent, calcGCPercent(0, 1))
+	require.Equal(t, defaultGCPercent, calcGCPercent(1, 0))
 
-	is.Equal(MaxGCPercent, calcGCPercent(1, 3*gb))
-	is.Equal(MaxGCPercent, calcGCPercent(gb/10, 4*gb))
-	is.Equal(MaxGCPercent, calcGCPercent(gb/2, 4*gb))
-	is.Equal(uint32(300), calcGCPercent(1*gb, 4*gb))
-	is.Equal(uint32(166), calcGCPercent(1.5*gb, 4*gb))
-	is.Equal(uint32(100), calcGCPercent(2*gb, 4*gb))
-	is.Equal(MinGCPercent, calcGCPercent(3*gb, 4*gb))
-	is.Equal(MinGCPercent, calcGCPercent(4*gb, 4*gb))
-	is.Equal(MinGCPercent, calcGCPercent(5*gb, 4*gb))
+	require.Equal(t, MaxGCPercent, calcGCPercent(1, 3*gb))
+	require.Equal(t, MaxGCPercent, calcGCPercent(gb/10, 4*gb))
+	require.Equal(t, MaxGCPercent, calcGCPercent(gb/2, 4*gb))
+	require.Equal(t, uint32(300), calcGCPercent(1*gb, 4*gb))
+	require.Equal(t, uint32(166), calcGCPercent(1.5*gb, 4*gb))
+	require.Equal(t, uint32(100), calcGCPercent(2*gb, 4*gb))
+	require.Equal(t, uint32(33), calcGCPercent(3*gb, 4*gb))
+	require.Equal(t, MinGCPercent, calcGCPercent(4*gb, 4*gb))
+	require.Equal(t, MinGCPercent, calcGCPercent(5*gb, 4*gb))
 }

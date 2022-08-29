@@ -18,20 +18,22 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"sync/atomic"
 
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
-	atomicutil "go.uber.org/atomic"
 )
 
 const (
 	// MaxGCPercent is the default max cost of memory.
-	MaxGCPercent uint32 = 1000
+	MaxGCPercent uint32 = 500
 	// MinGCPercent is the default min cost of memory.
 	MinGCPercent uint32 = 20
 )
 
 var defaultGCPercent uint32 = 100
+
+// EnableGOGCTuner is to control whether enable the GOGC tuner.
+var EnableGOGCTuner atomic.Bool
 
 func init() {
 	gogcEnv := os.Getenv("GOGC")
@@ -69,26 +71,26 @@ func GetGCPercent() uint32 {
 }
 
 // only allow one gc tuner in one process
-var globalTuner *tuner = nil
+var globalTuner *tuner
 
-/* Heap
- _______________  => limit: host/cgroup memory hard limit
-|               |
-|---------------| => threshold: increase GCPercent when gc_trigger < threshold
-|               |
-|---------------| => gc_trigger: heap_live + heap_live * GCPercent / 100
-|               |
-|---------------|
-|   heap_live   |
-|_______________|
-
-Go runtime only trigger GC when hit gc_trigger which affected by GCPercent and heap_live.
-So we can change GCPercent dynamically to tuning GC performance.
+/*
+// 			Heap
+//  _______________  => limit: host/cgroup memory hard limit
+// |               |
+// |---------------| => threshold: increase GCPercent when gc_trigger < threshold
+// |               |
+// |---------------| => gc_trigger: heap_live + heap_live * GCPercent / 100
+// |               |
+// |---------------|
+// |   heap_live   |
+// |_______________|
 */
+// Go runtime only trigger GC when hit gc_trigger which affected by GCPercent and heap_live.
+// So we can change GCPercent dynamically to tuning GC performance.
 type tuner struct {
 	finalizer *finalizer
-	gcPercent atomicutil.Uint32
-	threshold atomicutil.Uint64 // high water level, in bytes
+	gcPercent atomic.Uint32
+	threshold atomic.Uint64 // high water level, in bytes
 }
 
 // tuning check the memory inuse and tune GC percent dynamically.
@@ -100,7 +102,9 @@ func (t *tuner) tuning() {
 	if threshold <= 0 {
 		return
 	}
-	t.setGCPercent(calcGCPercent(inuse, threshold))
+	if EnableGOGCTuner.Load() {
+		t.setGCPercent(calcGCPercent(inuse, threshold))
+	}
 }
 
 // threshold = inuse + inuse * (gcPercent / 100)
@@ -108,7 +112,6 @@ func (t *tuner) tuning() {
 // if threshold < inuse*2, so gcPercent < 100, and GC positively to avoid OOM
 // if threshold > inuse*2, so gcPercent > 100, and GC negatively to reduce GC times
 func calcGCPercent(inuse, threshold uint64) uint32 {
-	metrics.GOGCTuner.Inc()
 	// invalid params
 	if inuse == 0 || threshold == 0 {
 		return defaultGCPercent
@@ -127,10 +130,9 @@ func calcGCPercent(inuse, threshold uint64) uint32 {
 }
 
 func newTuner(threshold uint64) *tuner {
-	t := &tuner{
-		gcPercent: *atomicutil.NewUint32(defaultGCPercent),
-		threshold: *atomicutil.NewUint64(threshold),
-	}
+	t := &tuner{}
+	t.gcPercent.Store(defaultGCPercent)
+	t.threshold.Store(threshold)
 	t.finalizer = newFinalizer(t.tuning) // start tuning
 	return t
 }
