@@ -528,14 +528,18 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		pos := params[2].getIntVal(i)
 		if re.isBinCollation {
 			bexpr = []byte(expr)
-			if pos < 1 || (pos > int64(len(bexpr)) && len(expr) != 0) {
-				return ErrRegexp.GenWithStackByArgs(invalidIndex)
+			if pos < 1 || pos > int64(len(bexpr)) {
+				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
+					return ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
 			}
 
 			bexpr = bexpr[pos-1:] // Trim
 		} else {
-			if pos < 1 || (pos > int64(utf8.RuneCountInString(expr)) && len(expr) != 0) {
-				return ErrRegexp.GenWithStackByArgs(invalidIndex)
+			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
+				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+					return ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
 			}
 
 			trimUtf8String(&expr, pos-1) // Trim
