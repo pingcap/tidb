@@ -125,7 +125,7 @@ func TestRegexpLikeConst(t *testing.T) {
 		{"^day", "good\nday", "m", 1, nil},
 		// Test n flag
 		{".", "\n", "", 0, nil},
-		{".", "\n", "n", 1, nil},
+		{".", "\n", "s", 1, nil},
 		// Test rightmost rule
 		{"aBc", "abc", "ic", 0, nil},
 		{"aBc", "abc", "ci", 1, nil},
@@ -151,7 +151,7 @@ func TestRegexpLikeConst(t *testing.T) {
 func TestRegexpLikeFunctionVec(t *testing.T) {
 	var expr []string = []string{"abc", "aBc", "Good\nday", "\n"}
 	var pattern []string = []string{"abc", "od$", "^day", "day$", "."}
-	var matchType []string = []string{"m", "i", "icc", "cii", "n", "mni"}
+	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}
 
 	constants := make([]*Constant, 3)
 	for i := 0; i < 3; i++ {
@@ -173,7 +173,7 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 	constants[1] = nil
 
 	// Prepare data: matchType is constant
-	constants[2] = getStringConstant("imn")
+	constants[2] = getStringConstant("ims")
 	matchTypeConstCase := getVecExprBenchCaseForRegexpLike(expr, pattern, matchType)
 	matchTypeConstCase.constants = make([]*Constant, 3)
 	copy(matchTypeConstCase.constants, constants)
@@ -182,7 +182,7 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 	// Prepare data: Memorization
 	constants[0] = nil
 	constants[1] = getStringConstant("abc")
-	constants[2] = getStringConstant("imn")
+	constants[2] = getStringConstant("ims")
 	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexpLike(expr, pattern, matchType)
 	patAndMatchTypeConstCase.constants = make([]*Constant, 3)
 	copy(patAndMatchTypeConstCase.constants, constants)
@@ -409,7 +409,7 @@ func TestRegexpSubstrConst(t *testing.T) {
 		{"abc", "aB.", int64(1), int64(1), "", nil, nil, nil},
 		{"abc", "aB.", int64(1), int64(1), "i", "abc", "0x616263", nil},
 		{"good\nday", "od", int64(1), int64(1), "m", "od", "0x6F64", nil},
-		{"\n", ".", int64(1), int64(1), "n", "\n", "0x0A", nil},
+		{"\n", ".", int64(1), int64(1), "s", "\n", "0x0A", nil},
 		// Test invalid matchType
 		{"abc", "ab.", int64(1), int64(1), "p", nil, nil, ErrRegexp}, // index 5
 		// Some nullable input tests
@@ -447,7 +447,7 @@ func TestRegexpSubstrVec(t *testing.T) {
 	var pattern []string = []string{"ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", "."}
 	var position []int = []int{1, 5}
 	var occurrence []int = []int{-1, 10}
-	var matchType []string = []string{"m", "i", "icc", "cii", "n", "mni"}
+	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}
 
 	args := make([]interface{}, 0)
 	args = append(args, interface{}(expr))
@@ -490,7 +490,7 @@ func TestRegexpSubstrVec(t *testing.T) {
 	constants[3] = nil
 
 	// Prepare data: match type is constant
-	constants[4] = getStringConstant("mni")
+	constants[4] = getStringConstant("msi")
 	matchTpConstCase := getVecExprBenchCaseForRegexpSubstr(args...)
 	matchTpConstCase.constants = make([]*Constant, 5)
 	copy(matchTpConstCase.constants, constants)
@@ -498,7 +498,7 @@ func TestRegexpSubstrVec(t *testing.T) {
 
 	// Prepare data: test memorization
 	constants[1] = getStringConstant("aB.")
-	constants[4] = getStringConstant("mni")
+	constants[4] = getStringConstant("msi")
 	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexpSubstr(args...)
 	patAndMatchTypeConstCase.constants = make([]*Constant, 5)
 	copy(patAndMatchTypeConstCase.constants, constants)

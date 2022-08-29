@@ -37,7 +37,7 @@ const (
 	flag_i = "i"
 	flag_c = "c"
 	flag_m = "m"
-	flag_n = "n"
+	flag_n = "s"
 )
 
 const (
@@ -92,11 +92,6 @@ func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchTyp
 			// re2 is case-sensitive by default, so we only need to delete 'i' flag
 			// to enable the case-sensitive for the regexp
 			delete(matchTypeSet, flag_i)
-			continue
-		}
-
-		if c == "n" {
-			matchTypeSet["s"] = empty{} // convert mysql's match type to the re2
 			continue
 		}
 
