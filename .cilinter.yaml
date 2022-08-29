@@ -3,7 +3,6 @@ run:
 linters:
   disable-all: true
   enable:
-    - unused
     - rowserrcheck
     - prealloc
 

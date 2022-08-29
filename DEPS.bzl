@@ -2301,7 +2301,7 @@ def go_deps():
     )
     go_repository(
         name = "com_github_mattn_go_runewidth",
-        build_file_proto_mode = "disable_global",
+        build_file_proto_mode = "disable",
         importpath = "github.com/mattn/go-runewidth",
         sum = "h1:lTGmDsbAYt5DmK6OnoV7EuIF1wEIFAcxld6ypU4OSgU=",
         version = "v0.0.13",
@@ -2354,8 +2354,8 @@ def go_deps():
         name = "com_github_mgechev_revive",
         build_file_proto_mode = "disable",
         importpath = "github.com/mgechev/revive",
-        sum = "h1:NzIEEa9+WimQ6q2Ov7OcNeySS/IOcwtkQ8RAh0R5UJ4=",
-        version = "v1.2.3",
+        sum = "h1:a+itKsYpxka50MyaWQW1XCZ1vwfgjzVy/OzZ7DC/4+U=",
+        version = "v1.2.4-0.20220827111817-553604eaced5",
     )
 
     go_repository(
@@ -2968,6 +2968,10 @@ def go_deps():
         name = "com_github_rivo_uniseg",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/rivo/uniseg",
+        patch_args = ["-p1"],
+        patches = [
+            "//build/patches:com_github_rivo_uniseg.patch",
+        ],
         sum = "h1:3Z3Eu6FGHZWSfNKJTOUiPatWwfc7DzJRU04jFUqJODw=",
         version = "v0.3.4",
     )

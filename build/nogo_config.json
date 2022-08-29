@@ -859,5 +859,11 @@
       "parser/parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
+  },
+  "U1000": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
   }
 }

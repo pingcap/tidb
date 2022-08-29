@@ -53,7 +53,7 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/kisielk/errcheck v1.6.2
 	github.com/kyoh86/exportloopref v0.1.8
-	github.com/mgechev/revive v1.2.3
+	github.com/mgechev/revive v1.2.4-0.20220827111817-553604eaced5
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/nishanths/predeclared v0.2.2
 	github.com/opentracing/basictracer-go v1.0.0
