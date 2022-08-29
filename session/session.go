@@ -452,7 +452,8 @@ func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache 
 		return nil
 	}
 	if s.preparedPlanCache == nil { // lazy construction
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
+		// todo: wait for the plan cache LRU
+		s.preparedPlanCache = kvcache.NewSimpleLR UCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
 			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	return s.preparedPlanCache
