@@ -47,7 +47,7 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 
 	recovery.makeRecoveryPlan()
 
-	log.Info("recover base alloc id", zap.Uint64("max alloc id", recovery.maxAllocID))
+	log.Info("recover the alloc id to pd", zap.Uint64("max alloc id", recovery.maxAllocID))
 	if err := recovery.mgr.RecoverBaseAllocID(ctx, recovery.maxAllocID); err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -327,7 +327,7 @@ func (recovery *Recovery) WaitApply(ctx context.Context, allStores []*metapb.Sto
 			return errors.Trace(err)
 		}
 		storeId := store.Id
-		log.Debug("iterate  tikv", zap.String("tikv address", storeAddr))
+		log.Debug("iterate tikv", zap.String("tikv address", storeAddr))
 		workers.ApplyOnErrorGroup(eg, func() error {
 			log.Info("send wait apply to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			req := &recovpb.WaitApplyRequest{StoreId: storeId}
