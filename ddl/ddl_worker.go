@@ -607,6 +607,8 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		err = finishRecoverTable(w, job)
 	case model.ActionFlashbackCluster:
 		err = finishFlashbackCluster(w, job)
+	case model.ActionRecoverSchema:
+		err = finishRecoverSchema(w, job)
 	case model.ActionCreateTables:
 		if job.IsCancelled() {
 			// it may be too large that it can not be added to the history queue, too
@@ -656,6 +658,24 @@ func finishRecoverTable(w *worker, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	if recoverTableCheckFlag == recoverTableCheckFlagEnableGC {
+		err = enableGC(w)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func finishRecoverSchema(w *worker, job *model.Job) error {
+	var (
+		recoverSchemaInfo      *RecoverSchemaInfo
+		recoverSchemaCheckFlag int64
+	)
+	err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if recoverSchemaCheckFlag == recoverSchemaCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -1168,6 +1188,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onModifySchemaCharsetAndCollate(d, t, job)
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(d, t, job)
+	case model.ActionRecoverSchema:
+		ver, err = w.onRecoverSchema(d, t, job)
 	case model.ActionModifySchemaDefaultPlacement:
 		ver, err = onModifySchemaDefaultPlacement(d, t, job)
 	case model.ActionCreateTable:
@@ -1518,6 +1540,22 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 			// apply create new table. So need to set diff.OldTableID here to make sure it.
 			if tbInfo != nil && tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
 				diff.OldTableID = job.TableID
+			}
+		}
+	case model.ActionRecoverSchema:
+		var recoverSchemaInfo *RecoverSchemaInfo
+		err = job.DecodeArgs(&recoverSchemaInfo)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		recoverTabsInfo := recoverSchemaInfo.RecoverTabsInfo
+		diff.AffectedOpts = make([]*model.AffectedOption, len(recoverTabsInfo))
+		for i := range recoverTabsInfo {
+			diff.AffectedOpts[i] = &model.AffectedOption{
+				SchemaID:    job.SchemaID,
+				OldSchemaID: job.SchemaID,
+				TableID:     recoverTabsInfo[i].TableInfo.ID,
+				OldTableID:  recoverTabsInfo[i].TableInfo.ID,
 			}
 		}
 	default:

@@ -210,6 +210,12 @@ func (d Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) 
 	return nil
 }
 
+// RecoverSchema implements the DDL interface.
+func (d Checker) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *ddl.RecoverSchemaInfo) (err error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 // CreateTable implements the DDL interface.
 func (d Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error {
 	err := d.realDDL.CreateTable(ctx, stmt)

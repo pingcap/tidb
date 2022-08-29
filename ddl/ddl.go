@@ -160,6 +160,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
+	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error
 	DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error
@@ -1260,6 +1261,15 @@ type RecoverInfo struct {
 	AutoIDs       meta.AutoIDGroup
 	OldSchemaName string
 	OldTableName  string
+}
+
+// RecoverSchemaInfo contains information needed by DDL.RecoverSchema.
+type RecoverSchemaInfo struct {
+	*model.DBInfo
+	RecoverTabsInfo []*RecoverInfo
+	DropJobID       int64
+	SnapshotTS      uint64
+	OldSchemaName   model.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.

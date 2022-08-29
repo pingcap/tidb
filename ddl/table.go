@@ -539,6 +539,46 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
+func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *RecoverInfo) (ver int64, err error) {
+	var tids []int64
+	if recoverInfo.TableInfo.GetPartitionInfo() != nil {
+		tids = getPartitionIDs(recoverInfo.TableInfo)
+		tids = append(tids, recoverInfo.TableInfo.ID)
+	} else {
+		tids = []int64{recoverInfo.TableInfo.ID}
+	}
+	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
+	}
+	// Remove dropped table DDL job from gc_delete_range table.
+	err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, recoverInfo.DropJobID, tids)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	tableInfo := recoverInfo.TableInfo.Clone()
+	tableInfo.State = model.StatePublic
+	tableInfo.UpdateTS = t.StartTS
+	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, tableInfo, recoverInfo.AutoIDs.RowID, recoverInfo.AutoIDs.RandomID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
+		if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
+			err = failpoint.Enable(`tikvclient/mockCommitErrorOpt`, "return(true)")
+		}
+	})
+
+	err = updateLabelRules(job, recoverInfo.TableInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, recoverInfo.TableInfo.ID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to update the label rule to PD")
+	}
+	return ver, nil
+}
+
 func clearTablePlacementAndBundles(tblInfo *model.TableInfo) error {
 	var bundles []*placement.Bundle
 	if tblInfo.PlacementPolicyRef != nil {

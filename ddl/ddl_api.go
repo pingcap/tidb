@@ -633,6 +633,18 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 	return nil
 }
 
+func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error {
+	recoverSchemaInfo.State = model.StateNone
+	job := &model.Job{
+		Type:       model.ActionRecoverSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{recoverSchemaInfo, recoverSchemaCheckFlagNone},
+	}
+	err := d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
 func checkTooLongSchema(schema model.CIStr) error {
 	if utf8.RuneCountInString(schema.L) > mysql.MaxDatabaseNameLength {
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(schema)
