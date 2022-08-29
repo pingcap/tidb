@@ -6117,7 +6117,6 @@ func TestIssue37414(t *testing.T) {
 	tk.MustExec("create table bar(a decimal(65,0), b decimal(65,0));")
 	tk.MustExec("insert into bar values(0,0),(1,1),(2,2);")
 	tk.MustExec("insert into foo select if(b>0, if(a/b>1, 1, 2), null) from bar;")
-
 }
 
 func TestControlFunctionWithEnumOrSet(t *testing.T) {
