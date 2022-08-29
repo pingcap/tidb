@@ -188,7 +188,8 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 // is totally composed of point range filters.
 // e.g, for input CNF expressions ((a,b) in ((1,1),(2,2))) and a > 1 and ((a,b,c) in (1,1,1),(2,2,2))
 // ((a,b,c) in (1,1,1),(2,2,2)) would be extracted.
-func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.Expression, cols []*expression.Column, lengths []int) (*DetachRangeResult, int, []*valueInfo, error) {
+func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.Expression, cols []*expression.Column, lengths []int,
+	rangeMemQuota int64) (*DetachRangeResult, int, []*valueInfo, error) {
 	if len(conds) < 2 {
 		return nil, -1, nil, nil
 	}
@@ -202,7 +203,7 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 		if colSets.Len() == 0 {
 			continue
 		}
-		res, err := DetachCondAndBuildRangeForIndex(sctx, tmpConds, cols, lengths)
+		res, err := DetachCondAndBuildRangeForIndex(sctx, tmpConds, cols, lengths, rangeMemQuota)
 		if err != nil {
 			return nil, -1, nil, err
 		}
@@ -332,7 +333,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		shouldReserve: d.lengths[eqOrInCount] != types.UnspecifiedLength,
 	}
 	if considerDNF {
-		pointRes, offset, columnValues, err := extractIndexPointRangesForCNF(d.sctx, conditions, d.cols, d.lengths)
+		pointRes, offset, columnValues, err := extractIndexPointRangesForCNF(d.sctx, conditions, d.cols, d.lengths, d.rangeMemQuota)
 		if err != nil {
 			return nil, err
 		}
@@ -358,7 +359,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		if eqOrInCount > 0 {
 			newCols := d.cols[eqOrInCount:]
 			newLengths := d.lengths[eqOrInCount:]
-			tailRes, err := DetachCondAndBuildRangeForIndex(d.sctx, newConditions, newCols, newLengths)
+			tailRes, err := DetachCondAndBuildRangeForIndex(d.sctx, newConditions, newCols, newLengths, d.rangeMemQuota)
 			if err != nil {
 				return nil, err
 			}
