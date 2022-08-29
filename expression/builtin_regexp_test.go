@@ -310,6 +310,7 @@ func TestRegexpSubstrConst(t *testing.T) {
 		{"abc", "bc", int64(-1), nil, nil, ErrRegexp},
 		{"abc", "bc", int64(4), nil, nil, ErrRegexp},
 		{"", "bc", int64(0), nil, nil, ErrRegexp},
+		{"", "^$", int64(2), nil, nil, ErrRegexp},
 		// Some nullable input tests
 		{"", "^$", nil, nil, nil, nil},
 		{nil, "^$", nil, nil, nil, nil},
