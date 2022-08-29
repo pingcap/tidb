@@ -59,30 +59,29 @@ const TrackMemWhenExceeds = 104857600 // 100MB
 // The actions that could be triggered are: SpillDiskAction, SortAndSpillDiskAction, rateLimitAction,
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
-	mu struct {
-		sync.Mutex
+	bytesLimit           atomic.Value
+	actionMuForHardLimit actionMu
+	actionMuForSoftLimit actionMu
+	mu                   struct {
 		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children map[int][]*Tracker
-	}
-	actionMuForHardLimit actionMu
-	actionMuForSoftLimit actionMu
-	parMu                struct {
 		sync.Mutex
-		parent *Tracker // The parent memory tracker.
 	}
-
-	label         int   // Label of this "Tracker".
-	bytesConsumed int64 // Consumed bytes.
-	bytesReleased int64 // Released bytes.
-	bytesLimit    atomic.Value
+	parMu struct {
+		parent *Tracker // The parent memory tracker.
+		sync.Mutex
+	}
+	label         int              // Label of this "Tracker".
+	bytesConsumed int64            // Consumed bytes.
+	bytesReleased int64            // Released bytes.
 	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
 	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
-	sync.Mutex
 	actionOnExceed ActionOnExceed
+	sync.Mutex
 }
 
 // EnableGCAwareMemoryTrack is used to turn on/off the GC-aware memory track
@@ -416,9 +415,12 @@ func (t *Tracker) Release(bytes int64) {
 		if tracker.shouldRecordRelease() {
 			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
-			runtime.SetFinalizer(newRef, func(ref *finalizerRef) {
-				tracker.release(bytes)
-			})
+			finalizer := func(tracker *Tracker) func(ref *finalizerRef) {
+				return func(ref *finalizerRef) {
+					tracker.release(bytes)
+				}
+			}
+			runtime.SetFinalizer(newRef, finalizer(tracker))
 			tracker.recordRelease(bytes)
 			return
 		}

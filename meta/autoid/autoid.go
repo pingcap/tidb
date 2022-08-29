@@ -17,6 +17,7 @@ package autoid
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"sync"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -65,11 +67,47 @@ const (
 // RowIDBitLength is the bit number of a row id in TiDB.
 const RowIDBitLength = 64
 
-// DefaultAutoRandomBits is the default value of auto sharding.
-const DefaultAutoRandomBits = 5
+const (
+	// AutoRandomShardBitsDefault is the default number of shard bits.
+	AutoRandomShardBitsDefault = 5
+	// AutoRandomRangeBitsDefault is the default number of range bits.
+	AutoRandomRangeBitsDefault = 64
+	// AutoRandomShardBitsMax is the max number of shard bits.
+	AutoRandomShardBitsMax = 15
+	// AutoRandomRangeBitsMax is the max number of range bits.
+	AutoRandomRangeBitsMax = 64
+	// AutoRandomRangeBitsMin is the min number of range bits.
+	AutoRandomRangeBitsMin = 32
+	// AutoRandomIncBitsMin is the min number of auto random incremental bits.
+	AutoRandomIncBitsMin = 27
+)
 
-// MaxAutoRandomBits is the max value of auto sharding.
-const MaxAutoRandomBits = 15
+// AutoRandomShardBitsNormalize normalizes the auto random shard bits.
+func AutoRandomShardBitsNormalize(shard int, colName string) (ret uint64, err error) {
+	if shard == types.UnspecifiedLength {
+		return AutoRandomShardBitsDefault, nil
+	}
+	if shard <= 0 {
+		return 0, dbterror.ErrInvalidAutoRandom.FastGenByArgs(AutoRandomNonPositive)
+	}
+	if shard > AutoRandomShardBitsMax {
+		errMsg := fmt.Sprintf(AutoRandomOverflowErrMsg, AutoRandomShardBitsMax, shard, colName)
+		return 0, dbterror.ErrInvalidAutoRandom.FastGenByArgs(errMsg)
+	}
+	return uint64(shard), nil
+}
+
+// AutoRandomRangeBitsNormalize normalizes the auto random range bits.
+func AutoRandomRangeBitsNormalize(rangeBits int) (ret uint64, err error) {
+	if rangeBits == types.UnspecifiedLength {
+		return AutoRandomRangeBitsDefault, nil
+	}
+	if rangeBits < AutoRandomRangeBitsMin || rangeBits > AutoRandomRangeBitsMax {
+		errMsg := fmt.Sprintf(AutoRandomInvalidRangeBits, AutoRandomRangeBitsMin, AutoRandomRangeBitsMax, rangeBits)
+		return 0, dbterror.ErrInvalidAutoRandom.FastGenByArgs(errMsg)
+	}
+	return uint64(rangeBits), nil
+}
 
 // Test needs to change it, so it's a variable.
 var step = int64(30000)
@@ -1064,48 +1102,56 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 	alloc.(*allocator).mu.Unlock()
 }
 
-// ShardIDLayout is used to calculate the bits length of different segments in auto id.
-// Generally, an auto id is consist of 3 segments: sign bit, shard bits and incremental bits.
+// ShardIDFormat is used to calculate the bit length of different segments in auto id.
+// Generally, an auto id is consist of 4 segments: sign bit, reserved bits, shard bits and incremental bits.
 // Take "a BIGINT AUTO_INCREMENT PRIMARY KEY" as an example, assume that the `shard_row_id_bits` = 5,
 // the layout is like
 //
-//	| [sign_bit] (1 bit) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
+//	| [sign_bit] (1 bit) | [reserved bits] (0 bits) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
 //
-// Please always use NewShardIDLayout() to instantiate.
-type ShardIDLayout struct {
+// Please always use NewShardIDFormat() to instantiate.
+type ShardIDFormat struct {
 	FieldType *types.FieldType
 	ShardBits uint64
 	// Derived fields.
-	TypeBitsLength  uint64
 	IncrementalBits uint64
-	HasSignBit      bool
 }
 
-// NewShardIDLayout create an instance of ShardIDLayout.
-func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayout {
-	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
-	incrementalBits := typeBitsLength - shardBits
+// NewShardIDFormat create an instance of ShardIDFormat.
+// RangeBits means the bit length of the sign bit + shard bits + incremental bits.
+// If RangeBits is 0, it will be calculated according to field type automatically.
+func NewShardIDFormat(fieldType *types.FieldType, shardBits, rangeBits uint64) ShardIDFormat {
+	var incrementalBits uint64
+	if rangeBits == 0 {
+		// Zero means that the range bits is not specified. We interpret it as the length of BIGINT.
+		incrementalBits = RowIDBitLength - shardBits
+	} else {
+		incrementalBits = rangeBits - shardBits
+	}
 	hasSignBit := !mysql.HasUnsignedFlag(fieldType.GetFlag())
 	if hasSignBit {
 		incrementalBits--
 	}
-	return &ShardIDLayout{
+	return ShardIDFormat{
 		FieldType:       fieldType,
 		ShardBits:       shardBits,
-		TypeBitsLength:  typeBitsLength,
 		IncrementalBits: incrementalBits,
-		HasSignBit:      hasSignBit,
 	}
 }
 
-// IncrementalBitsCapacity returns the max capacity of incremental section of the current layout.
-func (l *ShardIDLayout) IncrementalBitsCapacity() uint64 {
-	return uint64(math.Pow(2, float64(l.IncrementalBits))) - 1
+// IncrementalBitsCapacity returns the max capacity of incremental section of the current format.
+func (s *ShardIDFormat) IncrementalBitsCapacity() uint64 {
+	return uint64(s.IncrementalMask())
 }
 
-// IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.
-func (l *ShardIDLayout) IncrementalMask() int64 {
-	return (1 << l.IncrementalBits) - 1
+// IncrementalMask returns 00..0[11..1], where [11..1] is the incremental part of the current format.
+func (s *ShardIDFormat) IncrementalMask() int64 {
+	return (1 << s.IncrementalBits) - 1
+}
+
+// Compose generates an auto ID based on the given shard and an incremental ID.
+func (s *ShardIDFormat) Compose(shard int64, id int64) int64 {
+	return ((shard & ((1 << s.ShardBits) - 1)) << s.IncrementalBits) | id
 }
 
 type allocatorRuntimeStatsCtxKeyType struct{}

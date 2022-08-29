@@ -508,6 +508,10 @@ type ExecuteStmt struct {
 	BinaryArgs interface{}
 	PrepStmt   interface{} // the corresponding prepared statement
 	IdxInMulti int
+
+	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
+	// e.g. select * from t where a>2 --> execute 'select * from t where a>?' using 2
+	FromGeneralStmt bool
 }
 
 // Restore implements Node interface.
@@ -3569,7 +3573,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_build", "hash_probe", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")

@@ -122,7 +122,9 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsage                         = metrics.TelemetrySQLCTECnt
+	telemetryCTEUsageRecurCTE                 = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
+	telemetryCTEUsageNonRecurCTE              = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
+	telemetryCTEUsageNotCTE                   = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
 	telemetryMultiSchemaChangeUsage           = metrics.TelemetryMultiSchemaChangeCnt
 	telemetryTablePartitionUsage              = metrics.TelemetryTablePartitionCnt
 	telemetryTablePartitionListUsage          = metrics.TelemetryTablePartitionListCnt
@@ -146,6 +148,10 @@ type Session interface {
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+	// Parameterize tries to convert the general statement to an execute statement and then uses general plan cache to handle it.
+	// e.g. "select * from t where a>23" --> "execute 'select * from t where a>?' using 23".
+	// By using the general plan cache, it can skip the parse and optimization stage so to gain some performance benefits.
+	Parameterize(ctx context.Context, originSQL string) (*ast.ExecuteStmt, bool)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
@@ -154,7 +160,7 @@ type Session interface {
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
-	CacheGeneralStmt(sql string) error
+	CacheGeneralStmt(sql string) (interface{}, error)
 	// ExecutePreparedStmt executes a prepared statement.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
 	// ExecuteGeneralStmt executes a general statement.
@@ -170,7 +176,7 @@ type Session interface {
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
-	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
+	Auth(user *auth.UserIdentity, auth []byte, salt []byte) error
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
 	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
@@ -230,6 +236,7 @@ type session struct {
 	store kv.Storage
 
 	preparedPlanCache *kvcache.SimpleLRUCache
+	generalPlanCache  *kvcache.SimpleLRUCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -369,7 +376,7 @@ func (s *session) cleanRetryInfo() {
 				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				s.PreparedPlanCache().Delete(cacheKey)
+				s.GetPlanCache(false).Delete(cacheKey)
 			}
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
@@ -428,12 +435,24 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
+func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache {
+	if isGeneralPlanCache { // use the general plan cache
+		if !s.GetSessionVars().EnableGeneralPlanCache {
+			return nil
+		}
+		if s.generalPlanCache == nil { // lazy construction
+			s.generalPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+		}
+		return s.generalPlanCache
+	}
+
+	// use the prepared plan cache
 	if !s.GetSessionVars().EnablePreparedPlanCache {
 		return nil
 	}
 	if s.preparedPlanCache == nil { // lazy construction
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
 			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	return s.preparedPlanCache
@@ -777,13 +796,13 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessionData := sessVars.TemporaryTableData
 	var (
 		stage           kv.StagingHandle
-		localTempTables *infoschema.LocalTemporaryTables
+		localTempTables *infoschema.SessionTables
 	)
 
 	if sessVars.LocalTemporaryTables != nil {
-		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.SessionTables)
 	} else {
-		localTempTables = new(infoschema.LocalTemporaryTables)
+		localTempTables = new(infoschema.SessionTables)
 	}
 
 	defer func() {
@@ -1226,6 +1245,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		err = se.sessionVars.SetSystemVar(variable.TiDBEnableWindowFunction, variable.BoolToOnOff(variable.DefEnableWindowFunction))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		// Internal session uses default format to prevent memory leak problem.
@@ -1549,6 +1572,26 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, err
 	}
 	return []sqlexec.RecordSet{rs}, err
+}
+
+// Parameterize Parameterizes this sql.
+func (s *session) Parameterize(ctx context.Context, originSQL string) (exec *ast.ExecuteStmt, ok bool) {
+	if !s.GetSessionVars().EnableGeneralPlanCache {
+		return nil, false
+	}
+	paramSQL, params, ok, err := plannercore.Parameterize(s, originSQL)
+	if !ok || err != nil {
+		return nil, false
+	}
+	cachedStmt, err := s.CacheGeneralStmt(paramSQL)
+	if err != nil {
+		return nil, false
+	}
+	return &ast.ExecuteStmt{
+		BinaryArgs:      params,
+		PrepStmt:        cachedStmt,
+		FromGeneralStmt: true,
+	}, true
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -2009,7 +2052,15 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	logStmt(stmt, s)
-	recordSet, err := runStmt(ctx, s, stmt)
+
+	var recordSet sqlexec.RecordSet
+	if stmt.PsStmt != nil { // point plan short path
+		recordSet, err = stmt.PointGet(ctx)
+		s.txn.changeToInvalid()
+	} else {
+		recordSet, err = runStmt(ctx, s, stmt)
+	}
+
 	if err != nil {
 		if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
@@ -2236,15 +2287,18 @@ func (s *session) rollbackOnError(ctx context.Context) {
 
 // CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
 // The sql have to be parameterized, e.g. select * from t where a>?.
-func (s *session) CacheGeneralStmt(sql string) error {
+func (s *session) CacheGeneralStmt(sql string) (interface{}, error) {
 	if stmt := s.sessionVars.GetGeneralPlanCacheStmt(sql); stmt != nil {
 		// skip this step if there is already a PlanCacheStmt for this ql
-		return nil
+		return stmt, nil
 	}
 
 	prepareExec := executor.NewPrepareExec(s, sql)
 	prepareExec.IsGeneralStmt = true
-	return prepareExec.Next(context.Background(), nil)
+	if err := prepareExec.Next(context.Background(), nil); err != nil {
+		return nil, err
+	}
+	return prepareExec.Stmt, nil
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol
@@ -2299,16 +2353,30 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 		}
 	})
 
-	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, execStmt, is)
+	s.sessionVars.StartTime = time.Now()
+	preparedObj, err := plannercore.GetPreparedStmt(execStmt, s.GetSessionVars())
+	if err != nil {
+		return nil, err
+	}
+
+	compiler := executor.Compiler{Ctx: s}
+	stmt, err := compiler.Compile(ctx, execStmt)
 	if err == nil {
-		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, st.Plan)
+		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
 	}
 	if err != nil {
 		return nil, err
 	}
+	durCompile := time.Since(s.sessionVars.StartTime)
+	s.GetSessionVars().DurationCompile = durCompile
+
+	stmtCtx := s.GetSessionVars().StmtCtx
+	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
-		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(st.Plan)
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
 		telemetry.CurrentExecuteCount.Inc()
 		if tiFlashPushDown {
 			telemetry.CurrentTiFlashPushDownCount.Inc()
@@ -2318,15 +2386,17 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 		}
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
-	logGeneralQuery(st, s, true)
+	logGeneralQuery(stmt, s, true)
 
-	if st.PsStmt != nil { // point plan short path
-		resultSet, err := st.PointGet(ctx)
+	var recordSet sqlexec.RecordSet
+
+	if stmt.PsStmt != nil { // point plan short path
+		recordSet, err = stmt.PointGet(ctx)
 		s.txn.changeToInvalid()
-		return resultSet, err
+	} else {
+		recordSet, err = runStmt(ctx, s, stmt)
 	}
-
-	return runStmt(ctx, s, st)
+	return recordSet, err
 }
 
 // ExecutePreparedStmt executes a prepared statement.
@@ -2392,7 +2462,6 @@ func (s *session) executePlanCacheStmt(ctx context.Context, stmt *plannercore.Pl
 		}
 	}
 
-	executor.CountStmtNode(stmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	s.txn.onStmtStart(stmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
 
@@ -2498,20 +2567,24 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 // Auth validates a user using an authentication string and salt.
 // If the password fails, it will keep trying other users until exhausted.
 // This means it can not be refactored to use MatchIdentity yet.
-func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
+func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) error {
+	hasPassword := "YES"
+	if len(authentication) == 0 {
+		hasPassword = "NO"
+	}
 	pm := privilege.GetPrivilegeManager(s)
 	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
 	if err != nil {
-		return false
+		return dbterror.ClassSession.NewStd(mysql.ErrAccessDenied).FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if pm.ConnectionVerification(authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState) {
-		user.AuthUsername = authUser.Username
-		user.AuthHostname = authUser.Hostname
-		s.sessionVars.User = user
-		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
-		return true
+	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
+		return err
 	}
-	return false
+	user.AuthUsername = authUser.Username
+	user.AuthHostname = authUser.Hostname
+	s.sessionVars.User = user
+	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+	return nil
 }
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
@@ -3332,11 +3405,11 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 	ti := es.Ti
 	if ti.UseRecursive {
-		telemetryCTEUsage.WithLabelValues("recurCTE").Inc()
+		telemetryCTEUsageRecurCTE.Inc()
 	} else if ti.UseNonRecursive {
-		telemetryCTEUsage.WithLabelValues("nonRecurCTE").Inc()
+		telemetryCTEUsageNonRecurCTE.Inc()
 	} else {
-		telemetryCTEUsage.WithLabelValues("notCTE").Inc()
+		telemetryCTEUsageNotCTE.Inc()
 	}
 
 	if ti.UseMultiSchemaChange {
@@ -3400,7 +3473,7 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 	// Data in local temporary tables is hard to encode, so we do not support it.
 	// Check temporary tables here to avoid circle dependency.
 	if s.sessionVars.LocalTemporaryTables != nil {
-		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.SessionTables)
 		if localTempTables.Count() > 0 {
 			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
 		}

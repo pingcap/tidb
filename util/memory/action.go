@@ -77,11 +77,11 @@ func (b *BaseOOMAction) GetFallback() ActionOnExceed {
 
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
-	BaseOOMAction
-	mutex   sync.Mutex // For synchronization.
-	acted   bool
-	ConnID  uint64
 	logHook func(uint64)
+	BaseOOMAction
+	ConnID uint64
+	mutex  sync.Mutex // For synchronization.
+	acted  bool
 }
 
 // SetLogHook sets a hook for LogOnExceed.
@@ -106,11 +106,11 @@ func (a *LogOnExceed) Action(t *Tracker) {
 
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
-	BaseOOMAction
-	mutex   sync.Mutex // For synchronization.
-	acted   bool
-	ConnID  uint64
 	logHook func(uint64)
+	BaseOOMAction
+	ConnID uint64
+	mutex  sync.Mutex // For synchronization.
+	acted  bool
 }
 
 // SetLogHook sets a hook for PanicOnExceed.

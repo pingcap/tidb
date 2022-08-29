@@ -885,6 +885,14 @@ def go_deps():
         version = "v0.0.0-20160511215533-1f3b11f56072",
     )
     go_repository(
+        name = "com_github_fatanugraha_noloopclosure",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/fatanugraha/noloopclosure",
+        sum = "h1:AhepjAikNpk50qTZoipHZqeZtnyKT/C2Tk5dGn7nC+A=",
+        version = "v0.1.1",
+    )
+
+    go_repository(
         name = "com_github_fatih_color",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/fatih/color",
@@ -1572,8 +1580,8 @@ def go_deps():
         name = "com_github_gostaticanalysis_testutil",
         build_file_proto_mode = "disable",
         importpath = "github.com/gostaticanalysis/testutil",
-        sum = "h1:d2/eIbH9XjD1fFwD5SHv8x168fjbQ9PB8hvs8DSEC08=",
-        version = "v0.3.1-0.20210208050101-bfb5c8eec0e4",
+        sum = "h1:nhdCmubdmDF6VEatUNjgUZBJKWRqugoISdUv3PPQgHY=",
+        version = "v0.4.0",
     )
 
     go_repository(
@@ -2802,8 +2810,8 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:FBaTXU8C3xgt/drM58VHxojHo/QoG1oPsgWTGvaSpO4=",
-        version = "v0.0.0-20220718022156-3e2483c20a9e",
+        sum = "h1:kWYridgsn8xSKYJ2EkXp7uj5HwJnG5snpY3XP8oYmPU=",
+        version = "v0.0.0-20220824081009-0714a57aff1d",
     )
     go_repository(
         name = "com_github_pkg_browser",
@@ -3366,8 +3374,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:tugwRUqH0gYZ0noHr17AVSKxNVd+Jl2BmNqgANeDIok=",
-        version = "v2.0.1-0.20220809034808-2ed2113d1090",
+        sum = "h1:/nr7P8uzJQ7u3wPEBHCokrsVmuDvi/1x/zI/ydk5n8U=",
+        version = "v2.0.1-0.20220818084834-0d0ae0dcfb1f",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

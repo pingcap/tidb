@@ -157,7 +157,7 @@ func TestAnalyze(t *testing.T) {
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
-		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
+		SetAnalyzeRequest(&tipb.AnalyzeReq{}, kv.RC).
 		SetKeepOrder(true).
 		Build()
 	require.NoError(t, err)
