@@ -885,6 +885,14 @@ def go_deps():
         version = "v0.0.0-20160511215533-1f3b11f56072",
     )
     go_repository(
+        name = "com_github_fatanugraha_noloopclosure",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/fatanugraha/noloopclosure",
+        sum = "h1:AhepjAikNpk50qTZoipHZqeZtnyKT/C2Tk5dGn7nC+A=",
+        version = "v0.1.1",
+    )
+
+    go_repository(
         name = "com_github_fatih_color",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/fatih/color",
@@ -1572,8 +1580,8 @@ def go_deps():
         name = "com_github_gostaticanalysis_testutil",
         build_file_proto_mode = "disable",
         importpath = "github.com/gostaticanalysis/testutil",
-        sum = "h1:d2/eIbH9XjD1fFwD5SHv8x168fjbQ9PB8hvs8DSEC08=",
-        version = "v0.3.1-0.20210208050101-bfb5c8eec0e4",
+        sum = "h1:nhdCmubdmDF6VEatUNjgUZBJKWRqugoISdUv3PPQgHY=",
+        version = "v0.4.0",
     )
 
     go_repository(
