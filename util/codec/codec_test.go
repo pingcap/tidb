@@ -872,6 +872,10 @@ func TestCut(t *testing.T) {
 			types.MakeDatums(json.CreateBinary("abc")),
 			types.MakeDatums(json.CreateBinary("abc")),
 		},
+		{
+			types.MakeDatums(json.CreateBinary(json.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
+			types.MakeDatums(json.CreateBinary(json.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
+		},
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for i, datums := range table {
