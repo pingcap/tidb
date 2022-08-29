@@ -1501,6 +1501,7 @@ func TestRandomPanicConsume(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_max_chunk_size=32")
 	tk.MustExec("set @@tidb_init_chunk_size=1")
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, index idx(a))")
 	for i := 0; i <= 1000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%v),(%v),(%v)", i, i, i))

@@ -288,7 +288,6 @@ func (e *HashAggExec) Close() error {
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
-		e.parallelExecInitialized = false
 	}
 	return e.baseExecutor.Close()
 }
@@ -304,8 +303,6 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	// If panic here, the children executor should be closed because they are open.
-	defer closeBaseExecutor(&e.baseExecutor)
 	e.prepared = false
 
 	e.memTracker = memory.NewTracker(e.id, -1)
