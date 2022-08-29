@@ -345,31 +345,37 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
 		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
 	}
+	statsVer := rows[0].GetInt64(0)
 	if item.IsIndex {
 		idxHist := &statistics.Index{
-			Histogram: *hg,
-			CMSketch:  cms,
-			TopN:      topN,
-			FMSketch:  fms,
-			Info:      index.Info,
-			ErrorRate: index.ErrorRate,
-			StatsVer:  rows[0].GetInt64(0), Flag: index.Flag,
-			PhysicalID:        index.PhysicalID,
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			Histogram:  *hg,
+			CMSketch:   cms,
+			TopN:       topN,
+			FMSketch:   fms,
+			Info:       index.Info,
+			ErrorRate:  index.ErrorRate,
+			StatsVer:   statsVer,
+			Flag:       index.Flag,
+			PhysicalID: index.PhysicalID,
+		}
+		if statsVer != statistics.Version0 {
+			idxHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 		}
 		index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 		w.idx = idxHist
 	} else {
 		colHist := &statistics.Column{
-			PhysicalID:        item.TableID,
-			Histogram:         *hg,
-			Info:              c.Info,
-			CMSketch:          cms,
-			TopN:              topN,
-			FMSketch:          fms,
-			IsHandle:          c.IsHandle,
-			StatsVer:          rows[0].GetInt64(0),
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			PhysicalID: item.TableID,
+			Histogram:  *hg,
+			Info:       c.Info,
+			CMSketch:   cms,
+			TopN:       topN,
+			FMSketch:   fms,
+			IsHandle:   c.IsHandle,
+			StatsVer:   statsVer,
+		}
+		if statsVer != statistics.Version0 {
+			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 		}
 		// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
 		colHist.Count = int64(colHist.TotalRowCount())

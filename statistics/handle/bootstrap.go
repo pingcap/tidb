@@ -112,14 +112,16 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 			index := &statistics.Index{
-				Histogram:         *hist,
-				CMSketch:          cms,
-				TopN:              topN,
-				Info:              idxInfo,
-				StatsVer:          statsVer,
-				Flag:              row.GetInt64(10),
-				PhysicalID:        tblID,
-				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+				Histogram:  *hist,
+				CMSketch:   cms,
+				TopN:       topN,
+				Info:       idxInfo,
+				StatsVer:   statsVer,
+				Flag:       row.GetInt64(10),
+				PhysicalID: tblID,
+			}
+			if statsVer != statistics.Version0 {
+				index.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			table.Indices[hist.ID] = index

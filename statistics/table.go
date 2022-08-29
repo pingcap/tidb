@@ -463,6 +463,21 @@ func (n *neededStatsMap) Length() int {
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
 
+// IsInitialized returns true if any column/index stats of the table is initialized.
+func (t *Table) IsInitialized() bool {
+	for _, col := range t.Columns {
+		if col != nil && col.IsStatsInitialized() {
+			return true
+		}
+	}
+	for _, idx := range t.Indices {
+		if idx != nil && idx.IsStatsInitialized() {
+			return true
+		}
+	}
+	return false
+}
+
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
 	rowcount := t.GetColRowCount()
