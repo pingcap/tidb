@@ -1922,3 +1922,22 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	tk.MustExec("set global tiflash_fine_grained_shuffle_stream_count = -1")
 	tk.MustExec("set global tiflash_fine_grained_shuffle_batch_size = 8192")
 }
+
+func TestSetTiFlashFastScanVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+
+	// check the default tiflash read mode
+	tk.MustQuery("select @@session.tiflash_fastscan").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tiflash_fastscan=ON;")
+	tk.MustQuery("select @@session.tiflash_fastscan").Check(testkit.Rows("1"))
+
+	tk.MustExec("set GLOBAL tiflash_fastscan=OFF;")
+	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
+}

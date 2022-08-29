@@ -362,7 +362,6 @@ go_test(
         "//planner/util",
         "//server",
         "//session",
-        "//session/txninfo",
         "//sessionctx",
         "//sessionctx/binloginfo",
         "//sessionctx/stmtctx",

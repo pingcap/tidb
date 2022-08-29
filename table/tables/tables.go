@@ -1938,12 +1938,13 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 }
 
 // BuildPartitionTableScanFromInfos build tipb.PartitonTableScan with *model.TableInfo and *model.ColumnInfo.
-func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo) *tipb.PartitionTableScan {
+func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo, fastScan bool) *tipb.PartitionTableScan {
 	pkColIds := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
 		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle),
 		PrimaryColumnIds: pkColIds,
+		IsFastScan:       &fastScan,
 	}
 	if tableInfo.IsCommonHandle {
 		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
