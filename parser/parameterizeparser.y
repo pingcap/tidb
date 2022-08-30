@@ -37,23 +37,21 @@ import (
 
 	/*yy:token "\"%c\"" */
 	pStringLit "string literal"
+	pInvalid   "a special token never used by parser, used by lexer to indicate error"
 	pAndand    "&&"
 	pPipes     "||"
 
-	/* TODO: Useless for the ReservedKeyword in parameterizer */
-	/* The following tokens belong to ReservedKeyword. Notice: make sure these tokens are contained in ReservedKeyword. */
-	pAs         "AS"
-	pAnd        "AND"
-	pCharType   "CHAR"
-	pDoubleType "DOUBLE"
-	pFrom       "FROM"
-	pIntType    "INT"
-	pSelectKwd  "SELECT"
-	pWhere      "WHERE"
-	pFalseKwd   "FALSE"
-	pTrueKwd    "TRUE"
-	pNull       "NULL"
-	pOr         "OR"
+	/* The following tokens belong to parameterizeTokenMap. Notice: make sure these tokens are contained in parameterizeTokenMap. */
+	pAs        "AS"
+	pAnd       "AND"
+	pFrom      "FROM"
+	pIntType   "INT"
+	pSelectKwd "SELECT"
+	pWhere     "WHERE"
+	pFalseKwd  "FALSE"
+	pTrueKwd   "TRUE"
+	pNull      "NULL"
+	pOr        "OR"
 
 %token	<item>
 
@@ -61,10 +59,7 @@ import (
 	pFloatLit "floating-point literal"
 
 	/*yy:token "%d"     */
-	pIntLit "integer literal"
-
-	/*yy:token "%b"     */
-	pBitLit       "bit literal"
+	pIntLit       "integer literal"
 	pAndnot       "&^"
 	pAssignmentEq ":="
 	pEq           "="
@@ -113,8 +108,8 @@ import (
 %type	<ident>
 	Identifier "identifier or unreserved keyword"
 
-%precedence empty
-%precedence lowerThanStringLitToken
+%precedence pEmpty
+%precedence pLowerThanStringLitToken
 %precedence pStringLit
 %precedence pSelectKwd
 %left pPipes
@@ -123,7 +118,7 @@ import (
 %left '|'
 %left '&'
 %left '-' '+'
-%left '*' '/' '%' div mod
+%left '*' '/' '%'
 
 %start	Start
 
@@ -135,7 +130,7 @@ Start:
 StatementList:
 	Statement
 	{
-		if $1 != nil {
+		if $1 != "" {
 			s := $1
 			parser.result = append(parser.result, s)
 		}
@@ -144,7 +139,7 @@ StatementList:
 ColumnName:
 	Identifier
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 |	Identifier '.' Identifier
 	{
@@ -170,9 +165,9 @@ FieldList:
 |	FieldList ',' Field
 	{
 		var builder strings.Builder
-		builder.WriteString($1)
+		builder.WriteString($1.(string))
 		builder.WriteString(".")
-		builder.WriteString($3)
+		builder.WriteString($3.(string))
 		$$ = builder.String()
 	}
 
@@ -210,10 +205,10 @@ SelectStmtFromTable:
 	SelectStmtBasic "FROM" TableRefsClause WhereClauseOptional
 	{
 		var builder strings.Builder
-		builder.WriteString($1)
+		builder.WriteString($1.(string))
 		builder.WriteString($2)
-		builder.WriteString($3)
-		builder.WriteString($4)
+		builder.WriteString($3.(string))
+		builder.WriteString($4.(string))
 		$$ = builder.String()
 	}
 
@@ -222,12 +217,15 @@ SelectStmtBasic:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
-		builder.WriteString($2)
+		builder.WriteString($2.(string))
 		$$ = builder.String()
 	}
 
 SelectStmtFieldList:
 	FieldList
+	{
+		$$ = $1
+	}
 
 TableRefsClause:
 	TableRefs
@@ -238,7 +236,7 @@ TableRefs:
 EscapedTableRef:
 	TableRef
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 
 TableRef:
@@ -251,22 +249,25 @@ TableFactor:
 	TableName TableAsNameOpt
 	{
 		var builder strings.Builder
-		builder.WriteString($1)
-		builder.WriteString($2)
+		builder.WriteString($1.(string))
+		builder.WriteString($2.(string))
 		$$ = builder.String()
 	}
 
 TableAsNameOpt:
-	%prec empty
+	%prec pEmpty
 	{
 		$$ = ""
 	}
 |	TableAsName
+	{
+		$$ = $1
+	}
 
 TableAsName:
 	Identifier
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 |	"AS" Identifier
 	{
@@ -279,7 +280,7 @@ TableAsName:
 TableName:
 	Identifier
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 |	Identifier '.' Identifier
 	{
@@ -310,7 +311,7 @@ Expression:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
-		builder.WriteString($2)
+		builder.WriteString($2.(string))
 		builder.WriteString($3)
 		$$ = builder.String()
 	}
@@ -318,7 +319,7 @@ Expression:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
-		builder.WriteString($2)
+		builder.WriteString($2.(string))
 		builder.WriteString($3)
 		$$ = builder.String()
 	}
@@ -329,7 +330,7 @@ BoolPri:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
-		builder.WriteString($2)
+		builder.WriteString($2.(string))
 		builder.WriteString($3)
 		$$ = builder.String()
 	}
@@ -426,17 +427,17 @@ BitExpr:
 SimpleExpr:
 	SimpleIdent
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 |	Literal
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 
 SimpleIdent:
 	Identifier
 	{
-		$$ = $1.(string)
+		$$ = $1
 	}
 |	Identifier '.' Identifier
 	{
@@ -488,7 +489,7 @@ Literal:
 		parser.params = append(parser.params, s)
 		$$ = "?"
 	}
-|	StringLiteral %prec lowerThanStringLitToken
+|	StringLiteral %prec pLowerThanStringLitToken
 
 StringLiteral:
 	pStringLit

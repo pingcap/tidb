@@ -105,6 +105,9 @@ func yySetOffset(yyVAL *yySymType, offset int) {
 	}
 }
 
+func yyparameterizeSetOffset(_ *yyparameterizeSymType, _ int) {
+}
+
 func yyhintSetOffset(_ *yyhintSymType, _ int) {
 }
 
@@ -247,11 +250,11 @@ func (parser *Parser) parseHint(input string) ([]*ast.TableOptimizerHint, []erro
 	return parser.hintParser.parse(input, parser.lexer.GetSQLMode(), parser.lexer.lastHintPos)
 }
 
-// Parameterizer represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
-type Parameterizer struct {
+// parameterizeParser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
+type parameterizeParser struct {
 	charset    string
 	collation  string
-	result     string
+	result     []string
 	params     []ast.ValueExpr
 	src        string
 	lexer      Scanner4Parameterize
@@ -266,8 +269,8 @@ type Parameterizer struct {
 	yyVAL  *yyparameterizeSymType
 }
 
-// NewParameterizer returns a Parameterizer object with default SQL mode.
-func NewParameterizer() *Parameterizer {
+// NewParameterizer returns a parameterizeParser object with default SQL mode.
+func NewParameterizer() *parameterizeParser {
 	if ast.NewValueExpr == nil ||
 		ast.NewParamMarkerExpr == nil ||
 		ast.NewHexLiteral == nil ||
@@ -275,7 +278,7 @@ func NewParameterizer() *Parameterizer {
 		panic("no parser driver (forgotten import?) https://github.com/pingcap/parser/issues/43")
 	}
 
-	p := &Parameterizer{
+	p := &parameterizeParser{
 		cache: make([]yyparameterizeSymType, 200),
 	}
 	// TODO: Need put the following part to the plan cache key
@@ -287,11 +290,11 @@ func NewParameterizer() *Parameterizer {
 }
 
 // ParseSQL parses a query string to raw ast.StmtNode.
-func (parameterizer *Parameterizer) ParseSQL(sql string, parseParams ...ParseParam) (paramSQL string, params []ast.ValueExpr, warns []error, err error) {
+func (parameterizer *parameterizeParser) ParseSQL(sql string, parseParams ...ParseParam) (paramSQL string, params []ast.ValueExpr, warns []error, err error) {
 	resetParams4Parameter(parameterizer)
 	parameterizer.lexer.reset(sql)
 	for _, p := range parseParams {
-		if err := p.ApplyOn4Parameter(parameterizer); err != nil {
+		if err := p.ApplyOn4Parameterizer(parameterizer); err != nil {
 			return "", nil, nil, err
 		}
 	}
@@ -310,22 +313,25 @@ func (parameterizer *Parameterizer) ParseSQL(sql string, parseParams ...ParsePar
 	if len(errs) != 0 {
 		return "", nil, warns, errors.Trace(errs[0])
 	}
-	return parameterizer.result, parameterizer.params, warns, nil
+	if len(parameterizer.result) > 1 {
+		return "", nil, warns, nil
+	}
+	return parameterizer.result[0], parameterizer.params, warns, nil
 }
 
 // Parse parses a query string to raw ast.StmtNode.
 // If charset or collation is "", default charset and collation will be used.
-func (parameterizer *Parameterizer) Parse(sql, charset, collation string) (paramSQL string, params []ast.ValueExpr, warns []error, err error) {
+func (parameterizer *parameterizeParser) Parse(sql, charset, collation string) (paramSQL string, params []ast.ValueExpr, warns []error, err error) {
 	return parameterizer.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
 }
 
-func (parameterizer *Parameterizer) lastErrorAsWarn() {
+func (parameterizer *parameterizeParser) lastErrorAsWarn() {
 	parameterizer.lexer.lastErrorAsWarn()
 }
 
 // ParseOneStmt parses a query and returns an ast.StmtNode.
 // The query must have one statement, otherwise ErrSyntax is returned.
-func (parameterizer *Parameterizer) ParseOneStmt(sql, charset, collation string) (string, []ast.ValueExpr, error) {
+func (parameterizer *parameterizeParser) ParseOneStmt(sql, charset, collation string) (string, []ast.ValueExpr, error) {
 	paramSQL, params, _, err := parameterizer.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
 	if err != nil {
 		return "", nil, errors.Trace(err)
@@ -333,7 +339,7 @@ func (parameterizer *Parameterizer) ParseOneStmt(sql, charset, collation string)
 	return paramSQL, params, nil
 }
 
-func (parameterizer *Parameterizer) parseHint(input string) ([]*ast.TableOptimizerHint, []error) {
+func (parameterizer *parameterizeParser) parseHint(input string) ([]*ast.TableOptimizerHint, []error) {
 	if parameterizer.hintParser == nil {
 		parameterizer.hintParser = newHintParser()
 	}
@@ -423,20 +429,8 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 func toInt4Parameterize(l yyparameterizeLexer, lval *yyparameterizeSymType, str string) int {
 	n, err := strconv.ParseUint(str, 10, 64)
 	if err != nil {
-		e := err.(*strconv.NumError)
-		if e.Err == strconv.ErrRange {
-			// TODO: toDecimal maybe out of range still.
-			// This kind of error should be throw to higher level, because truncated data maybe legal.
-			// For example, this SQL returns error:
-			// create table test (id decimal(30, 0));
-			// insert into test values(123456789012345678901234567890123094839045793405723406801943850);
-			// While this SQL:
-			// select 1234567890123456789012345678901230948390457934057234068019438509023041874359081325875128590860234789847359871045943057;
-			// get value 99999999999999999999999999999999999999999999999999999999999999999
-			return toDecimal4Parameterize(l, lval, str)
-		}
 		l.AppendError(l.Errorf("integer literal: %v", err))
-		return invalid
+		return pInvalid
 	}
 
 	switch {
@@ -448,56 +442,20 @@ func toInt4Parameterize(l yyparameterizeLexer, lval *yyparameterizeSymType, str 
 	return pIntLit
 }
 
-func toDecimal4Parameterize(l yyparameterizeLexer, lval *yyparameterizeSymType, str string) int {
-	dec, err := ast.NewDecimal(str)
-	if err != nil {
-		if terror.ErrorEqual(err, types.ErrDataOutOfRange) {
-			l.AppendWarn(types.ErrTruncatedWrongValue.FastGenByArgs("DECIMAL", dec))
-			dec, _ = ast.NewDecimal(mysql.DefaultDecimal)
-		} else {
-			l.AppendError(l.Errorf("decimal literal: %v", err))
-		}
-	}
-	lval.item = dec
-	return decLit
-}
-
 func toFloat4Parameterize(l yyparameterizeLexer, lval *yyparameterizeSymType, str string) int {
 	n, err := strconv.ParseFloat(str, 64)
 	if err != nil {
 		e := err.(*strconv.NumError)
 		if e.Err == strconv.ErrRange {
 			l.AppendError(types.ErrIllegalValueForType.GenWithStackByArgs("double", str))
-			return invalid
+			return pInvalid
 		}
 		l.AppendError(l.Errorf("float literal: %v", err))
-		return invalid
+		return pInvalid
 	}
 
 	lval.item = n
 	return pFloatLit
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
-func toHex4Parameterize(l yyparameterizeLexer, lval *yyparameterizeSymType, str string) int {
-	h, err := ast.NewHexLiteral(str)
-	if err != nil {
-		l.AppendError(l.Errorf("hex literal: %v", err))
-		return invalid
-	}
-	lval.item = h
-	return hexLit
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
-func toBit4Parameterize(l yyparameterizeLexer, lval *yyparameterizeSymType, str string) int {
-	b, err := ast.NewBitLiteral(str)
-	if err != nil {
-		l.AppendError(l.Errorf("bit literal: %v", err))
-		return invalid
-	}
-	lval.item = b
-	return pBitLit
 }
 
 func getUint64FromNUM(num interface{}) uint64 {
@@ -577,7 +535,7 @@ func resetParams(p *Parser) {
 	p.collation = mysql.DefaultCollationName
 }
 
-func resetParams4Parameter(p *Parameterizer) {
+func resetParams4Parameter(p *parameterizeParser) {
 	p.charset = mysql.DefaultCharset
 	p.collation = mysql.DefaultCollationName
 }
@@ -585,7 +543,7 @@ func resetParams4Parameter(p *Parameterizer) {
 // ParseParam represents the parameter of parsing.
 type ParseParam interface {
 	ApplyOn(*Parser) error
-	ApplyOn4Parameter(*Parameterizer) error
+	ApplyOn4Parameterizer(*parameterizeParser) error
 }
 
 // CharsetConnection is used for literals specified without a character set.
@@ -602,8 +560,8 @@ func (c CharsetConnection) ApplyOn(p *Parser) error {
 	return nil
 }
 
-// ApplyOn4Parameter implements ParseParam interface.
-func (c CharsetConnection) ApplyOn4Parameter(p *Parameterizer) error {
+// ApplyOn4Parameterizer implements ParseParam interface.
+func (c CharsetConnection) ApplyOn4Parameterizer(p *parameterizeParser) error {
 	if c == "" {
 		p.charset = mysql.DefaultCharset
 	} else {
@@ -626,8 +584,8 @@ func (c CollationConnection) ApplyOn(p *Parser) error {
 	return nil
 }
 
-// ApplyOn4Parameter implements ParseParam interface.
-func (c CollationConnection) ApplyOn4Parameter(p *Parameterizer) error {
+// ApplyOn4Parameterizer implements ParseParam interface.
+func (c CollationConnection) ApplyOn4Parameterizer(p *parameterizeParser) error {
 	if c == "" {
 		p.collation = mysql.DefaultCollationName
 	} else {
@@ -646,8 +604,8 @@ func (c CharsetClient) ApplyOn(p *Parser) error {
 	return nil
 }
 
-// ApplyOn4Parameter implements ParseParam interface.
-func (c CharsetClient) ApplyOn4Parameter(p *Parameterizer) error {
+// ApplyOn4Parameterizer implements ParseParam interface.
+func (c CharsetClient) ApplyOn4Parameterizer(p *parameterizeParser) error {
 	p.lexer.client = charset.FindEncoding(string(c))
 	return nil
 }

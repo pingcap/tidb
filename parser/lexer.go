@@ -284,34 +284,10 @@ func (s *Scanner4Parameterize) Lex(v *yyparameterizeSymType) int {
 	v.offset = pos.Offset
 	v.ident = lit
 	if tok == identifier {
-		tok = s.handleIdent(v)
-	}
-	if tok == identifier {
-		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
-			tok = tok1
-			s.lastKeyword = tok1
+		v.ident = lit
+		if tok1, ok := parameterizeTokenMap[strings.ToUpper(lit)]; ok {
+			return tok1
 		}
-	}
-	if s.sqlMode.HasANSIQuotesMode() &&
-		tok == stringLit &&
-		s.r.s[v.offset] == '"' {
-		tok = identifier
-	}
-
-	if tok == pipes && !(s.sqlMode.HasPipesAsConcatMode()) {
-		return pipesAsOr
-	}
-
-	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
-		return not2
-	}
-	if tok == pAs && s.getNextToken() == of {
-		_, pos, lit = s.scan()
-		v.ident = fmt.Sprintf("%s %s", v.ident, lit)
-		s.lastKeyword = asof
-		s.lastScanOffset = pos.Offset
-		v.offset = pos.Offset
-		return asof
 	}
 
 	switch tok {
@@ -319,23 +295,11 @@ func (s *Scanner4Parameterize) Lex(v *yyparameterizeSymType) int {
 		return toInt4Parameterize(s, v, lit)
 	case floatLit:
 		return toFloat4Parameterize(s, v, lit)
-	case decLit:
-		return toDecimal4Parameterize(s, v, lit)
-	case hexLit:
-		return toHex4Parameterize(s, v, lit)
-	case bitLit:
-		return toBit4Parameterize(s, v, lit)
-	case singleAtIdentifier, doubleAtIdentifier, cast, extract:
-		v.item = lit
-		return tok
 	case null:
 		v.item = nil
-	case quotedIdentifier, identifier:
-		tok = identifier
-		s.identifierDot = s.r.peek() == '.'
-		tok, v.ident = s.convert2System(tok, lit)
-	case stringLit:
-		tok, v.ident = s.convert2Connection(tok, lit)
+		tok = pNull
+	default:
+		return pInvalid
 	}
 
 	return tok
