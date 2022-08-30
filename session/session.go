@@ -161,7 +161,7 @@ type Session interface {
 	// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
 	CacheGeneralStmt(sql string) (interface{}, error)
 	// ExecutePreparedStmt executes a prepared statement.
-	// ExecutePreparedStmt is deprecated, please use ExecuteStmt, it's kept for testing only.
+	// Deprecated: please use ExecuteStmt, this function is left for testing only.
 	// TODO: remove ExecutePreparedStmt.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
