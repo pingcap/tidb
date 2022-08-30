@@ -1024,12 +1024,12 @@ func TestScanOnSmallTable(t *testing.T) {
 	}
 
 	rs := tk.MustQuery("explain select * from t").Rows()
-	useTiKVScan := false
+	useTiKVScan := true
 	for _, r := range rs {
 		op := r[0].(string)
 		task := r[2].(string)
 		if strings.Contains(op, "Scan") && strings.Contains(task, "tikv") {
-			useTiKVScan = true
+			useTiKVScan = false
 		}
 	}
 	require.True(t, useTiKVScan)
