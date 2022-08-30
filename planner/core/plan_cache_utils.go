@@ -15,6 +15,14 @@
 package core
 
 import (
+	"context"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/planner"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/sqlexec"
+	"golang.org/x/exp/slices"
 	"math"
 	"strconv"
 	"time"
@@ -40,6 +48,140 @@ var (
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
+
+type paramMarkerExtractor struct {
+	markers []ast.ParamMarkerExpr
+}
+
+func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
+	return in, false
+}
+
+func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
+	if x, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.markers = append(e.markers, x)
+	}
+	return in, true
+}
+
+func GeneratePlanCacheStmt(ctx context.Context, sctx sessionctx.Context, paramSQL string) (*PlanCacheStmt, Plan, error) {
+	vars := sctx.GetSessionVars()
+	charset, collation := vars.GetCharsetInfo()
+	var (
+		stmts []ast.StmtNode
+		err   error
+	)
+	if sqlParser, ok := sctx.(sqlexec.SQLParser); ok {
+		// FIXME: ok... yet another parse API, may need some api interface clean.
+		stmts, _, err = sqlParser.ParseSQL(ctx, paramSQL,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
+	} else {
+		p := parser.New()
+		p.SetParserConfig(vars.BuildParserConfig())
+		var warns []error
+		stmts, warns, err = p.ParseSQL(paramSQL,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
+		for _, warn := range warns {
+			vars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+		}
+	}
+	if err != nil {
+		return nil, nil, util.SyntaxError(err)
+	}
+	if len(stmts) != 1 {
+		return nil, nil, executor.ErrPrepareMulti
+	}
+	stmt := stmts[0]
+
+	var extractor paramMarkerExtractor
+	stmt.Accept(&extractor)
+
+	// DDL Statements can not accept parameters
+	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
+		return nil, nil, executor.ErrPrepareDDL
+	}
+
+	switch stmt.(type) {
+	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDeleteStmt:
+		return nil, nil, executor.ErrUnsupportedPs
+	}
+
+	// Prepare parameters should NOT over 2 bytes(MaxUint16)
+	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
+	if len(extractor.markers) > math.MaxUint16 {
+		return nil, nil, executor.ErrPsManyParam
+	}
+
+	ret := &PreprocessorReturn{}
+	err = Preprocess(sctx, stmt, InPrepare, WithPreprocessorReturn(ret))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The parameter markers are appended in visiting order, which may not
+	// be the same as the position order in the query string. We need to
+	// sort it by position.
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) bool {
+		return i.(*driver.ParamMarkerExpr).Offset < j.(*driver.ParamMarkerExpr).Offset
+	})
+	ParamCount := len(extractor.markers)
+	for i := 0; i < ParamCount; i++ {
+		extractor.markers[i].SetOrder(i)
+	}
+
+	prepared := &ast.Prepared{
+		Stmt:          stmt,
+		StmtType:      executor.GetStmtLabel(stmt),
+		Params:        extractor.markers,
+		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
+	}
+	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+
+	var (
+		normalizedSQL4PC, digest4PC string
+		selectStmtNode              ast.StmtNode
+	)
+	if vars.EnablePreparedPlanCache {
+		prepared.UseCache = false
+	} else {
+		prepared.UseCache = CacheableWithCtx(sctx, stmt, ret.InfoSchema)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = planner.ExtractSelectAndNormalizeDigest(stmt, vars.CurrentDB)
+		if err != nil || selectStmtNode == nil {
+			normalizedSQL4PC = ""
+			digest4PC = ""
+		}
+	}
+
+	// We try to build the real statement of preparedStmt.
+	for i := range prepared.Params {
+		param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		param.Datum.SetNull()
+		param.InExecute = false
+	}
+
+	var p Plan
+	destBuilder, _ := NewPlanBuilder().Init(sctx, ret.InfoSchema, &hint.BlockHintProcessor{})
+	p, err = destBuilder.Build(ctx, stmt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	preparedObj := &PlanCacheStmt{
+		PreparedAst:         prepared,
+		StmtDB:              vars.CurrentDB,
+		StmtText:            stmt.Text(),
+		VisitInfos:          destBuilder.GetVisitInfo(),
+		NormalizedSQL:       normalizedSQL,
+		SQLDigest:           digest,
+		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
+		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
+		NormalizedSQL4PC:    normalizedSQL4PC,
+		SQLDigest4PC:        digest4PC,
+	}
+	return preparedObj, p, nil
+}
 
 func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
 	cache := sctx.GetPlanCache(isGeneralPlanCache)
