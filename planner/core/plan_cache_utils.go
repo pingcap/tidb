@@ -53,23 +53,7 @@ func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key
 
 func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue, paramTypes []*types.FieldType) {
 	cache := sctx.GetPlanCache(isGeneralPlanCache).(*LRUPlanCache)
-	val, exist := cache.Get(key, paramTypes)
-	if !exist {
-		cache.Put(key, plan, paramTypes)
-		return
-	}
-	candidates := val.([]*PlanCacheValue)
-	for i, candidate := range candidates {
-		if candidate.varTypesUnchanged(plan.ParamTypes) {
-			// hit an existing cached plan
-			candidates[i] = plan
-			return
-		}
-	}
-	// add to current candidate list
-	// TODO: limit the candidate list length
-	candidates = append(candidates, plan)
-	cache.Put(key, candidates, paramTypes)
+	cache.Put(key, plan, paramTypes)
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
