@@ -70,16 +70,14 @@ func pickFromBucket(bucket map[*list.Element]struct{}, ptypes []*types.FieldType
 
 func TestLRUPCPut(t *testing.T) {
 	// test initialize
-	lruA, errA := NewLRUPlanCache(0, pickFromBucket)
-	require.Nil(t, lruA)
-	require.Error(t, errA, "capacity of LRU Cache should be at least 1")
+	lruA := NewLRUPlanCache(0, pickFromBucket)
+	require.Equal(t, lruA.capacity, uint(100))
 
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
-	lru, err := NewLRUPlanCache(3, pickFromBucket)
+	lru := NewLRUPlanCache(3, pickFromBucket)
 	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
 		maxMemDroppedKv[key] = value
 	}
-	require.NoError(t, err)
 	require.Equal(t, uint(3), lru.capacity)
 
 	keys := make([]*mockCacheKey, 5)
@@ -147,8 +145,7 @@ func TestLRUPCPut(t *testing.T) {
 }
 
 func TestLRUPCGet(t *testing.T) {
-	lru, err := NewLRUPlanCache(3, pickFromBucket)
-	require.NoError(t, err)
+	lru := NewLRUPlanCache(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -197,8 +194,7 @@ func TestLRUPCGet(t *testing.T) {
 }
 
 func TestLRUPCDelete(t *testing.T) {
-	lru, err := NewLRUPlanCache(3, pickFromBucket)
-	require.NoError(t, err)
+	lru := NewLRUPlanCache(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
@@ -230,8 +226,7 @@ func TestLRUPCDelete(t *testing.T) {
 }
 
 func TestLRUPCDeleteAll(t *testing.T) {
-	lru, err := NewLRUPlanCache(3, pickFromBucket)
-	require.NoError(t, err)
+	lru := NewLRUPlanCache(3, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
@@ -261,11 +256,10 @@ func TestLRUPCDeleteAll(t *testing.T) {
 
 func TestLRUPCSetCapacity(t *testing.T) {
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
-	lru, err := NewLRUPlanCache(5, pickFromBucket)
+	lru := NewLRUPlanCache(5, pickFromBucket)
 	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
 		maxMemDroppedKv[key] = value
 	}
-	require.NoError(t, err)
 	require.Equal(t, uint(5), lru.capacity)
 
 	keys := make([]*mockCacheKey, 5)
@@ -289,7 +283,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	require.Equal(t, lru.size, lru.capacity)
 	require.Equal(t, uint(5), lru.size)
 
-	err = lru.SetCapacity(3)
+	err := lru.SetCapacity(3)
 	require.NoError(t, err)
 
 	// test for non-existent elements
@@ -323,5 +317,5 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	require.Nil(t, root)
 
 	err = lru.SetCapacity(0)
-	require.Error(t, err, "capacity of lru cache should be at least 1")
+	require.Error(t, err, "capacity of LRU cache should be at least 1")
 }
