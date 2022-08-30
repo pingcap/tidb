@@ -47,13 +47,8 @@ func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key
 	if !exist {
 		return nil, exist
 	}
-	candidates := val.([]*PlanCacheValue)
-	for _, candidate := range candidates {
-		if candidate.varTypesUnchanged(paramTypes) {
-			return candidate, true
-		}
-	}
-	return nil, false
+	candidate := val.(*PlanCacheValue)
+	return candidate, true
 }
 
 func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue, paramTypes []*types.FieldType) {
