@@ -39,6 +39,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/parser/ast"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -238,7 +239,15 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []expression.Expression, useCursor bool) (bool, error) {
-	rs, err := stmt.Execute(ctx, args)
+	prepStmt, err := (&cc.ctx).GetSessionVars().GetPreparedStmtByID(uint32(stmt.ID()))
+	if err != nil {
+		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
+	}
+	execStmt := &ast.ExecuteStmt{
+		BinaryArgs: args,
+		PrepStmt:   prepStmt,
+	}
+	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
