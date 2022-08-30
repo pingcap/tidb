@@ -15,10 +15,10 @@ package core
 
 import (
 	"container/list"
-	"github.com/pingcap/log"
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -174,4 +174,15 @@ func (l *LRUPlanCache) removeOldest() {
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
 	bucket := l.buckets[string(hack.String(element.Value.(*planCacheEntry).PlanKey.Hash()))]
 	delete(bucket, element)
+}
+
+// PickPlanFromBucket pick one plan from bucket
+func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.FieldType) (*list.Element, bool) {
+	for k := range bucket {
+		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
+		if plan.ParamTypes.CheckTypesCompatibility4PC(paramTypes) {
+			return k, true
+		}
+	}
+	return nil, false
 }
