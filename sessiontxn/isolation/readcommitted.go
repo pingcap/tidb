@@ -138,16 +138,16 @@ func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
 		// statements which makes tso wait time a little more for text protocol sql
 		switch v := realNode.(type) {
 		case *ast.InsertStmt:
-			disableWarmup = v.Select == nil && sessionVars.RcWriteCheckTS
+			disableWarmup = v.Select == nil
 		case *ast.UpdateStmt:
-			disableWarmup = sessionVars.RcWriteCheckTS
+			disableWarmup = true
 		case *ast.DeleteStmt:
-			disableWarmup = sessionVars.RcWriteCheckTS
+			disableWarmup = true
 		case *ast.SelectStmt:
 			if v.LockInfo != nil && (v.LockInfo.LockType == ast.SelectLockForUpdate ||
 				v.LockInfo.LockType == ast.SelectLockForUpdateNoWait ||
 				v.LockInfo.LockType == ast.SelectLockForUpdateWaitN) {
-				disableWarmup = sessionVars.RcWriteCheckTS
+				disableWarmup = true
 			}
 		}
 	}
@@ -317,14 +317,14 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 // 4. A DELETE statement whose execution plan is "PointGet".
 // The function `planner.Optimize` always calls the `txnManger.AdviseWarmup` to warmup in the past, it makes a tso request
 // for all sqls except `SELECT` with RcCheckTs, but whether to use the tso request and wait it depends on `AdviseOptimizeWithPlan`.
-// (a) text protocol request
+// (a) non-prepare statments
 // For insert statements without select subquery, they always don't use the tso above, don't wait for it either.
-// If tidb_rc_insert_use_last_tso is ON, we don't make tso requests too, we use the p.latestOracleTS.
-// If tidb_rc_insert_use_last_tso is OFF, we make tso requests but don't wait.
-// For update/delete/select statements, if tidb_rc_point_lock_read_use_last_tso is ON, we don't make tso requests,
+// If tidb_rc_write_check_ts is ON, we don't make tso requests too, we use the p.latestOracleTS.
+// If tidb_rc_write_check_ts is OFF, we make tso requests but don't wait.
+// For update/delete/select statements, if tidb_rc_write_check_ts is ON, we don't make tso requests,
 // we use the p.latestOracleTS.
-// (b) binary protocol request (prepare mode)
-// The behavior is like text protocol request at most time, except that it can get a plan from plan cache,
+// (b) prepare statements
+// The behavior is like non-prepare statments at most time, except that it can get a plan from plan cache,
 // when optimizer never calls `txnManager.AdviseWarmup`.
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
