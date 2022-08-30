@@ -15,9 +15,14 @@
 package size
 
 const (
+	// KB is the kilobytes.
 	KB = uint64(1024)
+	// MB is the megabytes.
 	MB = KB * 1024
+	// GB is the gigabytes.
 	GB = MB * 1024
+	// TB is the terabytes.
 	TB = GB * 1024
+	// PB is the petabytes.
 	PB = TB * 1024
 )
