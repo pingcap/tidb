@@ -1031,7 +1031,6 @@ func (s *tiflashTestSuite) TestTiflashEmptyDynamicPruneResult(c *C) {
 	tb := testGetTableByName(c, tk.Se, "test", "IDT_RP24833")
 	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
-	time.Sleep(2 * time.Second)
 
 	tk.MustExec("insert into IDT_RP24833 values(-8448770111093677011, \"郇鋺篤堯擈斥鍮啸赠璭饱磟朅闑傒聎疫ᛄ怖霃\", \"8781-05-02 04:23:03\", -27252736532807028, -1.34554e38);")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
