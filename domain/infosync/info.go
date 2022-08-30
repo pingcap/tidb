@@ -1178,7 +1178,7 @@ func SetEtcdClient(etcdCli *clientv3.Client) {
 	is.etcdCli = etcdCli
 }
 
-// GetEtcdClient is only used for test
+// GetEtcdClient is only used for test.
 func GetEtcdClient() *clientv3.Client {
 	is, err := getGlobalInfoSyncer()
 
