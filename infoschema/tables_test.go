@@ -16,6 +16,7 @@ package infoschema_test
 
 import (
 	"fmt"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"math"
 	"os"
 	"strings"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,7 +53,8 @@ func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64)})
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100,
+		0.1, math.MaxUint64, plannercore.PickPlanFromBucket)})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()

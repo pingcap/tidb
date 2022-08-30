@@ -42,8 +42,8 @@ var (
 )
 
 func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
-	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	val, exist := cache.Get(key)
+	cache := sctx.GetPlanCache(isGeneralPlanCache).(*LRUPlanCache)
+	val, exist := cache.Get(key, paramTypes)
 	if !exist {
 		return nil, exist
 	}
@@ -56,11 +56,11 @@ func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key
 	return nil, false
 }
 
-func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue) {
-	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	val, exist := cache.Get(key)
+func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue, paramTypes []*types.FieldType) {
+	cache := sctx.GetPlanCache(isGeneralPlanCache).(*LRUPlanCache)
+	val, exist := cache.Get(key, paramTypes)
 	if !exist {
-		cache.Put(key, []*PlanCacheValue{plan})
+		cache.Put(key, plan, paramTypes)
 		return
 	}
 	candidates := val.([]*PlanCacheValue)
@@ -74,7 +74,7 @@ func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvca
 	// add to current candidate list
 	// TODO: limit the candidate list length
 	candidates = append(candidates, plan)
-	cache.Put(key, candidates)
+	cache.Put(key, candidates, paramTypes)
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.

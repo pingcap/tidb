@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
@@ -108,7 +107,7 @@ type Context interface {
 
 	// GetPlanCache returns the cache of the physical plan.
 	// generalPlanCache indicates to return the general plan cache or the prepared plan cache.
-	GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache
+	GetPlanCache(isGeneralPlanCache bool) interface{}
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
