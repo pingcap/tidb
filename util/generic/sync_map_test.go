@@ -12,17 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package lightning
+package generic_test
 
 import (
 	"sort"
 	"testing"
 
+	"github.com/pingcap/tidb/util/generic"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSyncMap(t *testing.T) {
-	sm := NewSyncMap[int64, string](10)
+	sm := generic.NewSyncMap[int64, string](10)
 	sm.Store(1, "a")
 	sm.Store(2, "b")
 	// Load an exist key.
@@ -51,7 +52,7 @@ func TestSyncMap(t *testing.T) {
 	require.Equal(t, "", v)
 
 	// Test the Keys() method.
-	sm = NewSyncMap[int64, string](10)
+	sm = generic.NewSyncMap[int64, string](10)
 	sm.Store(2, "b")
 	sm.Store(1, "a")
 	sm.Store(3, "c")
