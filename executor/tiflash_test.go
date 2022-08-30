@@ -982,16 +982,15 @@ func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
 	c.Assert(strings.Contains(res, "tikv"), IsTrue)
 }
 
-func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlash(2))
-	tk := testkit.NewTestKit(t, store)
+func (s *tiflashTestSuite) TestTiflashEmptyDynamicPruneResult(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `IDT_RP24833` (  `COL1` bigint(16) DEFAULT '15' COMMENT 'NUMERIC UNIQUE INDEX',\n  `COL2` varchar(20) DEFAULT NULL,\n  `COL4` datetime DEFAULT NULL,\n  `COL3` bigint(20) DEFAULT NULL,\n  `COL5` float DEFAULT NULL,\n  KEY `UK_COL1` (`COL1`) /*!80000 INVISIBLE */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ((`COL1`-57))\n(PARTITION `P0` VALUES LESS THAN (-3503857335115112215),\n PARTITION `P1` VALUES LESS THAN (-2987877108151063747),\n PARTITION `P2` VALUES LESS THAN (-1981049919102122710),\n PARTITION `P3` VALUES LESS THAN (-1635802972727465681),\n PARTITION `P4` VALUES LESS THAN (1186020639986357714),\n PARTITION `P5` VALUES LESS THAN (1220018677454711359),\n PARTITION `PMX` VALUES LESS THAN (MAXVALUE));")
 	tk.MustExec("alter table IDT_RP24833 set tiflash replica 1")
-	tb := external.GetTableByName(t, tk, "test", "IDT_RP24833")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
+	tb := testGetTableByName(c, tk.Se, "test", "IDT_RP24833")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
 	time.Sleep(2 * time.Second)
 
 	tk.MustExec("insert into IDT_RP24833 values(-8448770111093677011, \"郇鋺篤堯擈斥鍮啸赠璭饱磟朅闑傒聎疫ᛄ怖霃\", \"8781-05-02 04:23:03\", -27252736532807028, -1.34554e38);")
