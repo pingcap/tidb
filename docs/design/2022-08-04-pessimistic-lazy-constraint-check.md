@@ -157,3 +157,12 @@ First, atomicity is not affected. Although we skip the locking phase for some of
 The uniqueness constraints are also preserved. For all the keys with a `PresumeKeyNotExists` flag, we check the constraint either when prewriting them, or when acquiring the pessimistic locks like in the case of [Locking Lazy Checked Keys](#behavior-of-locking-lazy-checked-keys) above. So we can guarantee no duplicated entry exists after committing the transaction. In the case of "rollback to savepoint", some keys that need constraint checks may be unchanged in the end, but we will still check the constraints for them in prewrite to make sure the client does not miss any errors.
 
 Due to the "read committed" semantics of DMLs in pessimistic transactions, the late locking could succeed even if duplicated entries exist at the time of `INSERT` because other transactions remove the duplicated entry after that. From the view of our transaction, it's equivalent to the case when other transactions remove the duplicated entry before our `INSERT`. There will be no data corruption after the transaction commits.
+
+#### Safety with multiple operations in one statement
+
+In current TiDB(<=6.2) implementation, the locking phase of pessimistic DML (except SELECT FOR UPDATE) begins after executors. If there are multiple operations on one key in the execution phase, they may not behave like what we expect. For example in the same statement there are operations:
+
+1. write a key without the NeedConstraintCheckInPrewrite flag. This may be a normal locking request or because of compensating a deferred lock.
+2. write the same key with the NeedConstraintCheckInPrewrite flag
+
+In the locking phase we will not acquire pessimistic lock for the key because the NeedConstraintCheckInPrewrite flag is set. This should not happen in the current TiDB implementation, but is noteworthy.
