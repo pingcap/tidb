@@ -69,7 +69,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 		}
 		return tbInfo, errors.Trace(err)
 	}
-	// allocate foreign key ID.
+	// Allocate foreign key ID.
 	for _, fkInfo := range tbInfo.ForeignKeys {
 		fkInfo.ID = allocateFKIndexID(tbInfo)
 		fkInfo.State = model.StatePublic

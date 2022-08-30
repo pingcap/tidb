@@ -240,7 +240,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 		return infoschema.ErrCannotAddForeign
 	}
 
-	// check refer columns in paren table.
+	// check refer columns in parent table.
 	for i := range fkInfo.RefCols {
 		refCol := model.FindColumnInfo(referTblInfo.Columns, fkInfo.RefCols[i].L)
 		if refCol == nil {

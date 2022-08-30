@@ -1809,7 +1809,7 @@ func BuildTableInfo(
 			if constr.Name != "" {
 				fkName = model.NewCIStr(constr.Name)
 			} else {
-				fkName = model.NewCIStr(fmt.Sprintf("fk_%v", foreignKeyID))
+				fkName = model.NewCIStr(fmt.Sprintf("fk_%d", foreignKeyID))
 			}
 			if model.FindFKInfoByName(tbInfo.ForeignKeys, fkName.L) != nil {
 				return nil, infoschema.ErrCannotAddForeign
@@ -1924,10 +1924,8 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 			continue
 		}
 		idxName := fk.Name
-		for _, idx := range tbInfo.Indices {
-			if idx.Name.L == idxName.L {
-				return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", fk.Name.O)
-			}
+		if tbInfo.FindIndexByName(idxName.L) != nil {
+			return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", fk.Name.O)
 		}
 		keys := make([]*ast.IndexPartSpecification, 0, len(fk.Cols))
 		for _, col := range fk.Cols {
