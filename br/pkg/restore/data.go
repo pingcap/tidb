@@ -78,16 +78,6 @@ func NewStoreMeta(storeId uint64) StoreMeta {
 	return StoreMeta{storeId, meta}
 }
 
-type RecoveryPlan struct {
-	storeId      uint64
-	recoveryPlan []*recovpb.RecoverCmdRequest
-}
-
-func NewRecoveryPlan(storeId uint64) RecoveryPlan {
-	var meta = make([]*recovpb.RecoverCmdRequest, 0)
-	return RecoveryPlan{storeId, meta}
-}
-
 type Recovery struct {
 	allStores    []*metapb.Store
 	storeMetas   []StoreMeta
