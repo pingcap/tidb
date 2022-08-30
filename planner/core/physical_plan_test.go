@@ -1034,6 +1034,76 @@ func TestLimitToCopHint(t *testing.T) {
 	}
 }
 
+func TestCTEMergeHint(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tc")
+	tk.MustExec("drop table if exists te")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table tc(a int)")
+	tk.MustExec("create table te(c int)")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(b int)")
+	tk.MustExec("create table t3(c int)")
+	tk.MustExec("create table t4(d int)")
+	tk.MustExec("insert into tc values (1), (5), (10), (15), (20), (30), (50);")
+	tk.MustExec("insert into te values (1), (5), (10), (25), (40), (60), (100);")
+	tk.MustExec("insert into t1 values (1), (5), (10), (25), (40), (60), (100);")
+	tk.MustExec("insert into t2 values (1), (5), (10), (25), (40), (60), (100);")
+	tk.MustExec("insert into t3 values (1), (5), (10), (25), (40), (60), (100);")
+	tk.MustExec("insert into t4 values (1), (5), (10), (25), (40), (60), (100);")
+	tk.MustExec("analyze table tc;")
+	tk.MustExec("analyze table te;")
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("analyze table t2;")
+	tk.MustExec("analyze table t3;")
+	tk.MustExec("analyze table t4;")
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.GetTestCases(t, &input, &output)
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+
+		comment := fmt.Sprintf("case:%v sql:%s", i, ts)
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		testdata.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = make([]string, len(warnings))
+				for j, warning := range warnings {
+					output[i].Warning[j] = warning.Err.Error()
+				}
+			}
+		})
+		if len(output[i].Warning) == 0 {
+			require.Len(t, warnings, 0)
+		} else {
+			require.Len(t, warnings, len(output[i].Warning), comment)
+			for j, warning := range warnings {
+				require.Equal(t, stmtctx.WarnLevelWarning, warning.Level, comment)
+				require.Equal(t, output[i].Warning[j], warning.Err.Error(), comment)
+			}
+		}
+	}
+}
+
 func TestPushdownDistinctEnable(t *testing.T) {
 	var (
 		input  []string
