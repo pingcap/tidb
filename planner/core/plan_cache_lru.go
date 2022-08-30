@@ -15,10 +15,10 @@ package core
 
 import (
 	"container/list"
-	"github.com/pingcap/log"
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
