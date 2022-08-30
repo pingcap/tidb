@@ -974,6 +974,9 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk2.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
 	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+	if *testkit.WithTiKV == "" {
+		tk.MustExec("set @@tidb_txn_assertion_level=off")
+	}
 
 	// case: success
 	tk.MustExec("begin pessimistic")
@@ -993,16 +996,15 @@ func TestDeferConstraintCheck(t *testing.T) {
 
 	// case: constraint check failure
 	tk.MustExec("create table t2 (id int primary key, uk int, unique key i1(uk))")
-	tk.MustExec("set @@tidb_txn_assertion_level=off")
 	tk.MustExec("insert into t2 values (1, 1)")
 	tk.MustExec("begin pessimistic")
-	tk.MustExec("insert into t2 values (2, 1)")
+	tk.MustExec("insert into t2 values (2, 1), (3, 3)")
 	// NOTE: this read breaks constraint, but we are not able to return an error here.
 	// We can only guarantee the txn should not commit
-	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
+	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1", "3 3"))
 	err := tk.ExecToErr("commit")
 	require.Error(t, err)
-	println("ah", err.Error())
+	require.Contains(t, err.Error(), "Duplicate entry '1' for key 'i1'")
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
 
@@ -1013,7 +1015,7 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk2.MustExec("insert into t3 values (1, 2)")
 	err = tk.ExecToErr("commit")
 	require.Error(t, err)
-	println("ah", err.Error())
+	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
 
 	// case: DML returns error => abort txn
 	tk.MustExec("create table t4 (id int primary key, v int, key i1(v))")
