@@ -162,6 +162,8 @@ type Session interface {
 	// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
 	CacheGeneralStmt(sql string) (interface{}, error)
 	// ExecutePreparedStmt executes a prepared statement.
+	// ExecutePreparedStmt is deprecated, please use ExecuteStmt, it's kept for testing only.
+	// TODO: remove ExecutePreparedStmt.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
 	// ExecuteGeneralStmt executes a general statement.
 	ExecuteGeneralStmt(ctx context.Context, sql string, param []expression.Expression) (sqlexec.RecordSet, error)
@@ -2411,7 +2413,11 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 	if !ok {
 		return nil, errors.Errorf("invalid PlanCacheStmt type")
 	}
-	return s.executePlanCacheStmt(ctx, stmt, params)
+	execStmt := &ast.ExecuteStmt{
+		BinaryArgs: params,
+		PrepStmt:   stmt,
+	}
+	return s.ExecuteStmt(ctx, execStmt)
 }
 
 // ExecuteGeneralStmt executes a general statement.
