@@ -967,6 +967,8 @@ var hintTokenMap = map[string]int{
 	"MATERIALIZATION": hintMaterialization,
 }
 
+var parameterizeTokenMap = map[string]int{}
+
 func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	// An identifier before or after '.' means it is part of a qualified identifier.
 	// We do not parse it as keyword.

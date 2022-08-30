@@ -17,13 +17,7 @@ package parser
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/types"
 )
 
 %}
@@ -39,46 +33,46 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier "identifier"
+	pIdentifier "identifier"
 
 	/*yy:token "\"%c\"" */
-	stringLit "string literal"
-	andand    "&&"
-	pipes     "||"
+	pStringLit "string literal"
+	pAndand    "&&"
+	pPipes     "||"
 
 	/* TODO: Useless for the ReservedKeyword in parameterizer */
 	/* The following tokens belong to ReservedKeyword. Notice: make sure these tokens are contained in ReservedKeyword. */
-	as         "AS"
-	and        "AND"
-	charType   "CHAR"
-	doubleType "DOUBLE"
-	from       "FROM"
-	intType    "INT"
-	selectKwd  "SELECT"
-	where      "WHERE"
-	falseKwd   "FALSE"
-	trueKwd    "TRUE"
-	null       "NULL"
-	or         "OR"
+	pAs         "AS"
+	pAnd        "AND"
+	pCharType   "CHAR"
+	pDoubleType "DOUBLE"
+	pFrom       "FROM"
+	pIntType    "INT"
+	pSelectKwd  "SELECT"
+	pWhere      "WHERE"
+	pFalseKwd   "FALSE"
+	pTrueKwd    "TRUE"
+	pNull       "NULL"
+	pOr         "OR"
 
 %token	<item>
 
 	/*yy:token "1.%d"   */
-	floatLit "floating-point literal"
+	pFloatLit "floating-point literal"
 
 	/*yy:token "%d"     */
-	intLit "integer literal"
+	pIntLit "integer literal"
 
 	/*yy:token "%b"     */
-	bitLit       "bit literal"
-	andnot       "&^"
-	assignmentEq ":="
-	eq           "="
-	ge           ">="
-	le           "<="
-	neq          "!="
-	neqSynonym   "<>"
-	nulleq       "<=>"
+	pBitLit       "bit literal"
+	pAndnot       "&^"
+	pAssignmentEq ":="
+	pEq           "="
+	pGe           ">="
+	pLe           "<="
+	pNeq          "!="
+	pNeqSynonym   "<>"
+	pNulleq       "<=>"
 
 %type	<expr>
 	Expression    "expression"
@@ -121,11 +115,11 @@ import (
 
 %precedence empty
 %precedence lowerThanStringLitToken
-%precedence stringLit
-%precedence selectKwd
-%left pipes
-%left or
-%left andand and
+%precedence pStringLit
+%precedence pSelectKwd
+%left pPipes
+%left pOr
+%left pAndand pAnd
 %left '|'
 %left '&'
 %left '-' '+'
@@ -312,7 +306,7 @@ WhereClause:
 	}
 
 Expression:
-	Expression logOr Expression %prec pipes
+	Expression logOr Expression %prec pPipes
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
@@ -320,7 +314,7 @@ Expression:
 		builder.WriteString($3)
 		$$ = builder.String()
 	}
-|	Expression logAnd Expression %prec andand
+|	Expression logAnd Expression %prec pAndand
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
@@ -331,7 +325,7 @@ Expression:
 |	BoolPri
 
 BoolPri:
-	BoolPri CompareOp PredicateExpr %prec eq
+	BoolPri CompareOp PredicateExpr %prec pEq
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
@@ -482,13 +476,13 @@ Literal:
 		parser.params = append(parser.params, s)
 		$$ = "?"
 	}
-|	floatLit
+|	pFloatLit
 	{
 		s := ast.NewValueExpr($1, parser.charset, parser.collation)
 		parser.params = append(parser.params, s)
 		$$ = "?"
 	}
-|	intLit
+|	pIntLit
 	{
 		s := ast.NewValueExpr($1, parser.charset, parser.collation)
 		parser.params = append(parser.params, s)
@@ -497,7 +491,7 @@ Literal:
 |	StringLiteral %prec lowerThanStringLitToken
 
 StringLiteral:
-	stringLit
+	pStringLit
 	{
 		s := ast.NewValueExpr($1, parser.charset, parser.collation)
 		parser.params = append(parser.params, s)
@@ -525,5 +519,5 @@ Statement:
 
 /**********************************Identifier********************************************/
 Identifier:
-	identifier
+	pIdentifier
 %%

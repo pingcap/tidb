@@ -26,6 +26,7 @@ import (
 )
 
 var _ = yyLexer(&Scanner{})
+var _ = yyparameterizeLexer(&Scanner4Parameterize{})
 
 // Pos represents the position of a token.
 type Pos struct {
@@ -80,6 +81,11 @@ type Scanner struct {
 
 	// true if a dot follows an identifier
 	identifierDot bool
+}
+
+// Scanner4Parameterize implements the yyparameterizeLexer interface.
+type Scanner4Parameterize struct {
+	*Scanner
 }
 
 // Errors returns the errors and warns during a scan.
@@ -264,6 +270,77 @@ func (s *Scanner) Lex(v *yySymType) int {
 	return tok
 }
 
+// Lex returns a token and store the token value in v.
+// Scanner4Parameterize satisfies yyparameterizeLexer interface.
+// 0 and invalid are special token id this function would return:
+// return 0 tells parser that scanner meets EOF,
+// return invalid tells parser that scanner meets illegal character.
+func (s *Scanner4Parameterize) Lex(v *yyparameterizeSymType) int {
+	tok, pos, lit := s.scan()
+	s.lastScanOffset = pos.Offset
+	s.lastKeyword3 = s.lastKeyword2
+	s.lastKeyword2 = s.lastKeyword
+	s.lastKeyword = 0
+	v.offset = pos.Offset
+	v.ident = lit
+	if tok == identifier {
+		tok = s.handleIdent(v)
+	}
+	if tok == identifier {
+		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
+			tok = tok1
+			s.lastKeyword = tok1
+		}
+	}
+	if s.sqlMode.HasANSIQuotesMode() &&
+		tok == stringLit &&
+		s.r.s[v.offset] == '"' {
+		tok = identifier
+	}
+
+	if tok == pipes && !(s.sqlMode.HasPipesAsConcatMode()) {
+		return pipesAsOr
+	}
+
+	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
+		return not2
+	}
+	if tok == pAs && s.getNextToken() == of {
+		_, pos, lit = s.scan()
+		v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+		s.lastKeyword = asof
+		s.lastScanOffset = pos.Offset
+		v.offset = pos.Offset
+		return asof
+	}
+
+	switch tok {
+	case intLit:
+		return toInt4Parameterize(s, v, lit)
+	case floatLit:
+		return toFloat4Parameterize(s, v, lit)
+	case decLit:
+		return toDecimal4Parameterize(s, v, lit)
+	case hexLit:
+		return toHex4Parameterize(s, v, lit)
+	case bitLit:
+		return toBit4Parameterize(s, v, lit)
+	case singleAtIdentifier, doubleAtIdentifier, cast, extract:
+		v.item = lit
+		return tok
+	case null:
+		v.item = nil
+	case quotedIdentifier, identifier:
+		tok = identifier
+		s.identifierDot = s.r.peek() == '.'
+		tok, v.ident = s.convert2System(tok, lit)
+	case stringLit:
+		tok, v.ident = s.convert2Connection(tok, lit)
+	}
+
+	return tok
+}
+
 // LexLiteral returns the value of the converted literal
 func (s *Scanner) LexLiteral() interface{} {
 	symType := &yySymType{}
@@ -307,6 +384,22 @@ func NewScanner(s string) *Scanner {
 }
 
 func (*Scanner) handleIdent(lval *yySymType) int {
+	str := lval.ident
+	// A character string literal may have an optional character set introducer and COLLATE clause:
+	// [_charset_name]'string' [COLLATE collation_name]
+	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+	if !strings.HasPrefix(str, "_") {
+		return identifier
+	}
+	cs, _ := charset.GetCharsetInfo(str[1:])
+	if cs == nil {
+		return identifier
+	}
+	lval.ident = cs.Name
+	return underscoreCS
+}
+
+func (*Scanner4Parameterize) handleIdent(lval *yyparameterizeSymType) int {
 	str := lval.ident
 	// A character string literal may have an optional character set introducer and COLLATE clause:
 	// [_charset_name]'string' [COLLATE collation_name]
