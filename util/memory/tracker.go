@@ -654,6 +654,7 @@ func (t *Tracker) setParent(parent *Tracker) {
 	t.parMu.parent = parent
 }
 
+// CountAllChildrenMemUse return memory used tree for the tracker
 func (t *Tracker) CountAllChildrenMemUse() map[string]int64 {
 	trackerMemUseMap := make(map[string]int64, 1024)
 	countChildMem(t, "", trackerMemUseMap)
@@ -673,7 +674,6 @@ func countChildMem(t *Tracker, familyTreeName string, trackerMemUseMap map[strin
 			countChildMem(tracker, familyTreeName, trackerMemUseMap)
 		}
 	}
-	return
 }
 
 const (
