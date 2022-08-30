@@ -36,7 +36,7 @@ func (m *SyncMap[K, V]) Store(key K, value V) {
 	m.mu.Unlock()
 }
 
-// Load loads a value.
+// Load loads a key value.
 func (m *SyncMap[K, V]) Load(key K) (V, bool) {
 	m.mu.RLock()
 	val, exist := m.item[key]
@@ -44,8 +44,8 @@ func (m *SyncMap[K, V]) Load(key K) (V, bool) {
 	return val, exist
 }
 
-// Drop drops a value.
-func (m *SyncMap[K, V]) Drop(key K) {
+// Delete deletes a key value.
+func (m *SyncMap[K, V]) Delete(key K) {
 	m.mu.Lock()
 	delete(m.item, key)
 	m.mu.Unlock()

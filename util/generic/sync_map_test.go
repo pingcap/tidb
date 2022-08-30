@@ -40,12 +40,12 @@ func TestSyncMap(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "c", v)
 	// Drop an exist key.
-	sm.Drop(1)
+	sm.Delete(1)
 	v, ok = sm.Load(1)
 	require.False(t, ok)
 	require.Equal(t, "", v)
 	// Drop a non-exist key.
-	sm.Drop(3)
+	sm.Delete(3)
 	require.Equal(t, []int64{2}, sm.Keys())
 	v, ok = sm.Load(3)
 	require.False(t, ok)
