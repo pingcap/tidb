@@ -196,3 +196,14 @@ func (l *LRUPlanCache) memoryControl() {
 		memUsed, _ = memory.InstanceMemUsed()
 	}
 }
+
+// PickPlanFromBucket pick one plan from bucket
+func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.FieldType) (*list.Element, bool) {
+	for k := range bucket {
+		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
+		if plan.ParamTypes.CheckTypesCompatibility4PC(paramTypes) {
+			return k, true
+		}
+	}
+	return nil, false
+}
