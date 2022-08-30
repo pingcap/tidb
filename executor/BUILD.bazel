@@ -184,6 +184,7 @@ go_library(
         "//util/rowcodec",
         "//util/sem",
         "//util/set",
+        "//util/size",
         "//util/sqlexec",
         "//util/stmtsummary",
         "//util/stringutil",
