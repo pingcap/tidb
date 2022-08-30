@@ -31,10 +31,9 @@ import (
 // 5. send the resolvedTs to tikv for deleting data.
 func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, dumpRegionInfo bool, mgr *conn.Mgr, progress glue.Progress) (int, error) {
 
-	numOfTiKVs := len(allStores)
-	var recovery = NewRecovery(numOfTiKVs, mgr, progress)
+	var recovery = NewRecovery(allStores, mgr, progress)
 
-	err := recovery.ReadRegionMeta(ctx, allStores)
+	err := recovery.ReadRegionMeta(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -52,17 +51,17 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 		return 0, errors.Trace(err)
 	}
 
-	err = recovery.RecoverRegions(ctx, allStores)
+	err = recovery.RecoverRegions(ctx)
 	if err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
-	recovery.WaitApply(ctx, allStores)
+	recovery.WaitApply(ctx)
 	if err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
-	err = recovery.ResolveData(ctx, allStores, resolvedTs)
+	err = recovery.ResolveData(ctx, resolvedTs)
 	if err != nil {
 		return totalRegions, errors.Trace(err)
 	}
@@ -90,7 +89,7 @@ func NewRecoveryPlan(storeId uint64) RecoveryPlan {
 }
 
 type Recovery struct {
-	totalStores  int
+	allStores    []*metapb.Store
 	storeMetas   []StoreMeta
 	recoveryPlan map[uint64][]*recovpb.RecoverCmdRequest
 	maxAllocID   uint64
@@ -99,12 +98,13 @@ type Recovery struct {
 	progress     glue.Progress
 }
 
-func NewRecovery(totalStores int, mgr *conn.Mgr, progress glue.Progress) Recovery {
+func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress) Recovery {
+	totalStores := len(allStores)
 	var storeMetas = make([]StoreMeta, totalStores)
 	var regionRecovers = make(map[uint64][]*recovpb.RecoverCmdRequest, totalStores)
 	var resolvedTs = new(uint64)
 	return Recovery{
-		totalStores:  totalStores,
+		allStores:    allStores,
 		storeMetas:   storeMetas,
 		recoveryPlan: regionRecovers,
 		maxAllocID:   0,
@@ -161,9 +161,9 @@ func getStoreAddress(allStores []*metapb.Store, storeId uint64) string {
 }
 
 // read all region meta from tikvs
-func (recovery *Recovery) ReadRegionMeta(ctx context.Context, allStores []*metapb.Store) error {
+func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 	eg, ectx := errgroup.WithContext(ctx)
-	totalStores := recovery.totalStores
+	totalStores := len(recovery.allStores)
 	workers := utils.NewWorkerPool(uint(totalStores), "Collect Region Meta")
 
 	// TODO: optimize the ErroGroup when TiKV is panic
@@ -172,8 +172,8 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context, allStores []*metap
 
 	for i := 0; i < totalStores; i++ {
 		i := i
-		storeId := allStores[i].GetId()
-		storeAddr := allStores[i].GetAddress()
+		storeId := recovery.allStores[i].GetId()
+		storeAddr := recovery.allStores[i].GetAddress()
 		tikvClient, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
 		if err != nil {
 			return errors.Trace(err)
@@ -229,7 +229,7 @@ func (recovery *Recovery) getTotalRegions() int {
 		storeId := v.storeId
 		for _, m := range v.regionMeta {
 			if regions[m.RegionId] == nil {
-				regions[m.RegionId] = make([]Regions, 0, recovery.totalStores)
+				regions[m.RegionId] = make([]Regions, 0, len(recovery.allStores))
 			}
 			regions[m.RegionId] = append(regions[m.RegionId], Regions{m, storeId})
 		}
@@ -247,7 +247,7 @@ func (recovery *Recovery) dumpRegionInfo() {
 		storeId := v.storeId
 		for _, m := range v.regionMeta {
 			if regions[m.RegionId] == nil {
-				regions[m.RegionId] = make([]Regions, 0, recovery.totalStores)
+				regions[m.RegionId] = make([]Regions, 0, len(recovery.allStores))
 			}
 			regions[m.RegionId] = append(regions[m.RegionId], Regions{m, storeId})
 		}
@@ -270,13 +270,13 @@ func (recovery *Recovery) dumpRegionInfo() {
 
 // send the recovery plan to recovery region (force leader etc)
 // only tikvs have regions whose have to recover be sent
-func (recovery *Recovery) RecoverRegions(ctx context.Context, allStores []*metapb.Store) (err error) {
+func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalRecoveredStores := len(recovery.recoveryPlan)
 	workers := utils.NewWorkerPool(uint(totalRecoveredStores), "Recover Regions")
 
 	for storeId, plan := range recovery.recoveryPlan {
-		storeAddr := getStoreAddress(allStores, storeId)
+		storeAddr := getStoreAddress(recovery.allStores, storeId)
 		tikvClient, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
 		if err != nil {
 			log.Error("create tikv client failed", zap.Uint64("storeID", storeId))
@@ -315,13 +315,13 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context, allStores []*metap
 }
 
 // send wait apply to all tikv ensure all region peer apply log into the last
-func (recovery *Recovery) WaitApply(ctx context.Context, allStores []*metapb.Store) (err error) {
+func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	totalStores := len(allStores)
+	totalStores := len(recovery.allStores)
 	workers := utils.NewWorkerPool(uint(totalStores), "wait apply")
 
-	for _, store := range allStores {
-		storeAddr := getStoreAddress(allStores, store.Id)
+	for _, store := range recovery.allStores {
+		storeAddr := getStoreAddress(recovery.allStores, store.Id)
 		tikvClient, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
 		if err != nil {
 			return errors.Trace(err)
@@ -347,15 +347,15 @@ func (recovery *Recovery) WaitApply(ctx context.Context, allStores []*metapb.Sto
 }
 
 // a worker pool to all tikv for execute delete all data whose has ts > resolvedTs
-func (recovery *Recovery) ResolveData(ctx context.Context, allStores []*metapb.Store, resolvedTs uint64) (err error) {
+func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (err error) {
 
 	eg, ectx := errgroup.WithContext(ctx)
-	totalStores := recovery.totalStores
+	totalStores := len(recovery.allStores)
 	workers := utils.NewWorkerPool(uint(totalStores), "resolve data from tikv")
 
 	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at least some retry may neccessary
-	for _, store := range allStores {
-		storeAddr := getStoreAddress(allStores, store.Id)
+	for _, store := range recovery.allStores {
+		storeAddr := getStoreAddress(recovery.allStores, store.Id)
 		tikvClient, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
 		if err != nil {
 			return errors.Trace(err)
@@ -418,7 +418,7 @@ func (recovery *Recovery) makeRecoveryPlan() {
 		maxId := storeId
 		for _, m := range v.regionMeta {
 			if regions[m.RegionId] == nil {
-				regions[m.RegionId] = make([]Regions, 0, recovery.totalStores)
+				regions[m.RegionId] = make([]Regions, 0, len(recovery.allStores))
 			}
 			regions[m.RegionId] = append(regions[m.RegionId], Regions{m, storeId})
 			maxId = utils.Max(maxId, utils.Max(m.RegionId, m.PeerId))
