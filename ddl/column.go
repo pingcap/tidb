@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -480,16 +479,17 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 // checkForNullValue ensure there are no null values of the column of this table.
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
 func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, newCol model.CIStr, oldCols ...*model.ColumnInfo) error {
-	colsStr := ""
+	var buf strings.Builder
+	sqlexec.MustFormatSQL(&buf, "select 1 from %n.%n where ", schema.L, table.L)
 	for i, col := range oldCols {
 		if i == 0 {
-			colsStr += "`" + col.Name.L + "` is null"
+			sqlexec.MustFormatSQL(&buf, "%n is null", col.Name.L)
 		} else {
-			colsStr += " or `" + col.Name.L + "` is null"
+			sqlexec.MustFormatSQL(&buf, " or %n is null", col.Name.L)
 		}
 	}
-	sql := fmt.Sprintf("select 1 from `%s`.`%s` where %s limit 1;", schema.L, table.L, colsStr)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	sqlexec.MustFormatSQL(&buf, " limit 1")
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, buf.String())
 	if err != nil {
 		return errors.Trace(err)
 	}
