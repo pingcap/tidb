@@ -67,6 +67,7 @@ const (
 	RegexpLike         = "regexp_like"
 	RegexpSubstr       = "regexp_substr"
 	RegexpInStr        = "regexp_instr"
+	RegexpReplace      = "regexp_replace"
 	IsNull             = "isnull"
 	IsTruthWithoutNull = "istrue" // Avoid name conflict with IsTrue in github/pingcap/check.
 	IsTruthWithNull    = "istrue_with_null"

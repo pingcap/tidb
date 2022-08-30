@@ -2148,6 +2148,8 @@ func TestBuiltin(t *testing.T) {
 		// Test regexp functions
 		{"select regexp_like('aBc', 'abc', 'im');", true, "select regexp_like('aBc', 'abc', 'im');"},
 		{"select regexp_substr('aBc', 'abc', 1, 1, 'im');", true, "select regexp_substr('aBc', 'abc', 1, 1, 'im');"},
+		{"select regexp_instr('aBc', 'abc', 1, 1, 0, 'im');", true, "select regexp_instr('aBc', 'abc', 1, 1, 0, 'im');"},
+		{"select regexp_replace('aBc', 'abc', 'def', 1, 1, 'i');", true, "select regexp_replace('aBc', 'abc', 'def', 1, 1, 'i');"},
 	}
 	RunTest(t, table, false)
 

@@ -829,3 +829,96 @@ func TestRegexpInStrVec(t *testing.T) {
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpInStrCases)
 }
+
+func TestRegexpReplaceConst(t *testing.T) {
+	ctx := createContext(t)
+
+	// test regexp_replace(expr, pat, repl)
+	testParam3 := []struct {
+		input    interface{} // string
+		pattern  interface{} // string
+		replace  interface{} // string
+		match    interface{} // string
+		matchBin interface{} // bin result
+		err      error
+	}{
+		{"abc abd abe", "ab.", "cz", "cz cz cz", "0x637A20637A20637A", nil},
+		{"你好 好的", "好", "逸", "你逸 逸的", "0xE4BDA0E980B820E980B8E79A84", nil},
+		{"", "^$", "123", "", "0x", nil},
+		{"abc", nil, nil, nil, nil, nil},
+		{nil, "bc", nil, nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam3 {
+			fc := funcs[ast.RegexpReplace]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+
+	// test regexp_replace(expr, pat, repl, pos)
+	testParam4 := []struct {
+		input    interface{} // string
+		pattern  interface{} // string
+		replace  interface{} // string
+		pos      interface{} // int64
+		match    interface{} // string
+		matchBin interface{} // bin result
+		err      error
+	}{
+		{"abc", "ab.", "cc", int64(1), "cc", "0x6363", nil},
+		{"abc", "bc", "cc", int64(3), "abc", "0x616263", nil},
+		{"你好", "好", "的", int64(2), "你的", "0xE4BDA0E79A84", nil},
+		{"你好啊", "好", "的", int64(3), "你好啊", "0xE4BDA0E79A84E5958A", nil},
+		{"", "^$", "cc", int64(1), "", "0x", nil},
+		// Invalid position index tests
+		{"", "^$", "a", int64(2), "", "", ErrRegexp},
+		{"", "^&", "a", int64(0), "", "", ErrRegexp},
+		{"abc", "bc", "a", int64(-1), "", "", ErrRegexp},
+		{"abc", "bc", "a", int64(4), "", "", ErrRegexp},
+		// Some nullable input tests
+		{"", "^$", "a", nil, nil, nil, nil},
+		{nil, "^$", "a", nil, nil, nil, nil},
+		{"", nil, nil, nil, nil, nil, nil},
+		{nil, nil, nil, int64(1), nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam4 {
+			fc := funcs[ast.RegexpReplace]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+}

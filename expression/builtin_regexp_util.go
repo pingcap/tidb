@@ -43,14 +43,6 @@ func (re *regexpParam) getCol() *chunk.Column {
 	return re.col
 }
 
-func (re *regexpParam) isParamConst() bool {
-	return re.isConst
-}
-
-func (re *regexpParam) isParamNull() bool {
-	return re.isNull
-}
-
 func (re *regexpParam) getStringVal(id int) string {
 	if re.isNull {
 		return ""
@@ -241,13 +233,17 @@ func utf8Len(b byte) int {
 }
 
 // This string should always be valid which means that it should always return true in ValidString(str)
-func trimUtf8String(str *string, trimmedNum int64) {
+func trimUtf8String(str *string, trimmedNum int64) int64 {
+	totalLenTrimmed := int64(0)
 	for ; trimmedNum > 0; trimmedNum-- {
 		length := utf8Len((*str)[0]) // character length
 		(*str) = (*str)[length:]
+		totalLenTrimmed += int64(length)
 	}
+	return totalLenTrimmed
 }
 
+// Convert a binary index to index referring to utf8
 func convertPosInUtf8(str *string, pos int64) int64 {
 	preStr := (*str)[:pos]
 	preStrNum := utf8.RuneCountInString(preStr)

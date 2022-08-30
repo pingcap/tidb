@@ -369,7 +369,6 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 
 		// Check position and trim expr
 		if re.isBinCollation {
-			bexpr = []byte(expr)
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
 					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -521,7 +520,6 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		// Check position and trim expr
 		pos := params[2].getIntVal(i)
 		if re.isBinCollation {
-			bexpr = []byte(expr)
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -667,7 +665,6 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 		// Check position and trim expr
 		if re.isBinCollation {
-			bexpr = []byte(expr)
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
 					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -846,7 +843,6 @@ func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		// Check position and trim expr
 		pos := params[2].getIntVal(i)
 		if re.isBinCollation {
-			bexpr = []byte(expr)
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -912,4 +908,197 @@ func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		}
 	}
 	return nil
+}
+
+// ---------------------------------- regexp_replace ----------------------------------
+
+type regexpReplaceFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argTp := []types.EvalType{types.ETString, types.ETString}
+	switch len(args) {
+	case 3:
+		argTp = append(argTp, types.ETString)
+	case 4:
+		argTp = append(argTp, types.ETString, types.ETInt)
+	case 5:
+		argTp = append(argTp, types.ETString, types.ETInt, types.ETInt)
+	case 6:
+		argTp = append(argTp, types.ETString, types.ETInt, types.ETInt, types.ETString)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTp...)
+	if err != nil {
+		return nil, err
+	}
+
+	argType := args[0].GetType()
+	bf.tp.SetFlen(argType.GetFlen())
+	sig := regexpReplaceFuncSig{
+		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
+	}
+
+	if bf.collation == charset.CollationBin {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceSig)
+		sig.isBinCollation = true
+	} else {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceUTF8Sig)
+		sig.isBinCollation = false
+	}
+
+	return &sig, nil
+}
+
+type regexpReplaceFuncSig struct {
+	regexpBaseFuncSig
+	isBinCollation bool
+}
+
+func (re *regexpReplaceFuncSig) vectorized() bool {
+	return true
+}
+
+func (re *regexpReplaceFuncSig) Clone() builtinFunc {
+	newSig := &regexpReplaceFuncSig{}
+	newSig.cloneFrom(&re.baseBuiltinFunc)
+	newSig.clone(&re.regexpBaseFuncSig)
+	newSig.isBinCollation = re.isBinCollation
+	return newSig
+}
+
+// Call this function when all args are constant
+func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) {
+	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
+	trimmedExpr := expr
+	if isNull || err != nil {
+		return "", true, err
+	}
+
+	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+
+	repl, isNull, err := re.args[2].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+
+	pos := int64(1)
+	occurrence := int64(0)
+	matchType := ""
+	arg_num := len(re.args)
+	var bexpr []byte
+	var trimmedBexpr []byte
+
+	if re.isBinCollation {
+		bexpr = []byte(expr)
+		trimmedBexpr = bexpr
+	}
+
+	trimmedLen := int64(0)
+	if arg_num >= 4 {
+		pos, isNull, err = re.args[3].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+
+		// Check position and trim expr
+		if re.isBinCollation {
+			if pos < 1 || pos > int64(len(trimmedBexpr)) {
+				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimmedBexpr = bexpr[pos-1:] // Trim
+		} else {
+			if pos < 1 || pos > int64(utf8.RuneCountInString(trimmedExpr)) {
+				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimmedLen = trimUtf8String(&trimmedExpr, pos-1) // Trim
+		}
+	}
+
+	if arg_num >= 5 {
+		occurrence, isNull, err = re.args[4].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+
+		if occurrence < 0 {
+			occurrence = 1
+		}
+	}
+
+	if arg_num == 6 {
+		matchType, isNull, err = re.args[5].EvalString(re.ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+	}
+
+	if len(expr) == 0 {
+		if re.isBinCollation {
+			return "0x", false, nil
+		} else {
+			return "", false, nil
+		}
+	}
+
+	re.compile, err = re.genCompile(matchType)
+	if err != nil {
+		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
+	reg, err := re.compile(pat)
+	if err != nil {
+		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
+	count := occurrence
+	if re.isBinCollation {
+		repFunc := func(matchedStr []byte) []byte {
+			if occurrence == 0 {
+				return []byte(repl)
+			}
+
+			count--
+			if count == 0 {
+				return []byte(repl)
+			}
+
+			return []byte(matchedStr)
+		}
+
+		replacedBStr := reg.ReplaceAllFunc(trimmedBexpr, repFunc)
+
+		return fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(append(bexpr[:pos-1], replacedBStr...)))), false, nil
+	}
+
+	repFunc := func(matchedStr string) string {
+		if occurrence == 0 {
+			return repl
+		}
+
+		count--
+		if count == 0 {
+			return repl
+		}
+
+		return matchedStr
+	}
+
+	replacedStr := reg.ReplaceAllStringFunc(trimmedExpr, repFunc)
+
+	return expr[:trimmedLen] + replacedStr, false, nil
 }
