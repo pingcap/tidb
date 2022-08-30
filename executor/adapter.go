@@ -774,15 +774,15 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return nil
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
-		// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
-		// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
-		if sctx.GetSessionVars().ConstraintCheckInPlacePessimistic {
-			sctx.GetSessionVars().SetInTxn(false)
-		}
 		if err != nil {
 			// todo: Report deadlock
 			if ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
+			}
+			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
+			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
+			if sctx.GetSessionVars().ConstraintCheckInPlacePessimistic {
+				sctx.GetSessionVars().SetInTxn(false)
 			}
 			return err
 		}
