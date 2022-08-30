@@ -305,9 +305,9 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 		if len(partitionNames) == 0 {
 			ret = []table.PhysicalTable{tbl.GetPartition(pi.Definitions[0].ID)}
 		} else {
-			for i, def := range pi.Definitions {
+			for _, def := range pi.Definitions {
 				if def.Name.L == partitionNames[0].L {
-					ret = []table.PhysicalTable{tbl.GetPartition(pi.Definitions[i].ID)}
+					ret = []table.PhysicalTable{tbl.GetPartition(def.ID)}
 					break
 				}
 			}
