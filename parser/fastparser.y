@@ -32,34 +32,37 @@ import (
 	offset int // offset
 	item interface{}
 	ident string
-	expr ast.ExprNode
-	statement ast.StmtNode
+	expr string
+	statement string
 }
 
 %token	<ident>
+
 	/*yy:token "%c"     */
 	identifier "identifier"
 
 	/*yy:token "\"%c\"" */
-	stringLit          "string literal"
-	singleAtIdentifier "identifier with single leading at" /* TODO */
-	andand             "&&"
-	pipes              "||"
+	stringLit "string literal"
+	andand    "&&"
+	pipes     "||"
 
 	/* TODO: Useless for the ReservedKeyword in parameterizer */
 	/* The following tokens belong to ReservedKeyword. Notice: make sure these tokens are contained in ReservedKeyword. */
-	as                "AS"
-	charType          "CHAR"
-	doubleType        "DOUBLE"
-	from              "FROM"
-	intType           "INT"
-	selectKwd         "SELECT"
-	where             "WHERE"
-	falseKwd          "FALSE"
-	trueKwd           "TRUE"
-	null              "NULL"
+	as         "AS"
+	and        "AND"
+	charType   "CHAR"
+	doubleType "DOUBLE"
+	from       "FROM"
+	intType    "INT"
+	selectKwd  "SELECT"
+	where      "WHERE"
+	falseKwd   "FALSE"
+	trueKwd    "TRUE"
+	null       "NULL"
+	or         "OR"
 
 %token	<item>
+
 	/*yy:token "1.%d"   */
 	floatLit "floating-point literal"
 
@@ -78,251 +81,298 @@ import (
 	nulleq       "<=>"
 
 %type	<expr>
-	Expression                      "expression"
-	BoolPri                         "boolean primary expression"
-	PredicateExpr                   "Predicate expression factor"
-	BitExpr                         "bit expression"
-	SimpleExpr                      "simple expression"
-	SimpleIdent                     "Simple Identifier expression"
-
-	Literal                         "literal value"
-	StringLiteral                   "text literal"
-
+	Expression    "expression"
+	BoolPri       "boolean primary expression"
+	BitExpr       "bit expression"
+	PredicateExpr "Predicate expression factor"
+	SimpleExpr    "simple expression"
+	SimpleIdent   "Simple Identifier expression"
+	StringLiteral "text literal"
+	Literal       "literal value"
+	TableRef      "table reference"
 
 %type	<statement>
+	Statement  "statement"
+	SelectStmt "SELECT statement"
 
 %type	<item>
-	ColumnName                             "column name"
-	CompareOp                              "Compare opcode"
-	EscapedTableRef                        "escaped table reference"
-	Field                                  "field expression"
-	FieldList                              "field expression list"
-	SelectStmtFieldList                    "SELECT statement field list"
-	SelectStmtFromTable                    "SELECT statement from table"
-	SelectStmtBasic                        "SELECT statement from constant value"
-	TableAsName                            "table alias name"
-	TableAsNameOpt                         "table alias name optional"
-	TableFactor                            "table factor"
-	TableName                              "Table name"
-	TableRefs                              "table references"
-	TableRefsClause                        "Table references clause"
-
-	WhereClause                            "WHERE clause"
-	WhereClauseOptional                    "Optional WHERE clause"
-	logAnd            "logical and operator"
-	logOr             "logical or operator"
+	ColumnName          "column name"
+	CompareOp           "Compare opcode"
+	EscapedTableRef     "escaped table reference"
+	Field               "field expression"
+	FieldList           "field expression list"
+	StatementList       "statement list"
+	SelectStmtFieldList "SELECT statement field list"
+	SelectStmtFromTable "SELECT statement from table"
+	SelectStmtBasic     "SELECT statement from constant value"
+	TableAsName         "table alias name"
+	TableAsNameOpt      "table alias name optional"
+	TableFactor         "table factor"
+	TableName           "Table name"
+	TableRefs           "table references"
+	TableRefsClause     "Table references clause"
+	WhereClause         "WHERE clause"
+	WhereClauseOptional "Optional WHERE clause"
+	logAnd              "logical and operator"
+	logOr               "logical or operator"
 
 %type	<ident>
-	Identifier                      "identifier or unreserved keyword"
+	Identifier "identifier or unreserved keyword"
 
 %precedence empty
 %precedence lowerThanStringLitToken
 %precedence stringLit
 %precedence selectKwd
-
+%left pipes
+%left or
+%left andand and
 %left '|'
 %left '&'
 %left '-' '+'
 %left '*' '/' '%' div mod
 
+%start	Start
+
 %%
+
+Start:
+	StatementList
+
+StatementList:
+	Statement
+	{
+		if $1 != nil {
+			s := $1
+			parser.result = append(parser.result, s)
+		}
+	}
+
 ColumnName:
 	Identifier
 	{
-		$$ = &ast.ColumnName{Name: model.NewCIStr($1)}
+		$$ = $1.(string)
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.ColumnName{Table: model.NewCIStr($1), Name: model.NewCIStr($3)}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString(".")
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	Identifier '.' Identifier '.' Identifier
 	{
-		$$ = &ast.ColumnName{Schema: model.NewCIStr($1), Table: model.NewCIStr($3), Name: model.NewCIStr($5)}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString(".")
+		builder.WriteString($3)
+		builder.WriteString(".")
+		builder.WriteString($5)
+		$$ = builder.String()
 	}
 
 FieldList:
 	Field
-	{
-		field := $1.(*ast.SelectField)
-		field.Offset = parser.startOffset(&yyS[yypt])
-		$$ = []*ast.SelectField{field}
-	}
 |	FieldList ',' Field
 	{
-		fl := $1.([]*ast.SelectField)
-		last := fl[len(fl)-1]
-		if last.Expr != nil && last.AsName.O == "" {
-			lastEnd := parser.endOffset(&yyS[yypt-1])
-			last.SetText(parser.lexer.client, parser.src[last.Offset:lastEnd])
-		}
-		newField := $3.(*ast.SelectField)
-		newField.Offset = parser.startOffset(&yyS[yypt])
-		$$ = append(fl, newField)
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString(".")
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 
 Field:
 	'*' %prec '*'
 	{
-		$$ = &ast.SelectField{WildCard: &ast.WildCardField{}}
+		$$ = "*"
 	}
 |	Identifier '.' '*' %prec '*'
 	{
-		wildCard := &ast.WildCardField{Table: model.NewCIStr($1)}
-		$$ = &ast.SelectField{WildCard: wildCard}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString(".")
+		builder.WriteString("*")
+		$$ = builder.String()
 	}
 |	Identifier '.' Identifier '.' '*' %prec '*'
 	{
-		wildCard := &ast.WildCardField{Schema: model.NewCIStr($1), Table: model.NewCIStr($3)}
-		$$ = &ast.SelectField{WildCard: wildCard}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString(".")
+		builder.WriteString($3)
+		builder.WriteString(".")
+		builder.WriteString("*")
+		$$ = builder.String()
+	}
+
+SelectStmt:
+	SelectStmtFromTable
+	{
+		$$ = $1.(string)
 	}
 
 SelectStmtFromTable:
 	SelectStmtBasic "FROM" TableRefsClause WhereClauseOptional
 	{
-		st := $1.(*ast.SelectStmt)
-		st.From = $3.(*ast.TableRefsClause)
-		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-		if lastField.Expr != nil && lastField.AsName.O == "" {
-			lastEnd := parser.endOffset(&yyS[yypt-5])
-			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
-		}
-		if $4 != nil {
-			st.Where = $4.(ast.ExprNode)
-		}
-		$$ = st
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString($2)
+		builder.WriteString($3)
+		builder.WriteString($4)
+		$$ = builder.String()
 	}
 
 SelectStmtBasic:
 	"SELECT" SelectStmtFieldList
 	{
-		st := &ast.SelectStmt{
-			Fields:         $2.(*ast.FieldList),
-			Kind:           ast.SelectStmtKindSelect,
-		}
-		$$ = st
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString($2)
+		$$ = builder.String()
 	}
-
 
 SelectStmtFieldList:
 	FieldList
-	{
-		$$ = &ast.FieldList{Fields: $1.([]*ast.SelectField)}
-	}
 
 TableRefsClause:
 	TableRefs
-	{
-		$$ = &ast.TableRefsClause{TableRefs: $1.(*ast.Join)}
-	}
 
 TableRefs:
 	EscapedTableRef
-	{
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: nil}
-	}
 
 EscapedTableRef:
 	TableRef
+	{
+		$$ = $1.(string)
+	}
 
 TableRef:
 	TableFactor
+	{
+		$$ = $1.(string)
+	}
 
 TableFactor:
 	TableName TableAsNameOpt
 	{
-		tn := $1.(*ast.TableName)
-		$$ = &ast.TableSource{Source: tn, AsName: $2.(model.CIStr)}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString($2)
+		$$ = builder.String()
 	}
 
 TableAsNameOpt:
 	%prec empty
 	{
-		$$ = model.CIStr{}
+		$$ = ""
 	}
 |	TableAsName
 
 TableAsName:
 	Identifier
 	{
-		$$ = model.NewCIStr($1)
+		$$ = $1.(string)
 	}
 |	"AS" Identifier
 	{
-		$$ = model.NewCIStr($2)
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString($2)
+		$$ = builder.String()
 	}
 
 TableName:
 	Identifier
 	{
-		$$ = &ast.TableName{Name: model.NewCIStr($1)}
+		$$ = $1.(string)
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.TableName{Schema: model.NewCIStr($1), Name: model.NewCIStr($3)}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString(".")
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 
 WhereClauseOptional:
 	{
-		$$ = nil
+		$$ = ""
 	}
 |	WhereClause
 
 WhereClause:
 	"WHERE" Expression
 	{
-		$$ = $2
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString($2)
+		$$ = builder.String()
 	}
 
 Expression:
 	Expression logOr Expression %prec pipes
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.LogicOr, L: $1, R: $3}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString($2)
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	Expression logAnd Expression %prec andand
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.LogicAnd, L: $1, R: $3}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString($2)
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	BoolPri
 
 BoolPri:
 	BoolPri CompareOp PredicateExpr %prec eq
 	{
-		$$ = &ast.BinaryOperationExpr{Op: $2.(opcode.Op), L: $1, R: $3}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString($2)
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	PredicateExpr
 
 CompareOp:
 	">="
 	{
-		$$ = opcode.GE
+		$$ = ">="
 	}
 |	'>'
 	{
-		$$ = opcode.GT
+		$$ = ">"
 	}
 |	"<="
 	{
-		$$ = opcode.LE
+		$$ = "<="
 	}
 |	'<'
 	{
-		$$ = opcode.LT
+		$$ = "<"
 	}
 |	"!="
 	{
-		$$ = opcode.NE
+		$$ = "!="
 	}
 |	"<>"
 	{
-		$$ = opcode.NE
+		$$ = "<>"
 	}
 |	"="
 	{
-		$$ = opcode.EQ
+		$$ = "="
 	}
 |	"<=>"
 	{
-		$$ = opcode.NullEQ
+		$$ = "<=>"
 	}
 
 PredicateExpr:
@@ -331,98 +381,149 @@ PredicateExpr:
 BitExpr:
 	BitExpr '|' BitExpr %prec '|'
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.Or, L: $1, R: $3}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString("|")
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	BitExpr '&' BitExpr %prec '&'
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.And, L: $1, R: $3}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString("&")
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	BitExpr '+' BitExpr %prec '+'
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.Plus, L: $1, R: $3}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString("+")
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	BitExpr '-' BitExpr %prec '-'
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.Minus, L: $1, R: $3}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString("-")
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	BitExpr '*' BitExpr %prec '*'
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.Mul, L: $1, R: $3}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString("*")
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	BitExpr '/' BitExpr %prec '/'
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.Div, L: $1, R: $3}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString("/")
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	SimpleExpr
+
+SimpleExpr:
+	SimpleIdent
+	{
+		$$ = $1.(string)
+	}
+|	Literal
+	{
+		$$ = $1.(string)
+	}
 
 SimpleIdent:
 	Identifier
 	{
-		$$ = &ast.ColumnNameExpr{Name: &ast.ColumnName{
-			Name: model.NewCIStr($1),
-		}}
+		$$ = $1.(string)
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.ColumnNameExpr{Name: &ast.ColumnName{
-			Table: model.NewCIStr($1),
-			Name:  model.NewCIStr($3),
-		}}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString(".")
+		builder.WriteString($3)
+		$$ = builder.String()
 	}
 |	Identifier '.' Identifier '.' Identifier
 	{
-		$$ = &ast.ColumnNameExpr{Name: &ast.ColumnName{
-			Schema: model.NewCIStr($1),
-			Table:  model.NewCIStr($3),
-			Name:   model.NewCIStr($5),
-		}}
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString(".")
+		builder.WriteString($3)
+		builder.WriteString(".")
+		builder.WriteString($5)
+		$$ = builder.String()
 	}
-
-SimpleExpr:
-	SimpleIdent
-|	Literal
 
 Literal:
 	"FALSE"
 	{
-		$$ = ast.NewValueExpr(false, parser.charset, parser.collation)
+		s := ast.NewValueExpr(false, parser.charset, parser.collation)
+		parser.params = append(parser.params, s)
+		$$ = "?"
 	}
 |	"NULL"
 	{
-		$$ = ast.NewValueExpr(nil, parser.charset, parser.collation)
+		s := ast.NewValueExpr(nil, parser.charset, parser.collation)
+		parser.params = append(parser.params, s)
+		$$ = "?"
 	}
 |	"TRUE"
 	{
-		$$ = ast.NewValueExpr(true, parser.charset, parser.collation)
+		s := ast.NewValueExpr(true, parser.charset, parser.collation)
+		parser.params = append(parser.params, s)
+		$$ = "?"
 	}
 |	floatLit
 	{
-		$$ = ast.NewValueExpr($1, parser.charset, parser.collation)
+		s := ast.NewValueExpr($1, parser.charset, parser.collation)
+		parser.params = append(parser.params, s)
+		$$ = "?"
 	}
 |	intLit
 	{
-		$$ = ast.NewValueExpr($1, parser.charset, parser.collation)
+		s := ast.NewValueExpr($1, parser.charset, parser.collation)
+		parser.params = append(parser.params, s)
+		$$ = "?"
 	}
 |	StringLiteral %prec lowerThanStringLitToken
 
 StringLiteral:
 	stringLit
 	{
-		expr := ast.NewValueExpr($1, parser.charset, parser.collation)
-		$$ = expr
+		s := ast.NewValueExpr($1, parser.charset, parser.collation)
+		parser.params = append(parser.params, s)
+		$$ = "?"
 	}
 
 logOr:
-	pipesAsOr
-|	"OR"
+	"OR"
+	{
+		$$ = "OR"
+	}
 
 logAnd:
 	"&&"
+	{
+		$$ = "&&"
+	}
 |	"AND"
+	{
+		$$ = "AND"
+	}
+
+Statement:
+	SelectStmt
 
 /**********************************Identifier********************************************/
 Identifier:
 	identifier
-
-
 %%
