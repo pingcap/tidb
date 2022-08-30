@@ -193,7 +193,7 @@ func (h *memoryDebugModeHandler) getTrackerTreeMemUseLogs() []zap.Field {
 	trackerMemUseMap := h.memTracker.CountAllChildrenMemUse()
 	logs := make([]zap.Field, 0, len(trackerMemUseMap))
 	var keys []string
-	for k, _ := range trackerMemUseMap {
+	for k := range trackerMemUseMap {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
