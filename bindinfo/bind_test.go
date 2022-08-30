@@ -872,16 +872,17 @@ func TestNotEvolvePlanForReadStorageHint(t *testing.T) {
 	}
 
 	// Make sure the best plan of the SQL is use TiKV index.
-	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4; set @@tidb_allow_mpp=0;")
 	rows := tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
 	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
+	tk.MustExec("set @@tidb_allow_mpp=1")
 
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select /*+ read_from_storage(tiflash[t]) */ * from t where a >= 1 and b >= 1")
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 
 	// Even if index of TiKV has lower cost, it chooses TiFlash.
 	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
-	require.Equal(t, "cop[tiflash]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
+	require.Equal(t, "mpp[tiflash]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
 
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -920,7 +921,7 @@ func TestBindingWithIsolationRead(t *testing.T) {
 	// Even if we build a binding use index for SQL, but after we set the isolation read for TiFlash, it choose TiFlash instead of index of TiKV.
 	tk.MustExec("set @@tidb_isolation_read_engines = \"tiflash\"")
 	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
-	require.Equal(t, "cop[tiflash]", rows[len(rows)-1][2])
+	require.Equal(t, "mpp[tiflash]", rows[len(rows)-1][2])
 }
 
 func TestReCreateBindAfterEvolvePlan(t *testing.T) {
