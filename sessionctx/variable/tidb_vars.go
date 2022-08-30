@@ -731,7 +731,7 @@ const (
 	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
 	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
 
-	// TiDBConstraintCheckInPlacePessimistic is used in pessimistic transaction to skip the locking of simple insert statements.
+	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
 )
 
