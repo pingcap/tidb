@@ -582,5 +582,5 @@ func parseStorage(storage string) (*url.URL, error) {
 	// Replace "+" by "%2B" here to avoid this problem.
 	storage = strings.ReplaceAll(storage, "+", "%2B")
 	storageURL, err := url.Parse(storage)
-	return storageURL, err
+	return storageURL, errors.Annotate(err, "parseStorage failed")
 }
