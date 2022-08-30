@@ -91,10 +91,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		tasks []*copTask
 		err   error
 	)
-	if len(req.KeyRanges) > 0 {
-		ranges := NewKeyRanges(req.KeyRanges)
-		tasks, err = buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
-	} else {
+	if len(req.KeyRangesWithPartition) > 0 {
 		// Here we build the task by partition, not directly by region.
 		// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
 		// Keep it split by partition would be more safe.
@@ -107,6 +104,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 			}
 			tasks = append(tasks, tasksInPartition...)
 		}
+	} else {
+		ranges := NewKeyRanges(req.KeyRanges)
+		tasks, err = buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
 	}
 	if err != nil {
 		return copErrorResponse{err}
