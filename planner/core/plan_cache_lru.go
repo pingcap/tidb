@@ -184,7 +184,7 @@ func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
 
 // memoryControl control the memory by quota and guard
 func (l *LRUPlanCache) memoryControl() {
-	if l.quota == 0 {
+	if l.quota == 0 || l.guard == 0 {
 		return
 	}
 
