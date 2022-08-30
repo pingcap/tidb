@@ -1502,9 +1502,10 @@ func TestRandomPanicConsume(t *testing.T) {
 	tk.MustExec("set @@tidb_max_chunk_size=32")
 	tk.MustExec("set @@tidb_init_chunk_size=1")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("create table t(pk bigint primary key auto_random,a int, index idx(a));")
+	tk.MustExec("SPLIT TABLE t BETWEEN (-9223372036854775808) AND (9223372036854775807) REGIONS 50;") // Split 50 regions to simulate many requests
 	for i := 0; i <= 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v),(%v),(%v)", i, i, i))
+		tk.MustExec(fmt.Sprintf("insert into t(a) values(%v),(%v),(%v)", i, i, i))
 	}
 
 	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
@@ -1512,25 +1513,32 @@ func TestRandomPanicConsume(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
+	fpName2 := "github.com/pingcap/tidb/store/copr/ConsumeRandomPanic"
+	require.NoError(t, failpoint.Enable(fpName2, "3%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName2))
+	}()
 
 	sqls := []string{
 		// Without index
 		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t) */ count(a) from t group by a",                                  // HashAgg Paralleled
 		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t) */ count(distinct a) from t",                                    // HashAgg Unparalleled
-		"select /*+ STREAM_AGG() */ /*+ USE_INDEX(t) */ count(a) from t",                                           // StreamAgg
+		"select /*+ STREAM_AGG() */ /*+ USE_INDEX(t) */ count(a) from t group by a",                                // Shuffle+StreamAgg
 		"select /*+ USE_INDEX(t) */ a * a, a / a, a + a , a - a from t",                                            // Projection
 		"select /*+ HASH_JOIN(t1) */ /*+ USE_INDEX(t1) */ /*+ USE_INDEX(t2) */* from t t1 join t t2 on t1.a=t2.a",  // HashJoin
-		"select /*+ MERGE_JOIN(t1) */ /*+ USE_INDEX(t1) */ /*+ USE_INDEX(t2) */* from t t1 join t t2 on t1.a=t2.a", // MergeJoin
+		"select /*+ MERGE_JOIN(t1) */ /*+ USE_INDEX(t1) */ /*+ USE_INDEX(t2) */* from t t1 join t t2 on t1.a=t2.a", // Shuffle+MergeJoin
+		"select /*+ USE_INDEX(t) */ * from t",                                                                      // TableScan
 
 		// With index
 		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t,idx) */ count(a) from t group by a",                                       // HashAgg Paralleled
 		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t,idx) */ count(distinct a) from t",                                         // HashAgg Unparalleled
-		"select /*+ STREAM_AGG() */ /*+ USE_INDEX(t,idx) */ count(a) from t",                                                // StreamAgg
+		"select /*+ STREAM_AGG() */ /*+ USE_INDEX(t,idx) */ count(a) from t group by a",                                     // Shuffle+StreamAgg
 		"select /*+ USE_INDEX(t,idx) */ a * a, a / a, a + a , a - a from t",                                                 // Projection
 		"select /*+ HASH_JOIN(t1) */ /*+ USE_INDEX(t1,idx) */ /*+ USE_INDEX(t2,idx) */ * from t t1 join t t2 on t1.a=t2.a",  // HashJoin
-		"select /*+ MERGE_JOIN(t1) */ /*+ USE_INDEX(t1,idx) */ /*+ USE_INDEX(t2,idx) */ * from t t1 join t t2 on t1.a=t2.a", // MergeJoin
+		"select /*+ MERGE_JOIN(t1) */ /*+ USE_INDEX(t1,idx) */ /*+ USE_INDEX(t2,idx) */ * from t t1 join t t2 on t1.a=t2.a", // Shuffle+MergeJoin
 		"select /*+ INL_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;",                                                    // Index Join
 		"select /*+ INL_HASH_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;",                                               // Index Hash Join
+		"select /*+ USE_INDEX(t, idx) */ * from t",                                                                          // IndexScan
 	}
 
 	// Test 10 times panic for each Executor.
@@ -1541,6 +1549,8 @@ func TestRandomPanicConsume(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set @@tidb_executor_concurrency=%v", concurrency))
 			tk.MustExec(fmt.Sprintf("set @@tidb_merge_join_concurrency=%v", concurrency))
 			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%v", concurrency))
+			distConcurrency := rand.Int31n(15) + 1
+			tk.MustExec(fmt.Sprintf("set @@tidb_distsql_scan_concurrency=%v", distConcurrency))
 			var err error
 			for err == nil {
 				res, err = tk.Exec(sql)
