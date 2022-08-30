@@ -32,35 +32,32 @@ func NewSyncMap[K comparable, V any](capacity int) SyncMap[K, V] {
 // Store stores a value.
 func (m *SyncMap[K, V]) Store(key K, value V) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.item[key] = value
+	m.mu.Unlock()
 }
 
 // Load loads a value.
 func (m *SyncMap[K, V]) Load(key K) (V, bool) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	val, exist := m.item[key]
-	if !exist {
-		return *new(V), exist
-	}
+	m.mu.RUnlock()
 	return val, exist
 }
 
 // Drop drops a value.
 func (m *SyncMap[K, V]) Drop(key K) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	delete(m.item, key)
+	m.mu.Unlock()
 }
 
 // Keys returns all the keys in the map.
 func (m *SyncMap[K, V]) Keys() []K {
 	ret := make([]K, 0, len(m.item))
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	for k := range m.item {
 		ret = append(ret, k)
 	}
+	m.mu.RUnlock()
 	return ret
 }
