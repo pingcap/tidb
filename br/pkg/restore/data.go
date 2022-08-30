@@ -29,17 +29,13 @@ import (
 // 3. send the recover plan and the wait tikv to apply, in waitapply, all assigned region leader will check apply log to the last log
 // 4. ensure all region apply to last log
 // 5. send the resolvedTs to tikv for deleting data.
-func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, dumpRegionInfo bool, mgr *conn.Mgr, progress glue.Progress) (int, error) {
+func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress) (int, error) {
 
 	var recovery = NewRecovery(allStores, mgr, progress)
 
 	err := recovery.ReadRegionMeta(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
-	}
-
-	if dumpRegionInfo {
-		recovery.dumpRegionInfo()
 	}
 
 	totalRegions := recovery.getTotalRegions()
@@ -69,7 +65,7 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 }
 
 type StoreMeta struct {
-	storeId    uint64
+	storeId     uint64
 	regionMetas []*recovpb.RegionMeta
 }
 
@@ -182,7 +178,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 			for {
 				var meta *recovpb.RegionMeta
 				if meta, err = stream.Recv(); err == nil {
-					tikvMeta.regionMeta = append(tikvMeta.regionMeta, meta)
+					storeMeta.regionMetas = append(storeMeta.regionMetas, meta)
 				} else if err == io.EOF {
 					break
 				} else if err != nil {
@@ -190,7 +186,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 				}
 			}
 
-			metaChan <- tikvMeta
+			metaChan <- storeMeta
 			return nil
 		})
 	}
@@ -217,7 +213,7 @@ func (recovery *Recovery) getTotalRegions() int {
 	var regions = make(map[uint64][]Regions, 0)
 	for _, v := range recovery.storeMetas {
 		storeId := v.storeId
-		for _, m := range v.regionMeta {
+		for _, m := range v.regionMetas {
 			if regions[m.RegionId] == nil {
 				regions[m.RegionId] = make([]Regions, 0, len(recovery.allStores))
 			}
@@ -225,37 +221,6 @@ func (recovery *Recovery) getTotalRegions() int {
 		}
 	}
 	return len(regions)
-}
-
-// TODO: function provide for dump server received peer info into a file
-// function shall be enabled by debug enabled
-func (recovery *Recovery) dumpRegionInfo() {
-	log.Debug("dump region info")
-	// Group region peer info by region id.
-	var regions = make(map[uint64][]Regions, 0)
-	for _, v := range recovery.storeMetas {
-		storeId := v.storeId
-		for _, m := range v.regionMeta {
-			if regions[m.RegionId] == nil {
-				regions[m.RegionId] = make([]Regions, 0, len(recovery.allStores))
-			}
-			regions[m.RegionId] = append(regions[m.RegionId], Regions{m, storeId})
-		}
-	}
-
-	for regionId, peers := range regions {
-		log.Debug("Region", zap.Uint64("RegionID", regionId))
-		for _, m := range peers {
-			log.Debug("tikv", zap.Int("storeId", int(m.storeId)))
-			log.Debug("meta:", zap.Uint64("last_log_term", m.GetLastLogTerm()))
-			log.Debug("meta:", zap.Uint64("last_index", m.GetLastIndex()))
-			log.Debug("meta:", zap.Uint64("version", m.GetVersion()))
-			log.Debug("meta:", zap.Bool("tombstone", m.GetTombstone()))
-			log.Debug("meta:", zap.ByteString("start_key", m.GetStartKey()))
-			log.Debug("meta:", zap.ByteString("end_key", m.GetEndKey()))
-		}
-	}
-
 }
 
 // send the recovery plan to recovery region (force leader etc)
@@ -406,7 +371,7 @@ func (recovery *Recovery) makeRecoveryPlan() {
 	for _, v := range recovery.storeMetas {
 		storeId := v.storeId
 		maxId := storeId
-		for _, m := range v.regionMeta {
+		for _, m := range v.regionMetas {
 			if regions[m.RegionId] == nil {
 				regions[m.RegionId] = make([]Regions, 0, len(recovery.allStores))
 			}

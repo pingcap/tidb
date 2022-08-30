@@ -29,14 +29,9 @@ const (
 	ResolvedKvDataCmd = "Restore Data"
 )
 
-const (
-	flagDumpRegionInfo = "dump-region-info"
-)
-
 // DefineRestoreDataFlags defines common flags for the restore command.
 func DefineRestoreDataFlags(command *cobra.Command) {
 	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
-	command.Flags().Bool(flagDumpRegionInfo, false, "dump all regions info")
 	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
@@ -56,10 +51,6 @@ type RestoreDataConfig struct {
 func (cfg *RestoreDataConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	cfg.DryRun, err = flags.GetBool(flagDryRun)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.DumpRegionInfo, err = flags.GetBool(flagDumpRegionInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -211,7 +202,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	if cfg.DryRun {
 		totalRegions = 1024
 	} else {
-		totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, cfg.DumpRegionInfo, mgr, progress)
+		totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr, progress)
 		if err != nil {
 			return errors.Trace(err)
 		}
