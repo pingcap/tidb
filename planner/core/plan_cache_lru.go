@@ -54,7 +54,7 @@ type LRUPlanCache struct {
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
 func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
-	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)) (*LRUPlanCache, error) {
+	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)) *LRUPlanCache {
 	if capacity < 1 {
 		capacity = 100
 		log.Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
@@ -67,7 +67,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		pickFromBucket: pickFromBucket,
 		quota:          quota,
 		guard:          guard,
-	}, nil
+	}
 }
 
 // Get tries to find the corresponding value according to the given key.

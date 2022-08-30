@@ -70,12 +70,11 @@ func pickFromBucket(bucket map[*list.Element]struct{}, ptypes []*types.FieldType
 
 func TestLRUPCPut(t *testing.T) {
 	// test initialize
-	lruA, errA := NewLRUPlanCache(0, 0, 0, pickFromBucket)
-	require.Nil(t, lruA)
-	require.Error(t, errA, "capacity of LRU Cache should be at least 1")
+	lruA := NewLRUPlanCache(0, 0, 0, pickFromBucket)
+	require.Equal(t, lruA.capacity, uint(100))
 
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
-	lru, err := NewLRUPlanCache(3, 0, 0, pickFromBucket)
+	lru := NewLRUPlanCache(3, 0, 0, pickFromBucket)
 	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
 		maxMemDroppedKv[key] = value
 	}
@@ -146,8 +145,7 @@ func TestLRUPCPut(t *testing.T) {
 }
 
 func TestLRUPCGet(t *testing.T) {
-	lru, err := NewLRUPlanCache(3, 0, 0, pickFromBucket)
-	require.NoError(t, err)
+	lru := NewLRUPlanCache(3, 0, 0, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]*fakePlan, 5)
@@ -196,8 +194,7 @@ func TestLRUPCGet(t *testing.T) {
 }
 
 func TestLRUPCDelete(t *testing.T) {
-	lru, err := NewLRUPlanCache(3, 0, 0, pickFromBucket)
-	require.NoError(t, err)
+	lru := NewLRUPlanCache(3, 0, 0, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
@@ -229,8 +226,7 @@ func TestLRUPCDelete(t *testing.T) {
 }
 
 func TestLRUPCDeleteAll(t *testing.T) {
-	lru, err := NewLRUPlanCache(3, 0, 0, pickFromBucket)
-	require.NoError(t, err)
+	lru := NewLRUPlanCache(3, 0, 0, pickFromBucket)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]*fakePlan, 3)
@@ -260,7 +256,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 
 func TestLRUPCSetCapacity(t *testing.T) {
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
-	lru, err := NewLRUPlanCache(5, 0, 0, pickFromBucket)
+	lru := NewLRUPlanCache(5, 0, 0, pickFromBucket)
 	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
 		maxMemDroppedKv[key] = value
 	}
