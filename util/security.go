@@ -58,7 +58,7 @@ func addVerifyPeerCertificate(tlsCfg *tls.Config, verifyCN []string) {
 					}
 				}
 			}
-			return errors.Errorf("client certificate authentication failed. The Common Name from the client certificate %v was not found in the configuration cluster-verify-cn with value: %s", cns, verifyCN)
+			return errors.Errorf("client certificate authentication failed. The CommonName from the client certificate %v was not found in the configuration cluster-verify-cn with value: %s", cns, verifyCN)
 		}
 	}
 }
@@ -107,34 +107,92 @@ func ToTLSConfigWithVerify(caPath, certPath, keyPath string, verifyCN []string) 
 	return tlsCfg, nil
 }
 
-// ToTLSConfigWithVerifyByRawbytes constructs a `*tls.Config` from the CA, certification and key bytes
-// and add verify for CN.
-func ToTLSConfigWithVerifyByRawbytes(caData, certData, keyData []byte, verifyCN []string) (*tls.Config, error) {
-	var certificates []tls.Certificate
+// NewTLSConfigWithVerifyCN constructs a `*tls.Config` from given data:
+//   - caData: represents the MySQL server's CA certificate. If not empty, the TLS connection only allows this CA.
+//   - certData, keyData: represents the client's certificate and key. If not empty, the TLS connection will use this
+//     certificate. Otherwise, it will use self-generated certificate.
+//   - verifyCN: represents the Common Name that the MySQL server's certificate is expected to have. If not empty, the TLS
+//     connection only allows the certificates with these CN.
+func NewTLSConfigWithVerifyCN(caData, certData, keyData []byte, verifyCN []string) (*tls.Config, error) {
+	var (
+		certificates []tls.Certificate
+		certPool     *x509.CertPool
+		verifyFuncs  []func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error
+	)
+
 	if len(certData) != 0 && len(keyData) != 0 {
 		// Generate a key pair from your pem-encoded cert and key ([]byte).
 		cert, err := tls.X509KeyPair(certData, keyData)
 		if err != nil {
-			return nil, errors.New("failed to generate cert")
+			return nil, errors.Wrap(err, "failed to generate cert")
 		}
 		certificates = []tls.Certificate{cert}
 	}
-	// Create a certificate pool from CA
-	certPool := x509.NewCertPool()
 
-	// Append the certificates from the CA
-	if !certPool.AppendCertsFromPEM(caData) {
-		return nil, errors.New("failed to append ca certs")
-	}
 	/* #nosec G402 */
 	tlsCfg := &tls.Config{
 		MinVersion:   tls.VersionTLS10,
 		Certificates: certificates,
-		RootCAs:      certPool,
-		ClientCAs:    certPool,
 		NextProtos:   []string{"h2", "http/1.2"}, // specify `h2` to let Go use HTTP/2.
 	}
-	addVerifyPeerCertificate(tlsCfg, verifyCN)
+
+	if len(caData) != 0 {
+		certPool = x509.NewCertPool()
+		if !certPool.AppendCertsFromPEM(caData) {
+			return nil, errors.New("failed to append ca certs")
+		}
+		tlsCfg.RootCAs = certPool
+		tlsCfg.ClientCAs = certPool
+
+		// check the received MySQL server certificate during TLS handshake
+		verifyFuncs = append(verifyFuncs, func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return errors.New("no certificates available to verify")
+			}
+
+			cert, err := x509.ParseCertificate(rawCerts[0])
+			if err != nil {
+				return err
+			}
+
+			opts := x509.VerifyOptions{Roots: certPool}
+			if _, err = cert.Verify(opts); err != nil {
+				return errors.Wrap(err, "different CA is used")
+			}
+			return nil
+		})
+	}
+
+	if len(verifyCN) != 0 {
+		checkCN := make(map[string]struct{})
+		for _, cn := range verifyCN {
+			cn = strings.TrimSpace(cn)
+			checkCN[cn] = struct{}{}
+		}
+		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+		// check the received CommonName of MySQL server certificate's verify chain during TLS handshake
+		verifyFuncs = append(verifyFuncs, func(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
+			cns := make([]string, 0, len(verifiedChains))
+			for _, chains := range verifiedChains {
+				for _, chain := range chains {
+					cns = append(cns, chain.Subject.CommonName)
+					if _, match := checkCN[chain.Subject.CommonName]; match {
+						return nil
+					}
+				}
+			}
+			return errors.Errorf("MySQL server certificate authentication failed. The Common Name from the certificate %v was not found in the configuration values: %s", cns, verifyCN)
+		})
+	}
+
+	tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		for _, f := range verifyFuncs {
+			if err := f(rawCerts, verifiedChains); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	return tlsCfg, nil
 }
 

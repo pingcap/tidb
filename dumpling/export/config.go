@@ -656,7 +656,7 @@ func registerTLSConfig(conf *Config) error {
 				}
 			}
 		}
-		tlsConfig, err = util.ToTLSConfigWithVerifyByRawbytes(conf.Security.SSLCABytes,
+		tlsConfig, err = util.NewTLSConfigWithVerifyCN(conf.Security.SSLCABytes,
 			conf.Security.SSLCertBytes, conf.Security.SSLKEYBytes, []string{})
 		if err != nil {
 			return errors.Trace(err)
@@ -666,6 +666,7 @@ func registerTLSConfig(conf *Config) error {
 		if conf.Host == "127.0.0.1" || len(conf.Security.SSLCertBytes) == 0 || len(conf.Security.SSLKEYBytes) == 0 {
 			tlsConfig.InsecureSkipVerify = true
 		}
+		// TODO: separate name
 		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)
 		if err != nil {
 			return errors.Trace(err)
