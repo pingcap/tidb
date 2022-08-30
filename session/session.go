@@ -122,7 +122,7 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsageRecurCTE                 = metrics.TelemetrySQLCTECnt.WithLabelValues("recursive_cte")
+	telemetryCTEUsageRecurCTE                 = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
 	telemetryCTEUsageNonRecurCTE              = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
 	telemetryCTEUsageNotCTE                   = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
 	telemetryMultiSchemaChangeUsage           = metrics.TelemetryMultiSchemaChangeCnt
@@ -148,6 +148,10 @@ type Session interface {
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+	// Parameterize tries to convert the general statement to an execute statement and then uses general plan cache to handle it.
+	// e.g. "select * from t where a>23" --> "execute 'select * from t where a>?' using 23".
+	// By using the general plan cache, it can skip the parse and optimization stage so to gain some performance benefits.
+	Parameterize(ctx context.Context, originSQL string) (*ast.ExecuteStmt, bool)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
@@ -156,7 +160,7 @@ type Session interface {
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
-	CacheGeneralStmt(sql string) error
+	CacheGeneralStmt(sql string) (interface{}, error)
 	// ExecutePreparedStmt executes a prepared statement.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
 	// ExecuteGeneralStmt executes a general statement.
@@ -172,7 +176,7 @@ type Session interface {
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
-	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
+	Auth(user *auth.UserIdentity, auth []byte, salt []byte) error
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
 	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
@@ -792,13 +796,13 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessionData := sessVars.TemporaryTableData
 	var (
 		stage           kv.StagingHandle
-		localTempTables *infoschema.LocalTemporaryTables
+		localTempTables *infoschema.SessionTables
 	)
 
 	if sessVars.LocalTemporaryTables != nil {
-		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.SessionTables)
 	} else {
-		localTempTables = new(infoschema.LocalTemporaryTables)
+		localTempTables = new(infoschema.SessionTables)
 	}
 
 	defer func() {
@@ -1570,6 +1574,26 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return []sqlexec.RecordSet{rs}, err
 }
 
+// Parameterize Parameterizes this sql.
+func (s *session) Parameterize(ctx context.Context, originSQL string) (exec *ast.ExecuteStmt, ok bool) {
+	if !s.GetSessionVars().EnableGeneralPlanCache {
+		return nil, false
+	}
+	paramSQL, params, ok, err := plannercore.Parameterize(s, originSQL)
+	if !ok || err != nil {
+		return nil, false
+	}
+	cachedStmt, err := s.CacheGeneralStmt(paramSQL)
+	if err != nil {
+		return nil, false
+	}
+	return &ast.ExecuteStmt{
+		BinaryArgs:      params,
+		PrepStmt:        cachedStmt,
+		FromGeneralStmt: true,
+	}, true
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	parseStartTime := time.Now()
@@ -2263,15 +2287,18 @@ func (s *session) rollbackOnError(ctx context.Context) {
 
 // CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
 // The sql have to be parameterized, e.g. select * from t where a>?.
-func (s *session) CacheGeneralStmt(sql string) error {
+func (s *session) CacheGeneralStmt(sql string) (interface{}, error) {
 	if stmt := s.sessionVars.GetGeneralPlanCacheStmt(sql); stmt != nil {
 		// skip this step if there is already a PlanCacheStmt for this ql
-		return nil
+		return stmt, nil
 	}
 
 	prepareExec := executor.NewPrepareExec(s, sql)
 	prepareExec.IsGeneralStmt = true
-	return prepareExec.Next(context.Background(), nil)
+	if err := prepareExec.Next(context.Background(), nil); err != nil {
+		return nil, err
+	}
+	return prepareExec.Stmt, nil
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol
@@ -2360,12 +2387,6 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
 	logGeneralQuery(stmt, s, true)
-
-	if stmt.PsStmt != nil { // point plan short path
-		resultSet, err := stmt.PointGet(ctx)
-		s.txn.changeToInvalid()
-		return resultSet, err
-	}
 
 	var recordSet sqlexec.RecordSet
 
@@ -2546,20 +2567,24 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 // Auth validates a user using an authentication string and salt.
 // If the password fails, it will keep trying other users until exhausted.
 // This means it can not be refactored to use MatchIdentity yet.
-func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
+func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) error {
+	hasPassword := "YES"
+	if len(authentication) == 0 {
+		hasPassword = "NO"
+	}
 	pm := privilege.GetPrivilegeManager(s)
 	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
 	if err != nil {
-		return false
+		return dbterror.ClassSession.NewStd(mysql.ErrAccessDenied).FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if pm.ConnectionVerification(authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState) {
-		user.AuthUsername = authUser.Username
-		user.AuthHostname = authUser.Hostname
-		s.sessionVars.User = user
-		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
-		return true
+	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
+		return err
 	}
-	return false
+	user.AuthUsername = authUser.Username
+	user.AuthHostname = authUser.Hostname
+	s.sessionVars.User = user
+	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+	return nil
 }
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
@@ -3448,7 +3473,7 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 	// Data in local temporary tables is hard to encode, so we do not support it.
 	// Check temporary tables here to avoid circle dependency.
 	if s.sessionVars.LocalTemporaryTables != nil {
-		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.SessionTables)
 		if localTempTables.Count() > 0 {
 			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
 		}

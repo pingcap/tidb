@@ -3237,8 +3237,6 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
-		case ast.AlterTableSetTiFlashMode:
-			err = d.AlterTableSetTiFlashMode(sctx, ident, spec.TiFlashMode)
 		case ast.AlterTableOrderByColumns:
 			err = d.OrderByColumns(sctx, ident)
 		case ast.AlterTableIndexInvisible:
@@ -3883,6 +3881,11 @@ func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *mod
 }
 
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
+	// check temp table
+	if target.TempTableType != model.TempTableNone {
+		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(target.Name))
+	}
+
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits ||
 		source.AutoRandomRangeBits != target.AutoRandomRangeBits ||
@@ -3988,6 +3991,13 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	ptMeta := pt.Meta()
 
 	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+
+	// We should check local temporary here using session's info schema because the local temporary tables are only stored in session.
+	ntLocalTempTable, err := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().TableByName(ntIdent.Schema, ntIdent.Name)
+	if err == nil && ntLocalTempTable.Meta().TempTableType == model.TempTableLocal {
+		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(ntLocalTempTable.Meta().Name))
+	}
+
 	ntSchema, nt, err := d.getSchemaAndTableByIdent(ctx, ntIdent)
 	if err != nil {
 		return errors.Trace(err)
@@ -5037,42 +5047,6 @@ func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
 	}
 
 	return nil
-}
-
-func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, mode model.TiFlashMode) error {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if mode != model.TiFlashModeNormal && mode != model.TiFlashModeFast {
-		return fmt.Errorf("unsupported TiFlash mode %s", mode)
-	}
-
-	err = isTableTiFlashSupported(schema, tb)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Prompt warning when there is no TiFlash replica, as TiFlash mode will
-	// only take effect when executing in TiFlash.
-	tbReplicaInfo := tb.Meta().TiFlashReplica
-	if tbReplicaInfo == nil || tbReplicaInfo.Count == 0 {
-		ctx.GetSessionVars().StmtCtx.AppendNote(dbterror.ErrAlterTiFlashModeForTableWithoutTiFlashReplica)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionSetTiFlashMode,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{mode},
-	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
