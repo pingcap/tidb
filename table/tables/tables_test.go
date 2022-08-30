@@ -974,6 +974,9 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk2.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
 	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+
+	// TiKV will perform a constraint check before reporting assertion failure.
+	// And constraint violation precedes assertion failure.
 	if *testkit.WithTiKV == "" {
 		tk.MustExec("set @@tidb_txn_assertion_level=off")
 	}
