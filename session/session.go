@@ -2343,18 +2343,6 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 }
 
 func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStmt, prepareStmt *plannercore.PlanCacheStmt) (sqlexec.RecordSet, error) {
-	failpoint.Inject("assertTxnManagerInPreparedStmtExec", func() {
-		sessiontxn.RecordAssert(s, "assertTxnManagerInPreparedStmtExec", true)
-		if prepareStmt.SnapshotTSEvaluator != nil {
-			staleread.AssertStmtStaleness(s, true)
-			ts, err := prepareStmt.SnapshotTSEvaluator(s)
-			if err != nil {
-				panic(err)
-			}
-			sessiontxn.AssertTxnManagerReadTS(s, ts)
-		}
-	})
-
 	s.sessionVars.StartTime = time.Now()
 	preparedObj, err := plannercore.GetPreparedStmt(execStmt, s.GetSessionVars())
 	if err != nil {
