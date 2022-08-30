@@ -316,7 +316,7 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 // 3. A UPDATE statement whose execution plan is "PointGet".
 // 4. A DELETE statement whose execution plan is "PointGet".
 // The function `planner.Optimize` always calls the `txnManger.AdviseWarmup` to warmup in the past, it makes a tso request
-// for all sqls execept `SELECT` with RcCheckTs, but whether to use the tso request and wait it are depended on `AdviseOptimizeWithPlan`.
+// for all sqls except `SELECT` with RcCheckTs, but whether to use the tso request and wait it depends on `AdviseOptimizeWithPlan`.
 // (a) text protocol request
 // For insert statements without select subquery, they always don't use the tso above, don't wait for it either.
 // If tidb_rc_insert_use_last_tso is ON, we don't make tso requests too, we use the p.latestOracleTS.
@@ -324,8 +324,8 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 // For update/delete/select statements, if tidb_rc_point_lock_read_use_last_tso is ON, we don't make tso requests,
 // we use the p.latestOracleTS.
 // (b) binary protocol request (prepare mode)
-// The behavior is like text protocol request at most time, except that the it can get a plan from plan cache,
-// when optimizer doesn't call `txnManger.AdviseWarmup` forever.
+// The behavior is like text protocol request at most time, except that it can get a plan from plan cache,
+// when optimizer never calls `txnManager.AdviseWarmup`.
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil

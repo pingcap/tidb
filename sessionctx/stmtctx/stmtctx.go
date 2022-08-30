@@ -308,7 +308,7 @@ type StatementContext struct {
 	RCCheckTS bool
 
 	// See the detail in function `NeedDisableWarmupInOptimizer`.
-	// If DisableWarmupInOptimizer is true, Optimizer doesn't call txnManger.AdviseWarmup() to warmup.
+	// If DisableWarmupInOptimizer is true, Optimizer doesn't call txnManager.AdviseWarmup() to warmup.
 	// it is used to skip tso request in compile phase for some write statements when tidb_rc_write_check_ts
 	// is on and these statements meet specific scenarios.
 	DisableWarmupInOptimizer bool
