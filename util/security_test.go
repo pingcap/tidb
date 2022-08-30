@@ -146,8 +146,7 @@ func TestWithOrWithoutCA(t *testing.T) {
 	serverCert, serverKey := certs[0], keys[0]
 	clientCert, clientKey := certs[1], keys[1]
 
-	caData2, certs2, keys2 := generateCerts(t, []string{"client2"})
-	clientCert2, clientKey2 := certs2[0], keys2[0]
+	caData2, _, _ := generateCerts(t, nil)
 
 	serverTLS, err := util.NewTLSConfigWithVerifyCN(caData, serverCert, serverKey, nil)
 	require.NoError(t, err)
@@ -183,8 +182,6 @@ func TestWithOrWithoutCA(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	// test wrong CA should fail
-	_ = clientCert2
-	_ = clientKey2
 	clientTLS3, err := util.NewTLSConfigWithVerifyCN(caData2, nil, nil, []string{})
 	require.NoError(t, err)
 	// inject CA to imitate our generated CA is a trusted CA
