@@ -70,7 +70,7 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 
 type StoreMeta struct {
 	storeId    uint64
-	regionMeta []*recovpb.RegionMeta
+	regionMetas []*recovpb.RegionMeta
 }
 
 func NewStoreMeta(storeId uint64) StoreMeta {
