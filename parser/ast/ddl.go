@@ -264,7 +264,7 @@ type FlashBackDatabaseStmt struct {
 
 // Restore implements Node interface.
 func (n *FlashBackDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("FLASHBACK DATABASE")
+	ctx.WriteKeyWord("FLASHBACK DATABASE ")
 	ctx.WriteName(n.DBName.O)
 	if len(n.NewName) > 0 {
 		ctx.WriteKeyWord(" TO ")

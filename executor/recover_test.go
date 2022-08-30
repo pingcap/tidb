@@ -441,7 +441,7 @@ func TestFlashbackSchema(t *testing.T) {
 	defer resetGC()
 
 	// if GC safe point is not exists in mysql.tidb
-	tk.MustGetErrMsg("flashback database test_flashback", "can not get 'tikv_gc_safe_point'")
+	tk.MustGetErrMsg("flashback database db_not_exists", "can not get 'tikv_gc_safe_point'")
 	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	// Set GC enable.
@@ -451,7 +451,7 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("drop database test_flashback")
 
 	// Test flashback database with db_not_exists name.
-	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database 'db_not_exists' in GC safe point")
+	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database: db_not_exists in DDL history jobs")
 	tk.MustExec("flashback database test_flashback")
 	tk.MustGetErrMsg("flashback database test_flashback to test_flashback2", "Schema 'test_flashback' already been recover to 'test_flashback', can't be recover repeatedly")
 
