@@ -993,6 +993,7 @@ func TestDeferConstraintCheck(t *testing.T) {
 
 	// case: constraint check failure
 	tk.MustExec("create table t2 (id int primary key, uk int, unique key i1(uk))")
+	tk.MustExec("set @@tidb_txn_assertion_level=off")
 	tk.MustExec("insert into t2 values (1, 1)")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (2, 1)")
@@ -1001,6 +1002,7 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
 	err := tk.ExecToErr("commit")
 	require.Error(t, err)
+	println("ah", err.Error())
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
 
@@ -1011,4 +1013,18 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk2.MustExec("insert into t3 values (1, 2)")
 	err = tk.ExecToErr("commit")
 	require.Error(t, err)
+	println("ah", err.Error())
+
+	// case: DML returns error => abort txn
+	tk.MustExec("create table t4 (id int primary key, v int, key i1(v))")
+	tk.MustExec("insert into t4 values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t4 values (1, 2), (2, 2)")
+	tk.MustQuery("select * from t4 order by id").Check(testkit.Rows("1 2", "2 2"))
+	err = tk.ExecToErr("delete from t4 where id = 1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t4")
+	tk.MustQuery("select * from t4 order by id").Check(testkit.Rows("1 1"))
 }

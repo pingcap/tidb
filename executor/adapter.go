@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/breakpoint"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -68,6 +70,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+var ErrLazyUniquenessCheckFailure = dbterror.ClassSession.NewStd(errno.ErrLazyUniquenessCheckFailure)
 
 // metrics option
 var (
@@ -720,9 +724,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	return nil, err
 }
 
-func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
+func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err error) {
 	sctx := a.Ctx
-	// Do not active the transaction here.
+	// Do not activate the transaction here.
 	// When autocommit = 0 and transaction in pessimistic mode,
 	// statements like set xxx = xxx; should not active the transaction.
 	txn, err := sctx.Txn(false)
@@ -730,6 +734,14 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
+	defer func() {
+		// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
+		// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
+		if err != nil && !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic {
+			sctx.GetSessionVars().SetInTxn(false)
+			err = ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
+		}
+	}()
 	for {
 		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
@@ -778,11 +790,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			// todo: Report deadlock
 			if ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
-			}
-			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
-			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
-			if !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic {
-				sctx.GetSessionVars().SetInTxn(false)
 			}
 			return err
 		}
