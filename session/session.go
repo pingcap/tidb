@@ -2050,7 +2050,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.currentPlan = stmt.Plan
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if execStmt.Name == "" {
-			s.currentPlan = nil // TODO
+			// for exec-stmt on bin-protocol, ignore the plan detail in `show process` to gain performance benefits.
+			s.currentPlan = nil
 		}
 	}
 
