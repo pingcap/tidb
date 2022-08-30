@@ -1168,7 +1168,7 @@ func DeleteInternalSession(se interface{}) {
 	sm.DeleteInternalSession(se)
 }
 
-// SetEtcdClient is only used for test
+// SetEtcdClient is only used for test.
 func SetEtcdClient(etcdCli *clientv3.Client) {
 	is, err := getGlobalInfoSyncer()
 
