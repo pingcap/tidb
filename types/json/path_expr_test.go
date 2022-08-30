@@ -95,6 +95,8 @@ func TestPathExprToString(t *testing.T) {
 		{"$.*[2]"},
 		{"$**.a[3]"},
 		{`$."\"hello\""`},
+		{`$."a b"`},
+		{`$."one potato"`},
 	}
 	for _, test := range tests {
 		// copy iterator variable into a new variable, see issue #27779
