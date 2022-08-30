@@ -781,7 +781,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			}
 			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
 			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
-			if sctx.GetSessionVars().ConstraintCheckInPlacePessimistic {
+			if !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic {
 				sctx.GetSessionVars().SetInTxn(false)
 			}
 			return err

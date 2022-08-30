@@ -952,7 +952,7 @@ func TestInsertNotLock(t *testing.T) {
 	tk2.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
 
-	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 1")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t values(1, 0)")
 	tk2.MustExec("begin pessimistic")
@@ -973,7 +973,7 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
-	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=1")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
 
 	// case: success
 	tk.MustExec("begin pessimistic")

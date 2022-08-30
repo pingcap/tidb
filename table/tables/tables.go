@@ -848,7 +848,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	if setPresume {
 		flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
-		if sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic && sessVars.InTxn() {
+		if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic && sessVars.InTxn() {
 			flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 		}
 		err = memBuffer.SetWithFlags(key, value, flags...)
