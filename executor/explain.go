@@ -192,7 +192,7 @@ func (h *memoryDebugModeHandler) genInfo(status string, needProfile bool, heapIn
 func (h *memoryDebugModeHandler) getTrackerTreeMemUseLogs() []zap.Field {
 	trackerMemUseMap := h.memTracker.CountAllChildrenMemUse()
 	logs := make([]zap.Field, 0, len(trackerMemUseMap))
-	var keys []string
+	keys := make([]string, 0, len(trackerMemUseMap))
 	for k := range trackerMemUseMap {
 		keys = append(keys, k)
 	}
