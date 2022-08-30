@@ -177,7 +177,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 				return errors.Trace(err)
 			}
 
-			tikvMeta := NewStoreMeta(storeId)
+			storeMeta := NewStoreMeta(storeId)
 			// for a TiKV, received the stream
 			for {
 				var meta *recovpb.RegionMeta
