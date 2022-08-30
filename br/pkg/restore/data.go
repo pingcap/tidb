@@ -395,15 +395,6 @@ type Regions struct {
 	storeId uint64
 }
 
-// Max returns the larger of x or y of uint64.
-// if x = y, return x
-func Max(x, y uint64) uint64 {
-	if x < y {
-		return y
-	}
-	return x
-}
-
 // generate the related the recovery plan to tikvs:
 // 1. check overlap the region, make a recovery decision
 // 2. build a leader list for all region during the tikv startup
@@ -430,9 +421,9 @@ func (recovery *Recovery) makeRecoveryPlan() {
 				regions[m.RegionId] = make([]Regions, 0, recovery.totalStores)
 			}
 			regions[m.RegionId] = append(regions[m.RegionId], Regions{m, storeId})
-			maxId = Max(maxId, Max(m.RegionId, m.PeerId))
+			maxId = utils.Max(maxId, utils.Max(m.RegionId, m.PeerId))
 		}
-		recovery.maxAllocID = Max(recovery.maxAllocID, maxId)
+		recovery.maxAllocID = utils.Max(recovery.maxAllocID, maxId)
 	}
 
 	// last log term -> last index -> commit index

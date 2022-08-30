@@ -75,12 +75,3 @@ func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
 	return src.GetCharset() == target.GetCharset() &&
 		src.GetCollate() == target.GetCollate()
 }
-
-// Max returns the larger of x or y of uint64.
-// if x = y, return x
-func Max(x, y uint64) uint64 {
-	if x < y {
-		return y
-	}
-	return x
-}
