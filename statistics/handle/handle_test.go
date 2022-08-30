@@ -2239,7 +2239,7 @@ func TestIndexUsageInformation(t *testing.T) {
 	))
 }
 
-//Functional Test:test batch insert
+// Functional Test:test batch insert
 func TestIndexUsageInformationMultiIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	session.SetIndexUsageSyncLease(1)

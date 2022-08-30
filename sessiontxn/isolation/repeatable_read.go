@@ -53,7 +53,7 @@ func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsisten
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.RepeatableRead
 			},
-			onTxnActive: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
@@ -168,7 +168,9 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point session
 
 // AdviseOptimizeWithPlan optimizes for update point get related execution.
 // Use case: In for update point get related operations, we do not fetch ts from PD but use the last ts we fetched.
-//     We expect that the data that the point get acquires has not been changed.
+//
+//	We expect that the data that the point get acquires has not been changed.
+//
 // Benefit: Save the cost of acquiring ts from PD.
 // Drawbacks: If the data has been changed since the ts we used, we need to retry.
 // One exception is insert operation, when it has no select plan, we do not fetch the latest ts immediately. We only update ts

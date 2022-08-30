@@ -71,7 +71,6 @@ var (
 		}, []string{LblResult})
 
 	OwnerUpdateGlobalVersion   = "update_global_version"
-	OwnerGetGlobalVersion      = "get_global_version"
 	OwnerCheckAllVersions      = "check_all_versions"
 	OwnerHandleSyncerHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{

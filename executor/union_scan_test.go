@@ -223,9 +223,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 	tk.MustExec("create table t (a int,b int, unique index idx(b))")
 	tk.MustExec("insert t values (1,1),(2,2)")
 	tk.MustExec("begin")
-	_, err := tk.Exec("update t set b=b+1")
-	require.NotNil(t, err)
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '2' for key 'idx'")
+	tk.MustGetErrMsg("update t set b=b+1", "[kv:1062]Duplicate entry '2' for key 'idx'")
 	// update with unchange index column.
 	tk.MustExec("update t set a=a+1")
 	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
@@ -534,6 +532,19 @@ func TestIssue32422(t *testing.T) {
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 
 	tk.MustExec("rollback")
+}
+
+func TestIssue36903(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_vwvgdc")
+
+	tk.MustExec("CREATE TABLE t_vwvgdc (wkey int, pkey int NOT NULL, c_rdsfbc double DEFAULT NULL, PRIMARY KEY (`pkey`));")
+	tk.MustExec("insert into t_vwvgdc values (2, 15000, 61.75);")
+	tk.MustExec("BEGIN OPTIMISTIC;")
+	tk.MustExec("insert into t_vwvgdc (wkey, pkey, c_rdsfbc) values (155, 228000, 99.50);")
+	tk.MustQuery("select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;")
 }
 
 func BenchmarkUnionScanRead(b *testing.B) {

@@ -782,6 +782,8 @@
   {
     "name": "TestMPPSinglePartitionType",
     "cases": [
+      "select * from employee where deptid>1",
+      "select deptid+5, empid*10  from employee where deptid>1",
       // test normal aggregation, MPP2Phase.
       "select count(*) from employee group by deptid+1",
       // test normal aggregation, MPPScalar.

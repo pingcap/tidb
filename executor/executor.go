@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -160,6 +161,9 @@ func init() {
 	variable.GetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.GetBytesLimit
 	// TODO: do not attach now to avoid impact to global, will attach later when analyze memory track is stable
 	//GlobalAnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+
+	schematracker.ConstructResultOfShowCreateDatabase = ConstructResultOfShowCreateDatabase
+	schematracker.ConstructResultOfShowCreateTable = ConstructResultOfShowCreateTable
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -1015,6 +1019,7 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 
 // ShowSlowExec represents the executor of showing the slow queries.
 // It is build from the "admin show slow" statement:
+//
 //	admin show slow top [internal | all] N
 //	admin show slow recent N
 type ShowSlowExec struct {
@@ -1704,21 +1709,22 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // UnionExec pulls all it's children's result and returns to its parent directly.
 // A "resultPuller" is started for every child to pull result from that child and push it to the "resultPool", the used
 // "Chunk" is obtained from the corresponding "resourcePool". All resultPullers are running concurrently.
-//                             +----------------+
-//   +---> resourcePool 1 ---> | resultPuller 1 |-----+
-//   |                         +----------------+     |
-//   |                                                |
-//   |                         +----------------+     v
-//   +---> resourcePool 2 ---> | resultPuller 2 |-----> resultPool ---+
-//   |                         +----------------+     ^               |
-//   |                               ......           |               |
-//   |                         +----------------+     |               |
-//   +---> resourcePool n ---> | resultPuller n |-----+               |
-//   |                         +----------------+                     |
-//   |                                                                |
-//   |                          +-------------+                       |
-//   |--------------------------| main thread | <---------------------+
-//                              +-------------+
+//
+//	                          +----------------+
+//	+---> resourcePool 1 ---> | resultPuller 1 |-----+
+//	|                         +----------------+     |
+//	|                                                |
+//	|                         +----------------+     v
+//	+---> resourcePool 2 ---> | resultPuller 2 |-----> resultPool ---+
+//	|                         +----------------+     ^               |
+//	|                               ......           |               |
+//	|                         +----------------+     |               |
+//	+---> resourcePool n ---> | resultPuller n |-----+               |
+//	|                         +----------------+                     |
+//	|                                                                |
+//	|                          +-------------+                       |
+//	|--------------------------| main thread | <---------------------+
+//	                           +-------------+
 type UnionExec struct {
 	baseExecutor
 	concurrency int
@@ -1919,6 +1925,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
+	sc.StatsLoadStatus = make(map[model.TableItemID]string)
+	sc.IsSyncStatsFailed = false
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 

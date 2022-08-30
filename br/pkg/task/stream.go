@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/spf13/pflag"
@@ -426,7 +428,7 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	return nil
 }
 
-// RunStreamCommand run all kinds of `stream task``
+// RunStreamCommand run all kinds of `stream task`
 func RunStreamCommand(
 	ctx context.Context,
 	g glue.Glue,
@@ -1002,6 +1004,8 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
+	recorder := tiflashrec.New()
+	cfg.tiflashRecorder = recorder
 	// restore full snapshot.
 	if len(cfg.FullBackupStorage) > 0 {
 		if err := checkPiTRRequirements(ctx, g, cfg); err != nil {
@@ -1010,7 +1014,6 @@ func RunStreamRestore(
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
-		cfg.skipTiflash = true
 		if err = RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
 			return errors.Trace(err)
 		}
@@ -1126,6 +1129,17 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	schemasReplace.AfterTableRewritten = func(deleted bool, tableInfo *model.TableInfo) {
+		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
+		// We should remove the table if we meet.
+		if deleted || tableInfo.TiFlashReplica == nil {
+			cfg.tiflashRecorder.DelTable(tableInfo.ID)
+			return
+		}
+		cfg.tiflashRecorder.AddTable(tableInfo.ID, *tableInfo.TiFlashReplica)
+		// Remove the replica firstly. Let's restore them at the end.
+		tableInfo.TiFlashReplica = nil
+	}
 
 	updateStats := func(kvCount uint64, size uint64) {
 		mu.Lock()
@@ -1166,6 +1180,26 @@ func restoreStream(
 
 	if err = client.InsertGCRows(ctx); err != nil {
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
+	}
+
+	if cfg.tiflashRecorder != nil {
+		sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
+		log.Info("Generating SQLs for restoring TiFlash Replica",
+			zap.Strings("sqls", sqls))
+		err = g.UseOneShotSession(mgr.GetStorage(), false, func(se glue.Session) error {
+			for _, sql := range sqls {
+				if errExec := se.ExecuteInternal(ctx, sql); errExec != nil {
+					logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+						logutil.ShortError(errExec),
+						zap.String("sql", sql),
+					)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

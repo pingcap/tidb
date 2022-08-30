@@ -40,11 +40,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	_ "github.com/pingcap/tidb/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table/tables"
@@ -432,47 +430,8 @@ func newTableInfo(createTblSQL string, tableID int64) (*model.TableInfo, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// set a auto_random bit if AUTO_RANDOM is set
-	setAutoRandomBits(info, createTableStmt.Cols)
 	info.State = model.StatePublic
 	return info, nil
-}
-
-func setAutoRandomBits(tblInfo *model.TableInfo, colDefs []*ast.ColumnDef) {
-	if !tblInfo.PKIsHandle {
-		return
-	}
-	pkColName := tblInfo.GetPkName()
-	for _, colDef := range colDefs {
-		if colDef.Name.Name.L != pkColName.L || colDef.Tp.GetType() != mysql.TypeLonglong {
-			continue
-		}
-		// potential AUTO_RANDOM candidate column, examine the options
-		hasAutoRandom := false
-		canSetAutoRandom := true
-		var autoRandomBits int
-		for _, option := range colDef.Options {
-			if option.Tp == ast.ColumnOptionAutoRandom {
-				hasAutoRandom = true
-				autoRandomBits = option.AutoRandomBitLength
-				switch {
-				case autoRandomBits == types.UnspecifiedLength:
-					autoRandomBits = autoid.DefaultAutoRandomBits
-				case autoRandomBits <= 0 || autoRandomBits > autoid.MaxAutoRandomBits:
-					canSetAutoRandom = false
-				}
-			}
-			if option.Tp == ast.ColumnOptionAutoIncrement {
-				canSetAutoRandom = false
-			}
-			if option.Tp == ast.ColumnOptionDefaultValue {
-				canSetAutoRandom = false
-			}
-		}
-		if hasAutoRandom && canSetAutoRandom {
-			tblInfo.AutoRandomBits = uint64(autoRandomBits)
-		}
-	}
 }
 
 // ReadFirstNRowsByTableName reads the first N rows of data of an importing source table.

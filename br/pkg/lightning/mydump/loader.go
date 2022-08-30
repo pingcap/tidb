@@ -100,7 +100,7 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 }
 
 /*
-	Mydumper File Loader
+Mydumper File Loader
 */
 type MDLoader struct {
 	store  storage.ExternalStorage

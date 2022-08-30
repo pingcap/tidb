@@ -45,7 +45,7 @@ const FullRange = -1
 
 // partitionProcessor rewrites the ast for table partition.
 // Used by static partition prune mode.
-//
+/*
 // create table t (id int) partition by range (id)
 //   (partition p1 values less than (10),
 //    partition p2 values less than (20),
@@ -56,7 +56,7 @@ const FullRange = -1
 //      select * from p1 where id < 10
 //      select * from p2 where id < 20
 //      select * from p3 where id < 30)
-//
+*/
 // partitionProcessor is here because it's easier to prune partition after predicate push down.
 type partitionProcessor struct{}
 

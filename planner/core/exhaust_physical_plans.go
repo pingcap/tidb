@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -366,11 +367,11 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 
 // ForceUseOuterBuild4Test is a test option to control forcing use outer input as build.
 // TODO: use hint and remove this variable
-var ForceUseOuterBuild4Test = false
+var ForceUseOuterBuild4Test = atomic.NewBool(false)
 
 // ForcedHashLeftJoin4Test is a test option to force using HashLeftJoin
 // TODO: use hint and remove this variable
-var ForcedHashLeftJoin4Test = false
+var ForcedHashLeftJoin4Test = atomic.NewBool(false)
 
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
@@ -381,21 +382,21 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 	case LeftOuterJoin:
-		if ForceUseOuterBuild4Test {
+		if ForceUseOuterBuild4Test.Load() {
 			joins = append(joins, p.getHashJoin(prop, 1, true))
 		} else {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 			joins = append(joins, p.getHashJoin(prop, 1, true))
 		}
 	case RightOuterJoin:
-		if ForceUseOuterBuild4Test {
+		if ForceUseOuterBuild4Test.Load() {
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		} else {
 			joins = append(joins, p.getHashJoin(prop, 0, false))
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		}
 	case InnerJoin:
-		if ForcedHashLeftJoin4Test {
+		if ForcedHashLeftJoin4Test.Load() {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 		} else {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
@@ -1327,11 +1328,12 @@ loopOtherConds:
 }
 
 // removeUselessEqAndInFunc removes the useless eq/in conditions. It's designed for the following case:
-//   t1 join t2 on t1.a=t2.a and t1.c=t2.c where t1.b > t2.b-10 and t1.b < t2.b+10 there's index(a, b, c) on t1.
-//   In this case the curIdxOff2KeyOff is [0 -1 1] and the notKeyEqAndIn is [].
-//   It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
-//   [0 -1 -1].
-//   So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
+//
+//	t1 join t2 on t1.a=t2.a and t1.c=t2.c where t1.b > t2.b-10 and t1.b < t2.b+10 there's index(a, b, c) on t1.
+//	In this case the curIdxOff2KeyOff is [0 -1 1] and the notKeyEqAndIn is [].
+//	It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
+//	[0 -1 -1].
+//	So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
 func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expression.Column, notKeyEqAndIn []expression.Expression, _ []*expression.Column) (usefulEqAndIn, uselessOnes []expression.Expression) {
 	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
 	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {
@@ -2043,8 +2045,8 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 		return nil, true, nil
 	}
 	newProps := []*property.PhysicalProperty{newProp}
-	// generate a mpp task candidate if enforced mpp
-	if newProp.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPEnforced() && p.canPushToCop(kv.TiFlash) &&
+	// generate a mpp task candidate if mpp mode is allowed
+	if newProp.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) &&
 		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType

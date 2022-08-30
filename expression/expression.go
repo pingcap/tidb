@@ -225,8 +225,9 @@ func ExprNotNull(expr Expression) bool {
 
 // HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
 // We should ignore overflow errors when evaluating selection conditions:
-//		INSERT INTO t VALUES ("999999999999999999");
-//		SELECT * FROM t WHERE v;
+//
+//	INSERT INTO t VALUES ("999999999999999999");
+//	SELECT * FROM t WHERE v;
 func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
 	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
 		return -1, nil
@@ -1057,7 +1058,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 		ast.JSONLength, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
-		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
+		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond,
 		ast.TimeToSec:
@@ -1105,6 +1106,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
 			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
 			return function.GetArgs()[0].GetType().GetType() != mysql.TypeYear
+		case tipb.ScalarFuncSig_CastTimeAsDuration:
+			return retType.GetType() == mysql.TypeDuration
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {

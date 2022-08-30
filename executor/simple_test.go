@@ -15,16 +15,25 @@
 package executor_test
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 )
 
 func TestKillStmt(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.EnableGlobalKill = false
@@ -33,13 +42,10 @@ func TestKillStmt(t *testing.T) {
 		config.StoreGlobalConfig(originCfg)
 	}()
 
-	tk := testkit.NewTestKit(t, store)
+	connID := conn1.ID()
+
 	tk.MustExec("use test")
-	sm := &mockSessionManager{
-		serverID: 0,
-	}
-	tk.Session().SetSessionManager(sm)
-	tk.MustExec("kill 1")
+	tk.MustExec(fmt.Sprintf("kill %d", connID))
 	result := tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
 
@@ -53,7 +59,6 @@ func TestKillStmt(t *testing.T) {
 	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
 
 	// truncated
-	sm.SetServerID(1)
 	tk.MustExec("kill 101")
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
@@ -64,8 +69,8 @@ func TestKillStmt(t *testing.T) {
 	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: Unexpected connectionID excceeds int64"))
 
 	// local kill
-	connID := util.NewGlobalConnID(1, true)
-	tk.MustExec("kill " + strconv.FormatUint(connID.ID(), 10))
+	killConnID := util.NewGlobalConnID(connID, true)
+	tk.MustExec("kill " + strconv.FormatUint(killConnID.ID(), 10))
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 

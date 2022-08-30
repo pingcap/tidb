@@ -705,7 +705,23 @@ func (b *builtinCastStringAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSO
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
+
+	typ := b.args[0].GetType()
+	if types.IsBinaryStr(typ) {
+		buf := []byte(val)
+		if typ.GetType() == mysql.TypeString {
+			// the tailing zero should also be in the opaque json
+			buf = make([]byte, typ.GetFlen())
+			copy(buf, val)
+		}
+
+		res := json.CreateBinary(json.Opaque{
+			TypeCode: b.args[0].GetType().GetType(),
+			Buf:      buf,
+		})
+
+		return res, false, err
+	} else if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
 		res, err = json.ParseBinaryFromString(val)
 	} else {
 		res = json.CreateBinary(val)
@@ -1786,11 +1802,8 @@ const inUnionCastContext inCastContext = 0
 // This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as integer.
 // See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
 func CanImplicitEvalInt(expr Expression) bool {
-	switch f := expr.(type) {
-	case *ScalarFunction:
-		if f.FuncName.L == ast.DayName {
-			return true
-		}
+	if f, ok := expr.(*ScalarFunction); ok {
+		return f.FuncName.L == ast.DayName
 	}
 	return false
 }
@@ -1800,12 +1813,8 @@ func CanImplicitEvalInt(expr Expression) bool {
 // This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as real.
 // See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
 func CanImplicitEvalReal(expr Expression) bool {
-	switch f := expr.(type) {
-	case *ScalarFunction:
-		switch f.FuncName.L {
-		case ast.DayName:
-			return true
-		}
+	if f, ok := expr.(*ScalarFunction); ok {
+		return f.FuncName.L == ast.DayName
 	}
 	return false
 }
@@ -1931,6 +1940,25 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+func minimalDecimalLenForHoldingInteger(tp byte) int {
+	switch tp {
+	case mysql.TypeTiny:
+		return 3
+	case mysql.TypeShort:
+		return 5
+	case mysql.TypeInt24:
+		return 8
+	case mysql.TypeLong:
+		return 10
+	case mysql.TypeLonglong:
+		return 20
+	case mysql.TypeYear:
+		return 4
+	default:
+		return mysql.MaxIntWidth
+	}
+}
+
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type of expr is
 // not type decimal, otherwise, returns `expr` directly.
 func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
@@ -1942,8 +1970,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
 
 	if expr.GetType().EvalType() == types.ETInt {
-		// todo set the flen returned by minimalDecimalLenForHoldingInteger
-		tp.SetFlen(mysql.MaxIntWidth)
+		tp.SetFlen(minimalDecimalLenForHoldingInteger(expr.GetType().GetType()))
 		tp.SetDecimal(0)
 	}
 	if tp.GetFlen() == types.UnspecifiedLength || tp.GetFlen() > mysql.MaxDecimalWidth {

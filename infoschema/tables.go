@@ -1126,7 +1126,6 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{name: "LOCATION_LABELS", tp: mysql.TypeVarchar, size: 64},
 	{name: "AVAILABLE", tp: mysql.TypeTiny, size: 1},
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
-	{name: "TABLE_MODE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var tableInspectionResultCols = []columnInfo{
@@ -1521,10 +1520,11 @@ var tableVariablesInfoCols = []columnInfo{
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
-//  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
-//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
-//  - "PK_AUTO_RANDOM_BITS={bit_number}": for tables of which primary key is sharded row id.
-//  - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+//   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
+//   - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
+//   - "PK_AUTO_RANDOM_BITS={bit_number}, RANGE BITS={bit_number}": for tables of which primary key is sharded row id.
+//   - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+//
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
 func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface{} {
@@ -1535,6 +1535,10 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 	if tableInfo.PKIsHandle {
 		if tableInfo.ContainsAutoRandomBits() {
 			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
+			rangeBits := tableInfo.AutoRandomRangeBits
+			if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
+				shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
+			}
 		} else {
 			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
 		}
