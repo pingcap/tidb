@@ -1543,11 +1543,17 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 			}
 		}
 	case model.ActionRecoverSchema:
-		var recoverSchemaInfo *RecoverSchemaInfo
-		err = job.DecodeArgs(&recoverSchemaInfo)
+		var (
+			recoverSchemaInfo      *RecoverSchemaInfo
+			recoverSchemaCheckFlag int64
+		)
+		const checkFlagIndexInJobArgs = 1 // The index of `recoverSchemaCheckFlag` in job arg list.
+		err = job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		// Reserved recoverSchemaCheckFlag value for gc work judgment.
+		job.Args[checkFlagIndexInJobArgs] = recoverSchemaCheckFlag
 		recoverTabsInfo := recoverSchemaInfo.RecoverTabsInfo
 		diff.AffectedOpts = make([]*model.AffectedOption, len(recoverTabsInfo))
 		for i := range recoverTabsInfo {
