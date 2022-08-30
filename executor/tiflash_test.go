@@ -1249,7 +1249,8 @@ func TestAggPushDownCountStar(t *testing.T) {
 }
 
 func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t")
