@@ -708,10 +708,11 @@ func TestRegexpInStrConst(t *testing.T) {
 		{"abc", "ab.", int64(1), int64(1), int64(0), "", 1, 1, nil},
 		{"abc", "aB.", int64(1), int64(1), int64(0), "", 0, 0, nil},
 		{"abc", "aB.", int64(1), int64(1), int64(0), "i", 1, 1, nil},
-		{"good\nday", "od", int64(1), int64(1), int64(0), "m", 3, 3, nil},
-		{"\n", ".", int64(1), int64(1), int64(0), "s", 1, 1, nil},
+		{"good\nday", "od$", int64(1), int64(1), int64(0), "m", 3, 3, nil},
+		{"good\nday", "oD$", int64(1), int64(1), int64(0), "mi", 3, 3, nil},
+		{"\n", ".", int64(1), int64(1), int64(0), "s", 1, 1, nil}, // index 6
 		// Test invalid matchType
-		{"abc", "ab.", int64(1), int64(1), int64(0), "p", nil, nil, ErrRegexp}, // index 5
+		{"abc", "ab.", int64(1), int64(1), int64(0), "p", nil, nil, ErrRegexp},
 		// Some nullable input tests
 		{"abc", "ab.", int64(1), int64(1), int64(0), nil, nil, nil, nil},
 		{"abc", "ab.", nil, int64(1), int64(0), nil, nil, nil, nil},
@@ -786,7 +787,7 @@ func TestRegexpInStrVec(t *testing.T) {
 	// Prepare data: occurrence is constant
 	constants[3] = getIntConstant(2)
 	occurConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	occurConstCase.constants = make([]*Constant, 5)
+	occurConstCase.constants = make([]*Constant, 6)
 	copy(occurConstCase.constants, constants)
 	constants[3] = nil
 
@@ -828,4 +829,285 @@ func TestRegexpInStrVec(t *testing.T) {
 	}
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpInStrCases)
+}
+
+func TestRegexpReplaceConst(t *testing.T) {
+	ctx := createContext(t)
+
+	// test regexp_replace(expr, pat, repl)
+	testParam3 := []struct {
+		input    interface{} // string
+		pattern  interface{} // string
+		replace  interface{} // string
+		match    interface{} // string
+		matchBin interface{} // bin result
+		err      error
+	}{
+		{"abc abd abe", "ab.", "cz", "cz cz cz", "0x637A20637A20637A", nil},
+		{"你好 好的", "好", "逸", "你逸 逸的", "0xE4BDA0E980B820E980B8E79A84", nil},
+		{"", "^$", "123", "", "0x", nil},
+		{"abc", nil, nil, nil, nil, nil},
+		{nil, "bc", nil, nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam3 {
+			fc := funcs[ast.RegexpReplace]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+
+	// test regexp_replace(expr, pat, repl, pos)
+	testParam4 := []struct {
+		input    interface{} // string
+		pattern  interface{} // string
+		replace  interface{} // string
+		pos      interface{} // int64
+		match    interface{} // string
+		matchBin interface{} // bin result
+		err      error
+	}{
+		{"abc", "ab.", "cc", int64(1), "cc", "0x6363", nil},
+		{"abc", "bc", "cc", int64(3), "abc", "0x616263", nil},
+		{"你好", "好", "的", int64(2), "你的", "0xE4BDA0E79A84", nil},
+		{"你好啊", "好", "的", int64(3), "你好啊", "0xE4BDA0E79A84E5958A", nil},
+		{"", "^$", "cc", int64(1), "", "0x", nil},
+		// Invalid position index tests
+		{"", "^$", "a", int64(2), "", "", ErrRegexp},
+		{"", "^&", "a", int64(0), "", "", ErrRegexp},
+		{"abc", "bc", "a", int64(-1), "", "", ErrRegexp},
+		{"abc", "bc", "a", int64(4), "", "", ErrRegexp},
+		// Some nullable input tests
+		{"", "^$", "a", nil, nil, nil, nil},
+		{nil, "^$", "a", nil, nil, nil, nil},
+		{"", nil, nil, nil, nil, nil, nil},
+		{nil, nil, nil, int64(1), nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam4 {
+			fc := funcs[ast.RegexpReplace]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+
+	// test regexp_replace(expr, pat, repl, pos, occurrence)
+	testParam5 := []struct {
+		input      interface{} // string
+		pattern    interface{} // string
+		replace    interface{} // string
+		pos        interface{} // int64
+		occurrence interface{} // int64
+		match      interface{} // string
+		matchBin   interface{} // bin result
+		err        error
+	}{
+		{"abc abd", "ab.", "cc", int64(1), int64(1), "cc abd", "0x636320616264", nil},
+		{"abc abd", "ab.", "cc", int64(1), int64(2), "abc cc", "0x616263206363", nil},
+		{"abc abd", "ab.", "cc", int64(1), int64(0), "cc cc", "0x6363206363", nil},
+		{"abc abd abe", "ab.", "cc", int64(3), int64(2), "abc abd cc", "0x61626320616264206363", nil},
+		{"abc abd abe", "ab.", "cc", int64(3), int64(10), "abc abd abe", "0x6162632061626420616265", nil},
+		{"你好 好啊", "好", "的", int64(1), int64(1), "你的 好啊", "0xE4BDA0E79A8420E5A5BDE5958A", nil}, // index 5
+		{"你好 好啊", "好", "的", int64(3), int64(1), "你好 的啊", "0xE4BDA0E79A8420E5A5BDE5958A", nil},
+		{"", "^$", "cc", int64(1), int64(1), "", "0x", nil},
+		{"", "^$", "cc", int64(1), int64(2), "", "0x", nil},
+		{"", "^$", "cc", int64(1), int64(-1), "", "0x", nil},
+		// Some nullable input tests
+		{"", "^$", "a", nil, int64(1), nil, nil, nil}, // index 10
+		{nil, "^$", "a", nil, nil, nil, nil, nil},
+		{"", nil, nil, nil, int64(1), nil, nil, nil},
+		{nil, nil, nil, int64(1), int64(1), nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam5 {
+			fc := funcs[ast.RegexpReplace]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos, tt.occurrence))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+
+	// test regexp_replace(expr, pat, repl, pos, occurrence, match_type)
+	testParam6 := []struct {
+		input      interface{} // string
+		pattern    interface{} // string
+		replace    interface{} // string
+		pos        interface{} // int64
+		occurrence interface{} // int64
+		matchType  interface{} // string
+		match      interface{} // string
+		matchBin   interface{} // bin result
+		err        error
+	}{
+		{"abc", "ab.", "cc", int64(1), int64(0), "", "cc", "0x6363", nil},
+		{"abc", "aB.", "cc", int64(1), int64(0), "i", "cc", "0x6363", nil},
+		{"good\nday", "od$", "cc", int64(1), int64(0), "m", "gocc\nday", "0x676F63630A646179", nil},
+		{"good\nday", "oD$", "cc", int64(1), int64(0), "mi", "gocc\nday", "0x676F63630A646179", nil},
+		{"\n", ".", "cc", int64(1), int64(0), "s", "cc", "0x6363", nil},
+		{"好的 好滴 好~", ".", "的", int64(1), int64(0), "msi", "的的的的的的的的", "0xE79A84E79A84E79A84E79A84E79A84E79A84E79A84E79A84", nil},
+		// Test invalid matchType
+		{"abc", "ab.", "cc", int64(1), int64(0), "p", nil, nil, ErrRegexp},
+		// Some nullable input tests
+		{"abc", "ab.", "cc", int64(1), int64(0), nil, nil, nil, nil},
+		{"abc", "ab.", nil, int64(1), int64(0), nil, nil, nil, nil},
+		{nil, "ab.", nil, int64(1), int64(0), nil, nil, nil, nil},
+	}
+
+	for isBin := 0; isBin <= 1; isBin++ {
+		for _, tt := range testParam6 {
+			fc := funcs[ast.RegexpReplace]
+			expectMatch := tt.match
+			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos, tt.occurrence, tt.matchType))
+			if isBin == 1 {
+				setBinCollation(args[0].GetType())
+				expectMatch = tt.matchBin
+			}
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+
+			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			if tt.err == nil {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
+			} else {
+				require.True(t, terror.ErrorEqual(err, tt.err))
+			}
+		}
+	}
+}
+
+func TestRegexpReplaceVec(t *testing.T) {
+	var expr []string = []string{"abc abd abe", "你好啊啊啊啊啊", "好的 好滴 好~", "Good\nday", "\n\n\n\n\n\n"}
+	var pattern []string = []string{"^$", "ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", "."}
+	var repl []string = []string{"cc", "的"}
+	var position []int = []int{1, 5}
+	var occurrence []int = []int{-1, 5}
+	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}
+
+	args := make([]interface{}, 0)
+	args = append(args, interface{}(expr))
+	args = append(args, interface{}(pattern))
+	args = append(args, interface{}(repl))
+	args = append(args, interface{}(position))
+	args = append(args, interface{}(occurrence))
+	args = append(args, interface{}(matchType))
+
+	constants := make([]*Constant, 6)
+	for i := 0; i < 6; i++ {
+		constants[i] = nil
+	}
+
+	// Prepare data: expr is constant
+	constants[0] = getStringConstant("好的 好滴 好~")
+	exprConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	exprConstCase.constants = make([]*Constant, 6)
+	copy(exprConstCase.constants, constants)
+	constants[0] = nil
+
+	// Prepare data: pattern is constant
+	constants[1] = getStringConstant("aB.")
+	patConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	patConstCase.constants = make([]*Constant, 6)
+	copy(patConstCase.constants, constants)
+	constants[1] = nil
+
+	// Prepare data: repl is constant
+	constants[2] = getStringConstant("cc")
+	replConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	replConstCase.constants = make([]*Constant, 6)
+	copy(replConstCase.constants, constants)
+	constants[2] = nil
+
+	// Prepare data: position is constant
+	constants[3] = getIntConstant(2)
+	posConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	posConstCase.constants = make([]*Constant, 6)
+	copy(posConstCase.constants, constants)
+	constants[3] = nil
+
+	// Prepare data: occurrence is constant
+	constants[4] = getIntConstant(2)
+	occurConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	occurConstCase.constants = make([]*Constant, 6)
+	copy(occurConstCase.constants, constants)
+	constants[4] = nil
+
+	// Prepare data: match type is constant
+	constants[5] = getStringConstant("msi")
+	matchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	matchTypeConstCase.constants = make([]*Constant, 6)
+	copy(matchTypeConstCase.constants, constants)
+	constants[5] = nil
+
+	// Prepare data: test memorization
+	constants[1] = getStringConstant("aB.")
+	constants[5] = getStringConstant("msi")
+	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	patAndMatchTypeConstCase.constants = make([]*Constant, 6)
+	copy(patAndMatchTypeConstCase.constants, constants)
+	constants[1] = nil
+	constants[5] = nil
+
+	// Build vecBuiltinRegexpSubstrCases
+	var vecBuiltinRegexpReplaceCases = map[string][]vecExprBenchCase{
+		ast.RegexpReplace: {
+			getVecExprBenchCaseForRegexp(types.ETString, args...),
+			exprConstCase,
+			patConstCase,
+			replConstCase,
+			posConstCase,
+			occurConstCase,
+			matchTypeConstCase,
+			patAndMatchTypeConstCase,
+		},
+	}
+
+	testVectorizedBuiltinFunc(t, vecBuiltinRegexpReplaceCases)
 }

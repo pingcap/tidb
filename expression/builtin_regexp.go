@@ -221,7 +221,7 @@ func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 //
 // return true: need, false: needless
 func (re *regexpLikeFuncSig) needMemorization() bool {
-	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) >= 2 || re.args[2].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 2 || re.args[2].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
@@ -369,7 +369,6 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 
 		// Check position and trim expr
 		if re.isBinCollation {
-			bexpr = []byte(expr)
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
 					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -441,7 +440,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 //
 // return true: need, false: needless
 func (re *regexpSubstrFuncSig) needMemorization() bool {
-	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) == 5 && re.args[4].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 4 || re.args[4].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
@@ -521,7 +520,6 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		// Check position and trim expr
 		pos := params[2].getIntVal(i)
 		if re.isBinCollation {
-			bexpr = []byte(expr)
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -667,7 +665,6 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 		// Check position and trim expr
 		if re.isBinCollation {
-			bexpr = []byte(expr)
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
 					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -758,7 +755,7 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 //
 // return true: need, false: needless
 func (re *regexpInStrFuncSig) needMemorization() bool {
-	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) == 6 && re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 && re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
@@ -846,7 +843,6 @@ func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		// Check position and trim expr
 		pos := params[2].getIntVal(i)
 		if re.isBinCollation {
-			bexpr = []byte(expr)
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -909,6 +905,376 @@ func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			} else {
 				i64s[i] = int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][1]))) + pos - 1
 			}
+		}
+	}
+	return nil
+}
+
+// ---------------------------------- regexp_replace ----------------------------------
+
+type regexpReplaceFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argTp := []types.EvalType{types.ETString, types.ETString}
+	switch len(args) {
+	case 3:
+		argTp = append(argTp, types.ETString)
+	case 4:
+		argTp = append(argTp, types.ETString, types.ETInt)
+	case 5:
+		argTp = append(argTp, types.ETString, types.ETInt, types.ETInt)
+	case 6:
+		argTp = append(argTp, types.ETString, types.ETInt, types.ETInt, types.ETString)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTp...)
+	if err != nil {
+		return nil, err
+	}
+
+	argType := args[0].GetType()
+	bf.tp.SetFlen(argType.GetFlen())
+	sig := regexpReplaceFuncSig{
+		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
+	}
+
+	if bf.collation == charset.CollationBin {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceSig)
+		sig.isBinCollation = true
+	} else {
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceUTF8Sig)
+		sig.isBinCollation = false
+	}
+
+	return &sig, nil
+}
+
+type regexpReplaceFuncSig struct {
+	regexpBaseFuncSig
+	isBinCollation bool
+}
+
+func (re *regexpReplaceFuncSig) vectorized() bool {
+	return true
+}
+
+func (re *regexpReplaceFuncSig) Clone() builtinFunc {
+	newSig := &regexpReplaceFuncSig{}
+	newSig.cloneFrom(&re.baseBuiltinFunc)
+	newSig.clone(&re.regexpBaseFuncSig)
+	newSig.isBinCollation = re.isBinCollation
+	return newSig
+}
+
+// Call this function when all args are constant
+func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) {
+	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
+	trimmedExpr := expr
+	if isNull || err != nil {
+		return "", true, err
+	}
+
+	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+
+	repl, isNull, err := re.args[2].EvalString(re.ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+
+	pos := int64(1)
+	occurrence := int64(0)
+	matchType := ""
+	arg_num := len(re.args)
+	var bexpr []byte
+	var trimmedBexpr []byte
+
+	if re.isBinCollation {
+		bexpr = []byte(expr)
+		trimmedBexpr = bexpr
+	}
+
+	trimmedLen := int64(0)
+	if arg_num >= 4 {
+		pos, isNull, err = re.args[3].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+
+		// Check position and trim expr
+		if re.isBinCollation {
+			if pos < 1 || pos > int64(len(trimmedBexpr)) {
+				if len(trimmedBexpr) != 0 || (len(trimmedBexpr) == 0 && pos != 1) {
+					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimmedBexpr = bexpr[pos-1:] // Trim
+		} else {
+			if pos < 1 || pos > int64(utf8.RuneCountInString(trimmedExpr)) {
+				if len(trimmedExpr) != 0 || (len(trimmedExpr) == 0 && pos != 1) {
+					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimmedLen = trimUtf8String(&trimmedExpr, pos-1) // Trim
+		}
+	}
+
+	if arg_num >= 5 {
+		occurrence, isNull, err = re.args[4].EvalInt(re.ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+
+		if occurrence < 0 {
+			occurrence = 1
+		}
+	}
+
+	if arg_num == 6 {
+		matchType, isNull, err = re.args[5].EvalString(re.ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+	}
+
+	if len(expr) == 0 {
+		if re.isBinCollation {
+			return "0x", false, nil
+		} else {
+			return "", false, nil
+		}
+	}
+
+	re.compile, err = re.genCompile(matchType)
+	if err != nil {
+		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
+	reg, err := re.compile(pat)
+	if err != nil {
+		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
+	}
+
+	count := occurrence
+	if re.isBinCollation {
+		repFunc := func(matchedStr []byte) []byte {
+			if occurrence == 0 {
+				return []byte(repl)
+			}
+
+			count--
+			if count == 0 {
+				return []byte(repl)
+			}
+
+			return []byte(matchedStr)
+		}
+
+		replacedBStr := reg.ReplaceAllFunc(trimmedBexpr, repFunc)
+
+		return fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(append(bexpr[:pos-1], replacedBStr...)))), false, nil
+	}
+
+	repFunc := func(matchedStr string) string {
+		if occurrence == 0 {
+			return repl
+		}
+
+		count--
+		if count == 0 {
+			return repl
+		}
+
+		return matchedStr
+	}
+
+	replacedStr := reg.ReplaceAllStringFunc(trimmedExpr, repFunc)
+	return expr[:trimmedLen] + replacedStr, false, nil
+}
+
+// we need to memorize the regexp when:
+//  1. pattern and match type are constant
+//  2. pattern is const and match type is null
+//
+// return true: need, false: needless
+func (re *regexpReplaceFuncSig) needMemorization() bool {
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 && re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+}
+
+// Call this function when at least one of the args is vector
+// REGEXP_REPLACE(expr, pat, repl[, pos[, occurrence[, match_type]]])
+func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	params := make([]*regexpParam, 0, 6)
+
+	for i := 0; i < 2; i++ {
+		param, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
+		if err != nil {
+			return err
+		}
+		params = append(params, param)
+	}
+
+	paramLen := len(re.args)
+
+	// Handle repl parameter
+	hasRepl := (paramLen >= 3)
+	param, err := buildStringParam(&re.baseBuiltinFunc, 2, input, !hasRepl)
+	params = append(params, param)
+	defer releaseBuffers(&re.baseBuiltinFunc, params)
+
+	if err != nil {
+		return err
+	}
+
+	// Handle position parameter
+	hasPosition := (paramLen >= 4)
+	param, err = buildIntParam(&re.baseBuiltinFunc, 3, input, !hasPosition, 1)
+	params = append(params, param)
+
+	if err != nil {
+		return err
+	}
+
+	// Handle occurrence parameter
+	hasOccur := (paramLen >= 5)
+	param, err = buildIntParam(&re.baseBuiltinFunc, 4, input, !hasOccur, 0)
+	params = append(params, param)
+
+	if err != nil {
+		return err
+	}
+
+	// Handle match type
+	hasMatchType := (paramLen == 6)
+	param, err = buildStringParam(&re.baseBuiltinFunc, 5, input, !hasMatchType)
+	params = append(params, param)
+
+	if err != nil {
+		return err
+	}
+
+	// Check memorization
+	if re.needMemorization() {
+		// matchType must be const or null
+		matchType := params[4].getStringVal(0)
+
+		re.compile, err = re.genCompile(matchType)
+		if err != nil {
+			return err
+		}
+
+		re.initMemoizedRegexp(re.compile, params[1].getCol(), n)
+	}
+
+	result.ReserveString(n)
+	buffers := getBuffers(params)
+
+	// Start to calculate
+	for i := 0; i < n; i++ {
+		if isResultNull(buffers, i) {
+			result.AppendNull()
+			continue
+		}
+
+		expr := params[0].getStringVal(i)
+		trimmedExpr := expr
+		var bexpr []byte
+		var trimmedBexpr []byte
+
+		if re.isBinCollation {
+			bexpr = []byte(expr)
+		}
+
+		repl := params[2].getStringVal(i)
+
+		// Check position and trim expr
+		pos := params[3].getIntVal(i)
+		trimmedLen := int64(0)
+		if re.isBinCollation {
+			if pos < 1 || pos > int64(len(trimmedBexpr)) {
+				if len(trimmedBexpr) != 0 || (len(trimmedBexpr) == 0 && pos != 1) {
+					return ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimmedBexpr = bexpr[pos-1:] // Trim
+		} else {
+			if pos < 1 || pos > int64(utf8.RuneCountInString(trimmedExpr)) {
+				if len(trimmedExpr) != 0 || (len(trimmedExpr) == 0 && pos != 1) {
+					return ErrRegexp.GenWithStackByArgs(invalidIndex)
+				}
+			}
+
+			trimmedLen = trimUtf8String(&trimmedExpr, pos-1) // Trim
+		}
+
+		// Get occurrence
+		occurrence := params[4].getIntVal(i)
+		if occurrence < 0 {
+			occurrence = 1
+		}
+
+		// Get match type and generate regexp
+		matchType := params[5].getStringVal(i)
+		reg, err := re.genRegexp(params[1].getStringVal(i), matchType)
+		if err != nil {
+			return err
+		}
+
+		if len(expr) == 0 {
+			if re.isBinCollation {
+				result.AppendString("0x")
+			} else {
+				result.AppendString("")
+			}
+			continue
+		}
+
+		// Start to replace
+		count := occurrence
+		if re.isBinCollation {
+			repFunc := func(matchedStr []byte) []byte {
+				if occurrence == 0 {
+					return []byte(repl)
+				}
+
+				count--
+				if count == 0 {
+					return []byte(repl)
+				}
+
+				return []byte(matchedStr)
+			}
+
+			replacedBStr := reg.ReplaceAllFunc(trimmedBexpr, repFunc)
+			result.AppendString(fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(append(bexpr[:pos-1], replacedBStr...)))))
+		} else {
+			repFunc := func(matchedStr string) string {
+				if occurrence == 0 {
+					return repl
+				}
+
+				count--
+				if count == 0 {
+					return repl
+				}
+
+				return matchedStr
+			}
+
+			replacedStr := reg.ReplaceAllStringFunc(trimmedExpr, repFunc)
+			result.AppendString(expr[:trimmedLen] + replacedStr)
 		}
 	}
 	return nil
