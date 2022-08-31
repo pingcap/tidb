@@ -1783,6 +1783,10 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptInt64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiFlashReadForWriteStmt, Value: BoolToOnOff(DefTiFlashReadForWriteStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashReadForWriteStmt = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

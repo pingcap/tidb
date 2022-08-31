@@ -1230,6 +1230,9 @@ type SessionVars struct {
 
 	// GeneralPlanCacheSize controls the size of general plan cache.
 	GeneralPlanCacheSize uint64
+
+	// TiFlashReadForWriteStmt indicates whether to enable write stmt read on TiFlash.
+	TiFlashReadForWriteStmt bool
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.

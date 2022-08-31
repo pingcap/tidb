@@ -234,6 +234,9 @@ const (
 
 	// TiFlashFastScan indicates whether use fast scan in tiflash .
 	TiFlashFastScan = "tiflash_fastscan"
+
+	// TiFlashReadForWriteStmt indicates whether to enable write stmt read on TiFlash.
+	TiFlashReadForWriteStmt = "tiflash_read_for_write_stmt"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1020,6 +1023,7 @@ const (
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableGeneralPlanCache                  = false
 	DefTiDBGeneralPlanCacheSize                    = 100
+	DefTiFlashReadForWriteStmt                     = false
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize           int32  = 10240
 	MinDDLReorgBatchSize           int32  = 32
