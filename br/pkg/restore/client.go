@@ -1013,7 +1013,7 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 			finalStore := store
 			rc.workerPool.ApplyOnErrorGroup(eg,
 				func() error {
-					err = rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
+					err := rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
 					if err != nil {
 						return errors.Trace(err)
 					}

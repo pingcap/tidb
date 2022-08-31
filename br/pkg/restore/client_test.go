@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -424,9 +425,9 @@ func (r *RecordStores) put(id uint64) {
 }
 
 func (r *RecordStores) sort() {
-	sort.Slice(r.stores, func(i, j int) bool {
-		return r.stores[i] < r.stores[j]
-	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	slices.Sort(r.stores)
 }
 
 var recordStores RecordStores
