@@ -319,7 +319,6 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 			}),
 		)
 	}
-
 }
 
 // isUnsupportedError checks whether we should fallback to ScatterRegion API when meeting the error.
@@ -350,6 +349,7 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*spli
 		rs.waitForSplit(ctx, region.Region.Id)
 	}
 
+	// the retry is for the temporary network errors during sending request.
 	err := utils.WithRetry(ctx, func() error {
 		err := rs.client.ScatterRegions(ctx, newRegions)
 		if isUnsupportedError(err) {
@@ -364,7 +364,6 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*spli
 			return nil
 		}
 		return err
-		// the retry is for the temporary network errors during sending request.
 	}, &split.ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
 
 	if err != nil {

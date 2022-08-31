@@ -77,8 +77,7 @@ func simplifyAndCheckBinaryOperator(t *testing.T, pb *tipb.ExplainOperator, with
 }
 
 func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// If we don't set this, it will be false sometimes and the cost in the result will be different.
@@ -109,7 +108,7 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 		BinaryPlan *tipb.ExplainData
 	}
 	planSuiteData := core.GetBinaryPlanSuiteData()
-	planSuiteData.GetTestCases(t, &input, &output)
+	planSuiteData.LoadTestCases(t, &input, &output)
 
 	for i, test := range input {
 		comment := fmt.Sprintf("case:%v sql:%s", i, test)
@@ -149,10 +148,9 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 }
 
 func TestBinaryPlanSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -220,10 +218,9 @@ func TestBinaryPlanSwitch(t *testing.T) {
 
 // TestTooLongBinaryPlan asserts that if the binary plan is larger than 1024*1024 bytes, it should be output to slow query but not to stmt summary.
 func TestTooLongBinaryPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -283,10 +280,9 @@ func TestTooLongBinaryPlan(t *testing.T) {
 // TestLongBinaryPlan asserts that if the binary plan is smaller than 1024*1024 bytes, it should be output to both slow query and stmt summary.
 // The size of the binary plan in this test case is designed to be larger than 1024*1024*0.85 bytes but smaller than 1024*1024 bytes.
 func TestLongBinaryPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -339,10 +335,9 @@ func TestLongBinaryPlan(t *testing.T) {
 }
 
 func TestBinaryPlanOfPreparedStmt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -393,8 +388,7 @@ func TestBinaryPlanOfPreparedStmt(t *testing.T) {
 
 // TestDecodeBinaryPlan asserts that the result of EXPLAIN ANALYZE FORMAT = 'verbose' is the same as tidb_decode_binary_plan().
 func TestDecodeBinaryPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -487,8 +481,7 @@ func TestDecodeBinaryPlan(t *testing.T) {
 }
 
 func TestInvalidDecodeBinaryPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -505,10 +498,9 @@ func TestInvalidDecodeBinaryPlan(t *testing.T) {
 }
 
 func TestUnnecessaryBinaryPlanInSlowLog(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg

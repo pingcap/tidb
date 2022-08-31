@@ -166,8 +166,7 @@ func testGetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Tab
 }
 
 func TestTable(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	d := domain.DDL()
 	dbInfo, err := testSchemaInfo(store, "test_table")
@@ -295,8 +294,7 @@ func testAlterNoCacheTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, newS
 }
 
 func TestRenameTables(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	d := domain.DDL()
 
@@ -332,8 +330,7 @@ func TestRenameTables(t *testing.T) {
 }
 
 func TestCreateTables(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	d := domain.DDL()
 

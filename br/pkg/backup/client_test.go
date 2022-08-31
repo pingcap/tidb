@@ -46,10 +46,10 @@ type testBackup struct {
 	storage storage.ExternalStorage
 }
 
-func createBackupSuite(t *testing.T) (s *testBackup, clean func()) {
+func createBackupSuite(t *testing.T) *testBackup {
 	tikvClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
-	s = new(testBackup)
+	s := new(testBackup)
 	s.mockGlue = &gluetidb.MockGlue{}
 	s.mockPDClient = pdClient
 	s.ctx, s.cancel = context.WithCancel(context.Background())
@@ -66,18 +66,17 @@ func createBackupSuite(t *testing.T) (s *testBackup, clean func()) {
 	require.NoError(t, err)
 	require.NoError(t, s.cluster.Start())
 
-	clean = func() {
+	t.Cleanup(func() {
 		mockMgr.Close()
 		s.cluster.Stop()
 		tikvClient.Close()
 		pdClient.Close()
-	}
-	return
+	})
+	return s
 }
 
 func TestGetTS(t *testing.T) {
-	s, clean := createBackupSuite(t)
-	defer clean()
+	s := createBackupSuite(t)
 
 	// mockPDClient' physical ts and current ts will have deviation
 	// so make this deviation tolerance 100ms
@@ -254,8 +253,7 @@ func TestOnBackupRegionErrorResponse(t *testing.T) {
 }
 
 func TestSkipUnsupportedDDLJob(t *testing.T) {
-	s, clean := createBackupSuite(t)
-	defer clean()
+	s := createBackupSuite(t)
 
 	tk := testkit.NewTestKit(t, s.cluster.Storage)
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
@@ -307,8 +305,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 }
 
 func TestCheckBackupIsLocked(t *testing.T) {
-	s, clean := createBackupSuite(t)
-	defer clean()
+	s := createBackupSuite(t)
 
 	ctx := context.Background()
 

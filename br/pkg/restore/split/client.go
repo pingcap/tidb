@@ -300,7 +300,7 @@ func (c *pdClient) sendSplitRegionRequest(
 ) (*kvrpcpb.SplitRegionResponse, error) {
 	var splitErrors error
 	for i := 0; i < splitRegionMaxRetryTime; i++ {
-		retry, result, err := sendSplitRegionRequest(c, ctx, regionInfo, keys, &splitErrors, i)
+		retry, result, err := sendSplitRegionRequest(ctx, c, regionInfo, keys, &splitErrors, i)
 		if retry {
 			continue
 		}
@@ -315,7 +315,7 @@ func (c *pdClient) sendSplitRegionRequest(
 	return nil, errors.Trace(splitErrors)
 }
 
-func sendSplitRegionRequest(c *pdClient, ctx context.Context, regionInfo *RegionInfo, keys [][]byte, splitErrors *error, retry int) (bool, *kvrpcpb.SplitRegionResponse, error) {
+func sendSplitRegionRequest(ctx context.Context, c *pdClient, regionInfo *RegionInfo, keys [][]byte, splitErrors *error, retry int) (bool, *kvrpcpb.SplitRegionResponse, error) {
 	var peer *metapb.Peer
 	// scanRegions may return empty Leader in https://github.com/tikv/pd/blob/v4.0.8/server/grpc_service.go#L524
 	// so wee also need check Leader.Id != 0

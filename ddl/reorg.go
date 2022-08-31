@@ -152,18 +152,18 @@ func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 // 1: add index
 // 2: alter column type
 // 3: clean global index
-//
-// ddl goroutine >---------+
-//   ^                     |
-//   |                     |
-//   |                     |
-//   |                     | <---(doneCh)--- f()
-// HandleDDLQueue(...)     | <---(regular timeout)
-//   |                     | <---(ctx done)
-//   |                     |
-//   |                     |
-// A more ddl round  <-----+
-//
+/*
+ ddl goroutine >---------+
+   ^                     |
+   |                     |
+   |                     |
+   |                     | <---(doneCh)--- f()
+ HandleDDLQueue(...)     | <---(regular timeout)
+   |                     | <---(ctx done)
+   |                     |
+   |                     |
+ A more ddl round  <-----+
+*/
 // How can we cancel reorg job?
 //
 // The background reorg is continuously running except for several factors, for instances, ddl owner change,

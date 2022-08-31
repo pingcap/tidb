@@ -35,21 +35,14 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-func TestDDLSchedulingMultiTimes(t *testing.T) {
+// TestDDLScheduling tests the DDL scheduling. See Concurrent DDL RFC for the rules of DDL scheduling.
+// This test checks the chosen job records to see if there are wrong scheduling, if job A and job B cannot run concurrently,
+// then the all the record of job A must before or after job B, no cross record between these 2 jobs should be in between.
+func TestDDLScheduling(t *testing.T) {
 	if !variable.EnableConcurrentDDL.Load() {
 		t.Skipf("test requires concurrent ddl")
 	}
-	for i := 0; i < 3; i++ {
-		testDDLScheduling(t)
-	}
-}
-
-// testDDLScheduling tests the DDL scheduling. See Concurrent DDL RFC for the rules of DDL scheduling.
-// This test checks the chosen job records to see if there are wrong scheduling, if job A and job B cannot run concurrently,
-// then the all the record of job A must before or after job B, no cross record between these 2 jobs should be in between.
-func testDDLScheduling(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -192,8 +185,7 @@ func check(t *testing.T, record []int64, ids ...int64) {
 }
 
 func TestConcurrentDDLSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	type table struct {
 		columnIdx int
@@ -226,7 +218,7 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 	}
 
 	ddls := make([]string, 0, tblCount)
-	ddlCount := 500
+	ddlCount := 100
 	for i := 0; i < ddlCount; i++ {
 		tblIdx := rand.Intn(tblCount)
 		if rand.Intn(2) == 0 {

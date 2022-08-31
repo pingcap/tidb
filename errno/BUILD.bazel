@@ -14,6 +14,7 @@ go_library(
 
 go_test(
     name = "errno_test",
+    timeout = "short",
     srcs = [
         "infoschema_test.go",
         "main_test.go",

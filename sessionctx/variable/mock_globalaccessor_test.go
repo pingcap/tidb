@@ -46,4 +46,8 @@ func TestMockAPI(t *testing.T) {
 	err = mock.SetGlobalSysVarOnly(DefaultAuthPlugin, "mysql_native_password")
 	require.NoError(t, err)
 
+	// Test GetTiDBTableValue
+	str, err = mock.GetTiDBTableValue("tikv_gc_life_time")
+	require.NoError(t, err)
+	require.Equal(t, "10m0s", str)
 }

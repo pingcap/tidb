@@ -52,6 +52,7 @@ go_library(
 
 go_test(
     name = "mock_test",
+    timeout = "short",
     srcs = ["mock_cluster_test.go"],
     flaky = True,
     deps = [

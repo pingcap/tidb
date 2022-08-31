@@ -93,7 +93,7 @@ func (t *task) String() string {
 	return t.pkg + " " + t.test
 }
 
-var P int
+var p int
 var workDir string
 
 func cmdList(args ...string) bool {
@@ -306,12 +306,12 @@ func cmdRun(args ...string) bool {
 		tasks = tmp
 	}
 
-	fmt.Printf("building task finish, maxproc=%d, count=%d, takes=%v\n", P, len(tasks), time.Since(start))
+	fmt.Printf("building task finish, maxproc=%d, count=%d, takes=%v\n", p, len(tasks), time.Since(start))
 
 	taskCh := make(chan task, 100)
-	works := make([]numa, P)
+	works := make([]numa, p)
 	var wg sync.WaitGroup
-	for i := 0; i < P; i++ {
+	for i := 0; i < p; i++ {
 		wg.Add(1)
 		go works[i].worker(&wg, taskCh)
 	}
@@ -423,6 +423,7 @@ var race bool
 var except string
 var only string
 
+//nolint:typecheck
 func main() {
 	junitfile = handleFlags("--junitfile")
 	coverprofile = handleFlags("--coverprofile")
@@ -441,7 +442,7 @@ func main() {
 	}
 
 	// Get the correct count of CPU if it's in docker.
-	P = runtime.GOMAXPROCS(0)
+	p = runtime.GOMAXPROCS(0)
 	rand.Seed(time.Now().Unix())
 	var err error
 	workDir, err = os.Getwd()
@@ -825,7 +826,7 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 }
 
 func skipDIR(pkg string) bool {
-	skipDir := []string{"br", "cmd", "dumpling", "tests"}
+	skipDir := []string{"br", "cmd", "dumpling", "tests", "tools/check"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true

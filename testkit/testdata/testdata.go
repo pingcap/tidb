@@ -128,8 +128,8 @@ func ConvertSQLWarnToStrings(warns []stmtctx.SQLWarn) (rs []string) {
 	return rs
 }
 
-// GetTestCases gets the test cases for a test function.
-func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) {
+// LoadTestCases Loads the test cases for a test function.
+func (td *TestData) LoadTestCases(t *testing.T, in interface{}, out interface{}) {
 	// Extract caller's name.
 	pc, _, _, ok := runtime.Caller(1)
 	require.True(t, ok)
@@ -155,8 +155,8 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 	td.output[casesIdx].decodedOut = out
 }
 
-// GetTestCasesByName gets the test cases for a test function by its name.
-func (td *TestData) GetTestCasesByName(caseName string, t *testing.T, in interface{}, out interface{}) {
+// LoadTestCasesByName loads the test cases for a test function by its name.
+func (td *TestData) LoadTestCasesByName(caseName string, t *testing.T, in interface{}, out interface{}) {
 	casesIdx, ok := td.funcMap[caseName]
 	require.Truef(t, ok, "Case name: %s", caseName)
 	require.NoError(t, json.Unmarshal(*td.input[casesIdx].Cases, in))

@@ -99,8 +99,7 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 }
 
 func TestForeignKey(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	d := dom.DDL()
 	dbInfo, err := testSchemaInfo(store, "test_foreign")

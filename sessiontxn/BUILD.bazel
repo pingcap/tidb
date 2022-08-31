@@ -20,6 +20,7 @@ go_library(
 
 go_test(
     name = "sessiontxn_test",
+    timeout = "short",
     srcs = [
         "txn_context_test.go",
         "txn_manager_test.go",
@@ -28,20 +29,20 @@ go_test(
     deps = [
         ":sessiontxn",
         "//domain",
+        "//expression",
         "//infoschema",
         "//kv",
         "//parser/ast",
         "//parser/model",
-        "//planner/core",
         "//sessionctx",
         "//sessiontxn/internal",
         "//sessiontxn/staleread",
+        "//table/temptable",
         "//tablecodec",
         "//testkit",
         "//testkit/testfork",
         "//testkit/testsetup",
         "//tests/realtikvtest",
-        "//types",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",

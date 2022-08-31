@@ -42,6 +42,7 @@ go_binary(
 
 go_test(
     name = "importer_test",
+    timeout = "short",
     srcs = ["db_test.go"],
     embed = [":importer_lib"],
     flaky = True,

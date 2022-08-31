@@ -37,8 +37,7 @@ import (
 const tableModifyLease = 600 * time.Millisecond
 
 func TestCreateTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
@@ -114,8 +113,7 @@ func TestCreateTable(t *testing.T) {
 }
 
 func TestLockTableReadOnly(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -178,8 +176,7 @@ func TestLockTableReadOnly(t *testing.T) {
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
 func TestConcurrentLockTables(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tableModifyLease)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -284,8 +281,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 }
 
 func TestUnsupportedAlterTableOption(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a char(10) not null,b char(20)) shard_row_id_bits=6")

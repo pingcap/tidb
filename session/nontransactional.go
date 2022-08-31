@@ -164,7 +164,6 @@ func checkConstraint(stmt *ast.NonTransactionalDeleteStmt, se Session) error {
 // single-threaded worker. work on the key range [start, end]
 func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDeleteStmt,
 	tableName *ast.TableName, se Session, originalCondition ast.ExprNode) ([]string, error) {
-
 	// prepare for the construction of statement
 	var shardColumnRefer *ast.ResultField
 	var shardColumnType types.FieldType

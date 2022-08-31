@@ -34,15 +34,13 @@ import (
 )
 
 func TestInsertOnDuplicateKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	testInsertOnDuplicateKey(t, tk)
 }
 
 func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	failpoint.Enable("github.com/pingcap/tidb/table/tables/forceWriteBinlog", "return")
 	defer failpoint.Disable("github.com/pingcap/tidb/table/tables/forceWriteBinlog")
@@ -259,8 +257,7 @@ func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
 }
 
 func TestClusterIndexInsertOnDuplicateKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists cluster_index_duplicate_entry_error;")
 	tk.MustExec("create database cluster_index_duplicate_entry_error;")
@@ -278,8 +275,7 @@ func TestClusterIndexInsertOnDuplicateKey(t *testing.T) {
 }
 
 func TestPaddingCommonHandle(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -291,8 +287,7 @@ func TestPaddingCommonHandle(t *testing.T) {
 }
 
 func TestInsertReorgDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -345,8 +340,7 @@ func TestInsertReorgDelete(t *testing.T) {
 }
 
 func TestUpdateDuplicateKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -359,8 +353,7 @@ func TestUpdateDuplicateKey(t *testing.T) {
 }
 
 func TestInsertWrongValueForField(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
@@ -386,7 +379,7 @@ func TestInsertWrongValueForField(t *testing.T) {
 	tk.MustExec(`CREATE TABLE ts (id int DEFAULT NULL, time1 TIMESTAMP NULL DEFAULT NULL)`)
 	tk.MustExec(`SET @@sql_mode=''`)
 	tk.MustExec(`INSERT INTO ts (id, time1) VALUES (1, TIMESTAMP '1018-12-23 00:00:00')`)
-	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(`Warning 1292 Incorrect timestamp value: '1018-12-23 00:00:00'`))
+	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(`Warning 1292 Incorrect timestamp value: '1018-12-23 00:00:00' for column 'time1' at row 1`))
 	tk.MustQuery(`SELECT * FROM ts ORDER BY id`).Check(testkit.Rows(`1 0000-00-00 00:00:00`))
 
 	tk.MustExec(`SET @@sql_mode='STRICT_TRANS_TABLES'`)
@@ -395,8 +388,7 @@ func TestInsertWrongValueForField(t *testing.T) {
 }
 
 func TestInsertValueForCastDecimalField(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
@@ -407,8 +399,7 @@ func TestInsertValueForCastDecimalField(t *testing.T) {
 }
 
 func TestInsertDateTimeWithTimeZone(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec(`use test;`)
@@ -511,8 +502,7 @@ func TestInsertDateTimeWithTimeZone(t *testing.T) {
 }
 
 func TestInsertZeroYear(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
@@ -543,8 +533,7 @@ func TestInsertZeroYear(t *testing.T) {
 }
 
 func TestAllowInvalidDates(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1, t2, t3, t4;`)
@@ -580,8 +569,7 @@ func TestAllowInvalidDates(t *testing.T) {
 }
 
 func TestInsertWithAutoidSchema(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1(id int primary key auto_increment, n int);`)
@@ -1007,12 +995,10 @@ func TestInsertWithAutoidSchema(t *testing.T) {
 			tk.MustQuery(tt.query).Check(tt.result)
 		}
 	}
-
 }
 
 func TestPartitionInsertOnDuplicate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int,primary key(a,b)) partition by range(a) (partition p0 values less than (100),partition p1 values less than (1000))`)
@@ -1039,8 +1025,7 @@ func TestPartitionInsertOnDuplicate(t *testing.T) {
 }
 
 func TestBit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a bit(3))`)
@@ -1053,8 +1038,7 @@ func TestBit(t *testing.T) {
 }
 
 func TestAllocateContinuousRowID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
@@ -1091,8 +1075,7 @@ func TestAllocateContinuousRowID(t *testing.T) {
 }
 
 func TestJiraIssue5366(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table bug (a varchar(100))`)
@@ -1101,8 +1084,7 @@ func TestJiraIssue5366(t *testing.T) {
 }
 
 func TestDMLCast(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b double)`)
@@ -1120,8 +1102,7 @@ func TestDMLCast(t *testing.T) {
 }
 
 func TestInsertFloatOverflow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t,t1;`)
@@ -1142,8 +1123,7 @@ func TestInsertFloatOverflow(t *testing.T) {
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
 // This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
 func TestAutoIDIncrementAndOffset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	// Test for offset is larger than increment.
@@ -1209,8 +1189,7 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 
 // Fix https://github.com/pingcap/tidb/issues/32601.
 func TestTextTooLongError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Set strict sql_mode
@@ -1251,8 +1230,7 @@ func TestTextTooLongError(t *testing.T) {
 }
 
 func TestAutoRandomID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
@@ -1292,8 +1270,7 @@ func TestAutoRandomID(t *testing.T) {
 }
 
 func TestMultiAutoRandomID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
@@ -1335,8 +1312,7 @@ func TestMultiAutoRandomID(t *testing.T) {
 }
 
 func TestAutoRandomIDAllowZero(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
@@ -1367,8 +1343,7 @@ func TestAutoRandomIDAllowZero(t *testing.T) {
 }
 
 func TestAutoRandomIDExplicit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
@@ -1390,8 +1365,7 @@ func TestAutoRandomIDExplicit(t *testing.T) {
 }
 
 func TestInsertErrorMsg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -1401,8 +1375,7 @@ func TestInsertErrorMsg(t *testing.T) {
 }
 
 func TestIssue16366(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -1412,8 +1385,7 @@ func TestIssue16366(t *testing.T) {
 }
 
 func TestClusterPrimaryTablePlainInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -1456,8 +1428,7 @@ func TestClusterPrimaryTablePlainInsert(t *testing.T) {
 }
 
 func TestClusterPrimaryTableInsertIgnore(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -1484,8 +1455,7 @@ func TestClusterPrimaryTableInsertIgnore(t *testing.T) {
 }
 
 func TestClusterPrimaryTableInsertDuplicate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -1518,8 +1488,7 @@ func TestClusterPrimaryTableInsertDuplicate(t *testing.T) {
 }
 
 func TestClusterPrimaryKeyForIndexScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -1566,8 +1535,7 @@ func TestInsertRuntimeStat(t *testing.T) {
 }
 
 func TestDuplicateEntryMessage(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	for _, enable := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
@@ -1633,8 +1601,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 }
 
 func TestIssue20768(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -1651,8 +1618,7 @@ func TestIssue20768(t *testing.T) {
 }
 
 func TestIssue10402(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table vctt (v varchar(4), c char(4))")
@@ -1663,7 +1629,7 @@ func TestIssue10402(t *testing.T) {
 	tk.MustExec("insert into vctt values ('ab\\n\\n\\n', 'ab\\n\\n\\n'), ('ab\\t\\t\\t', 'ab\\t\\t\\t'), ('ab    ', 'ab    '), ('ab\\r\\r\\r', 'ab\\r\\r\\r')")
 	require.Equal(t, uint16(4), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-	require.Equal(t, "[{Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 6} {Warning [types:1265]Data truncated, field len 4, data len 5}]",
+	require.Equal(t, "[{Warning [types:1265]Data truncated for column 'v' at row 1} {Warning [types:1265]Data truncated for column 'v' at row 2} {Warning [types:1265]Data truncated for column 'v' at row 3} {Warning [types:1265]Data truncated for column 'v' at row 4}]",
 		fmt.Sprintf("%v", warns))
 	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab\n\n ab\n\n", "ab\t\t ab\t\t", "ab   ab", "ab\r\r ab\r\r"))
 	tk.MustQuery("select length(v), length(c) from vctt").Check(testkit.Rows("4 4", "4 4", "4 2", "4 4"))
@@ -1689,8 +1655,7 @@ func combination(items []string) func() []string {
 
 // TestDuplicatedEntryErr See https://github.com/pingcap/tidb/issues/24582
 func TestDuplicatedEntryErr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
@@ -1706,8 +1671,7 @@ func TestDuplicatedEntryErr(t *testing.T) {
 }
 
 func TestBinaryLiteralInsertToEnum(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists bintest")
@@ -1718,8 +1682,7 @@ func TestBinaryLiteralInsertToEnum(t *testing.T) {
 }
 
 func TestBinaryLiteralInsertToSet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists bintest")
@@ -1730,8 +1693,7 @@ func TestBinaryLiteralInsertToSet(t *testing.T) {
 }
 
 func TestGlobalTempTableAutoInc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
@@ -1777,8 +1739,7 @@ func TestGlobalTempTableAutoInc(t *testing.T) {
 }
 
 func TestGlobalTempTableRowID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
@@ -1814,8 +1775,7 @@ func TestGlobalTempTableRowID(t *testing.T) {
 }
 
 func TestGlobalTempTableParallel(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
@@ -1846,8 +1806,7 @@ func TestGlobalTempTableParallel(t *testing.T) {
 }
 
 func TestIssue26762(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists t1;")
@@ -1864,8 +1823,7 @@ func TestIssue26762(t *testing.T) {
 }
 
 func TestStringtoDecimal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1880,14 +1838,14 @@ func TestStringtoDecimal(t *testing.T) {
 	tk.MustGetErrCode("insert into t values('1.2.')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('1,999.00')", errno.ErrTruncatedWrongValueForField)
 	tk.MustExec("insert into t values('12e-3')")
-	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
+	// TODO: MySQL8.0 reports Note 1265 Data truncated for column 'id' at row 1
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect decimal value: '12e-3' for column 'id' at row 1"))
 	tk.MustQuery("select id from t").Check(testkit.Rows("0"))
 	tk.MustExec("drop table if exists t")
 }
 
 func TestIssue17745(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists tt1")
@@ -1895,7 +1853,7 @@ func TestIssue17745(t *testing.T) {
 	tk.MustGetErrCode("insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)", errno.ErrWarnDataOutOfRange)
 	tk.MustGetErrCode("insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)", errno.ErrWarnDataOutOfRange)
 	tk.MustExec("insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)")
-	tk.MustQuery("show warnings;").Check(testkit.Rows(`Warning 1690 DECIMAL value is out of range in '(64, 0)'`, `Warning 1292 Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'`))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(`Warning 1264 Out of range value for column 'c1' at row 1`, `Warning 1292 Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'`))
 	tk.MustQuery("select c1 from tt1").Check(testkit.Rows("9999999999999999999999999999999999999999999999999999999999999999"))
 	tk.MustGetErrCode("update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000", errno.ErrWarnDataOutOfRange)
 	tk.MustExec("drop table if exists tt1")
@@ -1906,8 +1864,7 @@ func TestIssue17745(t *testing.T) {
 
 // TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
 func TestInsertIssue29892(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 
@@ -1936,8 +1893,7 @@ func TestInsertIssue29892(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/29483.
 func TestReplaceAllocatingAutoID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists replace_auto_id;")
 	tk.MustExec("create database replace_auto_id;")
@@ -1952,8 +1908,7 @@ func TestReplaceAllocatingAutoID(t *testing.T) {
 }
 
 func TestInsertIntoSelectError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1970,8 +1925,7 @@ func TestInsertIntoSelectError(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/32213.
 func TestIssue32213(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 

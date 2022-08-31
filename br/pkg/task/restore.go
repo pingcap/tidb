@@ -20,11 +20,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -163,9 +165,9 @@ type RestoreConfig struct {
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
-	StartTS     uint64 `json:"start-ts" toml:"start-ts"`
-	RestoreTS   uint64 `json:"restore-ts" toml:"restore-ts"`
-	skipTiflash bool   `json:"-" toml:"-"`
+	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
+	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
+	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -359,10 +361,9 @@ func CheckNewCollationEnable(
 					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
 					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
 					"use --check-requirements=false to skip this check")
-		} else {
-			log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
-			return nil
 		}
+		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		return nil
 	}
 
 	se, err := g.CreateSession(storage)
@@ -521,7 +522,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
-	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.skipTiflash)
+	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.tiflashRecorder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -580,6 +581,15 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
 		// don't return immediately, wait all pipeline done.
+	}
+
+	if cfg.tiflashRecorder != nil {
+		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+			if cfg.tiflashRecorder != nil {
+				cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
+			}
+			return t
+		})
 	}
 
 	tableFileMap := restore.MapTableToFiles(files)

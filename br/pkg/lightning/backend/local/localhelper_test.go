@@ -797,7 +797,7 @@ func TestStoreWriteLimiter(t *testing.T) {
 		wg.Add(1)
 		go func(storeID uint64) {
 			defer wg.Done()
-			start = time.Now()
+			start := time.Now()
 			var gotTokens int
 			for {
 				n := rand.Intn(50)
@@ -811,7 +811,6 @@ func TestStoreWriteLimiter(t *testing.T) {
 			// In theory, gotTokens should be less than or equal to maxTokens.
 			// But we allow a little of error to avoid the test being flaky.
 			require.LessOrEqual(t, gotTokens, maxTokens+1)
-
 		}(uint64(i))
 	}
 	wg.Wait()

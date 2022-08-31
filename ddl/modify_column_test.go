@@ -48,8 +48,7 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 }
 
 func TestModifyColumnReorgInfo(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -159,8 +158,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 }
 
 func TestModifyColumnNullToNotNullWithChangingVal2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -178,8 +176,7 @@ func TestModifyColumnNullToNotNullWithChangingVal2(t *testing.T) {
 }
 
 func TestModifyColumnNullToNotNull(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -234,8 +231,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 }
 
 func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -292,8 +288,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 }
 
 func TestModifyColumnBetweenStringTypes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -395,8 +390,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 }
 
 func TestModifyColumnCharset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
@@ -420,7 +414,6 @@ func TestModifyColumnCharset(t *testing.T) {
 			"  `a` varchar(8) DEFAULT NULL,\n" +
 			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
 }
 
 func TestModifyColumnTime_TimeToYear(t *testing.T) {
@@ -778,8 +771,7 @@ type testModifyColumnTimeCase struct {
 func testModifyColumnTime(t *testing.T, tests []testModifyColumnTimeCase) {
 	limit := variable.GetDDLErrorCountLimit()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
@@ -809,8 +801,7 @@ func testModifyColumnTime(t *testing.T, tests []testModifyColumnTimeCase) {
 }
 
 func TestModifyColumnTypeWithWarnings(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -846,8 +837,7 @@ func TestModifyColumnTypeWithWarnings(t *testing.T) {
 // TestModifyColumnTypeWhenInterception is to test modifying column type with warnings intercepted by
 // reorg timeout, not owner error and so on.
 func TestModifyColumnTypeWhenInterception(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

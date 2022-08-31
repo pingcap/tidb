@@ -87,14 +87,12 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
-			sessionVars.UsersLock.Lock()
 			if value.IsNull() {
 				sessionVars.UnsetUserVar(name)
 			} else {
-				sessionVars.Users[name] = value
-				sessionVars.UserVarTypes[name] = v.Expr.GetType()
+				sessionVars.SetUserVarVal(name, value)
+				sessionVars.SetUserVarType(name, v.Expr.GetType())
 			}
-			sessionVars.UsersLock.Unlock()
 			continue
 		}
 
@@ -181,7 +179,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
 	}
-	err = variable.SetSessionSystemVar(sessionVars, name, valStr)
+	err = sessionVars.SetSystemVar(name, valStr)
 	if err != nil {
 		return err
 	}
@@ -273,15 +271,15 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	}
 	if isSetName {
 		for _, v := range variable.SetNamesVariables {
-			if err = variable.SetSessionSystemVar(sessionVars, v, cs); err != nil {
+			if err = sessionVars.SetSystemVar(v, cs); err != nil {
 				return errors.Trace(err)
 			}
 		}
-		return errors.Trace(variable.SetSessionSystemVar(sessionVars, variable.CollationConnection, co))
+		return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
 	}
 	// Set charset statement, see also https://dev.mysql.com/doc/refman/8.0/en/set-character-set.html.
 	for _, v := range variable.SetCharsetVariables {
-		if err = variable.SetSessionSystemVar(sessionVars, v, cs); err != nil {
+		if err = sessionVars.SetSystemVar(v, cs); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -293,11 +291,11 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	if err != nil {
 		return err
 	}
-	err = variable.SetSessionSystemVar(sessionVars, variable.CharacterSetConnection, csDb)
+	err = sessionVars.SetSystemVar(variable.CharacterSetConnection, csDb)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(variable.SetSessionSystemVar(sessionVars, variable.CollationConnection, coDb))
+	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDb))
 }
 
 func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
@@ -308,7 +306,7 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		if sysVar != nil {
 			return sysVar.Value, nil
 		}
-		return variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
+		return e.ctx.GetSessionVars().GetGlobalSystemVar(v.Name)
 	}
 	nativeVal, err := v.Expr.Eval(chunk.Row{})
 	if err != nil || nativeVal.IsNull() {

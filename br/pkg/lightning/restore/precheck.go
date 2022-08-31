@@ -48,6 +48,28 @@ func WithPrecheckKey(ctx context.Context, key precheckContextKey, val any) conte
 	return context.WithValue(ctx, key, val)
 }
 
+type PrecheckItemBuilderConfig struct {
+	PreInfoGetterOptions []GetPreInfoOption
+}
+
+type PrecheckItemBuilderOption interface {
+	Apply(c *PrecheckItemBuilderConfig)
+}
+
+type preInfoGetterOptsForBuilder struct {
+	opts []GetPreInfoOption
+}
+
+func (o *preInfoGetterOptsForBuilder) Apply(c *PrecheckItemBuilderConfig) {
+	c.PreInfoGetterOptions = append([]GetPreInfoOption{}, o.opts...)
+}
+
+func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOption {
+	return &preInfoGetterOptsForBuilder{
+		opts: opts,
+	}
+}
+
 type PrecheckItemBuilder struct {
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
@@ -55,7 +77,11 @@ type PrecheckItemBuilder struct {
 	checkpointsDB checkpoints.DB
 }
 
-func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config) (*PrecheckItemBuilder, error) {
+func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+	builderCfg := new(PrecheckItemBuilderConfig)
+	for _, o := range opts {
+		o.Apply(builderCfg)
+	}
 	targetDB, err := DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -77,6 +103,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config) (
 		targetInfoGetter,
 		nil, // ioWorkers
 		nil, // encBuilder
+		builderCfg.PreInfoGetterOptions...,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)

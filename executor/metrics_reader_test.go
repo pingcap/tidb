@@ -28,8 +28,7 @@ import (
 )
 
 func TestStmtLabel(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table label (c1 int primary key, c2 int, c3 int, index (c2))")

@@ -50,6 +50,7 @@ go_library(
 
 go_test(
     name = "streamhelper_test",
+    timeout = "short",
     srcs = [
         "advancer_test.go",
         "basic_lib_for_test.go",

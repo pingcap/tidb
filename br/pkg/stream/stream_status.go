@@ -158,7 +158,6 @@ func (p *printByTable) addCheckpoints(task *TaskStatus, table *glue.Table, forma
 			}
 		}
 	}
-
 }
 
 func (p *printByTable) PrintTasks() {
@@ -256,7 +255,8 @@ type PDInfoProvider interface {
 
 // MaybeQPS get a number like the QPS of last seconds for each store via the prometheus interface.
 // TODO: this is a temporary solution(aha, like in a Hackthon),
-//       we MUST find a better way for providing this information.
+//
+//	we MUST find a better way for providing this information.
 func MaybeQPS(ctx context.Context, mgr PDInfoProvider) (float64, error) {
 	c := mgr.GetPDClient()
 	prefix := "http://"

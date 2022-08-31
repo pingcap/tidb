@@ -99,3 +99,8 @@ func (*mockManager) RequireOwner(context.Context) error {
 func (m *mockManager) SetBeOwnerHook(hook func()) {
 	m.beOwnerHook = hook
 }
+
+// CampaignCancel implements Manager.CampaignCancel interface
+func (m *mockManager) CampaignCancel() {
+	// do nothing
+}

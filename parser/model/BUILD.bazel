@@ -21,6 +21,7 @@ go_library(
 
 go_test(
     name = "model_test",
+    timeout = "short",
     srcs = [
         "ddl_test.go",
         "model_test.go",

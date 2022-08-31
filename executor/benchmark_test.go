@@ -760,7 +760,6 @@ func baseBenchmarkWindowFunctionsWithFrame(b *testing.B, pipelined int) {
 			}
 		}
 	}
-
 }
 
 func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
@@ -2118,5 +2117,4 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 
 func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 	b.ReportAllocs()
-
 }

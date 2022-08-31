@@ -114,7 +114,6 @@ func TestLeadLag(t *testing.T) {
 	for _, test := range tests {
 		testWindowFunc(t, test)
 	}
-
 }
 
 func TestMemLeadLag(t *testing.T) {
@@ -163,5 +162,4 @@ func TestMemLeadLag(t *testing.T) {
 	for _, test := range tests {
 		testWindowAggMemFunc(t, test)
 	}
-
 }

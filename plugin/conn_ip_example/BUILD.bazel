@@ -13,6 +13,7 @@ go_library(
 
 go_test(
     name = "conn_ip_example_test",
+    timeout = "short",
     srcs = [
         "conn_ip_example_test.go",
         "main_test.go",

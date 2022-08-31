@@ -258,7 +258,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 		sessionVars: variable.NewSessionVars(),
 	}
 	se.mu.values = make(map[fmt.Stringer]interface{})
-	domain.BindDomain(se, &domain.Domain{})
+	domain.BindDomain(se, domain.NewMockDomain())
 	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization}
 	for _, startState := range startStates {
 		endStatMap := ConstOpAddIndex[startState]

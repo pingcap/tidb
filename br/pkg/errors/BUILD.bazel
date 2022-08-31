@@ -10,6 +10,7 @@ go_library(
 
 go_test(
     name = "errors_test",
+    timeout = "short",
     srcs = ["errors_test.go"],
     flaky = True,
     deps = [

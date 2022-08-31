@@ -21,6 +21,7 @@ import (
 	"io"
 	"strings"
 
+	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -38,15 +39,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	_ "github.com/pingcap/tidb/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -152,6 +153,7 @@ func NewTargetInfoGetterImpl(
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
 	return &TargetInfoGetterImpl{
+		cfg:          cfg,
 		targetDBGlue: targetDBGlue,
 		tls:          tls,
 		backend:      backendTargetInfoGetter,
@@ -205,7 +207,14 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 		&dump,
 	)
 
+	isNoSuchTableErr := false
+	rootErr := errors.Cause(err)
+	if mysqlErr, ok := rootErr.(*mysql_sql_driver.MySQLError); ok && mysqlErr.Number == errno.ErrNoSuchTable {
+		isNoSuchTableErr = true
+	}
 	switch {
+	case isNoSuchTableErr:
+		result = true
 	case errors.ErrorEqual(err, sql.ErrNoRows):
 		result = true
 	case err != nil:
@@ -262,6 +271,7 @@ func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtype
 // PreRestoreInfoGetterImpl implements the operations to get information used in importing preparation.
 type PreRestoreInfoGetterImpl struct {
 	cfg              *config.Config
+	getPreInfoCfg    *GetPreInfoConfig
 	srcStorage       storage.ExternalStorage
 	ioWorkers        *worker.Pool
 	encBuilder       backend.EncodingBuilder
@@ -280,6 +290,7 @@ func NewPreRestoreInfoGetter(
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
 	encBuilder backend.EncodingBuilder,
+	opts ...GetPreInfoOption,
 ) (*PreRestoreInfoGetterImpl, error) {
 	if ioWorkers == nil {
 		ioWorkers = worker.NewPool(context.Background(), cfg.App.IOConcurrency, "pre_info_getter_io")
@@ -295,8 +306,13 @@ func NewPreRestoreInfoGetter(
 		}
 	}
 
+	getPreInfoCfg := NewDefaultGetPreInfoConfig()
+	for _, o := range opts {
+		o.Apply(getPreInfoCfg)
+	}
 	result := &PreRestoreInfoGetterImpl{
 		cfg:              cfg,
+		getPreInfoCfg:    getPreInfoCfg,
 		dbMetas:          dbMetas,
 		srcStorage:       srcStorage,
 		ioWorkers:        ioWorkers,
@@ -358,8 +374,20 @@ func (p *PreRestoreInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Cont
 	dbName := dbSrcFileMeta.Name
 	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
 	if err != nil {
+		if p.getPreInfoCfg != nil && p.getPreInfoCfg.IgnoreDBNotExist {
+			dbNotExistErr := dbterror.ClassSchema.NewStd(errno.ErrBadDB).FastGenByArgs(dbName)
+			// The returned error is an error showing get info request error,
+			// and attaches the detailed error response as a string.
+			// So we cannot get the error chain and use error comparison,
+			// and instead, we use the string comparison on error messages.
+			if strings.Contains(err.Error(), dbNotExistErr.Error()) {
+				log.L().Warn("DB not exists.  But ignore it", zap.Error(err))
+				goto get_struct_from_src
+			}
+		}
 		return nil, errors.Trace(err)
 	}
+get_struct_from_src:
 	currentTableInfosMap := make(map[string]*model.TableInfo)
 	for _, tblInfo := range currentTableInfosFromDB {
 		currentTableInfosMap[tblInfo.Name.L] = tblInfo
@@ -402,47 +430,8 @@ func newTableInfo(createTblSQL string, tableID int64) (*model.TableInfo, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// set a auto_random bit if AUTO_RANDOM is set
-	setAutoRandomBits(info, createTableStmt.Cols)
 	info.State = model.StatePublic
 	return info, nil
-}
-
-func setAutoRandomBits(tblInfo *model.TableInfo, colDefs []*ast.ColumnDef) {
-	if !tblInfo.PKIsHandle {
-		return
-	}
-	pkColName := tblInfo.GetPkName()
-	for _, colDef := range colDefs {
-		if colDef.Name.Name.L != pkColName.L || colDef.Tp.GetType() != mysql.TypeLonglong {
-			continue
-		}
-		// potential AUTO_RANDOM candidate column, examine the options
-		hasAutoRandom := false
-		canSetAutoRandom := true
-		var autoRandomBits int
-		for _, option := range colDef.Options {
-			if option.Tp == ast.ColumnOptionAutoRandom {
-				hasAutoRandom = true
-				autoRandomBits = option.AutoRandomBitLength
-				switch {
-				case autoRandomBits == types.UnspecifiedLength:
-					autoRandomBits = autoid.DefaultAutoRandomBits
-				case autoRandomBits <= 0 || autoRandomBits > autoid.MaxAutoRandomBits:
-					canSetAutoRandom = false
-				}
-			}
-			if option.Tp == ast.ColumnOptionAutoIncrement {
-				canSetAutoRandom = false
-			}
-			if option.Tp == ast.ColumnOptionDefaultValue {
-				canSetAutoRandom = false
-			}
-		}
-		if hasAutoRandom && canSetAutoRandom {
-			tblInfo.AutoRandomBits = uint64(autoRandomBits)
-		}
-	}
 }
 
 // ReadFirstNRowsByTableName reads the first N rows of data of an importing source table.
@@ -511,14 +500,12 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context,
 		if err != nil {
 			if errors.Cause(err) != io.EOF {
 				return nil, nil, errors.Trace(err)
-			} else {
-				break
 			}
+			break
 		}
 		rows = append(rows, parser.LastRow().Row)
 	}
 	return parser.Columns(), rows, nil
-
 }
 
 // EstimateSourceDataSize estimates the datasize to generate during the import as well as some other sub-informaiton.
@@ -589,7 +576,6 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (
 		HasUnsortedBigTables: (unSortedBigTableCount > 0),
 	}
 	return result, nil
-
 }
 
 // sampleDataFromTable samples the source data file to get the extra data ratio for the index
@@ -704,7 +690,7 @@ outloop:
 			return 0.0, false, errors.Trace(err)
 		}
 		lastRow := parser.LastRow()
-		rowCount += 1
+		rowCount++
 
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
@@ -716,9 +702,8 @@ outloop:
 			}
 			if rowCount < maxSampleRowCount {
 				continue
-			} else {
-				break
 			}
+			break
 		}
 		if isRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
@@ -785,8 +770,8 @@ func (p *PreRestoreInfoGetterImpl) FetchRemoteTableModels(ctx context.Context, s
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.
 // It implements the PreRestoreInfoGetter interface.
 // Mydump database metas are retrieved from the context.
-func (g *PreRestoreInfoGetterImpl) CheckVersionRequirements(ctx context.Context) error {
-	return g.targetInfoGetter.CheckVersionRequirements(ctx)
+func (p *PreRestoreInfoGetterImpl) CheckVersionRequirements(ctx context.Context) error {
+	return p.targetInfoGetter.CheckVersionRequirements(ctx)
 }
 
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.

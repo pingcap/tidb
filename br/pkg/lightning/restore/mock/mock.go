@@ -21,8 +21,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/pdtypes"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/filter"
 )
 
@@ -202,7 +204,8 @@ func (t *MockTargetInfo) FetchRemoteTableModels(ctx context.Context, schemaName 
 	resultInfos := []*model.TableInfo{}
 	tblMap, ok := t.dbTblInfoMap[schemaName]
 	if !ok {
-		return resultInfos, nil
+		dbNotExistErr := dbterror.ClassSchema.NewStd(errno.ErrBadDB).FastGenByArgs(schemaName)
+		return nil, errors.Errorf("get xxxxxx http status code != 200, message %s", dbNotExistErr.Error())
 	}
 	for _, tblInfo := range tblMap {
 		resultInfos = append(resultInfos, tblInfo.TableModel)

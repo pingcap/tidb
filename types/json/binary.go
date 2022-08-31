@@ -16,6 +16,7 @@ package json
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -47,6 +48,7 @@ import (
        0x0a |       // uint64
        0x0b |       // double
        0x0c |       // utf8mb4 string
+       0x0d |       // opaque value
 
    value ::=
        object  |
@@ -54,6 +56,7 @@ import (
        literal |
        number  |
        string  |
+       opaque  |
 
    object ::= element-count size key-entry* value-entry* key* value*
 
@@ -97,6 +100,10 @@ import (
                              // field. So we need 1 byte to represent
                              // lengths up to 127, 2 bytes to represent
                              // lengths up to 16383, and so on...
+
+   opaque ::= typeId data-length byte*
+
+   typeId ::= byte
 */
 
 // BinaryJSON represents a binary encoded JSON object.
@@ -128,6 +135,8 @@ func (bj BinaryJSON) MarshalJSON() ([]byte, error) {
 
 func (bj BinaryJSON) marshalTo(buf []byte) ([]byte, error) {
 	switch bj.TypeCode {
+	case TypeCodeOpaque:
+		return marshalOpaqueTo(buf, bj.GetOpaque()), nil
 	case TypeCodeString:
 		return marshalStringTo(buf, bj.GetString()), nil
 	case TypeCodeLiteral:
@@ -164,6 +173,9 @@ func (bj BinaryJSON) IsZero() bool {
 		isZero = false
 	case TypeCodeObject:
 		isZero = false
+	// FIXME: TiDB always casts the json to double BINARY so this function will never be called.
+	case TypeCodeOpaque:
+		isZero = false
 	}
 	return isZero
 }
@@ -185,11 +197,33 @@ func (bj BinaryJSON) GetFloat64() float64 {
 
 // GetString gets the string value.
 func (bj BinaryJSON) GetString() []byte {
-	strLen, lenLen := uint64(bj.Value[0]), 1
-	if strLen >= utf8.RuneSelf {
-		strLen, lenLen = binary.Uvarint(bj.Value)
-	}
+	strLen, lenLen := binary.Uvarint(bj.Value)
 	return bj.Value[lenLen : lenLen+int(strLen)]
+}
+
+// Opaque represents a raw binary type
+type Opaque struct {
+	// TypeCode is the same with database type code
+	TypeCode byte
+	// Buf is the underlying bytes of the data
+	Buf []byte
+}
+
+// GetOpaque gets the opaque value
+func (bj BinaryJSON) GetOpaque() Opaque {
+	typ := bj.Value[0]
+
+	strLen, lenLen := binary.Uvarint(bj.Value[1:])
+	bufStart := lenLen + 1
+	return Opaque{
+		TypeCode: typ,
+		Buf:      bj.Value[bufStart : bufStart+int(strLen)],
+	}
+}
+
+// GetOpaqueFieldType returns the type of opaque value
+func (bj BinaryJSON) GetOpaqueFieldType() byte {
+	return bj.Value[0]
 }
 
 // GetKeys gets the keys of the object
@@ -231,11 +265,12 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 	case TypeCodeUint64, TypeCodeInt64, TypeCodeFloat64:
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+8]}
 	case TypeCodeString:
-		strLen, lenLen := uint64(bj.Value[valOff]), 1
-		if strLen >= utf8.RuneSelf {
-			strLen, lenLen = binary.Uvarint(bj.Value[valOff:])
-		}
+		strLen, lenLen := binary.Uvarint(bj.Value[valOff:])
 		totalLen := uint32(lenLen) + uint32(strLen)
+		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
+	case TypeCodeOpaque:
+		strLen, lenLen := binary.Uvarint(bj.Value[valOff+1:])
+		totalLen := 1 + uint32(lenLen) + uint32(strLen)
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
 	}
 	dataSize := endian.Uint32(bj.Value[valOff+dataSizeOff:])
@@ -380,6 +415,17 @@ func marshalStringTo(buf, s []byte) []byte {
 	return buf
 }
 
+// opaque value will yield "base64:typeXX:<base64 encoded string>"
+func marshalOpaqueTo(buf []byte, opaque Opaque) []byte {
+	b64 := base64.StdEncoding.EncodeToString(opaque.Buf)
+	output := fmt.Sprintf(`"base64:type%d:%s"`, opaque.TypeCode, b64)
+
+	// as the base64 string is simple and predictable, it could be appended
+	// to the buf directly.
+	buf = append(buf, output...)
+	return buf
+}
+
 func marshalLiteralTo(b []byte, litType byte) []byte {
 	switch litType {
 	case LiteralFalse:
@@ -514,6 +560,9 @@ func appendBinary(buf []byte, in interface{}) (TypeCode, []byte, error) {
 		if err != nil {
 			return typeCode, nil, errors.Trace(err)
 		}
+	case Opaque:
+		typeCode = TypeCodeOpaque
+		buf = appendBinaryOpaque(buf, x)
 	default:
 		msg := fmt.Sprintf(unknownTypeErrorMsg, reflect.TypeOf(in))
 		err = errors.New(msg)
@@ -572,6 +621,18 @@ func appendBinaryString(buf []byte, v string) []byte {
 	lenLen := binary.PutUvarint(buf[begin:], uint64(len(v)))
 	buf = buf[:len(buf)-binary.MaxVarintLen64+lenLen]
 	buf = append(buf, v...)
+	return buf
+}
+
+func appendBinaryOpaque(buf []byte, v Opaque) []byte {
+	buf = append(buf, v.TypeCode)
+
+	lenBegin := len(buf)
+	buf = appendZero(buf, binary.MaxVarintLen64)
+	lenLen := binary.PutUvarint(buf[lenBegin:], uint64(len(v.Buf)))
+
+	buf = buf[:len(buf)-binary.MaxVarintLen64+lenLen]
+	buf = append(buf, v.Buf...)
 	return buf
 }
 

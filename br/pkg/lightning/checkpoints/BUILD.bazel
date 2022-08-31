@@ -33,6 +33,7 @@ go_library(
 
 go_test(
     name = "checkpoints_test",
+    timeout = "short",
     srcs = [
         "checkpoints_file_test.go",
         "checkpoints_sql_test.go",

@@ -174,8 +174,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 //
 // To check (1), we need
 // (a) {added indices} is a subset of {needed indices} => each index mutation is consistent with the input/row key/value
-// (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate
-// 		the mutations, thus ignored.
+// (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate the mutations, thus ignored.
 func checkIndexKeys(
 	sessVars *variable.SessionVars, t *TableCommon, rowToInsert, rowToRemove []types.Datum,
 	indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo,
@@ -373,7 +372,7 @@ func getOrBuildColumnMaps(
 
 		for _, col := range t.Meta().Columns {
 			maps.ColumnIDToInfo[col.ID] = col
-			maps.ColumnIDToFieldType[col.ID] = &col.FieldType
+			maps.ColumnIDToFieldType[col.ID] = &(col.FieldType)
 		}
 		for _, index := range t.Indices() {
 			if index.Meta().Primary && t.meta.IsCommonHandle {
@@ -412,7 +411,7 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				indexMutation := indexMutations[0]
 				key := make([]byte, len(indexMutation.key))
 				copy(key, indexMutation.key)
-				key[len(key)-1] += 1
+				key[len(key)-1]++
 				if len(indexMutation.value) == 0 {
 					if err := memBuffer.Delete(key); err != nil {
 						return errors.Trace(err)
@@ -438,7 +437,7 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				indexMutation := indexMutations[0]
 				key := indexMutation.key
 				memBuffer.RemoveFromBuffer(key)
-				key[len(key)-1] += 1
+				key[len(key)-1]++
 				if len(indexMutation.value) == 0 {
 					if err := memBuffer.Delete(key); err != nil {
 						return errors.Trace(err)
@@ -459,7 +458,7 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				indexMutation := indexMutations[0]
 				value := indexMutation.value
 				if len(value) > 0 {
-					value[len(value)-1] += 1
+					value[len(value)-1]++
 					if err := memBuffer.Set(indexMutation.key, value); err != nil {
 						return errors.Trace(err)
 					}

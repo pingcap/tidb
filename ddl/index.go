@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"sync/atomic"
@@ -426,7 +427,7 @@ func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*m
 	return nullCols, nil
 }
 
-func checkPrimaryKeyNotNull(d *ddlCtx, w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job *model.Job,
+func checkPrimaryKeyNotNull(d *ddlCtx, w *worker, t *meta.Meta, job *model.Job,
 	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (warnings []string, err error) {
 	if !indexInfo.Primary {
 		return nil, nil
@@ -607,7 +608,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		indexInfo.State = model.StateWriteOnly
-		_, err = checkPrimaryKeyNotNull(d, w, sqlMode, t, job, tblInfo, indexInfo)
+		_, err = checkPrimaryKeyNotNull(d, w, t, job, tblInfo, indexInfo)
 		if err != nil {
 			break
 		}
@@ -619,7 +620,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		indexInfo.State = model.StateWriteReorganization
-		_, err = checkPrimaryKeyNotNull(d, w, sqlMode, t, job, tblInfo, indexInfo)
+		_, err = checkPrimaryKeyNotNull(d, w, t, job, tblInfo, indexInfo)
 		if err != nil {
 			break
 		}
@@ -697,7 +698,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
 			}, false)
-		return w.addTableIndex(tbl, indexInfo, reorgInfo)
+		return w.addTableIndex(tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
@@ -768,6 +769,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		removeIndexInfo(tblInfo, indexInfo)
 
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+			//nolint:forcetypeassert
 			if val.(bool) {
 				panic("panic test in cancelling add index")
 			}
@@ -782,9 +784,9 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 			job.Args[0] = indexInfo.ID
+		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
-		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
@@ -1008,8 +1010,19 @@ type addIndexWorker struct {
 	distinctCheckFlags []bool
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *addIndexWorker {
-	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *addIndexWorker {
+	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
+		logutil.BgLogger().Error("Element type for addIndexWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
+			zap.String("reorgInfo", reorgInfo.String()))
+		return nil
+	}
+	var index table.Index
+	for _, idx := range t.Indices() {
+		if idx.Meta().ID == reorgInfo.currElement.ID {
+			index = idx
+			break
+		}
+	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
@@ -1123,7 +1136,11 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in baseIndexWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			taskDone = recordKey.Cmp(taskRange.endKey) > 0
+			if taskRange.endInclude {
+				taskDone = recordKey.Cmp(taskRange.endKey) > 0
+			} else {
+				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
+			}
 
 			if taskDone || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
@@ -1146,7 +1163,6 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			w.cleanRowMap()
 
 			if recordKey.Cmp(taskRange.endKey) == 0 {
-				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
 				taskDone = true
 				return false, nil
 			}
@@ -1263,6 +1279,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test")
 		}
@@ -1325,13 +1342,13 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	return
 }
 
-func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writePhysicalTableRecord(t, typeAddIndexWorker, indexInfo, nil, nil, reorgInfo)
+	return w.writePhysicalTableRecord(t, typeAddIndexWorker, reorgInfo)
 }
 
 // addTableIndex handles the add index reorganization state for a table.
-func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	var err error
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
@@ -1340,7 +1357,7 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 			if p == nil {
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
+			err = w.addPhysicalTableIndex(p, reorgInfo)
 			if err != nil {
 				break
 			}
@@ -1350,7 +1367,8 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 			}
 		}
 	} else {
-		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), idx, reorgInfo)
+		//nolint:forcetypeassert
+		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), reorgInfo)
 	}
 	return errors.Trace(err)
 }
@@ -1376,8 +1394,10 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	}
 
 	failpoint.Inject("mockUpdateCachedSafePoint", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			ts := oracle.GoTimeToTS(time.Now())
+			//nolint:forcetypeassert
 			s := reorg.d.store.(tikv.Storage)
 			s.UpdateSPCache(ts, time.Now())
 			time.Sleep(time.Second * 3)
@@ -1456,7 +1476,7 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
-func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
+func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
@@ -1480,6 +1500,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 
 func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test")
 		}
@@ -1526,7 +1547,7 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 // cleanupPhysicalTableIndex handles the drop partition reorganization state for a non-partitioned table or a partition.
 func (w *worker) cleanupPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to clean up index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writePhysicalTableRecord(t, typeCleanUpIndexWorker, nil, nil, nil, reorgInfo)
+	return w.writePhysicalTableRecord(t, typeCleanUpIndexWorker, reorgInfo)
 }
 
 // cleanupGlobalIndex handles the drop partition reorganization state to clean up index entries of partitions.

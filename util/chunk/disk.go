@@ -173,11 +173,10 @@ func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
 	chk := NewChunkWithCapacity(l.fieldTypes, l.NumRowsOfChunk(chkIdx))
 	chkSize := l.numRowsOfEachChunk[chkIdx]
 	for rowIdx := 0; rowIdx < chkSize; rowIdx++ {
-		row, err := l.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		_, _, err := l.GetRowAndAppendToChunk(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}, chk)
 		if err != nil {
 			return chk, err
 		}
-		chk.AppendRow(row)
 	}
 	return chk, nil
 }

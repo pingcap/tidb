@@ -853,6 +853,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.Equal(t, tipb.ScalarFuncSig_DayOfMonth, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
+	// Repeat
 	function, err = NewFunction(mock.NewContext(), ast.Repeat, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_Repeat, function.(*ScalarFunction).Function.PbCode())
@@ -1147,6 +1148,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// ScalarFuncSig_LeftShift
+	function, err = NewFunction(mock.NewContext(), ast.LeftShift, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// ReverseUTF8 test
 	function, err = NewFunction(mock.NewContext(), ast.Reverse, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
@@ -1155,6 +1161,27 @@ func TestExprPushDownToFlash(t *testing.T) {
 	// Reverse
 	function, err = NewFunction(mock.NewContext(), ast.Reverse, types.NewFieldType(mysql.TypeBlob), stringColumn)
 	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// HexStr
+	function, err = NewFunction(mock.NewContext(), ast.Hex, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// HexInt
+	function, err = NewFunction(mock.NewContext(), ast.Hex, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// Elt
+	function, err = NewFunction(mock.NewContext(), ast.Elt, types.NewFieldType(mysql.TypeString), intColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastTimeAsDuration
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDuration), datetimeColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_CastTimeAsDuration, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
@@ -1650,7 +1677,6 @@ func TestPushDownSwitcher(t *testing.T) {
 }
 
 func TestPanicIfPbCodeUnspecified(t *testing.T) {
-
 	args := []Expression{genColumn(mysql.TypeLong, 1), genColumn(mysql.TypeLong, 2)}
 	fc, err := NewFunction(
 		mock.NewContext(),

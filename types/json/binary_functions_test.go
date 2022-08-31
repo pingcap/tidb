@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -47,5 +47,59 @@ func BenchmarkMergeBinary(b *testing.B) {
 	valueB, _ := ParseBinaryFromString(`{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`)
 	for i := 0; i < b.N; i++ {
 		_ = MergeBinary([]BinaryJSON{valueA, valueB})
+	}
+}
+
+func TestBinaryCompare(t *testing.T) {
+	tests := []struct {
+		left   BinaryJSON
+		right  BinaryJSON
+		result int
+	}{
+		{
+			CreateBinary("a"),
+			CreateBinary("b"),
+			-1,
+		},
+		{
+			CreateBinary(Opaque{
+				TypeCode: 0,
+				Buf:      []byte{0, 1, 2, 3},
+			}),
+			CreateBinary(Opaque{
+				TypeCode: 0,
+				Buf:      []byte{0, 1, 2},
+			}),
+			1,
+		},
+		{
+			CreateBinary(Opaque{
+				TypeCode: 0,
+				Buf:      []byte{0, 1, 2, 3},
+			}),
+			CreateBinary(Opaque{
+				TypeCode: 0,
+				Buf:      []byte{0, 2, 1},
+			}),
+			-1,
+		},
+		{
+			CreateBinary("test"),
+			CreateBinary(Opaque{
+				TypeCode: 0,
+				Buf:      []byte{0, 2, 1},
+			}),
+			-1,
+		},
+	}
+
+	compareMsg := map[int]string{
+		1:  "greater than",
+		0:  "equal with",
+		-1: "smaller than",
+	}
+
+	for _, test := range tests {
+		require.Equal(t, test.result, CompareBinary(test.left, test.right), "%s should be %s %s", test.left.String(), compareMsg[test.result], test.right.String())
 	}
 }

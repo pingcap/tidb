@@ -378,6 +378,9 @@ func BuildBackupRangeAndSchema(
 				tableInfo.ClearPlacement()
 			}
 
+			// Treat cached table as normal table.
+			tableInfo.TableCacheStatusType = model.TableCacheStatusDisable
+
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
@@ -581,9 +584,8 @@ func (bc *Client) BackupRanges(
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
 					return errors.SuspendStack(err)
-				} else {
-					return errors.Trace(err)
 				}
+				return errors.Trace(err)
 			}
 			return nil
 		})
@@ -1072,10 +1074,9 @@ func SendBackup(
 			}
 			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID), zap.Int("retry", retry))
 			return berrors.ErrFailedToConnect.Wrap(errBackup).GenWithStack("failed to create backup stream to store %d", storeID)
-		} else {
-			// finish backup
-			break
 		}
+		// finish backup
+		break
 	}
 	return nil
 }

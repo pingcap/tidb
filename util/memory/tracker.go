@@ -58,30 +58,29 @@ const TrackMemWhenExceeds = 104857600 // 100MB
 // The actions that could be triggered are: SpillDiskAction, SortAndSpillDiskAction, rateLimitAction,
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
-	mu struct {
-		sync.Mutex
+	bytesLimit           atomic.Value
+	actionMuForHardLimit actionMu
+	actionMuForSoftLimit actionMu
+	mu                   struct {
 		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children map[int][]*Tracker
-	}
-	actionMuForHardLimit actionMu
-	actionMuForSoftLimit actionMu
-	parMu                struct {
 		sync.Mutex
-		parent *Tracker // The parent memory tracker.
 	}
-
-	label         int   // Label of this "Tracker".
-	bytesConsumed int64 // Consumed bytes.
-	bytesReleased int64 // Released bytes.
-	bytesLimit    atomic.Value
+	parMu struct {
+		parent *Tracker // The parent memory tracker.
+		sync.Mutex
+	}
+	label         int              // Label of this "Tracker".
+	bytesConsumed int64            // Consumed bytes.
+	bytesReleased int64            // Released bytes.
 	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
 	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
-	sync.Mutex
 	actionOnExceed ActionOnExceed
+	sync.Mutex
 }
 
 // EnableGCAwareMemoryTrack is used to turn on/off the GC-aware memory track
@@ -103,8 +102,9 @@ type bytesLimits struct {
 }
 
 // InitTracker initializes a memory tracker.
-//	1. "label" is the label used in the usage string.
-//	2. "bytesLimit <= 0" means no limit.
+//  1. "label" is the label used in the usage string.
+//  2. "bytesLimit <= 0" means no limit.
+//
 // For the common tracker, isGlobal is default as false
 func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed) {
 	t.mu.children = nil
@@ -122,8 +122,9 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 }
 
 // NewTracker creates a memory tracker.
-//	1. "label" is the label used in the usage string.
-//	2. "bytesLimit <= 0" means no limit.
+//  1. "label" is the label used in the usage string.
+//  2. "bytesLimit <= 0" means no limit.
+//
 // For the common tracker, isGlobal is default as false
 func NewTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
@@ -191,7 +192,7 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMuForHardLimit.Lock()
 	defer t.actionMuForHardLimit.Unlock()
-	t.actionMuForHardLimit.actionOnExceed = reArrangeFallback(t.actionMuForHardLimit.actionOnExceed, a)
+	t.actionMuForHardLimit.actionOnExceed = reArrangeFallback(a, t.actionMuForHardLimit.actionOnExceed)
 }
 
 // FallbackOldAndSetNewActionForSoftLimit sets the action when memory usage exceeds bytesSoftLimit
@@ -199,7 +200,7 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
 	t.actionMuForSoftLimit.Lock()
 	defer t.actionMuForSoftLimit.Unlock()
-	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(t.actionMuForSoftLimit.actionOnExceed, a)
+	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(a, t.actionMuForSoftLimit.actionOnExceed)
 }
 
 // GetFallbackForTest get the oom action used by test.
@@ -222,10 +223,8 @@ func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	}
 	if a.GetPriority() < b.GetPriority() {
 		a, b = b, a
-		a.SetFallback(b)
-	} else {
-		a.SetFallback(reArrangeFallback(a.GetFallback(), b))
 	}
+	a.SetFallback(reArrangeFallback(a.GetFallback(), b))
 	return a
 }
 
@@ -421,9 +420,12 @@ func (t *Tracker) Release(bytes int64) {
 		if tracker.shouldRecordRelease() {
 			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
-			runtime.SetFinalizer(newRef, func(ref *finalizerRef) {
-				tracker.release(bytes)
-			})
+			finalizer := func(tracker *Tracker) func(ref *finalizerRef) {
+				return func(ref *finalizerRef) {
+					tracker.release(bytes)
+				}
+			}
+			runtime.SetFinalizer(newRef, finalizer(tracker))
 			tracker.recordRelease(bytes)
 			return
 		}

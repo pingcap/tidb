@@ -68,6 +68,7 @@ go_library(
 
 go_test(
     name = "export_test",
+    timeout = "short",
     srcs = [
         "block_allow_list_test.go",
         "config_test.go",

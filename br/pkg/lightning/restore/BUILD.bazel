@@ -7,6 +7,7 @@ go_library(
         "check_template.go",
         "checksum.go",
         "get_pre_info.go",
+        "get_pre_info_opts.go",
         "meta_manager.go",
         "precheck.go",
         "precheck_impl.go",
@@ -42,6 +43,7 @@ go_library(
         "//br/pkg/version",
         "//br/pkg/version/build",
         "//ddl",
+        "//errno",
         "//kv",
         "//meta/autoid",
         "//parser",
@@ -56,11 +58,13 @@ go_library(
         "//table/tables",
         "//types",
         "//util/collate",
+        "//util/dbterror",
         "//util/engine",
         "//util/mathutil",
         "//util/mock",
         "@com_github_coreos_go_semver//semver",
         "@com_github_docker_go_units//:go-units",
+        "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_google_uuid//:uuid",
         "@com_github_jedib0t_go_pretty_v6//table",
         "@com_github_jedib0t_go_pretty_v6//text",
@@ -82,6 +86,7 @@ go_library(
 
 go_test(
     name = "restore_test",
+    timeout = "short",
     srcs = [
         "check_info_test.go",
         "checksum_test.go",

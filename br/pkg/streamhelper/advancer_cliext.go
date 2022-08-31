@@ -149,7 +149,7 @@ func (t AdvancerExt) getFullTasksAsEvent(ctx context.Context) ([]TaskEvent, int6
 		te := TaskEvent{
 			Type: EventAdd,
 			Name: task.Info.Name,
-			Info: &task.Info,
+			Info: &(task.Info),
 		}
 		events = append(events, te)
 	}

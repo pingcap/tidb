@@ -308,7 +308,7 @@ func BuildHistAndTopN(
 		}
 		// case 1, this value is equal to the last one: current count++
 		if bytes.Equal(cur, sampleBytes) {
-			curCnt += 1
+			curCnt++
 			continue
 		}
 		// case 2, meet a different value: counting for the "current" is complete
@@ -405,7 +405,8 @@ func BuildHistAndTopN(
 }
 
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
-//   We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
+//
+//	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
 func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
 	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
 	if sampleRows == totalRows || totalRows <= 1 || int64(len(topns)) >= ndv {

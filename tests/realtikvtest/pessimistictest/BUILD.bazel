@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "pessimistictest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "pessimistic_test.go",
@@ -11,6 +11,7 @@ go_test(
     deps = [
         "//config",
         "//domain",
+        "//expression",
         "//kv",
         "//parser",
         "//parser/auth",
@@ -24,7 +25,6 @@ go_test(
         "//tablecodec",
         "//testkit",
         "//tests/realtikvtest",
-        "//types",
         "//util/codec",
         "//util/deadlockhistory",
         "@com_github_pingcap_errors//:errors",

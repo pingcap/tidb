@@ -47,14 +47,14 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func createTestStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
+func createTestStore(t *testing.T) (kv.Storage, *domain.Domain) {
 	if *withTiKV {
 		return createTiKVStore(t)
 	}
 	return createUnistore(t)
 }
 
-func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
+func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
 	var d TiKVDriver
 	store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 	require.NoError(t, err)
@@ -75,15 +75,15 @@ func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
-	clean := func() {
+	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
-	}
+	})
 
-	return store, dom, clean
+	return store, dom
 }
 
-func createUnistore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
+func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
 	client, pdClient, cluster, err := unistore.New("")
 	require.NoError(t, err)
 
@@ -98,12 +98,12 @@ func createUnistore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
-	clean := func() {
+	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
-	}
+	})
 
-	return store, dom, clean
+	return store, dom
 }
 
 func prepareSnapshot(t *testing.T, store kv.Storage, data [][]interface{}) kv.Snapshot {

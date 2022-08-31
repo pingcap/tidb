@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+//revive:disable:defer
 func vecJSONModify(ctx sessionctx.Context, args []Expression, bufAllocator columnBufferAllocator, input *chunk.Chunk, result *chunk.Column, mt json.ModifyType) error {
 	nr := input.NumRows()
 	jsonBuf, err := bufAllocator.get()

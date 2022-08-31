@@ -59,12 +59,12 @@ func GetDDLReorgBatchSize() int32 {
 
 // SetDDLErrorCountLimit sets ddlErrorCountlimit size.
 func SetDDLErrorCountLimit(cnt int64) {
-	atomic.StoreInt64(&ddlErrorCountlimit, cnt)
+	atomic.StoreInt64(&ddlErrorCountLimit, cnt)
 }
 
 // GetDDLErrorCountLimit gets ddlErrorCountlimit size.
 func GetDDLErrorCountLimit() int64 {
-	return atomic.LoadInt64(&ddlErrorCountlimit)
+	return atomic.LoadInt64(&ddlErrorCountLimit)
 }
 
 // SetDDLReorgRowFormat sets ddlReorgRowFormat version.
@@ -159,97 +159,6 @@ func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValu
 		vars.StmtCtx.AppendWarning(returnErr)
 	}
 	return normalizedValue, nil
-}
-
-// GetSessionOrGlobalSystemVar gets a system variable.
-// If it is a session only variable, use the default value defined in code.
-// Returns error if there is no such variable.
-func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	if sv.HasNoneScope() {
-		return sv.Value, nil
-	}
-	if sv.HasSessionScope() {
-		// Populate the value to s.systems if it is not there already.
-		// in future should be already loaded on session init
-		if sv.GetSession != nil {
-			// shortcut to the getter, we won't use the value
-			return sv.GetSessionFromHook(s)
-		}
-		if _, ok := s.systems[sv.Name]; !ok {
-			if sv.HasGlobalScope() {
-				if val, err := s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name); err == nil {
-					s.systems[sv.Name] = val
-				}
-			} else {
-				s.systems[sv.Name] = sv.Value // no global scope, use default
-			}
-		}
-		return sv.GetSessionFromHook(s)
-	}
-	return sv.GetGlobalFromHook(s)
-}
-
-// GetSessionStatesSystemVar gets the session variable value for session states.
-// It's only used for encoding session states when migrating a session.
-// The returned boolean indicates whether to keep this value in the session states.
-func GetSessionStatesSystemVar(s *SessionVars, name string) (string, bool, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	// Call GetStateValue first if it exists. Otherwise, call GetSession.
-	if sv.GetStateValue != nil {
-		return sv.GetStateValue(s)
-	}
-	if sv.GetSession != nil {
-		val, err := sv.GetSessionFromHook(s)
-		return val, err == nil, err
-	}
-	// Only get the cached value. No need to check the global or default value.
-	if val, ok := s.systems[sv.Name]; ok {
-		return val, true, nil
-	}
-	return "", false, nil
-}
-
-// GetGlobalSystemVar gets a global system variable.
-func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	return sv.GetGlobalFromHook(s)
-}
-
-// SetSessionSystemVar sets system variable and updates SessionVars states.
-func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	sVal, err := sysVar.Validate(vars, value, ScopeSession)
-	if err != nil {
-		return err
-	}
-	return vars.SetSystemVar(name, sVal)
-}
-
-// SetStmtVar sets system variable and updates SessionVars states.
-func SetStmtVar(vars *SessionVars, name string, value string) error {
-	name = strings.ToLower(name)
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	sVal, err := sysVar.Validate(vars, value, ScopeSession)
-	if err != nil {
-		return err
-	}
-	return vars.SetStmtVar(name, sVal)
 }
 
 // Deprecated: Read the value from the mysql.tidb table.
@@ -514,6 +423,16 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 		return err
 	}
 	s.ReadStaleness = time.Duration(sValue) * time.Second
+	return nil
+}
+
+// switchDDL turns on/off DDL in an instance.
+func switchDDL(on bool) error {
+	if on && EnableDDL != nil {
+		return EnableDDL()
+	} else if !on && DisableDDL != nil {
+		return DisableDDL()
+	}
 	return nil
 }
 

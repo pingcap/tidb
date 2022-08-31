@@ -21,6 +21,7 @@ go_library(
 
 go_test(
     name = "rtree_test",
+    timeout = "short",
     srcs = [
         "logging_test.go",
         "main_test.go",

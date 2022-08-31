@@ -1340,8 +1340,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
-	if (lhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) ||
-		(lhsFieldType.GetType() == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
+	if (lhsEvalType.IsStringKind() && lhsFieldType.GetType() == mysql.TypeJSON) || (rhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) {
 		cmpType = types.ETJson
 	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.GetType()) || types.IsTypeTime(rhsFieldType.GetType())) {
 		// date[time] <cmp> date[time]
@@ -1430,8 +1429,9 @@ func isTemporalColumn(expr Expression) bool {
 // If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
 // CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
-// 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
+//
+//	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
+//	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
@@ -1467,8 +1467,9 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 // If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
 // CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
-// 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
+//
+//	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
+//	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {

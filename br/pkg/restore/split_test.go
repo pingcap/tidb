@@ -87,7 +87,6 @@ func (c *TestClient) ScatterRegions(ctx context.Context, regionInfo []*split.Reg
 				delete(regions, id)
 			}
 			err = multierr.Append(err, splitErr)
-
 		}
 	}
 	return nil
@@ -315,15 +314,15 @@ func TestScatterFinishInTime(t *testing.T) {
 	regionSplitter.ScatterRegionsWithBackoffer(ctx,
 		regionInfos,
 		assertRetryLessThan(t, 40))
-
 }
 
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 // range: [aaa, aae), [aae, aaz), [ccd, ccf), [ccf, ccj)
 // rewrite rules: aa -> xx,  cc -> bb
 // expected regions after split:
-//   [, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
+//
+//	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
+//	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func TestSplitAndScatter(t *testing.T) {
 	t.Run("BatchScatter", func(t *testing.T) {
 		client := initTestClient(false)
@@ -476,8 +475,9 @@ func initRewriteRules() *restore.RewriteRules {
 }
 
 // expected regions after split:
-//   [, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
+//
+//	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
+//	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func validateRegions(regions map[uint64]*split.RegionInfo) bool {
 	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "bbj", "cca", "xxe", "xxz", ""}
 	return validateRegionsExt(regions, keys[:], false)

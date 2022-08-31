@@ -93,7 +93,6 @@ func TestInsert(t *testing.T) {
 	require.Nil(t, ic.GetBySnapshotTS(2))
 	require.Nil(t, ic.GetBySnapshotTS(5))
 	require.Equal(t, is6, ic.GetBySnapshotTS(10))
-
 }
 
 func TestGetByVersion(t *testing.T) {

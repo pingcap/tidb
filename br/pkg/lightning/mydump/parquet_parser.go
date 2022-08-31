@@ -186,11 +186,10 @@ func NewParquetParser(
 
 	columns := make([]string, 0, len(reader.Footer.Schema)-1)
 	columnMetas := make([]*parquet.SchemaElement, 0, len(reader.Footer.Schema)-1)
-	for _, c := range reader.SchemaHandler.SchemaElements {
+	for i, c := range reader.SchemaHandler.SchemaElements {
 		if c.GetNumChildren() == 0 {
-			// NOTE: the SchemaElement.Name is capitalized, SchemaHandler.Infos.ExName is the raw column name
-			// though in this context, there is no difference between these two fields
-			columns = append(columns, strings.ToLower(c.Name))
+			// we need to use the raw name, SchemaElement.Name might be prefixed with PARGO_PERFIX_
+			columns = append(columns, strings.ToLower(reader.SchemaHandler.GetExName(i)))
 			// transfer old ConvertedType to LogicalType
 			columnMeta := c
 			if c.ConvertedType != nil && c.LogicalType == nil {
@@ -388,9 +387,8 @@ func getDatumLen(v reflect.Value) int {
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
 			return 0
-		} else {
-			return getDatumLen(v.Elem())
 		}
+		return getDatumLen(v.Elem())
 	}
 	if v.Kind() == reflect.String {
 		return len(v.String())

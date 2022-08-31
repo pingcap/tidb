@@ -23,8 +23,7 @@ import (
 )
 
 func TestCharsetFeature(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -70,8 +69,7 @@ func TestCharsetFeature(t *testing.T) {
 }
 
 func TestCharsetFeatureCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -97,8 +95,7 @@ func TestCharsetFeatureCollation(t *testing.T) {
 }
 
 func TestCharsetWithPrefixIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

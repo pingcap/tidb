@@ -25,7 +25,6 @@ go_library(
         "//meta/autoid",
         "//parser/model",
         "//parser/mysql",
-        "//planner/core",
         "//sessionctx",
         "//sessionctx/variable",
         "//table",
@@ -45,14 +44,14 @@ go_library(
 
 go_test(
     name = "kv_test",
+    timeout = "short",
     srcs = [
         "session_test.go",
         "sql2kv_test.go",
     ],
-    embed = [":kv"],
     flaky = True,
     deps = [
-        "//br/pkg/lightning/backend/kv",
+        ":kv",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/verification",
@@ -74,4 +73,3 @@ go_test(
         "@org_uber_go_zap//zapcore",
     ],
 )
-

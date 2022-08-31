@@ -25,8 +25,7 @@ import (
 )
 
 func TestInitMetaTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -41,8 +40,8 @@ func TestInitMetaTable(t *testing.T) {
 	}
 
 	for tbl := range tbls {
-		metaInMySQL := external.GetTableByName(t, tk, "mysql", tbl).Meta()
-		metaInTest := external.GetTableByName(t, tk, "test", tbl).Meta()
+		metaInMySQL := external.GetTableByName(t, tk, "mysql", tbl).Meta().Clone()
+		metaInTest := external.GetTableByName(t, tk, "test", tbl).Meta().Clone()
 
 		require.Greater(t, metaInMySQL.ID, int64(0))
 		require.Greater(t, metaInMySQL.UpdateTS, uint64(0))

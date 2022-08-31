@@ -459,6 +459,7 @@ func TestAlterTableSpecRestore(t *testing.T) {
 		{"ROW_FORMAT = tokudb_fast", "ROW_FORMAT = TOKUDB_FAST"},
 		{"ROW_FORMAT = tokudb_small", "ROW_FORMAT = TOKUDB_SMALL"},
 		{"ROW_FORMAT = tokudb_zlib", "ROW_FORMAT = TOKUDB_ZLIB"},
+		{"ROW_FORMAT = tokudb_zstd", "ROW_FORMAT = TOKUDB_ZSTD"},
 		{"ROW_FORMAT = tokudb_quicklz", "ROW_FORMAT = TOKUDB_QUICKLZ"},
 		{"ROW_FORMAT = tokudb_lzma", "ROW_FORMAT = TOKUDB_LZMA"},
 		{"ROW_FORMAT = tokudb_snappy", "ROW_FORMAT = TOKUDB_SNAPPY"},
@@ -535,8 +536,6 @@ func TestAlterTableSpecRestore(t *testing.T) {
 		{"placement policy p1", "PLACEMENT POLICY = `p1`"},
 		{"placement policy p1 comment='aaa'", "PLACEMENT POLICY = `p1` COMMENT = 'aaa'"},
 		{"partition p0 placement policy p1", "PARTITION `p0` PLACEMENT POLICY = `p1`"},
-		{"set tiflash mode normal", "SET TIFLASH MODE NORMAL"},
-		{"set tiflash mode fast", "SET TIFLASH MODE FAST"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*AlterTableStmt).Specs[0]

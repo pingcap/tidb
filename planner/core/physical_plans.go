@@ -240,18 +240,7 @@ func (p *PhysicalTableReader) buildPlanTrace() *tracing.PlanTrace {
 
 func (p *PhysicalTableReader) appendChildCandidate(op *physicalOptimizeOp) {
 	p.basePhysicalPlan.appendChildCandidate(op)
-	if p.tablePlan != nil {
-		candidate := &tracing.CandidatePlanTrace{
-			PlanTrace: &tracing.PlanTrace{
-				ID:          p.tablePlan.ID(),
-				TP:          p.tablePlan.TP(),
-				Cost:        p.tablePlan.Cost(),
-				ExplainInfo: p.tablePlan.ExplainInfo(),
-			},
-		}
-		op.tracer.AppendCandidate(candidate)
-		p.tablePlan.appendChildCandidate(op)
-	}
+	appendChildCandidate(p, p.tablePlan, op)
 }
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -314,6 +303,21 @@ func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
+}
+
+func (p *PhysicalIndexReader) buildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.buildPlanTrace()
+	if p.indexPlan != nil {
+		rp.Children = append(rp.Children, p.indexPlan.buildPlanTrace())
+	}
+	return rp
+}
+
+func (p *PhysicalIndexReader) appendChildCandidate(op *physicalOptimizeOp) {
+	p.basePhysicalPlan.appendChildCandidate(op)
+	if p.indexPlan != nil {
+		appendChildCandidate(p, p.indexPlan, op)
+	}
 }
 
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
@@ -405,6 +409,27 @@ func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
 	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 }
 
+func (p *PhysicalIndexLookUpReader) buildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.buildPlanTrace()
+	if p.indexPlan != nil {
+		rp.Children = append(rp.Children, p.indexPlan.buildPlanTrace())
+	}
+	if p.tablePlan != nil {
+		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+	}
+	return rp
+}
+
+func (p *PhysicalIndexLookUpReader) appendChildCandidate(op *physicalOptimizeOp) {
+	p.basePhysicalPlan.appendChildCandidate(op)
+	if p.indexPlan != nil {
+		appendChildCandidate(p, p.indexPlan, op)
+	}
+	if p.tablePlan != nil {
+		appendChildCandidate(p, p.tablePlan, op)
+	}
+}
+
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
@@ -441,6 +466,27 @@ func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expressio
 		}
 	}
 	return corCols
+}
+
+func (p *PhysicalIndexMergeReader) buildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.buildPlanTrace()
+	if p.tablePlan != nil {
+		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+	}
+	for _, partialPlan := range p.partialPlans {
+		rp.Children = append(rp.Children, partialPlan.buildPlanTrace())
+	}
+	return rp
+}
+
+func (p *PhysicalIndexMergeReader) appendChildCandidate(op *physicalOptimizeOp) {
+	p.basePhysicalPlan.appendChildCandidate(op)
+	if p.tablePlan != nil {
+		appendChildCandidate(p, p.tablePlan, op)
+	}
+	for _, partialPlan := range p.partialPlans {
+		appendChildCandidate(p, partialPlan, op)
+	}
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -1448,12 +1494,15 @@ func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
 
 // PhysicalShuffle represents a shuffle plan.
 // `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
-//  to build the child executors chain.
+//
+//	to build the child executors chain.
+//
 // Take `Window` operator for example:
-//  Shuffle -> Window -> Sort -> DataSource, will be separated into:
-//    ==> Shuffle: for main thread
-//    ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
-//    ==> DataSource: for `fetchDataAndSplit` thread
+//
+//	Shuffle -> Window -> Sort -> DataSource, will be separated into:
+//	  ==> Shuffle: for main thread
+//	  ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
+//	  ==> DataSource: for `fetchDataAndSplit` thread
 type PhysicalShuffle struct {
 	basePhysicalPlan
 
@@ -1647,4 +1696,18 @@ func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
+}
+
+func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {
+	candidate := &tracing.CandidatePlanTrace{
+		PlanTrace: &tracing.PlanTrace{
+			ID:          pp.ID(),
+			TP:          pp.TP(),
+			Cost:        pp.Cost(),
+			ExplainInfo: pp.ExplainInfo(),
+		},
+	}
+	op.tracer.AppendCandidate(candidate)
+	pp.appendChildCandidate(op)
+	op.tracer.Candidates[origin.ID()].ChildrenID = append(op.tracer.Candidates[origin.ID()].ChildrenID, pp.ID())
 }

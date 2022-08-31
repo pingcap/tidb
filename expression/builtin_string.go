@@ -1903,7 +1903,6 @@ func (b *builtinTrim3ArgsSig) evalString(row chunk.Row) (d string, isNull bool, 
 	default:
 		d = trimLeft(str, remstr)
 		d = trimRight(d, remstr)
-
 	}
 	return d, false, nil
 }

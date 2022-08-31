@@ -34,6 +34,7 @@ go_library(
         "//expression",
         "//expression/aggregation",
         "//parser/ast",
+        "//parser/charset",
         "//parser/mysql",
         "//planner/core",
         "//planner/util",
@@ -58,6 +59,7 @@ go_library(
 
 go_test(
     name = "aggfuncs_test",
+    timeout = "short",
     srcs = [
         "aggfunc_test.go",
         "export_test.go",
@@ -91,6 +93,7 @@ go_test(
         "//expression",
         "//expression/aggregation",
         "//parser/ast",
+        "//parser/charset",
         "//parser/mysql",
         "//planner/util",
         "//sessionctx",
