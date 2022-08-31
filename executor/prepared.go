@@ -25,7 +25,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -37,21 +36,6 @@ var (
 	_ Executor = &ExecuteExec{}
 	_ Executor = &PrepareExec{}
 )
-
-type paramMarkerExtractor struct {
-	markers []ast.ParamMarkerExpr
-}
-
-func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
-	return in, false
-}
-
-func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
-	if x, ok := in.(*driver.ParamMarkerExpr); ok {
-		e.markers = append(e.markers, x)
-	}
-	return in, true
-}
 
 // PrepareExec represents a PREPARE executor.
 type PrepareExec struct {

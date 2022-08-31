@@ -363,6 +363,10 @@ func getDbFromResultNode(resultNode ast.ResultSetNode) []string { // may have du
 	return dbLabels
 }
 
+func init() {
+	plannercore.GetStmtLabel = GetStmtLabel
+}
+
 // GetStmtLabel generates a label for a statement.
 func GetStmtLabel(stmtNode ast.StmtNode) string {
 	switch x := stmtNode.(type) {
