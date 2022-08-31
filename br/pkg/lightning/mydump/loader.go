@@ -275,9 +275,8 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 	if err := setup.setup(ctx, mdl.store); err != nil {
 		if errors.Cause(err) == ErrTooManySourceFiles {
 			return mdl, err
-		} else {
-			return nil, errors.Trace(err)
 		}
+		return nil, errors.Trace(err)
 	}
 
 	return mdl, nil
