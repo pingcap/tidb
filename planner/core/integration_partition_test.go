@@ -1107,3 +1107,19 @@ func TestIssue27532(t *testing.T) {
 	tk.MustQuery(`select * from t2`).Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 2", "3 3 3 3", "4 4 4 4"))
 	tk.MustExec(`drop table t2`)
 }
+
+func TestIssue37508(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (id int, c date) partition by range (to_days(c))
+(partition p0 values less than (to_days('2022-01-11')),
+partition p1 values less than (to_days('2022-02-11')),
+partition p2 values less than (to_days('2022-03-11')));`)
+
+	tk.MustPartition("select * from t1 where c in ('2022-01-23', '2022-01-22');", "p1").Sort().Check(testkit.Rows())
+	tk.MustPartition("select * from t1 where c in (NULL, '2022-01-23');", "p0,p1").Sort().Check(testkit.Rows())
+
+	tk.MustExec(`drop table t1`)
+}

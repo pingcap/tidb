@@ -1062,14 +1062,6 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 		if !ok {
 			return pruner.fullRange()
 		}
-		switch constExpr.Value.Kind() {
-		case types.KindInt64, types.KindUint64:
-		case types.KindNull:
-			result = append(result, partitionRange{0, 1})
-			continue
-		default:
-			return pruner.fullRange()
-		}
 
 		var val int64
 		var err error
