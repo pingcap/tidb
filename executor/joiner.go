@@ -432,6 +432,7 @@ func (j *semiJoiner) Clone() joiner {
 	return &semiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
 
+// NAAJType is join detail type only used by null-aware AntiLeftOuterSemiJoin.
 type NAAJType byte
 
 const (

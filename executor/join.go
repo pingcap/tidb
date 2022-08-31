@@ -628,63 +628,28 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		// both cases mean the result should be <rhs, 1>
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
-	} else {
-		// when left side has null values, all we want is to find a valid build side rows (past other condition)
-		// so we can return it as soon as possible. here means two cases:
-		// case1: <?, null> NOT IN (empty set):             ----------------------> result is <rhs, 1>.
-		// case2: <?, null> NOT IN (at least a valid inner row) ------------------> result is <rhs, null>.
-		// Step1: match null bucket (assumption that null bucket is quite smaller than all hash table bucket rows)
-		e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-		buildSideRows := e.buildSideRows[workerID]
-		if err != nil {
-			joinResult.err = err
-			return false, joinResult
-		}
-		if len(buildSideRows) != 0 {
-			iter1 := chunk.NewIterator4Slice(buildSideRows)
-			defer chunk.FreeIterator(iter1)
-			for iter1.Begin(); iter1.Current() != iter1.End(); {
-				matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk, LeftHasNullRightHasNull)
-				if err != nil {
-					joinResult.err = err
-					return false, joinResult
-				}
-				// here matched means: there is a valid null bucket row from right side. (not empty)
-				// as said in the comment, once we found at least a valid row, we can determine the result as <rhs, null>.
-				if matched {
-					return true, joinResult
-				}
-				if joinResult.chk.IsFull() {
-					e.joinResultCh <- joinResult
-					ok, joinResult = e.getNewJoinResult(workerID)
-					if !ok {
-						return false, joinResult
-					}
-				}
-			}
-		}
-		// Step2: match all hash table bucket build rows (use probeKeyNullBits to filter if any).
-		e.buildSideRows[workerID], err = rowContainer.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-		buildSideRows = e.buildSideRows[workerID]
-		if err != nil {
-			joinResult.err = err
-			return false, joinResult
-		}
-		if len(buildSideRows) == 0 {
-			// when reach here, it means we couldn't return it quickly in null bucket, and same-bucket is empty,
-			// which means x NOT IN (empty set) or x NOT IN (l,m,n), the result should be <rhs, 1>
-			e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
-			return true, joinResult
-		}
-		iter2 := chunk.NewIterator4Slice(buildSideRows)
-		defer chunk.FreeIterator(iter2)
-		for iter2.Begin(); iter2.Current() != iter2.End(); {
-			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk, LeftHasNullRightNotNull)
+	}
+	// when left side has null values, all we want is to find a valid build side rows (past other condition)
+	// so we can return it as soon as possible. here means two cases:
+	// case1: <?, null> NOT IN (empty set):             ----------------------> result is <rhs, 1>.
+	// case2: <?, null> NOT IN (at least a valid inner row) ------------------> result is <rhs, null>.
+	// Step1: match null bucket (assumption that null bucket is quite smaller than all hash table bucket rows)
+	e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
+	buildSideRows := e.buildSideRows[workerID]
+	if err != nil {
+		joinResult.err = err
+		return false, joinResult
+	}
+	if len(buildSideRows) != 0 {
+		iter1 := chunk.NewIterator4Slice(buildSideRows)
+		defer chunk.FreeIterator(iter1)
+		for iter1.Begin(); iter1.Current() != iter1.End(); {
+			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk, LeftHasNullRightHasNull)
 			if err != nil {
 				joinResult.err = err
 				return false, joinResult
 			}
-			// here matched means: there is a valid same key bucket row from right side. (not empty)
+			// here matched means: there is a valid null bucket row from right side. (not empty)
 			// as said in the comment, once we found at least a valid row, we can determine the result as <rhs, null>.
 			if matched {
 				return true, joinResult
@@ -697,12 +662,46 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 				}
 			}
 		}
-		// step3: if we couldn't return it quickly in null bucket and all hash bucket, here means only one cases:
-		// case1: <?, null> NOT IN (empty set):
-		// empty set comes from no rows from all bucket can pass other condition. the result should be <rhs, 1>
+	}
+	// Step2: match all hash table bucket build rows (use probeKeyNullBits to filter if any).
+	e.buildSideRows[workerID], err = rowContainer.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
+	buildSideRows = e.buildSideRows[workerID]
+	if err != nil {
+		joinResult.err = err
+		return false, joinResult
+	}
+	if len(buildSideRows) == 0 {
+		// when reach here, it means we couldn't return it quickly in null bucket, and same-bucket is empty,
+		// which means x NOT IN (empty set) or x NOT IN (l,m,n), the result should be <rhs, 1>
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
+	iter2 := chunk.NewIterator4Slice(buildSideRows)
+	defer chunk.FreeIterator(iter2)
+	for iter2.Begin(); iter2.Current() != iter2.End(); {
+		matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk, LeftHasNullRightNotNull)
+		if err != nil {
+			joinResult.err = err
+			return false, joinResult
+		}
+		// here matched means: there is a valid same key bucket row from right side. (not empty)
+		// as said in the comment, once we found at least a valid row, we can determine the result as <rhs, null>.
+		if matched {
+			return true, joinResult
+		}
+		if joinResult.chk.IsFull() {
+			e.joinResultCh <- joinResult
+			ok, joinResult = e.getNewJoinResult(workerID)
+			if !ok {
+				return false, joinResult
+			}
+		}
+	}
+	// step3: if we couldn't return it quickly in null bucket and all hash bucket, here means only one cases:
+	// case1: <?, null> NOT IN (empty set):
+	// empty set comes from no rows from all bucket can pass other condition. the result should be <rhs, 1>
+	e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+	return true, joinResult
 }
 
 // joinNAASJMatchProbeSideRow2Chunk implement the matching logic for NA-AntiSemiJoin
@@ -784,63 +783,28 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 		// both cases should accept the rhs row.
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
-	} else {
-		// when left side has null values, all we want is to find a valid build side rows (passed from other condition)
-		// so we can return it as soon as possible. here means two cases:
-		// case1: <?, null> NOT IN (empty set):             ----------------------> accept rhs row.
-		// case2: <?, null> NOT IN (at least a valid inner row) ------------------> unknown result, refuse rhs row.
-		// Step1: match null bucket (assumption that null bucket is quite smaller than all hash table bucket rows)
-		e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-		buildSideRows := e.buildSideRows[workerID]
-		if err != nil {
-			joinResult.err = err
-			return false, joinResult
-		}
-		if len(buildSideRows) != 0 {
-			iter1 := chunk.NewIterator4Slice(buildSideRows)
-			defer chunk.FreeIterator(iter1)
-			for iter1.Begin(); iter1.Current() != iter1.End(); {
-				matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk)
-				if err != nil {
-					joinResult.err = err
-					return false, joinResult
-				}
-				// here matched means: there is a valid null bucket row from right side. (not empty)
-				// as said in the comment, once we found at least a valid row, we can determine the reject of lhs row.
-				if matched {
-					return true, joinResult
-				}
-				if joinResult.chk.IsFull() {
-					e.joinResultCh <- joinResult
-					ok, joinResult = e.getNewJoinResult(workerID)
-					if !ok {
-						return false, joinResult
-					}
-				}
-			}
-		}
-		// Step2: match all hash table bucket build rows.
-		e.buildSideRows[workerID], err = rowContainer.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-		buildSideRows = e.buildSideRows[workerID]
-		if err != nil {
-			joinResult.err = err
-			return false, joinResult
-		}
-		if len(buildSideRows) == 0 {
-			// when reach here, it means we couldn't return it quickly in null bucket, and same-bucket is empty,
-			// which means <?,null> NOT IN (empty set) or <?,null> NOT IN (no valid rows) accept the rhs row.
-			e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
-			return true, joinResult
-		}
-		iter2 := chunk.NewIterator4Slice(buildSideRows)
-		defer chunk.FreeIterator(iter2)
-		for iter2.Begin(); iter2.Current() != iter2.End(); {
-			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk)
+	}
+	// when left side has null values, all we want is to find a valid build side rows (passed from other condition)
+	// so we can return it as soon as possible. here means two cases:
+	// case1: <?, null> NOT IN (empty set):             ----------------------> accept rhs row.
+	// case2: <?, null> NOT IN (at least a valid inner row) ------------------> unknown result, refuse rhs row.
+	// Step1: match null bucket (assumption that null bucket is quite smaller than all hash table bucket rows)
+	e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
+	buildSideRows := e.buildSideRows[workerID]
+	if err != nil {
+		joinResult.err = err
+		return false, joinResult
+	}
+	if len(buildSideRows) != 0 {
+		iter1 := chunk.NewIterator4Slice(buildSideRows)
+		defer chunk.FreeIterator(iter1)
+		for iter1.Begin(); iter1.Current() != iter1.End(); {
+			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk)
 			if err != nil {
 				joinResult.err = err
 				return false, joinResult
 			}
-			// here matched means: there is a valid key row from right side. (not empty)
+			// here matched means: there is a valid null bucket row from right side. (not empty)
 			// as said in the comment, once we found at least a valid row, we can determine the reject of lhs row.
 			if matched {
 				return true, joinResult
@@ -853,12 +817,46 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 				}
 			}
 		}
-		// step3: if we couldn't return it quickly in null bucket and all hash bucket, here means only one cases:
-		// case1: <?, null> NOT IN (empty set):
-		// empty set comes from no rows from all bucket can pass other condition. we should accept the rhs row.
+	}
+	// Step2: match all hash table bucket build rows.
+	e.buildSideRows[workerID], err = rowContainer.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
+	buildSideRows = e.buildSideRows[workerID]
+	if err != nil {
+		joinResult.err = err
+		return false, joinResult
+	}
+	if len(buildSideRows) == 0 {
+		// when reach here, it means we couldn't return it quickly in null bucket, and same-bucket is empty,
+		// which means <?,null> NOT IN (empty set) or <?,null> NOT IN (no valid rows) accept the rhs row.
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
+	iter2 := chunk.NewIterator4Slice(buildSideRows)
+	defer chunk.FreeIterator(iter2)
+	for iter2.Begin(); iter2.Current() != iter2.End(); {
+		matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk)
+		if err != nil {
+			joinResult.err = err
+			return false, joinResult
+		}
+		// here matched means: there is a valid key row from right side. (not empty)
+		// as said in the comment, once we found at least a valid row, we can determine the reject of lhs row.
+		if matched {
+			return true, joinResult
+		}
+		if joinResult.chk.IsFull() {
+			e.joinResultCh <- joinResult
+			ok, joinResult = e.getNewJoinResult(workerID)
+			if !ok {
+				return false, joinResult
+			}
+		}
+	}
+	// step3: if we couldn't return it quickly in null bucket and all hash bucket, here means only one cases:
+	// case1: <?, null> NOT IN (empty set):
+	// empty set comes from no rows from all bucket can pass other condition. we should accept the rhs row.
+	e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+	return true, joinResult
 }
 
 // joinNAAJMatchProbeSideRow2Chunk implement the matching priority logic for NA-AntiSemiJoin and NA-AntiLeftOuterSemiJoin
