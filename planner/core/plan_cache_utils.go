@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -49,6 +48,9 @@ var (
 
 	// GetStmtLabel generates a label for a statement.
 	GetStmtLabel func(stmtNode ast.StmtNode) string
+
+	// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
+	ExtractSelectAndNormalizeDigest func(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error)
 )
 
 type paramMarkerExtractor struct {
@@ -155,7 +157,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		prepared.UseCache = false
 	} else {
 		prepared.UseCache = CacheableWithCtx(sctx, stmt, ret.InfoSchema)
-		selectStmtNode, normalizedSQL4PC, digest4PC, err = planner.ExtractSelectAndNormalizeDigest(stmt, vars.CurrentDB)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(stmt, vars.CurrentDB)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""
 			digest4PC = ""
