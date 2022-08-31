@@ -666,7 +666,7 @@ func registerTLSConfig(conf *Config) error {
 		if conf.Host == "127.0.0.1" || len(conf.Security.SSLCertBytes) == 0 || len(conf.Security.SSLKEYBytes) == 0 {
 			tlsConfig.InsecureSkipVerify = true
 		}
-		// TODO: separate name
+		// TODO: use separate name when dumpling as DM library
 		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)
 		if err != nil {
 			return errors.Trace(err)

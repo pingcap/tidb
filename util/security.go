@@ -58,7 +58,7 @@ func addVerifyPeerCertificate(tlsCfg *tls.Config, verifyCN []string) {
 					}
 				}
 			}
-			return errors.Errorf("client certificate authentication failed. The CommonName from the client certificate %v was not found in the configuration cluster-verify-cn with value: %s", cns, verifyCN)
+			return errors.Errorf("client certificate authentication failed. The Common Name from the client certificate %v was not found in the configuration cluster-verify-cn with value: %s", cns, verifyCN)
 		}
 	}
 }
@@ -181,7 +181,7 @@ func NewTLSConfigWithVerifyCN(caData, certData, keyData []byte, verifyCN []strin
 					}
 				}
 			}
-			return errors.Errorf("MySQL server certificate authentication failed. The Common Name from the certificate %v was not found in the configuration values: %s", cns, verifyCN)
+			return errors.Errorf("client certificate authentication failed. The Common Name from the client certificate %v was not found in the configuration cluster-verify-cn with value: %s", cns, verifyCN)
 		})
 	}
 
