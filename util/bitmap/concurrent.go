@@ -47,6 +47,20 @@ func NewConcurrentBitmap(bitLen int) *ConcurrentBitmap {
 	}
 }
 
+// Reset clean the bitmap if the length is suitable, otherwise renewing one.
+func (cb *ConcurrentBitmap) Reset(bitLen int) {
+	segmentLen := (bitLen + segmentWidth - 1) >> segmentWidthPower
+	if segmentLen <= len(cb.segments) {
+		for i := range cb.segments {
+			cb.segments[i] = 0
+		}
+		cb.bitLen = bitLen
+	} else {
+		cb.segments = make([]uint32, segmentLen)
+		cb.bitLen = bitLen
+	}
+}
+
 // BytesConsumed returns size of this bitmap in bytes.
 func (cb *ConcurrentBitmap) BytesConsumed() int64 {
 	return bytesConcurrentBitmap + int64(segmentWidth/8*cap(cb.segments))

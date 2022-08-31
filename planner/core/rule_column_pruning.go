@@ -413,6 +413,9 @@ func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (left
 	for _, otherCond := range p.OtherConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
 	}
+	for _, naeqCond := range p.NAEQConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(naeqCond)...)
+	}
 	lChild := p.children[0]
 	rChild := p.children[1]
 	for _, col := range parentUsedCols {

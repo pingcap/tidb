@@ -377,6 +377,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
+	// todo: mpp na-key toPB.
 	leftJoinKeys := make([]expression.Expression, 0, len(p.LeftJoinKeys))
 	rightJoinKeys := make([]expression.Expression, 0, len(p.RightJoinKeys))
 	for _, leftKey := range p.LeftJoinKeys {
@@ -465,6 +466,7 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		probeFiledTypes = append(probeFiledTypes, ty)
 		buildFiledTypes = append(buildFiledTypes, ty)
 	}
+	// todo: arenatlx, push down hash join
 	join := &tipb.Join{
 		JoinType:                pbJoinType,
 		JoinExecType:            tipb.JoinExecType_TypeHashJoin,

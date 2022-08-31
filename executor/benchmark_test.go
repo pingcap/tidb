@@ -929,7 +929,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
-			nil, lhsTypes, rhsTypes, childrenUsedSchema)
+			nil, lhsTypes, rhsTypes, childrenUsedSchema, false)
 	}
 	memLimit := int64(-1)
 	if testCase.disk {
@@ -1336,7 +1336,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			hashCols:      tc.innerHashKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil),
+		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false),
 		isOuterJoin:   false,
 		keyOff2IdxOff: keyOff2IdxOff,
 		lastColHelper: nil,
@@ -1420,7 +1420,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
 	joiners := make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
-		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil)
+		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false)
 	}
 	e.joiners = joiners
 	return e, nil
@@ -1539,6 +1539,7 @@ func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, 
 		retTypes(leftExec),
 		retTypes(rightExec),
 		tc.childrenUsedSchema,
+		false,
 	)
 
 	mergeJoinExec.innerTable = &mergeJoinTable{

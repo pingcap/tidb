@@ -1111,14 +1111,23 @@ type fullJoinRowCountHelper struct {
 	rightJoinKeys []*expression.Column
 	leftSchema    *expression.Schema
 	rightSchema   *expression.Schema
+
+	leftNAJoinKeys  []*expression.Column
+	rightNAJoinKeys []*expression.Column
 }
 
 func (h *fullJoinRowCountHelper) estimate() float64 {
 	if h.cartesian {
 		return h.leftProfile.RowCount * h.rightProfile.RowCount
 	}
-	leftKeyNDV := getColsNDV(h.leftJoinKeys, h.leftSchema, h.leftProfile)
-	rightKeyNDV := getColsNDV(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	var leftKeyNDV, rightKeyNDV float64
+	if len(h.leftJoinKeys) > 0 {
+		leftKeyNDV = getColsNDV(h.leftJoinKeys, h.leftSchema, h.leftProfile)
+		rightKeyNDV = getColsNDV(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	} else {
+		leftKeyNDV = getColsNDV(h.leftNAJoinKeys, h.leftSchema, h.leftProfile)
+		rightKeyNDV = getColsNDV(h.rightNAJoinKeys, h.rightSchema, h.rightProfile)
+	}
 	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyNDV, rightKeyNDV)
 	return count
 }
