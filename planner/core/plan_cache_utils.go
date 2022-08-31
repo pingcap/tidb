@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -95,7 +94,7 @@ func GeneratePlanCacheStmt(ctx context.Context, sctx sessionctx.Context, paramSQ
 		return nil, nil, util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
-		return nil, nil, executor.ErrPrepareMulti
+		return nil, nil, ErrPrepareMulti
 	}
 	stmt := stmts[0]
 	return GeneratePlanCacheStmtWithAST(ctx, sctx, stmt)
@@ -109,18 +108,18 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	// DDL Statements can not accept parameters
 	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
-		return nil, nil, executor.ErrPrepareDDL
+		return nil, nil, ErrPrepareDDL
 	}
 
 	switch stmt.(type) {
 	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDeleteStmt:
-		return nil, nil, executor.ErrUnsupportedPs
+		return nil, nil, ErrUnsupportedPs
 	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
 	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
 	if len(extractor.markers) > math.MaxUint16 {
-		return nil, nil, executor.ErrPsManyParam
+		return nil, nil, ErrPsManyParam
 	}
 
 	ret := &PreprocessorReturn{}
@@ -142,7 +141,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
-		StmtType:      executor.GetStmtLabel(stmt),
+		StmtType:      GetStmtLabel(stmt),
 		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
