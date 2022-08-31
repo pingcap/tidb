@@ -235,8 +235,8 @@ type session struct {
 
 	store kv.Storage
 
-	preparedPlanCache *plannercore.LRUPlanCache
-	generalPlanCache  *plannercore.LRUPlanCache
+	preparedPlanCache sessionctx.PlanCache
+	generalPlanCache  sessionctx.PlanCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -435,7 +435,7 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) GetPlanCache(isGeneralPlanCache bool) interface{} {
+func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
 	if isGeneralPlanCache { // use the general plan cache
 		if !s.GetSessionVars().EnableGeneralPlanCache {
 			return nil

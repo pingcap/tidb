@@ -55,7 +55,7 @@ type Context struct {
 	values      map[fmt.Stringer]interface{}
 	sessionVars *variable.SessionVars
 	cancel      context.CancelFunc
-	pcache      interface{}
+	pcache      sessionctx.PlanCache
 	level       kvrpcpb.DiskFullOpt
 }
 
@@ -247,7 +247,7 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 }
 
 // GetPlanCache implements the sessionctx.Context interface.
-func (c *Context) GetPlanCache(_ bool) interface{} {
+func (c *Context) GetPlanCache(_ bool) sessionctx.PlanCache {
 	return c.pcache
 }
 
