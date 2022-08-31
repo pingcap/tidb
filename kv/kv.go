@@ -323,6 +323,10 @@ type Request struct {
 	Data      []byte
 	KeyRanges []KeyRange
 
+	// KeyRangesWithPartition makes sure that the request is sent first by partition then by region.
+	// When the table is small, it's possible that multiple partitions are in the same region.
+	KeyRangesWithPartition [][]KeyRange
+
 	// For PartitionTableScan used by tiflash.
 	PartitionIDAndRanges []PartitionIDAndRanges
 

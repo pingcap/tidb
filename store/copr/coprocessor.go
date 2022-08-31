@@ -109,8 +109,27 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
+	var (
+		tasks []*copTask
+		err   error
+	)
+	if len(req.KeyRangesWithPartition) > 0 {
+		// Here we build the task by partition, not directly by region.
+		// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
+		// Keep it split by partition would be more safe.
+		for _, kvRanges := range req.KeyRangesWithPartition {
+			ranges := NewKeyRanges(kvRanges)
+			var tasksInPartition []*copTask
+			tasksInPartition, err = buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
+			if err != nil {
+				break
+			}
+			tasks = append(tasks, tasksInPartition...)
+		}
+	} else {
+		ranges := NewKeyRanges(req.KeyRanges)
+		tasks, err = buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
+	}
 	reqType := "null"
 	if req.ClosestReplicaReadAdjuster != nil {
 		reqType = "miss"
