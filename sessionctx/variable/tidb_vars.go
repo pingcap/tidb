@@ -1000,8 +1000,8 @@ const (
 	DefTiDBGenerateBinaryPlan                      = true
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
-	DefTiDBAutoBuildStatsConcurrency        = 1
-	DefTiDBSysProcScanConcurrency           = 1
+	DefTiDBAutoBuildStatsConcurrency               = 1
+	DefTiDBSysProcScanConcurrency                  = 1
 )
 
 // Process global variables.
