@@ -16,7 +16,6 @@ package expression
 
 import (
 	"regexp"
-	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
@@ -25,17 +24,17 @@ import (
 // Parameters may be const or ignored by the user, so different situations should be considered
 // We can handle parameters more easily with this struct.
 //
-// isNull field shows if user ignores this param in sql
+// notProvided field shows if user ignores this param in sql
 // for example:
 //
-//	select regexp_like("123", "123", "m"), here isNull field is false for the third parameter
-//	select regexp_like("123", "123"), here isNull field is true for the third parameter
+//	select regexp_like("123", "123", "m"), here notProvided field is false for the third parameter
+//	select regexp_like("123", "123"), here notProvided field is true for the third parameter
 type regexpParam struct {
 	constStrVal   string
 	constIntVal   int64
-	defaultIntVal int64 // default value when isNull is true
+	defaultIntVal int64 // default value when notProvided is true
 	isConst       bool
-	isNull        bool
+	notProvided   bool
 	col           *chunk.Column
 }
 
@@ -44,7 +43,7 @@ func (re *regexpParam) getCol() *chunk.Column {
 }
 
 func (re *regexpParam) getStringVal(id int) string {
-	if re.isNull {
+	if re.notProvided {
 		return ""
 	}
 
@@ -52,11 +51,11 @@ func (re *regexpParam) getStringVal(id int) string {
 		return re.constStrVal
 	}
 
-	return re.col.GetString(id)
+	return re.getCol().GetString(id)
 }
 
 func (re *regexpParam) getIntVal(id int) int64 {
-	if re.isNull {
+	if re.notProvided {
 		return re.defaultIntVal
 	}
 
@@ -64,94 +63,100 @@ func (re *regexpParam) getIntVal(id int) int64 {
 		return re.constIntVal
 	}
 
-	return re.col.GetInt64(id)
+	return re.getCol().GetInt64(id)
 }
 
-func buildStringParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, isNull bool) (*regexpParam, error) {
+// bool return value: return true when we get a const null parameter
+func buildStringParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, notProvided bool) (*regexpParam, bool, error) {
 	var pa regexpParam
 	var err error
 
-	pa.isNull = isNull
-	if pa.isNull {
-		return &pa, nil
+	pa.notProvided = notProvided
+	if pa.notProvided {
+		return &pa, false, nil
 	}
 
 	pa.col, err = bf.bufAllocator.get()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// Get values from input
-	if err := bf.args[id].VecEvalString(bf.ctx, input, pa.col); err != nil {
-		return nil, err
+	if err := bf.args[id].VecEvalString(bf.ctx, input, pa.getCol()); err != nil {
+		return nil, false, err
 	}
 
 	// Check if this is a const value
 	pa.isConst = bf.args[id].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
 	if pa.isConst {
 		// Initialize the const
-		pa.constStrVal, err = getColumnConstValString(pa.col, input.NumRows())
-		if err != nil {
-			return nil, err
+		var isConstNull bool
+		pa.constStrVal, isConstNull = getColumnConstValString(pa.getCol(), input.NumRows())
+		if isConstNull {
+			return nil, isConstNull, nil
 		}
 	}
 
-	return &pa, nil
+	return &pa, false, nil
 }
 
-func buildIntParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, isNull bool, defaultIntVal int64) (*regexpParam, error) {
+// bool return value: return true when we get a const null parameter
+func buildIntParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, notProvided bool, defaultIntVal int64) (*regexpParam, bool, error) {
 	var pa regexpParam
 	var err error
 
-	pa.isNull = isNull
-	if pa.isNull {
+	pa.notProvided = notProvided
+	if pa.notProvided {
 		pa.defaultIntVal = defaultIntVal
-		return &pa, nil
+		return &pa, false, nil
 	}
 
 	pa.col, err = bf.bufAllocator.get()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// Get values from input
-	if err := bf.args[id].VecEvalInt(bf.ctx, input, pa.col); err != nil {
-		return nil, err
+	if err := bf.args[id].VecEvalInt(bf.ctx, input, pa.getCol()); err != nil {
+		return nil, false, err
 	}
 
 	// Check if this is a const value
 	pa.isConst = bf.args[id].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
 	if pa.isConst {
 		// Initialize the const
-		pa.constIntVal, err = getColumnConstValInt(pa.col, input.NumRows())
-		if err != nil {
-			return nil, err
+		var isConstNull bool
+		pa.constIntVal, isConstNull = getColumnConstValInt(pa.getCol(), input.NumRows())
+		if isConstNull {
+			return nil, isConstNull, nil
 		}
 	}
 
-	return &pa, nil
+	return &pa, false, nil
 }
 
-func getColumnConstValString(col *chunk.Column, n int) (string, error) {
+// bool return value: return true when we get a const null parameter
+func getColumnConstValString(col *chunk.Column, n int) (string, bool) {
 	// Precondition: col is generated from a constant expression
 	for i := 0; i < n; i++ {
 		if col.IsNull(i) {
-			continue
+			return "", true
 		}
-		return col.GetString(i), nil
+		return col.GetString(i), false
 	}
-	return "", errors.New("Can't get const string")
+	return "", true
 }
 
-func getColumnConstValInt(col *chunk.Column, n int) (int64, error) {
+// bool return value: return true when we get a const null parameter
+func getColumnConstValInt(col *chunk.Column, n int) (int64, bool) {
 	// Precondition: col is generated from a constant expression
 	for i := 0; i < n; i++ {
 		if col.IsNull(i) {
-			continue
+			return 0, true
 		}
-		return col.GetInt64(i), nil
+		return col.GetInt64(i), false
 	}
-	return 0, errors.New("Can't get const int")
+	return 0, true
 }
 
 // memorized regexp means the constant pattern.
@@ -192,17 +197,17 @@ func (reg *regexpMemorizedSig) initMemoizedRegexp(compile func(string) (*regexp.
 
 func releaseBuffers(bf *baseBuiltinFunc, params []*regexpParam) {
 	for _, pa := range params {
-		if pa.col != nil {
-			bf.bufAllocator.put(pa.col)
+		if pa.getCol() != nil {
+			bf.bufAllocator.put(pa.getCol())
 		}
 	}
 }
 
 func getBuffers(params []*regexpParam) []*chunk.Column {
-	buffers := make([]*chunk.Column, 0, 5)
+	buffers := make([]*chunk.Column, 0, 6)
 	for _, pa := range params {
-		if pa.col != nil {
-			buffers = append(buffers, pa.col)
+		if pa.getCol() != nil {
+			buffers = append(buffers, pa.getCol())
 		}
 	}
 	return buffers
@@ -217,35 +222,9 @@ func isResultNull(columns []*chunk.Column, i int) bool {
 	return false
 }
 
-func utf8Len(b byte) int {
-	flag := uint8(128)
-	if (flag & b) == 0 {
-		return 1
+func fillNullStringIntoResult(result *chunk.Column, num int) {
+	result.ReserveString(num)
+	for i := 0; i < num; i++ {
+		result.AppendNull()
 	}
-
-	length := 0
-
-	for ; (flag & b) != 0; flag >>= 1 {
-		length++
-	}
-
-	return length
-}
-
-// This string should always be valid which means that it should always return true in ValidString(str)
-func trimUtf8String(str *string, trimmedNum int64) int64 {
-	totalLenTrimmed := int64(0)
-	for ; trimmedNum > 0; trimmedNum-- {
-		length := utf8Len((*str)[0]) // character length
-		(*str) = (*str)[length:]
-		totalLenTrimmed += int64(length)
-	}
-	return totalLenTrimmed
-}
-
-// Convert a binary index to index referring to utf8
-func convertPosInUtf8(str *string, pos int64) int64 {
-	preStr := (*str)[:pos]
-	preStrNum := utf8.RuneCountInString(preStr)
-	return int64(preStrNum + 1)
 }

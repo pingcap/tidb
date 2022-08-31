@@ -27,17 +27,18 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 type empty struct{}
 
-// Valid flags in mysql's match type
+// Valid flags in match type
 const (
 	flag_i = "i"
 	flag_c = "c"
 	flag_m = "m"
-	flag_n = "s"
+	flag_s = "s"
 )
 
 const (
@@ -50,7 +51,7 @@ var validMatchType = map[string]empty{
 	flag_i: {}, // Case-insensitive matching
 	flag_c: {}, // Case-sensitive matching
 	flag_m: {}, // Multiple-line mode
-	flag_n: {}, // The . character matches line terminators
+	flag_s: {}, // The . character matches line terminators
 }
 
 type regexpBaseFuncSig struct {
@@ -74,7 +75,7 @@ func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchTyp
 	flag := ""
 	matchTypeSet := make(map[string]empty)
 
-	if bf.collation != charset.CollationBin && collate.IsCICollation(bf.collation) {
+	if collate.IsCICollation(bf.collation) {
 		matchTypeSet[flag_i] = empty{}
 	}
 
@@ -213,7 +214,7 @@ func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 // we need to memorize the regexp when:
 //  1. pattern and match type are constant
-//  2. pattern is const and match type is null
+//  2. pattern is const and there is no match type argument
 //
 // return true: need, false: needless
 func (re *regexpLikeFuncSig) needMemorization() bool {
@@ -225,23 +226,32 @@ func (re *regexpLikeFuncSig) needMemorization() bool {
 func (re *regexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*regexpParam, 0, 3)
+	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
 	for i := 0; i < 2; i++ {
-		param, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
+		param, isConstNull, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return err
+		}
+		if isConstNull {
+			result.ResizeInt64(n, true)
+			return nil
 		}
 		params = append(params, param)
 	}
 
 	// user may ignore match type parameter
 	hasMatchType := (len(re.args) == 3)
-	param, err := buildStringParam(&re.baseBuiltinFunc, 2, input, !hasMatchType)
+	param, isConstNull, err := buildStringParam(&re.baseBuiltinFunc, 2, input, !hasMatchType)
 	params = append(params, param)
-	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
 	if err != nil {
 		return err
+	}
+
+	if isConstNull {
+		result.ResizeInt64(n, true)
+		return nil
 	}
 
 	// Check memorization
@@ -378,7 +388,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 				}
 			}
 
-			trimUtf8String(&expr, pos-1) // Trim
+			stringutil.TrimUtf8String(&expr, pos-1) // Trim
 		}
 	}
 
@@ -443,11 +453,16 @@ func (re *regexpSubstrFuncSig) needMemorization() bool {
 func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*regexpParam, 0, 5)
+	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
 	for i := 0; i < 2; i++ {
-		param, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
+		param, isConstNull, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return err
+		}
+		if isConstNull {
+			fillNullStringIntoResult(result, n)
+			return nil
 		}
 		params = append(params, param)
 	}
@@ -456,30 +471,41 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 
 	// Handle position parameter
 	hasPosition := (paramLen >= 3)
-	param, err := buildIntParam(&re.baseBuiltinFunc, 2, input, !hasPosition, 1)
+	param, isConstNull, err := buildIntParam(&re.baseBuiltinFunc, 2, input, !hasPosition, 1)
 	params = append(params, param)
-	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
 	if err != nil {
 		return err
+	}
+	if isConstNull {
+		fillNullStringIntoResult(result, n)
+		return nil
 	}
 
 	// Handle occurrence parameter
 	hasOccur := (paramLen >= 4)
-	param, err = buildIntParam(&re.baseBuiltinFunc, 3, input, !hasOccur, 1)
+	param, isConstNull, err = buildIntParam(&re.baseBuiltinFunc, 3, input, !hasOccur, 1)
 	params = append(params, param)
 
 	if err != nil {
 		return err
 	}
+	if isConstNull {
+		fillNullStringIntoResult(result, n)
+		return nil
+	}
 
 	// Handle match type
 	hasMatchType := (paramLen == 5)
-	param, err = buildStringParam(&re.baseBuiltinFunc, 4, input, !hasMatchType)
+	param, isConstNull, err = buildStringParam(&re.baseBuiltinFunc, 4, input, !hasMatchType)
 	params = append(params, param)
 
 	if err != nil {
 		return err
+	}
+	if isConstNull {
+		fillNullStringIntoResult(result, n)
+		return nil
 	}
 
 	// Check memorization
@@ -529,7 +555,7 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 				}
 			}
 
-			trimUtf8String(&expr, pos-1) // Trim
+			stringutil.TrimUtf8String(&expr, pos-1) // Trim
 		}
 
 		// Get occurrence
@@ -660,7 +686,7 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 		// Check position and trim expr
 		if re.isBinCollation {
 			if pos < 1 || pos > int64(len(bexpr)) {
-				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -673,7 +699,7 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 				}
 			}
 
-			trimUtf8String(&expr, pos-1) // Trim
+			stringutil.TrimUtf8String(&expr, pos-1) // Trim
 		}
 	}
 
@@ -737,9 +763,9 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	if returnOption == 0 {
-		return int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][0]))) + pos - 1, false, nil
+		return int64(stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][0]))) + pos - 1, false, nil
 	} else {
-		return int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][1]))) + pos - 1, false, nil
+		return int64(stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][1]))) + pos - 1, false, nil
 	}
 }
 
@@ -757,11 +783,16 @@ func (re *regexpInStrFuncSig) needMemorization() bool {
 func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*regexpParam, 0, 5)
+	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
 	for i := 0; i < 2; i++ {
-		param, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
+		param, isConstNull, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return err
+		}
+		if isConstNull {
+			result.ResizeInt64(n, true)
+			return nil
 		}
 		params = append(params, param)
 	}
@@ -770,39 +801,54 @@ func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	// Handle position parameter
 	hasPosition := (paramLen >= 3)
-	param, err := buildIntParam(&re.baseBuiltinFunc, 2, input, !hasPosition, 1)
+	param, isConstNull, err := buildIntParam(&re.baseBuiltinFunc, 2, input, !hasPosition, 1)
 	params = append(params, param)
-	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
 	if err != nil {
 		return err
+	}
+	if isConstNull {
+		result.ResizeInt64(n, true)
+		return nil
 	}
 
 	// Handle occurrence parameter
 	hasOccur := (paramLen >= 4)
-	param, err = buildIntParam(&re.baseBuiltinFunc, 3, input, !hasOccur, 1)
+	param, isConstNull, err = buildIntParam(&re.baseBuiltinFunc, 3, input, !hasOccur, 1)
 	params = append(params, param)
 
 	if err != nil {
 		return err
+	}
+	if isConstNull {
+		result.ResizeInt64(n, true)
+		return nil
 	}
 
 	// Handle return_option parameter
 	hasRetOpt := (paramLen >= 5)
-	param, err = buildIntParam(&re.baseBuiltinFunc, 4, input, !hasRetOpt, 0)
+	param, isConstNull, err = buildIntParam(&re.baseBuiltinFunc, 4, input, !hasRetOpt, 0)
 	params = append(params, param)
 
 	if err != nil {
 		return err
 	}
+	if isConstNull {
+		result.ResizeInt64(n, true)
+		return nil
+	}
 
 	// Handle match type
 	hasMatchType := (paramLen == 6)
-	param, err = buildStringParam(&re.baseBuiltinFunc, 5, input, !hasMatchType)
+	param, isConstNull, err = buildStringParam(&re.baseBuiltinFunc, 5, input, !hasMatchType)
 	params = append(params, param)
 
 	if err != nil {
 		return err
+	}
+	if isConstNull {
+		result.ResizeInt64(n, true)
+		return nil
 	}
 
 	// Check memorization
@@ -851,7 +897,7 @@ func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 				}
 			}
 
-			trimUtf8String(&expr, pos-1) // Trim
+			stringutil.TrimUtf8String(&expr, pos-1) // Trim
 		}
 
 		// Get occurrence
@@ -895,9 +941,9 @@ func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			}
 
 			if returnOption == 0 {
-				i64s[i] = int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][0]))) + pos - 1
+				i64s[i] = int64(stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][0]))) + pos - 1
 			} else {
-				i64s[i] = int64(convertPosInUtf8(&expr, int64(matches[occurrence-1][1]))) + pos - 1
+				i64s[i] = int64(stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][1]))) + pos - 1
 			}
 		}
 	}
@@ -1018,7 +1064,7 @@ func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) 
 				}
 			}
 
-			trimmedLen = trimUtf8String(&trimmedExpr, pos-1) // Trim
+			trimmedLen = stringutil.TrimUtf8String(&trimmedExpr, pos-1) // Trim
 		}
 	}
 
@@ -1109,11 +1155,16 @@ func (re *regexpReplaceFuncSig) needMemorization() bool {
 func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*regexpParam, 0, 6)
+	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
 	for i := 0; i < 2; i++ {
-		param, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
+		param, isConstNull, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return err
+		}
+		if isConstNull {
+			fillNullStringIntoResult(result, n)
+			return nil
 		}
 		params = append(params, param)
 	}
@@ -1122,39 +1173,54 @@ func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.
 
 	// Handle repl parameter
 	hasRepl := (paramLen >= 3)
-	param, err := buildStringParam(&re.baseBuiltinFunc, 2, input, !hasRepl)
+	param, isConstNull, err := buildStringParam(&re.baseBuiltinFunc, 2, input, !hasRepl)
 	params = append(params, param)
-	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
 	if err != nil {
 		return err
+	}
+	if isConstNull {
+		fillNullStringIntoResult(result, n)
+		return nil
 	}
 
 	// Handle position parameter
 	hasPosition := (paramLen >= 4)
-	param, err = buildIntParam(&re.baseBuiltinFunc, 3, input, !hasPosition, 1)
+	param, isConstNull, err = buildIntParam(&re.baseBuiltinFunc, 3, input, !hasPosition, 1)
 	params = append(params, param)
 
 	if err != nil {
 		return err
+	}
+	if isConstNull {
+		fillNullStringIntoResult(result, n)
+		return nil
 	}
 
 	// Handle occurrence parameter
 	hasOccur := (paramLen >= 5)
-	param, err = buildIntParam(&re.baseBuiltinFunc, 4, input, !hasOccur, 0)
+	param, isConstNull, err = buildIntParam(&re.baseBuiltinFunc, 4, input, !hasOccur, 0)
 	params = append(params, param)
 
 	if err != nil {
 		return err
 	}
+	if isConstNull {
+		fillNullStringIntoResult(result, n)
+		return nil
+	}
 
 	// Handle match type
 	hasMatchType := (paramLen == 6)
-	param, err = buildStringParam(&re.baseBuiltinFunc, 5, input, !hasMatchType)
+	param, isConstNull, err = buildStringParam(&re.baseBuiltinFunc, 5, input, !hasMatchType)
 	params = append(params, param)
 
 	if err != nil {
 		return err
+	}
+	if isConstNull {
+		fillNullStringIntoResult(result, n)
+		return nil
 	}
 
 	// Check memorization
@@ -1209,7 +1275,7 @@ func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.
 				}
 			}
 
-			trimmedLen = trimUtf8String(&trimmedExpr, pos-1) // Trim
+			trimmedLen = stringutil.TrimUtf8String(&trimmedExpr, pos-1) // Trim
 		}
 
 		// Get occurrence
