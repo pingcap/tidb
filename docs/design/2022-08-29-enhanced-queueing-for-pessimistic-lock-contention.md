@@ -30,7 +30,7 @@ In our original implementation, when retrying a statement, the pessimistic locks
 - After executing the statement again, it might be found that some keys needs to be locked. We denote the set of the keys need to be locked by $S$.
 - Then, we will send requests to lock keys in $S - S_0$, and rollback keys in $S_0 - S$. Those keys that were already locked in the previous attempt don't need to be locked again.
 
-In most cases, we expect that $S_0 \subseteq S$, therefore rolling back the locks and acquire them again like the old implementation may be a waste. It's also possible in the original implementation that the lock is acquired by another transaction between rolling back the lock and acquiring the lock again, causing the statement retry useless. By keeping the lock until it's confirmed that the lock is not needed anymore, we avoid the problem, at the cost of causing more conflict when $S_0 - S$ is not empty.
+In most cases, we expect that $S_0 \subseteq S$, in which case rolling back the locks and acquire them again like the old implementation may be a waste. It's also possible in the original implementation that the lock is acquired by another transaction between rolling back the lock and acquiring the lock again, causing the statement retry useless. By keeping the lock until it's confirmed that the lock is not needed anymore, we avoid the problem, at the cost of causing more conflict when $S_0 - S$ is not empty.
 
 We plan to support this kind of behavior only for simple point-get queries for now.
 
