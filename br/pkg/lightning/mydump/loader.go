@@ -30,6 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// ErrTooManySourceFiles indicates the scanned source files exceeds a scan limit.
 var ErrTooManySourceFiles = errors.New("too many source files")
 
 type MDDatabaseMeta struct {
@@ -101,17 +102,21 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	return string(schema), nil
 }
 
+// MDLoaderSetupConfig stores the configs when setting up a MDLoader.
 type MDLoaderSetupConfig struct {
 	MaxScanFiles int
 }
 
+// DefaultMDLoaderSetupConfig generates a default MDLoaderSetupConfig.
 func DefaultMDLoaderSetupConfig() *MDLoaderSetupConfig {
 	return &MDLoaderSetupConfig{
 		MaxScanFiles: 0,
 	}
 }
 
+// MDLoaderSetupOption is the option interface for setting up a MDLoaderSetupConfig.
 type MDLoaderSetupOption interface {
+	// Apply applies some modifications to the MDLoaderSetupConfig object.
 	Apply(cfg *MDLoaderSetupConfig)
 }
 
@@ -119,27 +124,34 @@ type maxScanFilesMDLoaderSetupOption struct {
 	maxScanFiles int
 }
 
+// Apply applies some modifications to the MDLoaderSetupConfig object.
+// It implements the MDLoaderSetupOption interface.
 func (o *maxScanFilesMDLoaderSetupOption) Apply(cfg *MDLoaderSetupConfig) {
 	cfg.MaxScanFiles = o.maxScanFiles
 }
 
+// WithMaxScanFiles generates an option that limits the max scan files when setting up a MDLoader.
 func WithMaxScanFiles(maxScanFiles int) MDLoaderSetupOption {
 	return &maxScanFilesMDLoaderSetupOption{
 		maxScanFiles: maxScanFiles,
 	}
 }
 
+// MDLoaderConfig stores the configs when constructing a MDLoader.
 type MDLoaderConfig struct {
 	SetupOptions []MDLoaderSetupOption
 }
 
+// DefaultMDLoaderConfig generates a default MDLoaderConfig.
 func DefaultMDLoaderConfig() *MDLoaderConfig {
 	return &MDLoaderConfig{
 		SetupOptions: []MDLoaderSetupOption{},
 	}
 }
 
+// MDLoaderOption is the option interface for setting up an MDLoaderConfig.
 type MDLoaderOption interface {
+	// Apply applies some modifications to the MDLoaderConfig object.
 	Apply(cfg *MDLoaderConfig)
 }
 
@@ -147,10 +159,13 @@ type mdLoaderSetupOptsOption struct {
 	opts []MDLoaderSetupOption
 }
 
+// Apply applies some modifications to the MDLoaderConfig object.
+// It implements the MDLoaderOption interface.
 func (o *mdLoaderSetupOptsOption) Apply(cfg *MDLoaderConfig) {
 	cfg.SetupOptions = append([]MDLoaderSetupOption{}, o.opts...)
 }
 
+// WithMDLoaderSetupOptions generates an option that provide some options when setting up the MDLoader.
 func WithMDLoaderSetupOptions(opts ...MDLoaderSetupOption) MDLoaderOption {
 	return &mdLoaderSetupOptsOption{
 		opts: opts,
