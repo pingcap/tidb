@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -225,7 +224,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		},
 	}
 
-	storageURL, err := ParseRawURL(s.Storage)
+	storageURL, err := storage.ParseRawURL(s.Storage)
 	if err != nil {
 		b.err = errors.Annotate(err, "invalid destination URL")
 		return nil
@@ -573,14 +572,4 @@ func (gs *tidbGlueSession) GetVersion() string {
 func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se glue.Session) error) error {
 	// in SQL backup. we don't need to close domain.
 	return fn(gs)
-}
-
-// ParseRawURL parses the storage URL
-func ParseRawURL(storage string) (*url.URL, error) {
-	// https://github.com/pingcap/br/issues/603
-	// In aws the secret key may contain '/+=' and '+' has a special meaning in URL.
-	// Replace "+" by "%2B" here to avoid this problem.
-	storage = strings.ReplaceAll(storage, "+", "%2B")
-	storageURL, err := url.Parse(storage)
-	return storageURL, errors.Annotate(err, "parseStorage failed")
 }
