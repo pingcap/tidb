@@ -129,7 +129,6 @@ go_test(
         "//errno",
         "//executor",
         "//expression",
-        "//infoschema",
         "//kv",
         "//meta",
         "//parser/ast",

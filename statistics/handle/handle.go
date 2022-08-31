@@ -215,7 +215,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tr
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan model.TableItemID{}
+	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -936,11 +936,14 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
-			// we load all the statistics, i.e., loadAll is true. We don't need to read FMSketch from storage in notNeedLoad IF.
-			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
-			if err != nil {
-				return errors.Trace(err)
+			var fmSketch *statistics.FMSketch
+			if loadAll {
+				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+				// we load all the statistics, i.e., loadAll is true.
+				fmSketch, err = h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			col = &statistics.Column{
 				PhysicalID:        table.PhysicalID,
