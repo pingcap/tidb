@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1965,42 +1964,7 @@ type infoschemaTable struct {
 }
 
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	is := ctx.GetInfoSchema().(InfoSchema)
-	dbs := is.AllSchemas()
-	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
-		return i.Name.L < j.Name.L
-	})
-	switch it.meta.Name.O {
-	case tableFiles:
-	case tablePlugins, tableTriggers:
-	case tableRoutines:
-	// TODO: Fill the following tables.
-	case tableSchemaPrivileges:
-	case tableTablePrivileges:
-	case tableColumnPrivileges:
-	case tableParameters:
-	case tableEvents:
-	case tableGlobalStatus:
-	case tableGlobalVariables:
-	case tableSessionStatus:
-	case tableOptimizerTrace:
-	case tableTableSpaces:
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(cols) == len(it.cols) {
-		return
-	}
-	rows := make([][]types.Datum, len(fullRows))
-	for i, fullRow := range fullRows {
-		row := make([]types.Datum, len(cols))
-		for j, col := range cols {
-			row[j] = fullRow[col.Offset]
-		}
-		rows[i] = row
-	}
-	return rows, nil
+	return nil, nil
 }
 
 // IterRecords implements table.Table IterRecords interface.
