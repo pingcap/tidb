@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -1577,7 +1578,7 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 
 	infoSyncer := dom.InfoSyncer()
-	sm := &testkit.MockSessionManager{
+	sm := &testutil.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	infoSyncer.SetSessionManager(sm)

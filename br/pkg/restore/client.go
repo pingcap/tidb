@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -1004,7 +1005,7 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 			finalStore := store
 			rc.workerPool.ApplyOnErrorGroup(eg,
 				func() error {
-					err = rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
+					err := rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1630,20 +1631,30 @@ func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
 	return rc.rebasedTablesMap
 }
 
+func (rc *Client) getTiFlashNodeCount(ctx context.Context) (uint64, error) {
+	tiFlashStores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.TiFlashOnly)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return uint64(len(tiFlashStores)), nil
+}
+
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
 func (rc *Client) PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	tables []*metautil.Table,
-	skipTiflash bool,
+	recorder *tiflashrec.TiFlashRecorder,
 ) error {
-	tiFlashStores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.TiFlashOnly)
+	tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	tiFlashStoreCount := len(tiFlashStores)
 	for _, table := range tables {
-		if skipTiflash ||
-			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount)) {
+		if recorder != nil ||
+			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > tiFlashStoreCount) {
+			if recorder != nil && table.Info.TiFlashReplica != nil {
+				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
+			}
 			// we cannot satisfy TiFlash replica in restore cluster. so we should
 			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
 			// see details at https://github.com/pingcap/br/issues/931
@@ -1986,7 +1997,8 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		}()...)
 	}
 
-	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs, rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex), nil
+	rp := stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs, rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
+	return rp, nil
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {

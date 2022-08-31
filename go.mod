@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.18
+go 1.19
 
 require (
 	cloud.google.com/go/storage v1.21.0
@@ -27,6 +27,7 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1-0.20220403145359-8e850b710d6d
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/docker/go-units v0.4.0
+	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.13.0
 	github.com/fsouza/fake-gcs-server v1.19.0
 	github.com/go-sql-driver/mysql v1.6.0
@@ -66,7 +67,7 @@ require (
 	github.com/pingcap/log v1.1.0
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20220718022156-3e2483c20a9e
+	github.com/pingcap/tipb v0.0.0-20220824081009-0714a57aff1d
 	github.com/prometheus/client_golang v1.12.2
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.32.1

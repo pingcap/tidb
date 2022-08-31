@@ -2965,9 +2965,8 @@ func (s *InferTypeSuite) createTestCase4Literals() []typeInferTestCase {
 
 func (s *InferTypeSuite) createTestCase4JSONFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
-		{"json_type(c_json)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 51, types.UnspecifiedLength},
-		// TODO: flen of json_unquote doesn't follow MySQL now.
-		{"json_unquote(c_json)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxFieldVarCharLength, types.UnspecifiedLength},
+		{"json_type(c_json)", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.BinaryFlag, 51, types.UnspecifiedLength},
+		{"json_unquote(c_json)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxLongBlobWidth, types.UnspecifiedLength},
 		{"json_extract(c_json, '')", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{"json_set(c_json, '', 0)", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{"json_insert(c_json, '', 0)", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
@@ -2976,6 +2975,14 @@ func (s *InferTypeSuite) createTestCase4JSONFuncs() []typeInferTestCase {
 		{"json_merge(c_json, c_json)", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{"json_object('k', 'v')", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{"json_array('k', 'v')", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
+		{"json_pretty(c_json)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth * 4, types.UnspecifiedLength},
+		{"json_contains(c_json, 'a')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
+		{"json_contains_path(c_json, 'one', '$.a')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
+		{"json_quote('k')", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.BinaryFlag | mysql.NotNullFlag, 8, types.UnspecifiedLength},
+		{"json_valid(c_json)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
+		{`json_search(c_json, 'one', '"a"')`, mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
+		{`json_depth(c_json)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
+		{`json_length(c_json)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 	}
 }
 

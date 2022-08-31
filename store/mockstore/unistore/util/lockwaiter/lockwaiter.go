@@ -32,9 +32,9 @@ var LockNoWait = int64(-1)
 
 // Manager represents a waiters manager.
 type Manager struct {
-	mu                  sync.Mutex
 	waitingQueues       map[uint64]*queue
 	wakeUpDelayDuration int64
+	mu                  sync.Mutex
 }
 
 // NewManager returns a new manager.
@@ -90,11 +90,11 @@ type WakeupWaitTime int
 
 // WaitResult represents a wait result.
 type WaitResult struct {
+	DeadlockResp *deadlock.DeadlockResponse
 	// WakeupSleepTime, -1 means the wait is already timeout, 0 means the lock will be granted to this waiter
 	// others are the wake-up-delay-duration sleep time, in milliseconds
 	WakeupSleepTime WakeupWaitTime
 	CommitTS        uint64
-	DeadlockResp    *deadlock.DeadlockResponse
 }
 
 // WakeupWaitTime

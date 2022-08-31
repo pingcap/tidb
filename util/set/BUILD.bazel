@@ -11,7 +11,10 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/util/set",
     visibility = ["//visibility:public"],
-    deps = ["//util/hack"],
+    deps = [
+        "//util/hack",
+        "//util/memory",
+    ],
 )
 
 go_test(
