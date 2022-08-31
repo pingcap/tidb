@@ -130,7 +130,7 @@ type WriterContext struct {
 	lWrite *backend.LocalEngineWriter
 }
 
-func (ei *engineInfo) NewWorkerCtx(id int) (*WriterContext, error) {
+func (ei *engineInfo) NewWriterCtx(id int) (*WriterContext, error) {
 	memRequire := StructSizeWriterCtx
 	ei.memRoot.RefreshConsumption()
 	ok := ei.memRoot.TestConsume(memRequire)
@@ -138,7 +138,7 @@ func (ei *engineInfo) NewWorkerCtx(id int) (*WriterContext, error) {
 		return nil, logAllocMemFailedEngine(ei.memRoot, ei.jobID, ei.indexID)
 	}
 
-	wCtx, err := ei.newWorkerContext(id)
+	wCtx, err := ei.newWriterContext(id)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCreateContextFail, zap.Int64("index ID", ei.indexID),
 			zap.Int("worker ID", id))
@@ -154,11 +154,11 @@ func (ei *engineInfo) NewWorkerCtx(id int) (*WriterContext, error) {
 	return wCtx, err
 }
 
-// InitWorkerContext will get worker local writer from engine info writer cache first, if exists.
+// newWriterContext will get worker local writer from engine info writer cache first, if exists.
 // If local writer not exist, then create new one and store it into engine info writer cache.
 // note: operate ei.writeCache map is not thread safe please make sure there is sync mechanism to
 // make sure the safe.
-func (ei *engineInfo) newWorkerContext(workerID int) (*WriterContext, error) {
+func (ei *engineInfo) newWriterContext(workerID int) (*WriterContext, error) {
 	lWrite, exist := ei.writerCache.Load(workerID)
 	if !exist {
 		var err error
