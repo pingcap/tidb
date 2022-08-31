@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -107,12 +108,14 @@ func GetDBConfigFromEnv(schema string) DBConfig {
 
 // OpenDB opens a mysql connection FD
 func OpenDB(cfg DBConfig, vars map[string]string) (*sql.DB, error) {
-	var dbDSN string
+	var dbDSN, hostPort string
+
+	hostPort = net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	if len(cfg.Snapshot) != 0 {
 		log.Info("create connection with snapshot", zap.String("snapshot", cfg.Snapshot))
-		dbDSN = fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8mb4&tidb_snapshot=%s", cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Snapshot)
+		dbDSN = fmt.Sprintf("%s:%s@tcp(%s)/?charset=utf8mb4&tidb_snapshot=%s", cfg.User, cfg.Password, hostPort, url.QueryEscape(cfg.Snapshot))
 	} else {
-		dbDSN = fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8mb4", cfg.User, cfg.Password, cfg.Host, cfg.Port)
+		dbDSN = fmt.Sprintf("%s:%s@tcp(%s)/?charset=utf8mb4", cfg.User, cfg.Password, hostPort)
 	}
 
 	for key, val := range vars {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"text/template"
@@ -208,7 +209,7 @@ func (conf *Config) GetDSN(db string) string {
 	// https://github.com/go-sql-driver/mysql#maxallowedpacket
 	hostPort := net.JoinHostPort(conf.Host, strconv.Itoa(conf.Port))
 	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?collation=utf8mb4_general_ci&readTimeout=%s&writeTimeout=30s&interpolateParams=true&maxAllowedPacket=0",
-		conf.User, conf.Password, hostPort, db, conf.ReadTimeout)
+		conf.User, conf.Password, hostPort, url.QueryEscape(db), conf.ReadTimeout)
 	if len(conf.Security.CAPath) > 0 {
 		dsn += "&tls=dumpling-tls-target"
 	}

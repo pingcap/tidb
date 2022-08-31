@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -688,7 +689,11 @@ func main() {
 
 	mdb, err = openDBWithRetry(
 		"mysql",
-		"root@tcp(localhost:"+fmt.Sprint(port)+")/"+dbName+"?allowAllFiles=true",
+		fmt.Sprintf(
+			"root@tcp(localhost:%d)/%s?allowAllFiles=true",
+			port,
+			url.QueryEscape(dbName),
+		),
 	)
 	if err != nil {
 		log.Fatal("open DB failed", zap.Error(err))

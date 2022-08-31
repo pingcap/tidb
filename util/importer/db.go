@@ -18,6 +18,8 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"net"
+	"net/url"
 	"strconv"
 
 	_ "github.com/go-sql-driver/mysql" // for mysql driver
@@ -228,7 +230,8 @@ func execSQL(db *sql.DB, sql string) error {
 }
 
 func createDB(cfg dbutil.DBConfig) (*sql.DB, error) {
-	dbDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8", cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Schema)
+	hostPort := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	dbDSN := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8", cfg.User, cfg.Password, hostPort, url.QueryEscape(cfg.Schema))
 	db, err := sql.Open("mysql", dbDSN)
 	if err != nil {
 		return nil, errors.Trace(err)

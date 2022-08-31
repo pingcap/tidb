@@ -62,7 +62,7 @@ func (param *MySQLConnectParam) ToDSN() string {
 	hostPort := net.JoinHostPort(param.Host, strconv.Itoa(param.Port))
 	dsn := fmt.Sprintf("%s:%s@tcp(%s)/?charset=utf8mb4&sql_mode='%s'&maxAllowedPacket=%d&tls=%s",
 		param.User, param.Password, hostPort,
-		param.SQLMode, param.MaxAllowedPacket, param.TLS)
+		url.QueryEscape(param.SQLMode), param.MaxAllowedPacket, url.QueryEscape(param.TLS))
 
 	for k, v := range param.Vars {
 		dsn += fmt.Sprintf("&%s='%s'", k, url.QueryEscape(v))

@@ -6,7 +6,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"strconv"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -48,7 +51,7 @@ func main() {
 			return errors.Trace(err)
 		}
 
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4", "root", "", "127.0.0.1", port, database)
+		dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4", "root", "", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), url.QueryEscape(database))
 		db, err := sql.Open("mysql", dsn)
 		if err != nil {
 			return errors.Trace(err)
