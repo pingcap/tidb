@@ -1735,7 +1735,6 @@ func (e *memtableRetriever) getRegionsInfoForTable(h *helper.Helper, is infosche
 
 func (e *memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, tableID int64) (*helper.RegionsInfo, error) {
 	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
-
 	sRegion, err := helper.GetRegionByKey(codec.EncodeBytes(nil, sk))
 	if err != nil {
 		return nil, err
