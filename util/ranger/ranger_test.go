@@ -828,7 +828,7 @@ func TestColumnRange(t *testing.T) {
 			require.NotNil(t, col)
 			conds = ranger.ExtractAccessConditionsForColumn(conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
-			result, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length)
+			result, _, _, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
