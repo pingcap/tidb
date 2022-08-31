@@ -846,7 +846,7 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 		// we canot use a constant value to check timestamp funcs, so here
 		// just to check the fractional seconds part and the time delta.
 		require.False(t, strings.Contains(mt.String(), "."))
-		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())).Round(time.Second), 5*time.Second)
+		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 5*time.Second)
 
 		f, err = x.fc.getFunction(ctx, datumsToConstants(types.MakeDatums(6)))
 		require.NoError(t, err)
@@ -856,7 +856,7 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 		require.NoError(t, err)
 		mt = v.GetMysqlTime()
 		require.True(t, strings.Contains(mt.String(), "."))
-		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())).Round(time.Second), 5*time.Second)
+		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 5*time.Second)
 
 		resetStmtContext(ctx)
 		_, err = x.fc.getFunction(ctx, datumsToConstants(types.MakeDatums(8)))
