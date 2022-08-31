@@ -261,7 +261,7 @@ func LoadSchemaInfo(
 				if m, ok := metric.FromContext(ctx); ok {
 					m.RecordTableCount(metric.TableStatePending, err)
 				}
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			if m, ok := metric.FromContext(ctx); ok {
 				m.RecordTableCount(metric.TableStatePending, err)
