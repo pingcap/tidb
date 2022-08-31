@@ -269,7 +269,6 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 			// 1 0 0 0 means right join key : null ?   ?  ?
 			// ---------------------------------------------
 			// left & right: 1 0 1 0: just do the explicit column value check for whose bit is 0. (means no null from both side)
-
 			for i := 0; i < keyColLen; i++ {
 				if probeKeyNullBits.UnsafeIsSet(i) || nullEntry.nullBitMap.UnsafeIsSet(i) {
 					continue
@@ -292,7 +291,6 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 			//
 			// eg: the probe key is <1,2>, we only get <2, null> in the null bucket, even we can take the null as a wildcard symbol,
 			// the first value of this two tuple is obviously not a match. So we need filter it here.
-
 			for i := 0; i < keyColLen; i++ {
 				if nullEntry.nullBitMap.UnsafeIsSet(i) {
 					continue

@@ -880,10 +880,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 //	       key, we should return the result as left side row appended with a scalar value 0 which is from same key matching failure.
 func (e *HashJoinExec) joinNAAJMatchProbeSideRow2Chunk(workerID uint, probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *hashContext,
 	rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-
 	NAAntiSemiJoin := e.joinType == plannercore.AntiSemiJoin && len(e.buildNAKeys) > 0
 	NAAntiLeftOuterSemiJoin := e.joinType == plannercore.AntiLeftOuterSemiJoin && len(e.buildNAKeys) > 0
-
 	if NAAntiSemiJoin {
 		return e.joinNAASJMatchProbeSideRow2Chunk(workerID, probeKey, probeKeyNullBits, probeSideRow, hCtx, rowContainer, joinResult)
 	}
