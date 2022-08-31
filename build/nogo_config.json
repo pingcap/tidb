@@ -342,6 +342,7 @@
       "parser/goyacc/": "ignore goyacc code",
       "parser/ast/": "ignore parser/ast code",
       "parser/test_driver/": "ignore parser/test_driver code",
+      "dumpling/export/sql_type.go": "please fix it",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code"
     },
