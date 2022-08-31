@@ -179,16 +179,15 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
-	if record.memoryUsageAlarmRatio <= 0.0 || record.memoryUsageAlarmRatio >= 1.0 {
-		return
-	}
 	if !record.initialized {
 		record.initMemoryUsageAlarmRecord()
 		if record.err != nil {
 			return
 		}
 	}
-
+	if record.memoryUsageAlarmRatio <= 0.0 || record.memoryUsageAlarmRatio >= 1.0 {
+		return
+	}
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
 	runtime.ReadMemStats(instanceStats)
@@ -290,9 +289,9 @@ func getRelevantSystemVariableBuf() string {
 func getCurrentAnalyzePlan(info *util.ProcessInfo) string {
 	var buf strings.Builder
 	rows := info.CurrentAnalyzeRows(info.Plan, info.RuntimeStatsColl)
-	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|%v|%v|%v|%v|/n", "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"))
+	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|%v|%v|%v|%v|\n", "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"))
 	for _, row := range rows {
-		buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|%v|%v|%v|%v|/n", row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]))
+		buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|%v|%v|%v|%v|\n", row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]))
 	}
 	return buf.String()
 }
@@ -350,7 +349,6 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 				}
 				buf.WriteString("\n")
 			}
-			buf.WriteString(getCurrentAnalyzePlan(info))
 		}
 		buf.WriteString("\n")
 		if _, err = f.WriteString(buf.String()); err != nil {
