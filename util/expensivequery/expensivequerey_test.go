@@ -57,7 +57,7 @@ func TestLogFormat(t *testing.T) {
 		RedactSQL: false,
 	}
 	costTime := time.Second * 233
-	logSqlTruncateLen := 1024 * 8
+	logSQLTruncateLen := 1024 * 8
 	logFields := genLogFields(costTime, info, true, false)
 
 	assert.Len(t, logFields, 7)
@@ -86,7 +86,7 @@ func TestLogFormat(t *testing.T) {
 	info.RedactSQL = false
 	info.Info = string(mockTooLongQuery)
 	logFields = genLogFields(costTime, info, true, false)
-	assert.Equal(t, len(logFields[6].String), logSqlTruncateLen+10)
+	assert.Equal(t, len(logFields[6].String), logSQLTruncateLen+10)
 	logFields = genLogFields(costTime, info, false, false)
 	assert.Equal(t, len(logFields[6].String), len(mockTooLongQuery))
 }

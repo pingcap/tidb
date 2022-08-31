@@ -421,10 +421,10 @@ max-procs = 0
 server-memory-quota = 0
 
 # The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
-# and less than or equal to 1. The default value is 0.8.
+# and less than or equal to 1. The default value is 0.7.
 # If this configuration is set to 0 or 1, it'll disable the alarm.
 # <snip>
-memory-usage-alarm-ratio = 0.8
+memory-usage-alarm-ratio = 0.7
 
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000

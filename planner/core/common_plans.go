@@ -523,8 +523,10 @@ func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 }
 
 // GetExplainAnalyzeRowsForPlan get explain rows for plan.
-func GetExplainAnalyzeRowsForPlan(plan *Explain, runtimeStatsColl *execdetails.RuntimeStatsColl) (rows [][]string) {
-	plan.prepareSchema()
+func GetExplainAnalyzeRowsForPlan(plan *Explain) (rows [][]string) {
+	if err := plan.prepareSchema(); err != nil {
+		return rows
+	}
 	if err := plan.RenderResult(); err != nil {
 		return rows
 	}

@@ -53,23 +53,21 @@ type s3Config struct {
 }
 
 type memoryUsageAlarm struct {
-	err                                   error
-	initialized                           bool
-	isServerMemoryQuotaSet                bool
-	serverMemoryQuota                     uint64
-	memoryUsageAlarmRatio                 float64
-	autoGcRatio                           float64
-	memoryUsageAlarmDesensitizationEnable bool
-	memoryUsageAlarmTruncationEnable      bool
-	memoryUsageAlarmIntervalSeconds       uint64
 	lastCheckTime                         time.Time
-
-	tmpDir                 string
-	lastLogFileName        []string
-	lastSystemInfoFileName []string
-	lastProfileFileName    [][]string // heap, goroutine
-
-	s3Conf s3Config
+	err                                   error
+	tmpDir                                string
+	lastProfileFileName                   [][]string
+	lastSystemInfoFileName                []string
+	lastLogFileName                       []string
+	s3Conf                                s3Config
+	memoryUsageAlarmIntervalSeconds       uint64
+	autoGcRatio                           float64
+	memoryUsageAlarmRatio                 float64
+	serverMemoryQuota                     uint64
+	memoryUsageAlarmDesensitizationEnable bool
+	isServerMemoryQuotaSet                bool
+	initialized                           bool
+	memoryUsageAlarmTruncationEnable      bool
 }
 
 func (record *memoryUsageAlarm) initS3Config() {
@@ -105,7 +103,6 @@ func (record *memoryUsageAlarm) uploadFileToS3(filename string, uploader *s3mana
 		if err := file.Close(); err != nil {
 			logutil.BgLogger().Error("close record file fail", zap.Error(err))
 		}
-		return
 	}()
 }
 
@@ -133,8 +130,7 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	if recordToS3 := config.GetGlobalConfig().S3.EnableUploadOOMRecord; recordToS3 {
 		record.initS3Config()
 	}
-	record.memoryUsageAlarmRatio = 0.01
-	//record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
+	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
 	record.memoryUsageAlarmDesensitizationEnable = variable.MemoryUsageAlarmDesensitizationEnable.Load()
 	record.memoryUsageAlarmTruncationEnable = variable.MemoryUsageAlarmTruncationEnable.Load()
 	record.autoGcRatio = variable.AutoGcMemoryRatio.Load()
@@ -183,14 +179,14 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
+	if record.memoryUsageAlarmRatio <= 0.0 || record.memoryUsageAlarmRatio >= 1.0 {
+		return
+	}
 	if !record.initialized {
 		record.initMemoryUsageAlarmRecord()
 		if record.err != nil {
 			return
 		}
-	}
-	if record.memoryUsageAlarmRatio <= 0.0 || record.memoryUsageAlarmRatio >= 1.0 {
-		return
 	}
 
 	var memoryUsage uint64
@@ -213,6 +209,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 
 		if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.autoGcRatio {
 			// if memory usage is more than threshold (default 80% system memory), doing GC actively to avoid OOM risk.
+			// revive:disable:call-to-gc
 			runtime.GC()
 		}
 		interval := time.Since(record.lastCheckTime)
@@ -280,9 +277,9 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 }
 
-func (record *memoryUsageAlarm) getRelevantSystemVariableBuf() string {
+func getRelevantSystemVariableBuf() string {
 	var buf strings.Builder
-	buf.WriteString(fmt.Sprintf("System variables : \n"))
+	buf.WriteString("System variables : \n")
 	buf.WriteString(fmt.Sprintf("oom-action: %v \n", config.GetGlobalConfig().OOMAction))
 	buf.WriteString(fmt.Sprintf("mem-quota-query : %v \n", config.GetGlobalConfig().MemQuotaQuery))
 	buf.WriteString(fmt.Sprintf("server-memory-quota : %v \n", config.GetGlobalConfig().Performance.ServerMemoryQuota))
@@ -290,12 +287,12 @@ func (record *memoryUsageAlarm) getRelevantSystemVariableBuf() string {
 	return buf.String()
 }
 
-func (record *memoryUsageAlarm) getCurrentAnalyzePlan(info *util.ProcessInfo) string {
+func getCurrentAnalyzePlan(info *util.ProcessInfo) string {
 	var buf strings.Builder
 	rows := info.CurrentAnalyzeRows(info.Plan, info.RuntimeStatsColl)
-	buf.WriteString(fmt.Sprintf("%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/n", "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"))
+	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|%v|%v|%v|%v|/n", "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"))
 	for _, row := range rows {
-		buf.WriteString(fmt.Sprintf("%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/t%v/n", row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]))
+		buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|%v|%v|%v|%v|/n", row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]))
 	}
 	return buf.String()
 }
@@ -324,7 +321,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 		}
 	}()
 
-	if _, err = f.WriteString(record.getRelevantSystemVariableBuf()); err != nil {
+	if _, err = f.WriteString(getRelevantSystemVariableBuf()); err != nil {
 		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
 	}
 
@@ -339,7 +336,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 			buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
 			fields := genLogFields(record.lastCheckTime.Sub(info.Time), info, record.memoryUsageAlarmTruncationEnable, record.memoryUsageAlarmDesensitizationEnable)
 			fields = append(fields, info.OomAlarmVariablesInfo...)
-			fields = append(fields, zap.String("current_analyze_plan", record.getCurrentAnalyzePlan(info)))
+			fields = append(fields, zap.String("current_analyze_plan", getCurrentAnalyzePlan(info)))
 			for _, field := range fields {
 				switch field.Type {
 				case zapcore.StringType:
@@ -353,7 +350,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 				}
 				buf.WriteString("\n")
 			}
-			buf.WriteString(record.getCurrentAnalyzePlan(info))
+			buf.WriteString(getCurrentAnalyzePlan(info))
 		}
 		buf.WriteString("\n")
 		if _, err = f.WriteString(buf.String()); err != nil {
@@ -472,7 +469,11 @@ func (record *memoryUsageAlarm) recordSystemInfoFile() (string, error) {
 		buf.WriteString(fmt.Sprintf("%v: %v", "memroy", memInfo.String()) + "\n")
 		buf.WriteString("\n")
 	}
-	_, err = f.WriteString("The 10 system threads with the most memory usage for OOM analysis\n")
+	if _, err = f.WriteString("The 10 system threads with the most memory usage for OOM analysis\n"); err != nil {
+		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
+		return fileName, err
+	}
+
 	if _, err = f.WriteString(buf.String()); err != nil {
 		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
 		return fileName, err

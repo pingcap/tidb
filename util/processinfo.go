@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"go.uber.org/zap"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -29,29 +28,28 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID                    uint64
-	User                  string
-	Host                  string
-	Port                  string
-	DB                    string
-	Digest                string
-	Plan                  interface{}
-	PlanExplainRows       [][]string
-	CurrentAnalyzeRows    func(interface{}, *execdetails.RuntimeStatsColl) [][]string
-	RuntimeStatsColl      *execdetails.RuntimeStatsColl
-	Time                  time.Time
-	Info                  string
-	CurTxnStartTS         uint64
-	ctx                   context.Context
-	StmtCtx               *stmtctx.StatementContext
-	OomAlarmVariablesInfo []zap.Field
-	StatsInfo             func(interface{}) map[string]uint64
-	// MaxExecutionTime is the timeout for select statement, in milliseconds.
-	// If the query takes too long, kill it.
+	Time                      time.Time
+	Plan                      interface{}
+	ctx                       context.Context
+	CurrentAnalyzeRows        func(interface{}, *execdetails.RuntimeStatsColl) [][]string
+	RuntimeStatsColl          *execdetails.RuntimeStatsColl
+	StatsInfo                 func(interface{}) map[string]uint64
+	StmtCtx                   *stmtctx.StatementContext
+	Digest                    string
+	DB                        string
+	Port                      string
+	Host                      string
+	Info                      string
+	User                      string
+	OomAlarmVariablesInfo     []zap.Field
+	PlanExplainRows           [][]string
+	ID                        uint64
+	CurTxnStartTS             uint64
 	MaxExecutionTime          uint64
 	State                     uint16
 	Command                   byte

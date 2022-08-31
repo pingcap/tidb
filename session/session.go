@@ -27,7 +27,6 @@ import (
 	stderrs "errors"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/types"
 	"math/rand"
 	"runtime/pprof"
 	"runtime/trace"
@@ -84,6 +83,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -1514,7 +1514,6 @@ func (s *session) getOomAlarmVariablesInfo() []zap.Field {
 }
 
 func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdetails.RuntimeStatsColl) [][]string {
-
 	explain := &plannercore.Explain{
 		TargetPlan:       p.(plannercore.Plan),
 		Format:           types.ExplainFormatROW,
@@ -1522,7 +1521,7 @@ func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdet
 		RuntimeStatsColl: runtimeStatsColl,
 	}
 	explain.SetSCtx(s)
-	return plannercore.GetExplainAnalyzeRowsForPlan(explain, s.sessionVars.StmtCtx.RuntimeStatsColl)
+	return plannercore.GetExplainAnalyzeRowsForPlan(explain)
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
