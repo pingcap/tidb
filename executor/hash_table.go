@@ -284,7 +284,6 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 			if !ok {
 				continue
 			}
-			// once ok. just append the (maybe) valid build row for latter other conditions check if any.
 		} else {
 			// when the probeKeyNullBits is nil, it means the probe key is not null. But in the process of matching the null bucket,
 			// we still need to do the non-null (explicit) value check.
@@ -306,8 +305,8 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 			if !ok {
 				continue
 			}
-			// once ok. just append the (maybe) valid build row for latter other conditions check if any.
 		}
+		// once ok. just append the (maybe) valid build row for latter other conditions check if any.
 		matched = append(matched, mayMatchedRow)
 	}
 	return matched, err
