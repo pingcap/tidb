@@ -57,6 +57,7 @@ type PlanCache interface {
 	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType)
 	Delete(key kvcache.Key)
 	DeleteAll()
+	Size() int
 	SetCapacity(capacity uint) error
 }
 

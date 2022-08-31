@@ -42,7 +42,7 @@ var (
 )
 
 func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
-	cache := sctx.GetPlanCache(isGeneralPlanCache).(*LRUPlanCache)
+	cache := sctx.GetPlanCache(isGeneralPlanCache)
 	val, exist := cache.Get(key, paramTypes)
 	if !exist {
 		return nil, exist
@@ -52,7 +52,7 @@ func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key
 }
 
 func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue, paramTypes []*types.FieldType) {
-	cache := sctx.GetPlanCache(isGeneralPlanCache).(*LRUPlanCache)
+	cache := sctx.GetPlanCache(isGeneralPlanCache)
 	cache.Put(key, plan, paramTypes)
 }
 

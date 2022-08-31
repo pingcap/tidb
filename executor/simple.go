@@ -1777,7 +1777,7 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 	}
 	now := types.NewTime(types.FromGoTime(time.Now().In(e.ctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
 	e.ctx.GetSessionVars().LastUpdateTime4PC = now
-	e.ctx.GetPlanCache(false).(*core.LRUPlanCache).DeleteAll()
+	e.ctx.GetPlanCache(false).DeleteAll()
 	if s.StatementScope == ast.StatementScopeInstance {
 		// Record the timestamp. When other sessions want to use the plan cache,
 		// it will check the timestamp first to decide whether the plan cache should be flushed.
