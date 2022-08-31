@@ -92,7 +92,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if topsqlstate.TopSQLEnabled() {
 		e.ctx.GetSessionVars().StmtCtx.IsSQLRegistered.Store(true)
-		ctx = topsql.AttachAndRegisterSQLInfo(ctx, stmt.NormalizedSQL, stmt.SQLDigest, vars.InRestrictedSQL)
+		topsql.AttachAndRegisterSQLInfo(ctx, stmt.NormalizedSQL, stmt.SQLDigest, vars.InRestrictedSQL)
 	}
 
 	e.ctx.GetSessionVars().PlanID = 0
