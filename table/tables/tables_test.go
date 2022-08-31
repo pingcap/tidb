@@ -1032,4 +1032,13 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t4")
 	tk.MustQuery("select * from t4 order by id").Check(testkit.Rows("1 1"))
+
+	// case: larger for_update_ts should not prevent the "write conflict" error.
+	tk.MustExec("create table t5 (id int primary key, uk int, unique key i1(uk))")
+	tk.MustExec("insert into t5 values (1, 1), (2, 2)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t5 set uk = 2 where id = 1")
+	tk2.MustExec("delete from t5 where id = 2")
+	tk.MustExec("select * from t5 for update")
+	tk.MustExec("commit")
 }
