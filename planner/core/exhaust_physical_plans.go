@@ -1406,7 +1406,6 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		return false, nil
 	}
 	accesses := make([]expression.Expression, 0, len(path.IdxCols))
-	relatedExprs := make([]expression.Expression, 0, len(path.IdxCols)) // all expressions related to the chosen range
 	ijHelper.resetContextForIndex(innerJoinKeys, path.IdxCols, path.IdxColLens, outerJoinKeys)
 	notKeyEqAndIn, remained, rangeFilterCandidates, emptyRange := ijHelper.findUsefulEqAndInFilters(innerPlan)
 	if emptyRange {
@@ -1420,7 +1419,6 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		return false, nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
-	relatedExprs = append(relatedExprs, notKeyEqAndIn...)
 	remained = append(remained, remainedEqAndIn...)
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
 	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
@@ -1437,14 +1435,18 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 			return false, nil
 		}
 		remained = append(remained, rangeFilterCandidates...)
-		ranges, emptyRange, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
-		if err != nil {
-			return false, err
+		tempRangeResult := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
+		if tempRangeResult.err != nil {
+			return false, tempRangeResult.err
 		}
-		if emptyRange {
+		if tempRangeResult.emptyRange {
 			return true, nil
 		}
-		mutableRange := ijHelper.createMutableIndexJoinRange(relatedExprs, ranges, path, innerJoinKeys, outerJoinKeys)
+		lastColPos = tempRangeResult.keyCntInRange + tempRangeResult.eqAndInCntInRange
+		ijHelper.curPossibleUsedKeys = ijHelper.curPossibleUsedKeys[:tempRangeResult.keyCntInRange]
+		remained = append(remained, accesses[tempRangeResult.eqAndInCntInRange:]...)
+		accesses = accesses[:tempRangeResult.eqAndInCntInRange]
+		mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeResult.ranges, path, innerJoinKeys, outerJoinKeys)
 		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
 		return false, nil
 	}
@@ -1464,45 +1466,64 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 			return false, nil
 		}
 		colAccesses, colRemained := ranger.DetachCondsForColumn(ijHelper.join.ctx, rangeFilterCandidates, lastPossibleCol)
-		var ranges, nextColRange []*ranger.Range
+		var nextColRange []*ranger.Range
 		var err error
 		if len(colAccesses) > 0 {
-			nextColRange, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx, lastPossibleCol.RetType, path.IdxColLens[lastColPos])
+			var colRemained2 []expression.Expression
+			nextColRange, colAccesses, colRemained2, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx, lastPossibleCol.RetType, path.IdxColLens[lastColPos], ijHelper.join.ctx.GetSessionVars().OptimizerMemQuota)
 			if err != nil {
 				return false, err
 			}
-			relatedExprs = append(relatedExprs, colAccesses...)
+			if len(colRemained2) > 0 {
+				colRemained = append(colRemained, colRemained2...)
+				nextColRange = nil
+			}
 		}
-		ranges, emptyRange, err = ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
-		if err != nil {
-			return false, err
+		tempRangeResult := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
+		if tempRangeResult.err != nil {
+			return false, tempRangeResult.err
 		}
-		if emptyRange {
+		if tempRangeResult.emptyRange {
 			return true, nil
 		}
+		lastColPos = tempRangeResult.keyCntInRange + tempRangeResult.eqAndInCntInRange
+		ijHelper.curPossibleUsedKeys = ijHelper.curPossibleUsedKeys[:tempRangeResult.keyCntInRange]
+		remained = append(remained, accesses[tempRangeResult.eqAndInCntInRange:]...)
 		remained = append(remained, colRemained...)
-		if path.IdxColLens[lastColPos] != types.UnspecifiedLength {
+		accesses = accesses[:tempRangeResult.eqAndInCntInRange]
+		if tempRangeResult.nextColInRange {
+			if path.IdxColLens[lastColPos] != types.UnspecifiedLength {
+				remained = append(remained, colAccesses...)
+			}
+			accesses = append(accesses, colAccesses...)
+			lastColPos = lastColPos + 1
+		} else {
 			remained = append(remained, colAccesses...)
 		}
-		accesses = append(accesses, colAccesses...)
-		if len(colAccesses) > 0 {
-			lastColPos = lastColPos + 1
-		}
-		mutableRange := ijHelper.createMutableIndexJoinRange(relatedExprs, ranges, path, innerJoinKeys, outerJoinKeys)
+		mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeResult.ranges, path, innerJoinKeys, outerJoinKeys)
 		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
 		return false, nil
 	}
-	accesses = append(accesses, lastColAccess...)
-	remained = append(remained, rangeFilterCandidates...)
-	ranges, emptyRange, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true)
-	if err != nil {
-		return false, err
+	tempRangeResult := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true)
+	if tempRangeResult.err != nil {
+		return false, tempRangeResult.err
 	}
-	if emptyRange {
+	if tempRangeResult.emptyRange {
 		return true, nil
 	}
-	mutableRange := ijHelper.createMutableIndexJoinRange(relatedExprs, ranges, path, innerJoinKeys, outerJoinKeys)
-	ijHelper.updateBestChoice(mutableRange, path, accesses, remained, lastColManager, lastColPos+1, rebuildMode)
+	lastColPos = tempRangeResult.keyCntInRange + tempRangeResult.eqAndInCntInRange
+	ijHelper.curPossibleUsedKeys = ijHelper.curPossibleUsedKeys[:tempRangeResult.keyCntInRange]
+	remained = append(remained, accesses[tempRangeResult.eqAndInCntInRange:]...)
+	remained = append(remained, rangeFilterCandidates...)
+	accesses = accesses[:tempRangeResult.eqAndInCntInRange]
+	if tempRangeResult.extraColInRange {
+		accesses = append(accesses, lastColAccess...)
+		lastColPos = lastColPos + 1
+	} else {
+		lastColManager = nil
+	}
+	mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeResult.ranges, path, innerJoinKeys, outerJoinKeys)
+	ijHelper.updateBestChoice(mutableRange, path, accesses, remained, lastColManager, lastColPos, rebuildMode)
 	return false, nil
 }
 
@@ -1541,77 +1562,125 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges ranger.MutableRang
 	ijHelper.lastColManager = lastColManager
 }
 
-func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, emptyRange bool, err error) {
+type templateRangeResult struct {
+	ranges            ranger.Ranges
+	emptyRange        bool
+	keyCntInRange     int
+	eqAndInCntInRange int
+	nextColInRange    bool
+	extraColInRange   bool
+	err               error
+}
+
+func appendTailColumnRange(oldRanges, colRanges ranger.Ranges, rangeMemQuota int64) (ranger.Ranges, bool) {
+	newRanges := make(ranger.Ranges, 0, len(oldRanges))
+	for _, oldRan := range oldRanges {
+		for _, colRan := range colRanges {
+			newRan := &ranger.Range{
+				LowVal:    append(oldRan.LowVal, colRan.LowVal[0]),
+				HighVal:   append(oldRan.HighVal, colRan.HighVal[0]),
+				Collators: append(oldRan.Collators, colRan.Collators[0]),
+			}
+			if len(newRanges) == 0 && rangeMemQuota > 0 && newRan.MemUsage()*int64(len(newRanges))*int64(len(colRanges)) > rangeMemQuota {
+				return oldRanges, false
+			}
+			newRanges = append(newRanges, newRan)
+		}
+	}
+	return newRanges, true
+}
+
+func appendTailTemplateRange(oldRanges ranger.Ranges, rangeMemQuota int64) (ranger.Ranges, bool) {
+	newRanges := make(ranger.Ranges, 0, len(oldRanges))
+	for _, ran := range oldRanges {
+		newRange := &ranger.Range{
+			LowVal:    append(ran.LowVal, types.Datum{}),
+			HighVal:   append(ran.HighVal, types.Datum{}),
+			Collators: append(ran.Collators, nil),
+		}
+		if len(newRanges) == 0 && rangeMemQuota > 0 && newRanges.MemUsage()*int64(len(oldRanges)) > rangeMemQuota {
+			return oldRanges, false
+		}
+		newRanges = append(newRanges, newRange)
+	}
+	return newRanges, true
+}
+
+func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) *templateRangeResult {
 	pointLength := matchedKeyCnt + len(eqAndInFuncs)
-	//nolint:gosimple // false positive unnecessary nil check
-	if nextColRange != nil {
-		for _, colRan := range nextColRange {
-			// The range's exclude status is the same with last col's.
-			ran := &ranger.Range{
-				LowVal:      make([]types.Datum, pointLength, pointLength+1),
-				HighVal:     make([]types.Datum, pointLength, pointLength+1),
-				LowExclude:  colRan.LowExclude,
-				HighExclude: colRan.HighExclude,
-				Collators:   make([]collate.Collator, pointLength, pointLength+1),
-			}
-			ran.LowVal = append(ran.LowVal, colRan.LowVal[0])
-			ran.HighVal = append(ran.HighVal, colRan.HighVal[0])
-			ranges = append(ranges, ran)
-		}
-	} else if haveExtraCol {
-		// Reserve a position for the last col.
-		ranges = append(ranges, &ranger.Range{
-			LowVal:    make([]types.Datum, pointLength+1),
-			HighVal:   make([]types.Datum, pointLength+1),
-			Collators: make([]collate.Collator, pointLength+1),
-		})
-	} else {
-		ranges = append(ranges, &ranger.Range{
-			LowVal:    make([]types.Datum, pointLength),
-			HighVal:   make([]types.Datum, pointLength),
-			Collators: make([]collate.Collator, pointLength),
-		})
-	}
 	sc := ijHelper.join.ctx.GetSessionVars().StmtCtx
-	for i, j := 0, 0; j < len(eqAndInFuncs); i++ {
-		// This position is occupied by join key.
+	rangeMemQuota := ijHelper.join.ctx.GetSessionVars().OptimizerMemQuota
+	ranges := ranger.Ranges{&ranger.Range{}}
+	for i, j := 0, 0; i+j < pointLength; {
 		if ijHelper.curIdxOff2KeyOff[i] != -1 {
-			continue
-		}
-		exprs := []expression.Expression{eqAndInFuncs[j]}
-		oneColumnRan, err := ranger.BuildColumnRange(exprs, ijHelper.join.ctx, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
-		if err != nil {
-			return nil, false, err
-		}
-		if len(oneColumnRan) == 0 {
-			return nil, true, nil
-		}
-		if sc.MemTracker != nil {
-			sc.MemTracker.Consume(2 * types.EstimatedMemUsage(oneColumnRan[0].LowVal, len(oneColumnRan)))
-		}
-		for _, ran := range ranges {
-			ran.LowVal[i] = oneColumnRan[0].LowVal[0]
-			ran.HighVal[i] = oneColumnRan[0].HighVal[0]
-			ran.Collators[i] = oneColumnRan[0].Collators[0]
-		}
-		curRangeLen := len(ranges)
-		for ranIdx := 1; ranIdx < len(oneColumnRan); ranIdx++ {
-			newRanges := make([]*ranger.Range, 0, curRangeLen)
-			for oldRangeIdx := 0; oldRangeIdx < curRangeLen; oldRangeIdx++ {
-				newRange := ranges[oldRangeIdx].Clone()
-				newRange.LowVal[i] = oneColumnRan[ranIdx].LowVal[0]
-				newRange.HighVal[i] = oneColumnRan[ranIdx].HighVal[0]
-				newRange.Collators[i] = oneColumnRan[0].Collators[0]
-				newRanges = append(newRanges, newRange)
+			// This position is occupied by join key.
+			var ok bool
+			ranges, ok = appendTailTemplateRange(ranges, rangeMemQuota)
+			if !ok {
+				return &templateRangeResult{
+					ranges:            ranges,
+					keyCntInRange:     i,
+					eqAndInCntInRange: j,
+				}
 			}
-			if sc.MemTracker != nil && len(newRanges) != 0 {
-				sc.MemTracker.Consume(2 * types.EstimatedMemUsage(newRanges[0].LowVal, len(newRanges)))
+			i++
+		} else {
+			exprs := []expression.Expression{eqAndInFuncs[j]}
+			oneColumnRan, _, remained, err := ranger.BuildColumnRange(exprs, ijHelper.join.ctx, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j], rangeMemQuota)
+			if err != nil {
+				return &templateRangeResult{err: err}
 			}
-			ranges = append(ranges, newRanges...)
+			if len(oneColumnRan) == 0 {
+				return &templateRangeResult{emptyRange: true}
+			}
+			if sc.MemTracker != nil {
+				// TODO: more accurate mem track
+				sc.MemTracker.Consume(2 * types.EstimatedMemUsage(oneColumnRan[0].LowVal, len(oneColumnRan)))
+			}
+			if len(remained) > 0 {
+				return &templateRangeResult{
+					ranges:            ranges,
+					keyCntInRange:     i,
+					eqAndInCntInRange: j,
+				}
+			}
+			var ok bool
+			ranges, ok = appendTailColumnRange(ranges, oneColumnRan, rangeMemQuota)
+			if !ok {
+				return &templateRangeResult{
+					ranges:            ranges,
+					keyCntInRange:     i,
+					eqAndInCntInRange: j,
+				}
+			}
+			j++
 		}
-		j++
 	}
-	return ranges, false, nil
+	if nextColRange != nil {
+		var nextColInRange bool
+		ranges, nextColInRange = appendTailColumnRange(ranges, nextColRange, rangeMemQuota)
+		return &templateRangeResult{
+			ranges:            ranges,
+			keyCntInRange:     matchedKeyCnt,
+			eqAndInCntInRange: len(eqAndInFuncs),
+			nextColInRange:    nextColInRange,
+		}
+	}
+	if haveExtraCol {
+		var extraColInRange bool
+		ranges, extraColInRange = appendTailTemplateRange(ranges, rangeMemQuota)
+		return &templateRangeResult{
+			ranges:            ranges,
+			keyCntInRange:     matchedKeyCnt,
+			eqAndInCntInRange: len(eqAndInFuncs),
+			extraColInRange:   extraColInRange,
+		}
+	}
+	return &templateRangeResult{
+		ranges:            ranges,
+		keyCntInRange:     matchedKeyCnt,
+		eqAndInCntInRange: len(eqAndInFuncs),
+	}
 }
 
 func filterIndexJoinBySessionVars(sc sessionctx.Context, indexJoins []PhysicalPlan) []PhysicalPlan {
