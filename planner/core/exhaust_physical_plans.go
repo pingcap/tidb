@@ -1943,6 +1943,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		return nil
 	}
 	lkeys, rkeys, _, _ := p.GetJoinKeys()
+	lNAkeys, rNAKeys := p.GetNAJoinKeys()
 	// todo: mpp na-keys.
 	// check match property
 	baseJoin := basePhysicalJoin{
@@ -1953,6 +1954,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		DefaultValues:   p.DefaultValues,
 		LeftJoinKeys:    lkeys,
 		RightJoinKeys:   rkeys,
+		LeftNAJoinKeys:  lNAkeys,
+		RightNAJoinKeys: rNAKeys,
 	}
 	// It indicates which side is the build side.
 	preferredBuildIndex := 0
