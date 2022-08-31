@@ -413,6 +413,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	task.memTracker = memory.NewTracker(-1, -1)
 	task.outerResult.GetMemTracker().AttachTo(task.memTracker)
 	task.memTracker.AttachTo(ow.parentMemTracker)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 
 	ow.increaseBatchSize()
 	requiredRows := ow.batchSize
