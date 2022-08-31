@@ -168,7 +168,7 @@ func TestParseStorage(t *testing.T) {
 			schema:          "s3",
 			host:            "bucket",
 			path:            "/prefix/path",
-			accessKey:       "NXN7IPIOSAAKDEEOLMAF",
+			accessKey:       "NXN7IPIOSAAKDEEOLMAF",                    // fake ak/sk
 			secretAccessKey: "nREY/7DtPaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", // w/o "+"
 		},
 		{
@@ -176,14 +176,14 @@ func TestParseStorage(t *testing.T) {
 			schema:          "s3",
 			host:            "bucket",
 			path:            "/prefix/path",
-			accessKey:       "NXN7IPIOSAAKDEEOLMAF",
+			accessKey:       "NXN7IPIOSAAKDEEOLMAF",                     // fake ak/sk
 			secretAccessKey: "nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", // with "+"
 		},
 	}
 
 	for _, c := range cases {
 		storage := c.url
-		storageURL, err := parseStorage(storage)
+		storageURL, err := ParseRawURL(storage)
 		require.NoError(t, err)
 
 		require.Equal(t, c.schema, storageURL.Scheme)
