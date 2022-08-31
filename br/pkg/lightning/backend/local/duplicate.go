@@ -542,6 +542,11 @@ func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream 
 	return nil
 }
 
+// BuildDuplicateTaskForTest is only used for test.
+var BuildDuplicateTaskForTest = func(m *DuplicateManager) ([]dupTask, error) {
+	return m.buildDupTasks()
+}
+
 type dupTask struct {
 	tidbkv.KeyRange
 	tableID   int64
