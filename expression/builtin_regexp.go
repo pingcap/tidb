@@ -158,11 +158,7 @@ func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	sig := regexpLikeFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
-	if bf.collation == charset.CollationBin {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeSig)
-	} else {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeUTF8Sig)
-	}
+	sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeSig)
 
 	return &sig, nil
 }
@@ -310,12 +306,11 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	sig := regexpSubstrFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
+	sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrSig)
 
 	if bf.collation == charset.CollationBin {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrSig)
 		sig.isBinCollation = true
 	} else {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrUTF8Sig)
 		sig.isBinCollation = false
 	}
 
@@ -606,12 +601,11 @@ func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	sig := regexpInStrFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
+	sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrSig)
 
 	if bf.collation == charset.CollationBin {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrSig)
 		sig.isBinCollation = true
 	} else {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrUTF8Sig)
 		sig.isBinCollation = false
 	}
 
@@ -943,12 +937,11 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 	sig := regexpReplaceFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
+	sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceSig)
 
 	if bf.collation == charset.CollationBin {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceSig)
 		sig.isBinCollation = true
 	} else {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceUTF8Sig)
 		sig.isBinCollation = false
 	}
 
