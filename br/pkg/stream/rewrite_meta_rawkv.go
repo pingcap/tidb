@@ -498,7 +498,7 @@ func (sr *SchemasReplace) rewriteValue(
 func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, error) {
 	// skip mDDLJob
 
-	if IsMetaDBKey(e.Key) {
+	if !IsMetaDBKey(e.Key) {
 		if cf == DefaultCF && IsMetaDDLJobHistoryKey(e.Key) { // mDDLJobHistory
 			job := &model.Job{}
 			if err := job.Decode(e.Value); err != nil {
