@@ -2016,7 +2016,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	})
 
-	stmtLabel := executor.GetStmtLabel(stmtNode)
+	stmtLabel := ast.GetStmtLabel(stmtNode)
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
