@@ -139,7 +139,10 @@ StatementList:
 ColumnName:
 	Identifier
 	{
-		$$ = $1
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString(" ")
+		$$ = builder.String()
 	}
 |	Identifier '.' Identifier
 	{
@@ -166,7 +169,7 @@ FieldList:
 	{
 		var builder strings.Builder
 		builder.WriteString($1.(string))
-		builder.WriteString(".")
+		builder.WriteString(", ")
 		builder.WriteString($3.(string))
 		$$ = builder.String()
 	}
@@ -174,14 +177,14 @@ FieldList:
 Field:
 	'*' %prec '*'
 	{
-		$$ = "*"
+		$$ = "* "
 	}
 |	Identifier '.' '*' %prec '*'
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
 		builder.WriteString(".")
-		builder.WriteString("*")
+		builder.WriteString("* ")
 		$$ = builder.String()
 	}
 |	Identifier '.' Identifier '.' '*' %prec '*'
@@ -191,7 +194,7 @@ Field:
 		builder.WriteString(".")
 		builder.WriteString($3)
 		builder.WriteString(".")
-		builder.WriteString("*")
+		builder.WriteString("* ")
 		$$ = builder.String()
 	}
 
@@ -207,6 +210,7 @@ SelectStmtFromTable:
 		var builder strings.Builder
 		builder.WriteString($1.(string))
 		builder.WriteString($2)
+		builder.WriteString(" ")
 		builder.WriteString($3.(string))
 		builder.WriteString($4.(string))
 		$$ = builder.String()
@@ -217,6 +221,7 @@ SelectStmtBasic:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
+		builder.WriteString(" ")
 		builder.WriteString($2.(string))
 		$$ = builder.String()
 	}
@@ -273,6 +278,7 @@ TableAsName:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
+		builder.WriteString(" ")
 		builder.WriteString($2)
 		$$ = builder.String()
 	}
@@ -280,7 +286,10 @@ TableAsName:
 TableName:
 	Identifier
 	{
-		$$ = $1
+		var builder strings.Builder
+		builder.WriteString($1)
+		builder.WriteString(" ")
+		$$ = builder.String()
 	}
 |	Identifier '.' Identifier
 	{
@@ -302,6 +311,7 @@ WhereClause:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
+		builder.WriteString(" ")
 		builder.WriteString($2)
 		$$ = builder.String()
 	}
@@ -339,35 +349,35 @@ BoolPri:
 CompareOp:
 	">="
 	{
-		$$ = ">="
+		$$ = ">= "
 	}
 |	'>'
 	{
-		$$ = ">"
+		$$ = "> "
 	}
 |	"<="
 	{
-		$$ = "<="
+		$$ = "<= "
 	}
 |	'<'
 	{
-		$$ = "<"
+		$$ = "< "
 	}
 |	"!="
 	{
-		$$ = "!="
+		$$ = "!= "
 	}
 |	"<>"
 	{
-		$$ = "<>"
+		$$ = "<> "
 	}
 |	"="
 	{
-		$$ = "="
+		$$ = "= "
 	}
 |	"<=>"
 	{
-		$$ = "<=>"
+		$$ = "<=> "
 	}
 
 PredicateExpr:
@@ -378,7 +388,7 @@ BitExpr:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
-		builder.WriteString("|")
+		builder.WriteString("| ")
 		builder.WriteString($3)
 		$$ = builder.String()
 	}
@@ -386,7 +396,7 @@ BitExpr:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
-		builder.WriteString("&")
+		builder.WriteString("& ")
 		builder.WriteString($3)
 		$$ = builder.String()
 	}
@@ -394,7 +404,7 @@ BitExpr:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
-		builder.WriteString("+")
+		builder.WriteString("+ ")
 		builder.WriteString($3)
 		$$ = builder.String()
 	}
@@ -402,7 +412,7 @@ BitExpr:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
-		builder.WriteString("-")
+		builder.WriteString("- ")
 		builder.WriteString($3)
 		$$ = builder.String()
 	}
@@ -410,7 +420,7 @@ BitExpr:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
-		builder.WriteString("*")
+		builder.WriteString("* ")
 		builder.WriteString($3)
 		$$ = builder.String()
 	}
@@ -418,7 +428,7 @@ BitExpr:
 	{
 		var builder strings.Builder
 		builder.WriteString($1)
-		builder.WriteString("/")
+		builder.WriteString("/ ")
 		builder.WriteString($3)
 		$$ = builder.String()
 	}
@@ -463,31 +473,31 @@ Literal:
 	{
 		s := ast.NewValueExpr(false, parser.charset, parser.collation)
 		parser.params = append(parser.params, s)
-		$$ = "?"
+		$$ = "? "
 	}
 |	"NULL"
 	{
 		s := ast.NewValueExpr(nil, parser.charset, parser.collation)
 		parser.params = append(parser.params, s)
-		$$ = "?"
+		$$ = "? "
 	}
 |	"TRUE"
 	{
 		s := ast.NewValueExpr(true, parser.charset, parser.collation)
 		parser.params = append(parser.params, s)
-		$$ = "?"
+		$$ = "? "
 	}
 |	pFloatLit
 	{
 		s := ast.NewValueExpr($1, parser.charset, parser.collation)
 		parser.params = append(parser.params, s)
-		$$ = "?"
+		$$ = "? "
 	}
 |	pIntLit
 	{
 		s := ast.NewValueExpr($1, parser.charset, parser.collation)
 		parser.params = append(parser.params, s)
-		$$ = "?"
+		$$ = "? "
 	}
 |	StringLiteral %prec pLowerThanStringLitToken
 
@@ -496,23 +506,23 @@ StringLiteral:
 	{
 		s := ast.NewValueExpr($1, parser.charset, parser.collation)
 		parser.params = append(parser.params, s)
-		$$ = "?"
+		$$ = "? "
 	}
 
 logOr:
 	"OR"
 	{
-		$$ = "OR"
+		$$ = "OR "
 	}
 
 logAnd:
 	"&&"
 	{
-		$$ = "&&"
+		$$ = "&& "
 	}
 |	"AND"
 	{
-		$$ = "AND"
+		$$ = "AND "
 	}
 
 Statement:

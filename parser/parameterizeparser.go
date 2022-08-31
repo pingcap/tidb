@@ -626,7 +626,10 @@ yynewstate:
 		}
 	case 3:
 		{
-			parser.yyVAL.item = yyS[yypt-0].ident
+			var builder strings.Builder
+			builder.WriteString(yyS[yypt-0].ident)
+			builder.WriteString(" ")
+			parser.yyVAL.item = builder.String()
 		}
 	case 4:
 		{
@@ -650,20 +653,20 @@ yynewstate:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-2].item.(string))
-			builder.WriteString(".")
+			builder.WriteString(", ")
 			builder.WriteString(yyS[yypt-0].item.(string))
 			parser.yyVAL.item = builder.String()
 		}
 	case 8:
 		{
-			parser.yyVAL.item = "*"
+			parser.yyVAL.item = "* "
 		}
 	case 9:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-2].ident)
 			builder.WriteString(".")
-			builder.WriteString("*")
+			builder.WriteString("* ")
 			parser.yyVAL.item = builder.String()
 		}
 	case 10:
@@ -673,7 +676,7 @@ yynewstate:
 			builder.WriteString(".")
 			builder.WriteString(yyS[yypt-2].ident)
 			builder.WriteString(".")
-			builder.WriteString("*")
+			builder.WriteString("* ")
 			parser.yyVAL.item = builder.String()
 		}
 	case 11:
@@ -685,6 +688,7 @@ yynewstate:
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-3].item.(string))
 			builder.WriteString(yyS[yypt-2].ident)
+			builder.WriteString(" ")
 			builder.WriteString(yyS[yypt-1].item.(string))
 			builder.WriteString(yyS[yypt-0].item.(string))
 			parser.yyVAL.item = builder.String()
@@ -693,6 +697,7 @@ yynewstate:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-1].ident)
+			builder.WriteString(" ")
 			builder.WriteString(yyS[yypt-0].item.(string))
 			parser.yyVAL.item = builder.String()
 		}
@@ -731,12 +736,16 @@ yynewstate:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-1].ident)
+			builder.WriteString(" ")
 			builder.WriteString(yyS[yypt-0].ident)
 			parser.yyVAL.item = builder.String()
 		}
 	case 24:
 		{
-			parser.yyVAL.item = yyS[yypt-0].ident
+			var builder strings.Builder
+			builder.WriteString(yyS[yypt-0].ident)
+			builder.WriteString(" ")
+			parser.yyVAL.item = builder.String()
 		}
 	case 25:
 		{
@@ -754,6 +763,7 @@ yynewstate:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-1].ident)
+			builder.WriteString(" ")
 			builder.WriteString(yyS[yypt-0].expr)
 			parser.yyVAL.item = builder.String()
 		}
@@ -783,41 +793,41 @@ yynewstate:
 		}
 	case 34:
 		{
-			parser.yyVAL.item = ">="
+			parser.yyVAL.item = ">= "
 		}
 	case 35:
 		{
-			parser.yyVAL.item = ">"
+			parser.yyVAL.item = "> "
 		}
 	case 36:
 		{
-			parser.yyVAL.item = "<="
+			parser.yyVAL.item = "<= "
 		}
 	case 37:
 		{
-			parser.yyVAL.item = "<"
+			parser.yyVAL.item = "< "
 		}
 	case 38:
 		{
-			parser.yyVAL.item = "!="
+			parser.yyVAL.item = "!= "
 		}
 	case 39:
 		{
-			parser.yyVAL.item = "<>"
+			parser.yyVAL.item = "<> "
 		}
 	case 40:
 		{
-			parser.yyVAL.item = "="
+			parser.yyVAL.item = "= "
 		}
 	case 41:
 		{
-			parser.yyVAL.item = "<=>"
+			parser.yyVAL.item = "<=> "
 		}
 	case 43:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-2].expr)
-			builder.WriteString("|")
+			builder.WriteString("| ")
 			builder.WriteString(yyS[yypt-0].expr)
 			parser.yyVAL.expr = builder.String()
 		}
@@ -825,7 +835,7 @@ yynewstate:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-2].expr)
-			builder.WriteString("&")
+			builder.WriteString("& ")
 			builder.WriteString(yyS[yypt-0].expr)
 			parser.yyVAL.expr = builder.String()
 		}
@@ -833,7 +843,7 @@ yynewstate:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-2].expr)
-			builder.WriteString("+")
+			builder.WriteString("+ ")
 			builder.WriteString(yyS[yypt-0].expr)
 			parser.yyVAL.expr = builder.String()
 		}
@@ -841,7 +851,7 @@ yynewstate:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-2].expr)
-			builder.WriteString("-")
+			builder.WriteString("- ")
 			builder.WriteString(yyS[yypt-0].expr)
 			parser.yyVAL.expr = builder.String()
 		}
@@ -849,7 +859,7 @@ yynewstate:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-2].expr)
-			builder.WriteString("*")
+			builder.WriteString("* ")
 			builder.WriteString(yyS[yypt-0].expr)
 			parser.yyVAL.expr = builder.String()
 		}
@@ -857,7 +867,7 @@ yynewstate:
 		{
 			var builder strings.Builder
 			builder.WriteString(yyS[yypt-2].expr)
-			builder.WriteString("/")
+			builder.WriteString("/ ")
 			builder.WriteString(yyS[yypt-0].expr)
 			parser.yyVAL.expr = builder.String()
 		}
@@ -895,49 +905,49 @@ yynewstate:
 		{
 			s := ast.NewValueExpr(false, parser.charset, parser.collation)
 			parser.params = append(parser.params, s)
-			parser.yyVAL.expr = "?"
+			parser.yyVAL.expr = "? "
 		}
 	case 56:
 		{
 			s := ast.NewValueExpr(nil, parser.charset, parser.collation)
 			parser.params = append(parser.params, s)
-			parser.yyVAL.expr = "?"
+			parser.yyVAL.expr = "? "
 		}
 	case 57:
 		{
 			s := ast.NewValueExpr(true, parser.charset, parser.collation)
 			parser.params = append(parser.params, s)
-			parser.yyVAL.expr = "?"
+			parser.yyVAL.expr = "? "
 		}
 	case 58:
 		{
 			s := ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)
 			parser.params = append(parser.params, s)
-			parser.yyVAL.expr = "?"
+			parser.yyVAL.expr = "? "
 		}
 	case 59:
 		{
 			s := ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)
 			parser.params = append(parser.params, s)
-			parser.yyVAL.expr = "?"
+			parser.yyVAL.expr = "? "
 		}
 	case 61:
 		{
 			s := ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)
 			parser.params = append(parser.params, s)
-			parser.yyVAL.expr = "?"
+			parser.yyVAL.expr = "? "
 		}
 	case 62:
 		{
-			parser.yyVAL.item = "OR"
+			parser.yyVAL.item = "OR "
 		}
 	case 63:
 		{
-			parser.yyVAL.item = "&&"
+			parser.yyVAL.item = "&& "
 		}
 	case 64:
 		{
-			parser.yyVAL.item = "AND"
+			parser.yyVAL.item = "AND "
 		}
 
 	}
