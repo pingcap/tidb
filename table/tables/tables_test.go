@@ -1038,7 +1038,8 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk.MustExec("insert into t5 values (1, 1), (2, 2)")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t5 set uk = 2 where id = 1")
-	tk2.MustExec("delete from t5 where id = 2")
+	tk2.MustExec("delete from t5 where uk = 2")
 	tk.MustExec("select * from t5 for update")
-	tk.MustExec("commit")
+	err = tk.ExecToErr("commit")
+	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
 }

@@ -735,10 +735,22 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	defer func() {
-		// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
-		// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
-		// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
 		if err != nil && !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic {
+			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
+			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
+			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
+			stmtText := a.OriginText()
+			if sctx.GetSessionVars().EnableRedactLog {
+				stmtText = parser.Normalize(stmtText)
+			}
+			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
+				"Note this may not be a uniqueness violation.",
+				zap.Error(err),
+				zap.String("statement", stmtText),
+				zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+				zap.Uint64("txnStartTS", txnCtx.StartTS),
+				zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
+			)
 			sctx.GetSessionVars().SetInTxn(false)
 			err = ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
 		}
