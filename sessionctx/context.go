@@ -17,8 +17,6 @@ package sessionctx
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/kvcache"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
