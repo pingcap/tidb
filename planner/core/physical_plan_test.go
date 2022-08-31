@@ -369,8 +369,6 @@ func TestDAGPlanBuilderUnionScan(t *testing.T) {
 		SQL  string
 		Best string
 	}
-	planSuiteData := core.GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
 	p := parser.New()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	for i, tt := range input {
