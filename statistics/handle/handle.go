@@ -939,7 +939,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			var fmSketch *statistics.FMSketch
 			if loadAll {
 				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
-				// we load all the statistics, i.e., loadAll is true. We don't need to read FMSketch from storage in notNeedLoad IF.
+				// we load all the statistics, i.e., loadAll is true.
 				fmSketch, err = h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
 				if err != nil {
 					return errors.Trace(err)
