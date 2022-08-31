@@ -2657,7 +2657,7 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 
 // Opt describes the option for creating session
 type Opt struct {
-	PreparedPlanCache *plannercore.LRUPlanCache
+	PreparedPlanCache sessionctx.PlanCache
 }
 
 // CreateSession4TestWithOpt creates a new session environment for test.
