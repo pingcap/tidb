@@ -102,8 +102,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		staleread.AssertStmtStaleness(c.Ctx, val.(bool))
 	})
 
-	// TODO: Should we use the Execute statement or the corresponding Prepare statement to record？
-	CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
+	if preparedObj != nil {
+		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL)
+	} else {
+		CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
+	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		lowerPriority = needLowerPriority(finalPlan)
