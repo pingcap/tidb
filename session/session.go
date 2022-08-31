@@ -2465,7 +2465,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	pm := privilege.GetPrivilegeManager(s)
 	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
 	if err != nil {
-		return dbterror.ClassSession.NewStd(mysql.ErrAccessDenied).FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
 		return err
