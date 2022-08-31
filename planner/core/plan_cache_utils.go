@@ -16,32 +16,32 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/planner"
-	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/exp/slices"
 	"math"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	atomic2 "go.uber.org/atomic"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -64,6 +64,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
+// GeneratePlanCacheStmt generates the PlanCacheStmt structure for this parameterized SQL.
 func GeneratePlanCacheStmt(ctx context.Context, sctx sessionctx.Context, paramSQL string) (*PlanCacheStmt, Plan, error) {
 	vars := sctx.GetSessionVars()
 	charset, collation := vars.GetCharsetInfo()
@@ -94,7 +95,12 @@ func GeneratePlanCacheStmt(ctx context.Context, sctx sessionctx.Context, paramSQ
 		return nil, nil, executor.ErrPrepareMulti
 	}
 	stmt := stmts[0]
+	return GeneratePlanCacheStmtWithAST(ctx, sctx, stmt)
+}
 
+// GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
+func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (*PlanCacheStmt, Plan, error) {
+	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
@@ -115,7 +121,7 @@ func GeneratePlanCacheStmt(ctx context.Context, sctx sessionctx.Context, paramSQ
 	}
 
 	ret := &PreprocessorReturn{}
-	err = Preprocess(sctx, stmt, InPrepare, WithPreprocessorReturn(ret))
+	err := Preprocess(sctx, stmt, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, err
 	}

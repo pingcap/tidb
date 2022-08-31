@@ -96,7 +96,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	stmt, plan, err := plannercore.GeneratePlanCacheStmt(ctx, e.ctx, e.sqlText)
+	stmt, p, err := plannercore.GeneratePlanCacheStmt(ctx, e.ctx, e.sqlText)
 	if err != nil {
 		return err
 	}
@@ -114,6 +114,12 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
 	e.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
+	// In MySQL prepare protocol, the server need to tell the client how many column the prepared statement would return when executing it.
+	// For a query with on result, e.g. an insert statement, there will be no result, so 'e.Fields' is not set.
+	// Usually, p.Schema().Len() == 0 means no result. A special case is the 'do' statement, it looks like 'select' but discard the result.
+	if !isNoResultPlan(p) {
+		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
+	}
 	if e.ID == 0 && !e.IsGeneralStmt {
 		e.ID = vars.GetNextPreparedStmtID()
 	}
@@ -126,8 +132,6 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		vars.AddGeneralPlanCacheStmt(e.sqlText, stmt)
 		return nil
 	}
-	e.Fields = plan.OutputNames()
-
 	return vars.AddPreparedStmt(e.ID, stmt)
 }
 
