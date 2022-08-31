@@ -46,9 +46,6 @@ var (
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 
-	// GetStmtLabel generates a label for a statement.
-	GetStmtLabel func(stmtNode ast.StmtNode) string
-
 	// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
 	ExtractSelectAndNormalizeDigest func(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error)
 )
@@ -143,7 +140,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
-		StmtType:      GetStmtLabel(stmt),
+		StmtType:      ast.GetStmtLabel(stmt),
 		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
