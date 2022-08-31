@@ -280,6 +280,7 @@ func NewParameterizer() *parameterizeParser {
 
 	p := &parameterizeParser{
 		cache: make([]yyparameterizeSymType, 200),
+		lexer: Scanner4Parameterize{NewScanner("")},
 	}
 	// TODO: Need put the following part to the plan cache key
 	//p.EnableWindowFunc(true)

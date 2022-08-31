@@ -298,8 +298,8 @@ func (s *Scanner4Parameterize) Lex(v *yyparameterizeSymType) int {
 	case null:
 		v.item = nil
 		tok = pNull
-	default:
-		return pInvalid
+	case identifier:
+		tok = pIdentifier
 	}
 
 	return tok
