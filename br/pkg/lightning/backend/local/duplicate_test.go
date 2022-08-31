@@ -46,10 +46,10 @@ func TestBuildDupTask(t *testing.T) {
 	testCases := []struct {
 		sessOpt       *lkv.SessionOptions
 		hasTableRange bool
-		hasIndexRange bool
 	}{
-		{&lkv.SessionOptions{}, true, true},
-		{&lkv.SessionOptions{IndexID: info.Indices[0].ID}, false, true},
+		{&lkv.SessionOptions{}, true},
+		{&lkv.SessionOptions{IndexID: info.Indices[0].ID}, false},
+		{&lkv.SessionOptions{IndexID: info.Indices[1].ID}, false},
 	}
 	for _, tc := range testCases {
 		dupMgr, err := local.NewDuplicateManager(tbl, "t", nil, nil, nil,
@@ -57,16 +57,15 @@ func TestBuildDupTask(t *testing.T) {
 		require.NoError(t, err)
 		tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
 		require.NoError(t, err)
-		var hasTblKey bool
-		var hasIdxKey bool
-		for _, t := range tasks {
-			if tablecodec.IsRecordKey(t.StartKey) {
-				hasTblKey = true
-			} else if tablecodec.IsIndexKey(t.StartKey) {
-				hasIdxKey = true
+		var hasRecordKey bool
+		for _, task := range tasks {
+			tableID, _, isRecordKey, err := tablecodec.DecodeKeyHead(task.StartKey)
+			require.NoError(t, err)
+			require.Equal(t, info.ID, tableID)
+			if isRecordKey {
+				hasRecordKey = true
 			}
 		}
-		require.Equal(t, tc.hasTableRange, hasTblKey)
-		require.True(t, tc.hasIndexRange, hasIdxKey)
+		require.Equal(t, tc.hasTableRange, hasRecordKey)
 	}
 }
