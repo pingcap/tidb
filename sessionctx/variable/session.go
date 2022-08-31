@@ -1231,7 +1231,7 @@ type SessionVars struct {
 	// GeneralPlanCacheSize controls the size of general plan cache.
 	GeneralPlanCacheSize uint64
 
-	// TiFlashReadForWriteStmt indicates whether to enable write stmt read on TiFlash.
+	// TiFlashReadForWriteStmt indicates whether to enable write stmts to read on TiFlash.
 	TiFlashReadForWriteStmt bool
 }
 
@@ -1519,6 +1519,7 @@ func NewSessionVars() *SessionVars {
 		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
 		TiFlashFastScan:             DefTiFlashFastScan,
+		TiFlashReadForWriteStmt:     DefTiFlashReadForWriteStmt,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

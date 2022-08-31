@@ -235,7 +235,7 @@ const (
 	// TiFlashFastScan indicates whether use fast scan in tiflash .
 	TiFlashFastScan = "tiflash_fastscan"
 
-	// TiFlashReadForWriteStmt indicates whether to enable write stmt read on TiFlash.
+	// TiFlashReadForWriteStmt indicates whether to enable write stmts to read on TiFlash.
 	TiFlashReadForWriteStmt = "tiflash_read_for_write_stmt"
 )
 
