@@ -214,12 +214,12 @@ func appendPoints2Ranges(sctx sessionctx.Context, origin Ranges, rangePoints []*
 		} else {
 			newRanges, err := appendPoints2IndexRange(sctx, oRange, rangePoints, ft)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, false, errors.Trace(err)
 			}
 			newIndexRanges = append(newIndexRanges, newRanges...)
 		}
 	}
-	return newIndexRanges, nil
+	return newIndexRanges, false, nil
 }
 
 func appendPoints2IndexRange(sctx sessionctx.Context, origin *Range, rangePoints []*point,
@@ -290,7 +290,9 @@ func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges) Ranges {
 
 // points2TableRanges build ranges for table scan from range points.
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
-func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType) (Ranges, error) {
+// When rangeMemQuota is 0, there is no memory limit for building ranges.
+// If the second return value is true, it means that the memory usage of ranges exceeds rangeMemQuota and it falls back to full range.
+func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMemQuota int64) (Ranges, bool, error) {
 	ranges := make(Ranges, 0, len(rangePoints)/2)
 	var minValueDatum, maxValueDatum types.Datum
 	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
@@ -304,7 +306,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sctx, rangePoints[i], tp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		if startPoint.value.Kind() == types.KindNull {
 			startPoint.value = minValueDatum
@@ -314,7 +316,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 		}
 		endPoint, err := convertPoint(sctx, rangePoints[i+1], tp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		if endPoint.value.Kind() == types.KindMaxValue {
 			endPoint.value = maxValueDatum
@@ -323,7 +325,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 		}
 		less, err := validInterval(sctx, startPoint, endPoint)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		if !less {
 			continue
@@ -335,9 +337,13 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 			HighExclude: endPoint.excl,
 			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
 		}
+		if len(ranges) == 0 && rangeMemQuota > 0 && ran.MemUsage()*int64(len(rangePoints))/2 > rangeMemQuota {
+			// TODO: collator of full range?
+			return FullRange(), true, nil
+		}
 		ranges = append(ranges, ran)
 	}
-	return ranges, nil
+	return ranges, false, nil
 }
 
 // buildColumnRange builds range from CNF conditions.
@@ -353,19 +359,20 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		}
 	}
 	var (
-		ranges Ranges
-		err    error
+		ranges     Ranges
+		reachQuota bool
+		err        error
 	)
 	newTp := newFieldType(tp)
 	if tableRange {
-		ranges, err = points2TableRanges(sctx, rangePoints, newTp)
+		ranges, reachQuota, err = points2TableRanges(sctx, rangePoints, newTp, rangeMemQuota)
 	} else {
-		ranges, err = points2Ranges(sctx, rangePoints, newTp)
+		ranges, reachQuota, err = points2Ranges(sctx, rangePoints, newTp, rangeMemQuota)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	if rangeMemQuota > 0 && ranges.MemUsage() > rangeMemQuota {
+	if reachQuota {
 		return FullRange(), nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
