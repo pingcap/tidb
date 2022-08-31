@@ -132,7 +132,8 @@ func TsoRequestCountInc(sctx sessionctx.Context) {
 	sctx.SetValue(TsoRequestCount, count)
 }
 
-// TsoWaitCountInc is used to test waiting tso count
+// TsoWaitCountInc is used only for test
+// When it is called, there is a waiting tso operation
 func TsoWaitCountInc(sctx sessionctx.Context) {
 	count, ok := sctx.Value(TsoWaitCount).(uint64)
 	if !ok {

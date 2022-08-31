@@ -109,7 +109,7 @@ func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 	return false
 }
 
-// NeedDisableWarmupInOptimizer checks whether optimizer calls `txnManger.AdviseWarmup()` to warmup in RC isolation.
+// NeedDisableWarmupInOptimizer checks whether optimizer needs to call `txnManger.AdviseWarmup()` to warmup in RC isolation.
 // txnManger.AdviseWarmup makes a tso request except that it's a readonly statement with RcReadCheckTS mode, please
 // refer to tidb_rc_read_check_ts and know more about RcReadCheckTS mode. But for some special scenes, it maybe not
 // necessary to get tso from PD such as below.

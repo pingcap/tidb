@@ -609,3 +609,47 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 	assertAllTsoCounter(t, []uint64{uint64(10), countTsoRequest.(uint64),
 		uint64(15), countTsoUseConstant.(uint64), uint64(0), uint64(countWaitTsoOracle.(int))})
 }
+
+func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
+	se := tk.Session()
+
+	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set tidb_rc_write_check_ts = true")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t1 values (10, 10, 10)")
+
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
+	tk.MustExec("select * from t1 where id1 = 1 for update")
+	tk.MustExec("commit")
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["errWriteConflict"], 1)
+
+	tk.MustExec("set tidb_rc_write_check_ts = false")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
+	tk.MustExec("select * from t1 where id1 = 1 for update")
+	tk.MustExec("commit")
+	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.False(t, ok)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
+}
