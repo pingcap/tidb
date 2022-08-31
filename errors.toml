@@ -2141,6 +2141,11 @@ error = '''
 '%s' is unsupported on cache tables.
 '''
 
+["privilege:1045"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'

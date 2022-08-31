@@ -1138,7 +1138,6 @@ func TestTiflashPartitionTableScan(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
-	time.Sleep(2 * time.Second)
 	tk.MustExec("insert into t values(1),(11),(21),(31),(41);")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
@@ -1215,7 +1214,6 @@ func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "IDT_RP24833")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
-	time.Sleep(2 * time.Second)
 
 	tk.MustExec("insert into IDT_RP24833 values(-8448770111093677011, \"郇鋺篤堯擈斥鍮啸赠璭饱磟朅闑傒聎疫ᛄ怖霃\", \"8781-05-02 04:23:03\", -27252736532807028, -1.34554e38);")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
