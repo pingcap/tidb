@@ -103,9 +103,8 @@ func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
 
 func escapeBackslashCSV(s []byte, bf *bytes.Buffer, opt *csvOption) {
 	var (
-		escape  byte
-		last         = 0
-		specCmt byte = 0
+		escape, specCmt byte
+		last            = 0
 	)
 	if len(opt.delimiter) > 0 {
 		specCmt = opt.delimiter[0] // if csv has a delimiter, we should use backslash to comment the delimiter in field value
