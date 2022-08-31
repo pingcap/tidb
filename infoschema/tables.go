@@ -1963,26 +1963,9 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	return nil, nil
-}
-
 // IterRecords implements table.Table IterRecords interface.
-func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, cols []*table.Column,
-	fn table.RecordIterFunc) error {
-	rows, err := it.getRows(ctx, cols)
-	if err != nil {
-		return err
-	}
-	for i, row := range rows {
-		more, err := fn(kv.IntHandle(i), row, cols)
-		if err != nil {
-			return err
-		}
-		if !more {
-			break
-		}
-	}
+func (*infoschemaTable) IterRecords(_ sessionctx.Context, _ []*table.Column,
+	_ table.RecordIterFunc) error {
 	return nil
 }
 
