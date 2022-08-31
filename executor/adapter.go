@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -51,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/breakpoint"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -70,8 +68,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
-
-var ErrLazyUniquenessCheckFailure = dbterror.ClassSession.NewStd(errno.ErrLazyUniquenessCheckFailure)
 
 // metrics option
 var (

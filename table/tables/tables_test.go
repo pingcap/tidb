@@ -950,8 +950,9 @@ func TestInsertNotLock(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
-	tk.MustExec("create table t(id int primary key, v int)")
 
+	// case: primary key
+	tk.MustExec("create table t(id int primary key, v int)")
 	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t values(1, 0)")
@@ -960,10 +961,22 @@ func TestInsertNotLock(t *testing.T) {
 	tk2.MustExec("commit")
 	_, err := tk.Exec("commit")
 	require.NotNil(t, err)
-
+	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
-
 	tk.MustExec("admin check table t")
+
+	// case: unique key
+	tk.MustExec("create table t2(id int primary key, uk int, unique index(uk))")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t2 values(1, 0)")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t2 values (2, 0)")
+	tk2.MustExec("commit")
+	_, err = tk.Exec("commit")
+	require.NotNil(t, err)
+	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 0"))
+	tk.MustExec("admin check table t2")
 }
 
 func TestDeferConstraintCheck(t *testing.T) {
