@@ -51,6 +51,38 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 	return checker.cacheable
 }
 
+// Cacheable4GeneralPlanCache checks whether a general statement can be cached or not.
+// We will start with strict restrictions and gradually loosen them later.
+func Cacheable4GeneralPlanCache(node ast.Node) bool {
+	selectStmt, isSelect := node.(*ast.SelectStmt)
+	if !isSelect {
+		return false
+	}
+	if selectStmt.Kind != ast.SelectStmtKindSelect {
+		return false
+	}
+	from := selectStmt.From
+	if from != nil {
+		join := from.TableRefs
+		if join.Right != nil {
+			// We don't support the join for the general plan cache now.
+			return false
+		}
+		switch x := join.Left.(type) {
+		case *ast.TableSource:
+			_, isTableName := x.Source.(*ast.TableName)
+			if !isTableName {
+				return false
+			}
+		}
+	}
+	if selectStmt.Distinct == true || selectStmt.GroupBy != nil || selectStmt.Having != nil || selectStmt.WindowSpecs != nil || selectStmt.OrderBy != nil || selectStmt.Limit != nil ||
+		selectStmt.LockInfo != nil || selectStmt.SelectIntoOpt != nil {
+		return false
+	}
+	return true
+}
+
 // cacheableChecker checks whether a query's plan can be cached, querys that:
 //  1. have ExistsSubqueryExpr, or
 //  2. have VariableExpr

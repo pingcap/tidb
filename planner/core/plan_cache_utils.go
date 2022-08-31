@@ -312,6 +312,30 @@ func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, p
 	if v := sctx.Value(ParameterizerKey); v != nil { // for test
 		return v.(Parameterizer).Parameterize(originSQL)
 	}
-	// TODO: implement it
-	return "", nil, false, nil
+	var (
+		paramsString []string
+		paramsType   []int
+	)
+	paramSQL, paramsString, paramsType = parser.Normalize4GeneralPlanCache(originSQL)
+	if len(paramsString) != len(paramsType) {
+		return
+	}
+	params = make([]expression.Expression, 0, len(paramsString))
+	for ind, paramString := range paramsString {
+		var param expression.Expression
+		if parser.IsIntLit(paramsType[ind]) {
+			param, err = expression.ConvertInt([]byte(paramString))
+		} else if parser.IsFloatLit(paramsType[ind]) {
+			param, err = expression.ConvertFloat([]byte(paramString), false)
+		} else {
+			return
+		}
+
+		if err != nil {
+			return
+		}
+		params = append(params, param)
+	}
+	ok = true
+	return
 }
