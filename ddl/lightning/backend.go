@@ -55,9 +55,9 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 
 	// Check Remote duplicate value for index
 	if unique {
-		hasDupe, err := bc.backend.CollectRemoteDuplicateRows(bc.ctx, tbl, ei.tableName, &kv.SessionOptions{
+		hasDupe, err := bc.backend.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &kv.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
-			SysVars: ei.backCtx.sysVars,
+			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
 		})
 		if err != nil {
@@ -90,14 +90,14 @@ func (bc *BackendContext) Flush(indexID int64) error {
 	if bc.diskRoot.CurrentUsage() >= uint64(importThreshold*float64(bc.diskRoot.MaxQuota())) {
 		// TODO: it should be changed according checkpoint solution.
 		// Flush writer cached data into local disk for engine first.
-		err := ei.Flush(bc.ctx)
+		err := ei.Flush()
 		if err != nil {
 			return err
 		}
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 			zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
 			zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
-		err = bc.backend.UnsafeImportAndReset(ei.backCtx.ctx, ei.uuid, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys))
+		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys))
 		if err != nil {
 			logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
 				zap.Error(err), zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),

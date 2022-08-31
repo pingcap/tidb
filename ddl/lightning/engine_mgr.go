@@ -16,7 +16,6 @@ package lightning
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
@@ -55,15 +54,13 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 			return logAllocMemFailedEngine(m.MemRoot, bc.jobID, indexID)
 		}
 
-		// Create one slice for one backend on one stmt, current we share one engine
-		// Open one engine under an existing backend.
 		cfg := generateLocalEngineConfig(job.ID, job.SchemaName, job.TableName)
 		openedEn, err := bc.backend.OpenEngine(bc.ctx, cfg, job.TableName, int32(indexID))
 		if err != nil {
 			return errors.New(LitErrCreateEngineFail)
 		}
 		id := openedEn.GetEngineUUID()
-		en = NewEngineInfo(indexID, cfg, bc, openedEn, job.TableName, id, 1, m.MemRoot, m.DiskRoot)
+		en = NewEngineInfo(bc.ctx, job.ID, indexID, cfg, openedEn, id, 1, m.MemRoot, m.DiskRoot)
 		m.Store(indexID, en)
 		if err != nil {
 			return errors.New(LitErrCreateEngineFail)
@@ -82,9 +79,9 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 	m.MemRoot.ConsumeWithTag(encodeEngineTag(job.ID, indexID), int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
 	logutil.BgLogger().Info(LitInfoOpenEngine, zap.Int64("job ID", job.ID),
 		zap.Int64("index ID", indexID),
-		zap.String("current memory usage", strconv.FormatInt(m.MemRoot.CurrentUsage(), 10)),
-		zap.String("memory limitation", strconv.FormatInt(m.MemRoot.MaxMemoryQuota(), 10)),
-		zap.String("current writer count", strconv.Itoa(en.writerCount)))
+		zap.Int64("current memory usage", m.MemRoot.CurrentUsage()),
+		zap.Int64("memory limitation", m.MemRoot.MaxMemoryQuota()),
+		zap.Int("current writer count", en.writerCount))
 	return nil
 }
 

@@ -77,7 +77,7 @@ func genRLimit() uint64 {
 	var rl syscall.Rlimit
 	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl)
 	if err != nil {
-		logutil.BgLogger().Warn(LitErrGetSysLimitErr, zap.String("OS error", err.Error()), zap.String("default", "1024"))
+		logutil.BgLogger().Warn(LitErrGetSysLimitErr, zap.Error(err), zap.String("default", "1024"))
 	} else {
 		rLimit = rl.Cur
 	}
@@ -93,12 +93,9 @@ func genMaxMemoryLimit() uint64 {
 	// Otherwise, the ddl maxMemLimitation is 2 GB
 	if err == nil {
 		maxMemLimit = bufferSize * 8 * size.KB
-		logutil.BgLogger().Info(LitInfoSetMemLimit,
-			zap.String("Memory limitation set to:", strconv.FormatUint(maxMemLimit, 10)))
+		logutil.BgLogger().Info(LitInfoSetMemLimit, zap.Uint64("memory limitation", maxMemLimit))
 	} else {
-		logutil.BgLogger().Info(LitWarnGenMemLimit,
-			zap.Error(err),
-			zap.String("will use default memory limitation:", strconv.FormatUint(maxMemLimit, 10)))
+		logutil.BgLogger().Info(LitWarnGenMemLimit, zap.Error(err), zap.Uint64("memory limitation", maxMemLimit))
 	}
 	return maxMemLimit
 }
@@ -112,8 +109,7 @@ func genLightningDataDir() (string, error) {
 
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
-			logutil.BgLogger().Error(LitErrStatDirFail, zap.String("sort path", sortPath),
-				zap.String("Error:", err.Error()))
+			logutil.BgLogger().Error(LitErrStatDirFail, zap.String("sort path", sortPath), zap.Error(err))
 			return "", err
 		}
 	} else if info.IsDir() {
@@ -121,8 +117,7 @@ func genLightningDataDir() (string, error) {
 		// TODO: when do checkpoint should change follow logic.
 		err := os.RemoveAll(sortPath)
 		if err != nil {
-			logutil.BgLogger().Error(LitErrDeleteDirFail, zap.String("sort path", sortPath),
-				zap.String("Error:", err.Error()))
+			logutil.BgLogger().Error(LitErrDeleteDirFail, zap.String("sort path", sortPath), zap.Error(err))
 		}
 	}
 
