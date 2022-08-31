@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
@@ -131,8 +130,8 @@ func (b *PollTiFlashBackoffContext) Tick(ID int64) (bool, bool, int) {
 		return false, false, 0
 	}
 	grew := e.MaybeGrow(b)
-	e.Counter += 1
-	e.TotalCounter += 1
+	e.Counter++
+	e.TotalCounter++
 	return grew, true, e.TotalCounter
 }
 
@@ -265,8 +264,8 @@ func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
 	return addr, nil
 }
 
-// GetTiFlashReplicaInfo parses model.TableInfo into []TiFlashReplicaStatus.
-func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplicaStatus) {
+// LoadTiFlashReplicaInfo parses model.TableInfo into []TiFlashReplicaStatus.
+func LoadTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplicaStatus) {
 	if tblInfo.TiFlashReplica == nil {
 		// reject tables that has no tiflash replica such like `INFORMATION_SCHEMA`
 		return
@@ -343,14 +342,14 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 			}
 		}
 	}
-	logutil.BgLogger().Info("updateTiFlashStores finished", zap.Int("TiFlash store count", len(pollTiFlashContext.TiFlashStores)))
+	logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(pollTiFlashContext.TiFlashStores)))
 	return nil
 }
 
 func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) (bool, error) {
 	allReplicaReady := true
 	defer func() {
-		pollTiFlashContext.HandlePdCounter += 1
+		pollTiFlashContext.HandlePdCounter++
 		pollTiFlashContext.HandlePdCounter %= PullTiFlashPdTick.Load()
 	}()
 
@@ -385,7 +384,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		tbls := schema.SchemaTables(db.Name)
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
-			GetTiFlashReplicaInfo(tblInfo, &tableList)
+			LoadTiFlashReplicaInfo(tblInfo, &tableList)
 		}
 	}
 
@@ -485,7 +484,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 			return false, nil
 		}
 		uniqueIDMap[tblInfo.ID] = struct{}{}
-		GetTiFlashReplicaInfo(tblInfo, replicaInfos)
+		LoadTiFlashReplicaInfo(tblInfo, replicaInfos)
 		return false, nil
 	}
 	fn := func(jobs []*model.Job) (bool, error) {
@@ -500,7 +499,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 		return GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, handleJobAndTableInfo)
 	}
 
-	err = admin.IterAllDDLJobs(txn, fn)
+	err = IterAllDDLJobs(ctx, txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,
@@ -573,6 +572,9 @@ func (d *ddl) PollTiFlashRoutine() {
 	if err != nil {
 		logutil.BgLogger().Fatal("TiFlashManagement init failed", zap.Error(err))
 	}
+
+	hasSetTiFlashGroup := false
+	nextSetTiFlashGroupTime := time.Now()
 	for {
 		select {
 		case <-d.ctx.Done():
@@ -587,6 +589,18 @@ func (d *ddl) PollTiFlashRoutine() {
 			failpoint.Inject("BeforePollTiFlashReplicaStatusLoop", func() {
 				failpoint.Continue()
 			})
+
+			if !hasSetTiFlashGroup && !time.Now().Before(nextSetTiFlashGroupTime) {
+				// We should set tiflash rule group a higher index than other placement groups to forbid override by them.
+				// Once `SetTiFlashGroupConfig` succeed, we do not need to invoke it again. If failed, we should retry it util success.
+				if err = infosync.SetTiFlashGroupConfig(d.ctx); err != nil {
+					logutil.BgLogger().Warn("SetTiFlashGroupConfig failed", zap.Error(err))
+					nextSetTiFlashGroupTime = time.Now().Add(time.Minute)
+				} else {
+					hasSetTiFlashGroup = true
+				}
+			}
+
 			sctx, err := d.sessPool.get()
 			if err == nil {
 				if d.ownerManager.IsOwner() {

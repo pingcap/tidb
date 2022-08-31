@@ -22,9 +22,10 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	math2 "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
+//revive:disable:defer
 func (b *builtinArithmeticMultiplyRealSig) vectorized() bool {
 	return true
 }
@@ -320,7 +321,7 @@ func (b *builtinArithmeticMinusRealSig) vecEvalReal(input *chunk.Chunk, result *
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if !math2.IsFinite(x[i] - y[i]) {
+		if !mathutil.IsFinite(x[i] - y[i]) {
 			if result.IsNull(i) {
 				continue
 			}
@@ -521,7 +522,7 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(input *chunk.Chunk, result *c
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if !math2.IsFinite(x[i] + y[i]) {
+		if !mathutil.IsFinite(x[i] + y[i]) {
 			if result.IsNull(i) {
 				continue
 			}
@@ -673,7 +674,6 @@ func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(input *chunk.Chunk, result 
 	result.MergeNulls(buf)
 	var tmp int64
 	for i := 0; i < n; i++ {
-
 		tmp = x[i] * y[i]
 		if (x[i] != 0 && tmp/x[i] != y[i]) || (tmp == math.MinInt64 && x[i] == -1) {
 			if result.IsNull(i) {
@@ -788,7 +788,6 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhsI64
 		} else {
 			resultI64s[i] = int64(uint64(lhs) / uint64(rhs))
 		}
-
 	}
 	return nil
 }
@@ -1039,7 +1038,6 @@ func (b *builtinArithmeticMultiplyIntUnsignedSig) vecEvalInt(input *chunk.Chunk,
 	result.MergeNulls(buf)
 	var res uint64
 	for i := 0; i < n; i++ {
-
 		res = x[i] * y[i]
 		if x[i] != 0 && res/x[i] != y[i] {
 			if result.IsNull(i) {

@@ -527,7 +527,7 @@ func parseTime(t *testing.T, s string) types.Time {
 }
 
 func parseDuration(t *testing.T, s string) types.Duration {
-	m, err := types.ParseDuration(nil, s, types.DefaultFsp)
+	m, _, err := types.ParseDuration(nil, s, types.DefaultFsp)
 	require.NoError(t, err)
 	return m
 }
@@ -871,6 +871,10 @@ func TestCut(t *testing.T) {
 		{
 			types.MakeDatums(json.CreateBinary("abc")),
 			types.MakeDatums(json.CreateBinary("abc")),
+		},
+		{
+			types.MakeDatums(json.CreateBinary(json.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
+			types.MakeDatums(json.CreateBinary(json.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
 		},
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}

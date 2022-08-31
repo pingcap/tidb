@@ -19,7 +19,6 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -73,17 +73,27 @@ type Plan interface {
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
 	if p.TaskTp == property.MppTaskType {
-		if mpp, ok := tsk.(*mppTask); ok && !mpp.invalid() {
-			return mpp.enforceExchanger(p)
+		mpp, ok := tsk.(*mppTask)
+		if !ok || mpp.invalid() {
+			return invalidTask
 		}
-		return &mppTask{}
+		if !p.IsSortItemAllForPartition() {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
+			return invalidTask
+		}
+		tsk = mpp.enforceExchanger(p)
 	}
-	if p.IsEmpty() || tsk.plan() == nil {
+	if p.IsSortItemEmpty() || tsk.plan() == nil {
 		return tsk
 	}
-	tsk = tsk.convertToRootTask(ctx)
+	if p.TaskTp != property.MppTaskType {
+		tsk = tsk.convertToRootTask(ctx)
+	}
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.SortItems))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
+	sort := PhysicalSort{
+		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
+		IsPartialSort: p.IsSortItemAllForPartition(),
+	}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
@@ -131,11 +141,11 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
-	if NDV <= 1 {
+	ndv := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, NDV)
+	concurrency = mathutil.Min(concurrency, ndv)
 
 	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
 	for _, item := range pp.PartitionBy {
@@ -172,11 +182,11 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
-	if NDV <= 1 {
+	ndv := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, NDV)
+	concurrency = mathutil.Min(concurrency, ndv)
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
@@ -319,7 +329,7 @@ type PhysicalPlan interface {
 	Plan
 
 	// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-	GetPlanCost(taskType property.TaskType) (float64, error)
+	GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error)
 
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -365,6 +375,39 @@ type PhysicalPlan interface {
 
 	// Clone clones this physical plan.
 	Clone() (PhysicalPlan, error)
+
+	// appendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
+	// be tracked during findBestTask or enumeratePhysicalPlans4Task
+	appendChildCandidate(op *physicalOptimizeOp)
+}
+
+// NewDefaultPlanCostOption returns PlanCostOption
+func NewDefaultPlanCostOption() *PlanCostOption {
+	return &PlanCostOption{}
+}
+
+// PlanCostOption indicates option during GetPlanCost
+type PlanCostOption struct {
+	CostFlag uint64
+	tracer   *physicalOptimizeOp
+}
+
+// WithCostFlag set costflag
+func (op *PlanCostOption) WithCostFlag(flag uint64) *PlanCostOption {
+	if op == nil {
+		return nil
+	}
+	op.CostFlag = flag
+	return op
+}
+
+// WithOptimizeTracer set tracer
+func (op *PlanCostOption) WithOptimizeTracer(tracer *physicalOptimizeOp) *PlanCostOption {
+	if op == nil {
+		return nil
+	}
+	op.tracer = tracer
+	return op
 }
 
 type baseLogicalPlan struct {
@@ -402,7 +445,7 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *baseLogicalPlan) ExplainInfo() string {
+func (*baseLogicalPlan) ExplainInfo() string {
 	return ""
 }
 
@@ -417,6 +460,11 @@ type basePhysicalPlan struct {
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
+
+	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
+	// 1. For ExchangeSender, means its output will be partitioned by hash key.
+	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
+	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
 // Cost implements PhysicalPlan interface.
@@ -431,8 +479,9 @@ func (p *basePhysicalPlan) SetCost(cost float64) {
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
-		basePlan: p.basePlan,
-		self:     newSelf,
+		basePlan:                             p.basePlan,
+		self:                                 newSelf,
+		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 	}
 	for _, child := range p.children {
 		cloned, err := child.Clone()
@@ -456,12 +505,12 @@ func (p *basePhysicalPlan) Clone() (PhysicalPlan, error) {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *basePhysicalPlan) ExplainInfo() string {
+func (*basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
 // ExplainNormalizedInfo implements PhysicalPlan interface.
-func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
+func (*basePhysicalPlan) ExplainNormalizedInfo() string {
 	return ""
 }
 
@@ -470,26 +519,26 @@ func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
 
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
 func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
-	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS += 1
+	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS++
 	return p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS
 }
 
-func (p *baseLogicalPlan) rollBackTaskMap(TS uint64) {
+func (p *baseLogicalPlan) rollBackTaskMap(ts uint64) {
 	if !p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		return
 	}
 	if len(p.taskMapBak) > 0 {
 		// Rollback all the logs with TimeStamp TS.
-		N := len(p.taskMapBak)
-		for i := 0; i < N; i++ {
+		n := len(p.taskMapBak)
+		for i := 0; i < n; i++ {
 			cur := p.taskMapBak[i]
-			if p.taskMapBakTS[i] < TS {
+			if p.taskMapBakTS[i] < ts {
 				continue
 			}
 
@@ -497,14 +546,14 @@ func (p *baseLogicalPlan) rollBackTaskMap(TS uint64) {
 			p.taskMapBak = append(p.taskMapBak[:i], p.taskMapBak[i+1:]...)
 			p.taskMapBakTS = append(p.taskMapBakTS[:i], p.taskMapBakTS[i+1:]...)
 			i--
-			N--
+			n--
 
 			// Roll back taskMap.
 			p.taskMap[cur] = nil
 		}
 	}
 	for _, child := range p.children {
-		child.rollBackTaskMap(TS)
+		child.rollBackTaskMap(ts)
 	}
 }
 
@@ -517,8 +566,8 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	key := prop.HashCode()
 	if p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
-		TS := p.GetLogicalTS4TaskMap()
-		p.taskMapBakTS = append(p.taskMapBakTS, TS)
+		ts := p.GetLogicalTS4TaskMap()
+		p.taskMapBakTS = append(p.taskMapBakTS, ts)
 		p.taskMapBak = append(p.taskMapBak, string(key))
 	}
 	p.taskMap[string(key)] = task
@@ -550,7 +599,7 @@ func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Schema) {
 	childMaxOneRow := make([]bool, len(p.children))
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
@@ -608,7 +657,7 @@ func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan, o
 	}
 }
 
-func (p *baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
 
@@ -631,15 +680,13 @@ type basePlan struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *basePlan) OutputNames() types.NameSlice {
+func (*basePlan) OutputNames() types.NameSlice {
 	return nil
 }
 
-func (p *basePlan) SetOutputNames(names types.NameSlice) {
-}
+func (*basePlan) SetOutputNames(_ types.NameSlice) {}
 
-func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
-}
+func (*basePlan) replaceExprColumns(_ map[string]*expression.Column) {}
 
 // ID implements Plan ID interface.
 func (p *basePlan) ID() int {
@@ -652,7 +699,7 @@ func (p *basePlan) statsInfo() *property.StatsInfo {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *basePlan) ExplainInfo() string {
+func (*basePlan) ExplainInfo() string {
 	return "N/A"
 }
 
@@ -734,7 +781,7 @@ func (p *basePlan) SCtx() sessionctx.Context {
 
 // buildPlanTrace implements Plan
 func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.Cost()}
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.self.Cost()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
 	}
@@ -754,4 +801,21 @@ func (p *baseLogicalPlan) buildPlanTrace() *tracing.PlanTrace {
 func (p *basePlan) buildPlanTrace() *tracing.PlanTrace {
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
 	return planTrace
+}
+
+func (p *basePhysicalPlan) appendChildCandidate(op *physicalOptimizeOp) {
+	if len(p.Children()) < 1 {
+		return
+	}
+	childrenID := make([]int, 0)
+	for _, child := range p.Children() {
+		childCandidate := &tracing.CandidatePlanTrace{
+			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
+				ExplainInfo: child.ExplainInfo(), Cost: child.Cost()},
+		}
+		op.tracer.AppendCandidate(childCandidate)
+		child.appendChildCandidate(op)
+		childrenID = append(childrenID, child.ID())
+	}
+	op.tracer.Candidates[p.ID()].PlanTrace.ChildrenID = childrenID
 }

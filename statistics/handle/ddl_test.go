@@ -26,8 +26,7 @@ import (
 )
 
 func TestDDLAfterLoad(t *testing.T) {
-	store, do, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -60,8 +59,7 @@ func TestDDLAfterLoad(t *testing.T) {
 }
 
 func TestDDLTable(t *testing.T) {
-	store, do, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -100,8 +98,7 @@ func TestDDLTable(t *testing.T) {
 }
 
 func TestDDLHistogram(t *testing.T) {
-	store, do, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	h := do.StatsHandle()
 
@@ -188,8 +185,7 @@ func TestDDLHistogram(t *testing.T) {
 }
 
 func TestDDLPartition(t *testing.T) {
-	store, do, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")

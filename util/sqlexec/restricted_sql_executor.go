@@ -55,14 +55,15 @@ type RestrictedSQLExecutor interface {
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
-	IgnoreWarning      bool
-	SnapshotTS         uint64
-	AnalyzeVer         int
-	PartitionPruneMode string
-	UseCurSession      bool
-	TrackSysProcID     uint64
+	AnalyzeSnapshot    *bool
 	TrackSysProc       func(id uint64, ctx sessionctx.Context) error
 	UnTrackSysProc     func(id uint64)
+	PartitionPruneMode string
+	SnapshotTS         uint64
+	AnalyzeVer         int
+	TrackSysProcID     uint64
+	IgnoreWarning      bool
+	UseCurSession      bool
 }
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
@@ -87,6 +88,14 @@ var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
 func GetPartitionPruneModeOption(pruneMode string) OptionFuncAlias {
 	return func(option *ExecOption) {
 		option.PartitionPruneMode = pruneMode
+	}
+}
+
+// GetAnalyzeSnapshotOption returns a function which tells ExecRestrictedStmt/SQL to run with analyzeSnapshot.
+func GetAnalyzeSnapshotOption(analyzeSnapshot bool) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.AnalyzeSnapshot = new(bool)
+		*option.AnalyzeSnapshot = analyzeSnapshot
 	}
 }
 
@@ -173,6 +182,9 @@ type Statement interface {
 
 	// RebuildPlan rebuilds the plan of the statement.
 	RebuildPlan(ctx context.Context) (schemaVersion int64, err error)
+
+	// GetStmtNode returns the stmtNode inside Statement
+	GetStmtNode() ast.StmtNode
 }
 
 // RecordSet is an abstract result set interface to help get data from Plan.

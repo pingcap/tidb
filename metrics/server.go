@@ -52,6 +52,14 @@ var (
 			Help:      "Counter of queries.",
 		}, []string{LblType, LblResult})
 
+	AffectedRowsCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "affected_rows",
+			Help:      "Counters of server affected rows.",
+		}, []string{LblSQLType})
+
 	ConnGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
@@ -126,6 +134,14 @@ var (
 			Subsystem: "server",
 			Name:      "plan_cache_total",
 			Help:      "Counter of query using plan cache.",
+		}, []string{LblType})
+
+	PlanCacheMissCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_cache_miss_total",
+			Help:      "Counter of plan cache miss.",
 		}, []string{LblType})
 
 	ReadFromTableCacheCounter = prometheus.NewCounter(

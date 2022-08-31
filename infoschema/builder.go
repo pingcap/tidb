@@ -15,8 +15,8 @@
 package infoschema
 
 import (
+	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -33,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type policyGetter struct {
@@ -287,6 +289,40 @@ func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
+func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
+		if err != nil {
+			return err
+		}
+
+		// non-partition table auto IDs.
+		ntAutoIDs, err := t.GetAutoIDAccessors(ntSchemaID, ntID).Get()
+		if err != nil {
+			return err
+		}
+
+		// Set both tables to the maximum auto IDs between normal table and partitioned table.
+		newAutoIDs := meta.AutoIDGroup{
+			RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+			IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+			RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+		}
+		err = t.GetAutoIDAccessors(ptSchemaID, ptID).Put(newAutoIDs)
+		if err != nil {
+			return err
+		}
+		err = t.GetAutoIDAccessors(ntSchemaID, ntID).Put(newAutoIDs)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	return err
+}
+
 func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
@@ -308,6 +344,14 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 			return nil, errors.Trace(err)
 		}
 		tblIDs = append(tblIDs, affectedIDs...)
+
+		if diff.Type == model.ActionExchangeTablePartition {
+			// handle partition table and table AutoID
+			err = updateAutoIDForExchangePartition(b.store, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.TableID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 	}
 
 	return tblIDs, nil
@@ -648,8 +692,14 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
 	sortedTbls = append(sortedTbls, tbl)
-	sort.Sort(sortedTbls)
+	slices.SortFunc(sortedTbls, func(i, j table.Table) bool {
+		return i.Meta().ID < j.Meta().ID
+	})
 	b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
+
+	if tblInfo.TempTableType != model.TempTableNone {
+		b.addTemporaryTable(tableID)
+	}
 
 	newTbl, ok := b.is.TableByID(tableID)
 	if ok {
@@ -704,6 +754,11 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	// Remove the table in sorted table slice.
 	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTbls[0:idx], sortedTbls[idx+1:]...)
 
+	// Remove the table in temporaryTables
+	if b.is.temporaryTableIDs != nil {
+		delete(b.is.temporaryTableIDs, tableID)
+	}
+
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	for i, tblInfo := range dbInfo.Tables {
 		if tblInfo.ID == tableID {
@@ -731,6 +786,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
 	b.copyPoliciesMap(oldIS)
+	b.copyTemporaryTableIDsMap(oldIS)
 
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
@@ -753,6 +809,19 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
+	}
+}
+
+func (b *Builder) copyTemporaryTableIDsMap(oldIS *infoSchema) {
+	is := b.is
+	if len(oldIS.temporaryTableIDs) == 0 {
+		is.temporaryTableIDs = nil
+		return
+	}
+
+	is.temporaryTableIDs = make(map[int64]struct{})
+	for tblID := range oldIS.temporaryTableIDs {
+		is.temporaryTableIDs[tblID] = struct{}{}
 	}
 }
 
@@ -803,7 +872,9 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	// Sort all tables by `ID`
 	for _, v := range info.sortedTablesBuckets {
-		sort.Sort(v)
+		slices.SortFunc(v, func(a, b table.Table) bool {
+			return a.Meta().ID < b.Meta().ID
+		})
 	}
 	return b, nil
 }
@@ -847,8 +918,18 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
 		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
+		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
+			b.addTemporaryTable(tblInfo.ID)
+		}
 	}
 	return nil
+}
+
+func (b *Builder) addTemporaryTable(tblID int64) {
+	if b.is.temporaryTableIDs == nil {
+		b.is.temporaryTableIDs = make(map[int64]struct{})
+	}
+	b.is.temporaryTableIDs[tblID] = struct{}{}
 }
 
 type virtualTableDriver struct {

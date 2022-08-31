@@ -65,10 +65,10 @@ func TestPostSettings(t *testing.T) {
 	require.Equal(t, zap.ErrorLevel, log.GetLevel())
 	require.Equal(t, "error", config.GetGlobalConfig().Log.Level)
 	require.True(t, variable.ProcessGeneralLog.Load())
-	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
+	val, err := se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
 	require.Equal(t, variable.On, val)
-	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnable1PC)
 	require.NoError(t, err)
 	require.Equal(t, variable.On, val)
 
@@ -84,10 +84,10 @@ func TestPostSettings(t *testing.T) {
 	require.False(t, variable.ProcessGeneralLog.Load())
 	require.Equal(t, zap.FatalLevel, log.GetLevel())
 	require.Equal(t, "fatal", config.GetGlobalConfig().Log.Level)
-	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
 	require.Equal(t, variable.Off, val)
-	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnable1PC)
 	require.NoError(t, err)
 	require.Equal(t, variable.Off, val)
 	form.Set("log_level", os.Getenv("log_level"))
@@ -119,7 +119,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, true, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
+	require.Equal(t, true, config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load())
 	txn1, err := dbt.GetDB().Begin()
 	require.NoError(t, err)
 	_, err = txn1.Exec("insert t2 values (unhex('F0A48BAE'));")
@@ -134,7 +134,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, false, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
+	require.Equal(t, false, config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load())
 	dbt.MustExec("insert t2 values (unhex('f09f8c80'));")
 
 	// test deadlock_history_capacity
@@ -185,7 +185,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	// restore original value.
-	config.GetGlobalConfig().CheckMb4ValueInUTF8.Store(true)
+	config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(true)
 }
 
 func TestAllServerInfo(t *testing.T) {

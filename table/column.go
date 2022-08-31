@@ -197,9 +197,10 @@ func convertToIncorrectStringErr(err error, colName string) error {
 // handleZeroDatetime handles Timestamp/Datetime/Date zero date and invalid dates.
 // Currently only called from CastValue.
 // returns:
-//   value (possibly adjusted)
-//   boolean; true if break error/warning handling in CastValue and return what was returned from this
-//   error
+//
+//	value (possibly adjusted)
+//	boolean; true if break error/warning handling in CastValue and return what was returned from this
+//	error
 func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	tm := casted.GetMysqlTime()
@@ -577,27 +578,35 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 }
 
 func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	if !mysql.HasNotNullFlag(col.GetFlag()) {
+	if !mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
 		return types.Datum{}, nil
 	}
 	if col.GetType() == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
-		defEnum, err := types.ParseEnumValue(col.FieldType.GetElems(), 1)
-		if err != nil {
-			return types.Datum{}, err
+		if mysql.HasNotNullFlag(col.GetFlag()) {
+			defEnum, err := types.ParseEnumValue(col.FieldType.GetElems(), 1)
+			if err != nil {
+				return types.Datum{}, err
+			}
+			return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
 		}
-		return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
+		return types.Datum{}, nil
 	}
-	if mysql.HasAutoIncrementFlag(col.GetFlag()) {
-		// Auto increment column doesn't has default value and we should not return error.
+	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
+		// Auto increment column doesn't have default value and we should not return error.
 		return GetZeroValue(col), nil
 	}
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	if !vars.StrictSQLMode {
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
-		return GetZeroValue(col), nil
+		if mysql.HasNotNullFlag(col.GetFlag()) {
+			return GetZeroValue(col), nil
+		}
+		if mysql.HasNoDefaultValueFlag(col.GetFlag()) {
+			return types.Datum{}, nil
+		}
 	}
 	if sc.BadNullAsWarning {
 		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))

@@ -31,24 +31,23 @@ import (
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID               uint64
-	User             string
-	Host             string
-	Port             string
-	DB               string
-	Digest           string
-	Plan             interface{}
-	PlanExplainRows  [][]string
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	Time             time.Time
-	Info             string
-	CurTxnStartTS    uint64
+	Plan             interface{}
 	StmtCtx          *stmtctx.StatementContext
 	StatsInfo        func(interface{}) map[string]uint64
+	RuntimeStatsColl *execdetails.RuntimeStatsColl
+	DB               string
+	Digest           string
+	Host             string
+	User             string
+	Info             string
+	Port             string
+	PlanExplainRows  [][]string
+	CurTxnStartTS    uint64
+	ID               uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
-	MaxExecutionTime uint64
-
+	MaxExecutionTime          uint64
 	State                     uint16
 	Command                   byte
 	ExceedExpensiveTimeThresh bool
@@ -86,6 +85,11 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 		serverStatus2Str(pi.State),
 		info,
 	}
+}
+
+func (pi *ProcessInfo) String() string {
+	rows := pi.ToRowForShow(false)
+	return fmt.Sprintf("{id:%v, user:%v, host:%v, db:%v, command:%v, time:%v, state:%v, info:%v}", rows...)
 }
 
 func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
@@ -148,7 +152,8 @@ var mapServerStatus2Str = map[uint16]string{
 // Param state is a bit-field. (e.g. 0x0003 = "in transaction; autocommit").
 func serverStatus2Str(state uint16) string {
 	// l collect server status strings.
-	var l []string // nolint: prealloc
+	//nolint: prealloc
+	var l []string
 	// check each defined server status, if match, append to collector.
 	for _, s := range ascServerStatus {
 		if state&s == 0 {
@@ -169,32 +174,34 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
-	// Put the internal session pointer to the map in the SessionManager
+	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
 	StoreInternalSession(se interface{})
-	// Delete the internal session pointer from the map in the SessionManager
+	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.
 	DeleteInternalSession(se interface{})
-	// Get all startTS of every transactions running in the current internal sessions
+	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
 	GetInternalSessionStartTSList() []uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
 // 64 bits version:
-//  63 62                 41 40                                   1   0
-// +--+---------------------+--------------------------------------+------+
-// |  |      serverId       |             local connId             |markup|
-// |=0|       (22b)         |                 (40b)                |  =1  |
-// +--+---------------------+--------------------------------------+------+
-// 32 bits version(coming soon):
-//  31                          1   0
-// +-----------------------------+------+
-// |             ???             |markup|
-// |             ???             |  =0  |
-// +-----------------------------+------+
+/*
+  63 62                 41 40                                   1   0
+ +--+---------------------+--------------------------------------+------+
+ |  |      serverId       |             local connId             |markup|
+ |=0|       (22b)         |                 (40b)                |  =1  |
+ +--+---------------------+--------------------------------------+------+
+ 32 bits version(coming soon):
+  31                          1   0
+ +-----------------------------+------+
+ |             ???             |markup|
+ |             ???             |  =0  |
+ +-----------------------------+------+
+*/
 type GlobalConnID struct {
+	ServerIDGetter func() uint64
 	ServerID       uint64
 	LocalConnID    uint64
 	Is64bits       bool
-	ServerIDGetter func() uint64
 }
 
 // NewGlobalConnID creates GlobalConnID with serverID
@@ -245,7 +252,8 @@ func (g *GlobalConnID) NextID() uint64 {
 }
 
 // ParseGlobalConnID parses an uint64 to GlobalConnID.
-//   `isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
+//
+//	`isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
 func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) {
 	if id&0x80000000_00000000 > 0 {
 		return GlobalConnID{}, false, errors.New("Unexpected connectionID excceeds int64")

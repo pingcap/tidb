@@ -26,14 +26,14 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
@@ -49,7 +49,7 @@ func TestCTEPreviewAndReport(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	s := newSuite(t)
 	defer s.close()
@@ -70,7 +70,7 @@ func TestCTEPreviewAndReport(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)))
 	require.Equal(t, 1, int(jsonParsed.Path("featureUsage.cte.recursiveUsed").Data().(float64)))
-	require.Equal(t, 2, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
+	require.Equal(t, 3, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
 
 	err = telemetry.ReportUsageData(s.se, s.etcdCluster.RandClient())
 	require.NoError(t, err)

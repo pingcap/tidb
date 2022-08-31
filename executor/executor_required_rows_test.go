@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
@@ -35,10 +34,10 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 type requiredRowsDataSource struct {
@@ -757,7 +756,7 @@ func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression
 
 	expr = make([]expression.Expression, 1)
 	expr[0] = &expression.Column{
-		RetType: types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).SetFlen(mysql.MaxIntWidth).BuildP(),
+		RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlen(mysql.MaxIntWidth).BuildP(),
 		Index:   0,
 	}
 	return
@@ -846,7 +845,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(j)
 }
 
@@ -870,7 +869,7 @@ func TestVecGroupCheckerDATARACE(t *testing.T) {
 	for _, mType := range mTypes {
 		exprs := make([]expression.Expression, 1)
 		exprs[0] = &expression.Column{
-			RetType: types.NewFieldTypeBuilderP().SetType(mType).BuildP(),
+			RetType: types.NewFieldTypeBuilder().SetType(mType).BuildP(),
 			Index:   0,
 		}
 		vgc := newVecGroupChecker(ctx, exprs)

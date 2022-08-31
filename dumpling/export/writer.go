@@ -10,11 +10,10 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"go.uber.org/zap"
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
@@ -26,6 +25,7 @@ type Writer struct {
 	conn       *sql.Conn
 	extStorage storage.ExternalStorage
 	fileFmt    FileFormat
+	metrics    *metrics
 
 	receivedTaskCount int
 
@@ -35,13 +35,21 @@ type Writer struct {
 }
 
 // NewWriter returns a new Writer with given configurations
-func NewWriter(tctx *tcontext.Context, id int64, config *Config, conn *sql.Conn, externalStore storage.ExternalStorage) *Writer {
+func NewWriter(
+	tctx *tcontext.Context,
+	id int64,
+	config *Config,
+	conn *sql.Conn,
+	externalStore storage.ExternalStorage,
+	metrics *metrics,
+) *Writer {
 	sw := &Writer{
 		id:                  id,
 		tctx:                tctx,
 		conf:                config,
 		conn:                conn,
 		extStorage:          externalStore,
+		metrics:             metrics,
 		finishTaskCallBack:  func(Task) {},
 		finishTableCallBack: func(Task) {},
 	}
@@ -185,7 +193,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		defer func() {
 			lastErr = err
 			if err != nil {
-				IncCounter(errorCount, conf.Labels)
+				IncCounter(w.metrics.errorCount)
 			}
 		}()
 		retryTime++
@@ -209,7 +217,9 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 				return err
 			}
 		}
-		defer ir.Close()
+		defer func() {
+			_ = ir.Close()
+		}()
 		return w.tryToWriteTableData(tctx, meta, ir, currentChunk)
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
@@ -225,7 +235,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 	somethingIsWritten := false
 	for {
 		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
-		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter)
+		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics)
 		tearDown(tctx)
 		if err != nil {
 			return err

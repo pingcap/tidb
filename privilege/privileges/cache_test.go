@@ -27,8 +27,7 @@ import (
 )
 
 func TestLoadUserTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -57,8 +56,7 @@ func TestLoadUserTable(t *testing.T) {
 }
 
 func TestLoadGlobalPrivTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -81,8 +79,7 @@ func TestLoadGlobalPrivTable(t *testing.T) {
 }
 
 func TestLoadDBTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -100,8 +97,7 @@ func TestLoadDBTable(t *testing.T) {
 }
 
 func TestLoadTablesPrivTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -122,8 +118,7 @@ func TestLoadTablesPrivTable(t *testing.T) {
 }
 
 func TestLoadColumnsPrivTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -144,8 +139,7 @@ func TestLoadColumnsPrivTable(t *testing.T) {
 }
 
 func TestLoadDefaultRoleTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -163,8 +157,7 @@ func TestLoadDefaultRoleTable(t *testing.T) {
 }
 
 func TestPatternMatch(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	activeRoles := make([]*auth.RoleIdentity, 0)
 
@@ -199,8 +192,7 @@ func TestPatternMatch(t *testing.T) {
 }
 
 func TestHostMatch(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	activeRoles := make([]*auth.RoleIdentity, 0)
 
@@ -251,8 +243,7 @@ func TestHostMatch(t *testing.T) {
 }
 
 func TestCaseInsensitive(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	activeRoles := make([]*auth.RoleIdentity, 0)
 	tk := testkit.NewTestKit(t, store)
@@ -269,8 +260,7 @@ func TestCaseInsensitive(t *testing.T) {
 }
 
 func TestLoadRoleGraph(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -298,8 +288,7 @@ func TestLoadRoleGraph(t *testing.T) {
 }
 
 func TestRoleGraphBFS(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE ROLE r_1, r_2, r_3, r_4, r_5, r_6;`)
@@ -332,8 +321,7 @@ func TestRoleGraphBFS(t *testing.T) {
 }
 
 func TestFindAllUserEffectiveRoles(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER u1`)
@@ -367,8 +355,7 @@ func TestFindAllUserEffectiveRoles(t *testing.T) {
 }
 
 func TestAbnormalMySQLTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -508,8 +495,7 @@ func checkUserRecord(t *testing.T, x, y []privileges.UserRecord) {
 }
 
 func TestDBIsVisible(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database visdb")

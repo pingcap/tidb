@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
@@ -29,7 +29,7 @@ var indexMergeSuiteData testdata.TestData
 var planSuiteUnexportedData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	flag.Parse()
 
@@ -45,7 +45,11 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
+	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
+	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
+	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
+	testDataMap.LoadTestSuiteData("testdata", "binary_plan_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
@@ -54,6 +58,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 
 	callback := func(i int) int {
@@ -78,6 +84,10 @@ func GetStatsSuiteData() testdata.TestData {
 
 func GetOrderedResultModeSuiteData() testdata.TestData {
 	return testDataMap["ordered_result_mode_suite"]
+}
+
+func GetJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["join_reorder_suite"]
 }
 
 func GetPointGetPlanData() testdata.TestData {
@@ -106,4 +116,16 @@ func GetIntegrationSuiteData() testdata.TestData {
 
 func GetAnalyzeSuiteData() testdata.TestData {
 	return testDataMap["analyze_suite"]
+}
+
+func GetWindowPushDownSuiteData() testdata.TestData {
+	return testDataMap["window_push_down_suite"]
+}
+
+func GetFlatPlanSuiteData() testdata.TestData {
+	return testDataMap["flat_plan_suite"]
+}
+
+func GetBinaryPlanSuiteData() testdata.TestData {
+	return testDataMap["binary_plan_suite"]
 }

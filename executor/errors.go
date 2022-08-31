@@ -32,6 +32,7 @@ var (
 	ErrUnsupportedPs        = dbterror.ClassExecutor.NewStd(mysql.ErrUnsupportedPs)
 	ErrSubqueryMoreThan1Row = dbterror.ClassExecutor.NewStd(mysql.ErrSubqueryNo1Row)
 	ErrIllegalGrantForTable = dbterror.ClassExecutor.NewStd(mysql.ErrIllegalGrantForTable)
+	ErrColumnsNotMatched    = dbterror.ClassExecutor.NewStd(mysql.ErrColumnNotMatched)
 
 	ErrCantCreateUserWithGrant       = dbterror.ClassExecutor.NewStd(mysql.ErrCantCreateUserWithGrant)
 	ErrPasswordNoMatch               = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordNoMatch)
@@ -54,6 +55,7 @@ var (
 	ErrInvalidSplitRegionRanges      = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidSplitRegionRanges)
 	ErrViewInvalid                   = dbterror.ClassExecutor.NewStd(mysql.ErrViewInvalid)
 	ErrInstanceScope                 = dbterror.ClassExecutor.NewStd(mysql.ErrInstanceScope)
+	ErrSettingNoopVariable           = dbterror.ClassExecutor.NewStd(mysql.ErrSettingNoopVariable)
 
 	ErrBRIEBackupFailed      = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
 	ErrBRIERestoreFailed     = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
@@ -64,6 +66,7 @@ var (
 	ErrPluginIsNotLoaded     = dbterror.ClassExecutor.NewStd(mysql.ErrPluginIsNotLoaded)
 	ErrSetPasswordAuthPlugin = dbterror.ClassExecutor.NewStd(mysql.ErrSetPasswordAuthPlugin)
 	ErrFuncNotEnabled        = dbterror.ClassExecutor.NewStdErr(mysql.ErrNotSupportedYet, parser_mysql.Message("%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.", nil))
+	errSavepointNotExists    = dbterror.ClassExecutor.NewStd(mysql.ErrSpDoesNotExist)
 
 	ErrWrongStringLength            = dbterror.ClassDDL.NewStd(mysql.ErrWrongStringLength)
 	errUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))

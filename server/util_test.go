@@ -70,7 +70,7 @@ func TestDumpBinaryTime(t *testing.T) {
 	d = dumpBinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
-	myDuration, err := types.ParseDuration(sc, "0000-00-00 00:00:00.000000", 6)
+	myDuration, _, err := types.ParseDuration(sc, "0000-00-00 00:00:00.000000", 6)
 	require.NoError(t, err)
 	d = dumpBinaryTime(myDuration.Duration)
 	require.Equal(t, []byte{0}, d)
@@ -194,7 +194,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2017-01-06 00:00:00", mustDecodeStr(t, bs))
 
-	duration, err := types.ParseDuration(sc, "11:30:45", 0)
+	duration, _, err := types.ParseDuration(sc, "11:30:45", 0)
 	require.NoError(t, err)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration

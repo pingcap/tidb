@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -42,8 +43,7 @@ import (
 )
 
 func TestInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -54,25 +54,25 @@ func TestInsert(t *testing.T) {
 
 	errInsertSelectSQL := `insert insert_test (c1) values ();`
 	tk.MustExec("begin")
-	_, err := tk.Exec(errInsertSelectSQL)
+	err := tk.ExecToErr(errInsertSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errInsertSelectSQL = `insert insert_test (c1, c2) values (1,2),(1);`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errInsertSelectSQL)
+	err = tk.ExecToErr(errInsertSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errInsertSelectSQL = `insert insert_test (xxx) values (3);`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errInsertSelectSQL)
+	err = tk.ExecToErr(errInsertSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errInsertSelectSQL = `insert insert_test_xxx (c1) values ();`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errInsertSelectSQL)
+	err = tk.ExecToErr(errInsertSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -82,13 +82,13 @@ func TestInsert(t *testing.T) {
 
 	errInsertSelectSQL = `insert insert_test set c1 = 4, c1 = 5;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errInsertSelectSQL)
+	err = tk.ExecToErr(errInsertSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errInsertSelectSQL = `insert insert_test set xxx = 6;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errInsertSelectSQL)
+	err = tk.ExecToErr(errInsertSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -106,13 +106,13 @@ func TestInsert(t *testing.T) {
 
 	errInsertSelectSQL = `insert insert_test_1 select c1 from insert_test;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errInsertSelectSQL)
+	err = tk.ExecToErr(errInsertSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errInsertSelectSQL = `insert insert_test_1 values(default, default, default, default, default)`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errInsertSelectSQL)
+	err = tk.ExecToErr(errInsertSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -132,7 +132,7 @@ func TestInsert(t *testing.T) {
 	tk.MustExec(insertSQL)
 	require.Empty(t, tk.Session().LastMessage())
 
-	_, err = tk.Exec(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
+	err = tk.ExecToErr(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
 	require.Error(t, err)
 
 	// for on duplicate key
@@ -152,13 +152,13 @@ func TestInsert(t *testing.T) {
 	r.Check(testkit.Rows(rowStr))
 
 	tk.MustExec("create table insert_err (id int, c1 varchar(8))")
-	_, err = tk.Exec("insert insert_err values (1, 'abcdabcdabcd')")
+	err = tk.ExecToErr("insert insert_err values (1, 'abcdabcdabcd')")
 	require.True(t, types.ErrDataTooLong.Equal(err))
-	_, err = tk.Exec("insert insert_err values (1, '你好，世界')")
+	err = tk.ExecToErr("insert insert_err values (1, '你好，世界')")
 	require.NoError(t, err)
 
 	tk.MustExec("create table TEST1 (ID INT NOT NULL, VALUE INT DEFAULT NULL, PRIMARY KEY (ID))")
-	_, err = tk.Exec("INSERT INTO TEST1(id,value) VALUE(3,3) on DUPLICATE KEY UPDATE VALUE=4")
+	err = tk.ExecToErr("INSERT INTO TEST1(id,value) VALUE(3,3) on DUPLICATE KEY UPDATE VALUE=4")
 	require.NoError(t, err)
 	require.Empty(t, tk.Session().LastMessage())
 
@@ -171,21 +171,21 @@ func TestInsert(t *testing.T) {
 	// issue 3235
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c decimal(5, 5))")
-	_, err = tk.Exec("insert into t value(0)")
+	err = tk.ExecToErr("insert into t value(0)")
 	require.NoError(t, err)
-	_, err = tk.Exec("insert into t value(1)")
+	err = tk.ExecToErr("insert into t value(1)")
 	require.True(t, types.ErrWarnDataOutOfRange.Equal(err))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c binary(255))")
-	_, err = tk.Exec("insert into t value(1)")
+	err = tk.ExecToErr("insert into t value(1)")
 	require.NoError(t, err)
 	r = tk.MustQuery("select length(c) from t;")
 	r.Check(testkit.Rows("255"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c varbinary(255))")
-	_, err = tk.Exec("insert into t value(1)")
+	err = tk.ExecToErr("insert into t value(1)")
 	require.NoError(t, err)
 	r = tk.MustQuery("select length(c) from t;")
 	r.Check(testkit.Rows("1"))
@@ -195,7 +195,7 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("create table t(c int)")
 	tk.MustExec("set @origin_time_zone = @@time_zone")
 	tk.MustExec("set @@time_zone = '+08:00'")
-	_, err = tk.Exec("insert into t value(Unix_timestamp('2002-10-27 01:00'))")
+	err = tk.ExecToErr("insert into t value(Unix_timestamp('2002-10-27 01:00'))")
 	require.NoError(t, err)
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows("1035651600"))
@@ -203,7 +203,7 @@ func TestInsert(t *testing.T) {
 
 	// issue 3832
 	tk.MustExec("create table t1 (b char(0));")
-	_, err = tk.Exec(`insert into t1 values ("");`)
+	err = tk.ExecToErr(`insert into t1 values ("");`)
 	require.NoError(t, err)
 
 	// issue 3895
@@ -212,7 +212,8 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
 	tk.MustExec("INSERT INTO t VALUES (1.000001);")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '1.000001'"))
+	// TODO: MySQL8.0 reports Note 1265 Data truncated for column 'a' at row 1
+	r.Check(testkit.Rows("Warning 1366 Incorrect decimal value: '1.000001' for column 'a' at row 1"))
 	tk.MustExec("INSERT INTO t VALUES (1.000000);")
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows())
@@ -220,7 +221,7 @@ func TestInsert(t *testing.T) {
 	// issue 4653
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a datetime);")
-	_, err = tk.Exec("INSERT INTO t VALUES('2017-00-00')")
+	err = tk.ExecToErr("INSERT INTO t VALUES('2017-00-00')")
 	require.Error(t, err)
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("INSERT INTO t VALUES('2017-00-00')")
@@ -245,19 +246,18 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a bigint unsigned);")
 	tk.MustExec(" set @orig_sql_mode = @@sql_mode; set @@sql_mode = 'strict_all_tables';")
-	_, err = tk.Exec("insert into t value (-1);")
+	err = tk.ExecToErr("insert into t value (-1);")
 	require.True(t, types.ErrWarnDataOutOfRange.Equal(err))
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t value (-1);")
-	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t select -1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	tk.MustExec("insert into t select cast(-1 as unsigned);")
 	tk.MustExec("insert into t value (-1.111);")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t value ('-1.111');")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("update t set a = -1 limit 1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	r = tk.MustQuery("select * from t;")
@@ -272,7 +272,7 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
-	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
+	err = tk.ExecToErr("insert into t value(-20070219173709.055870)")
 	require.EqualError(t, err, "[table:1292]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
 
 	tk.MustExec("drop table if exists t")
@@ -280,8 +280,8 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("create table t(a float unsigned, b double unsigned)")
 	tk.MustExec("insert into t value(-1.1, -1.1), (-2.1, -2.1), (0, 0), (1.1, 1.1)")
 	tk.MustQuery("show warnings").
-		Check(testkit.Rows("Warning 1690 constant -1.1 overflows float", "Warning 1690 constant -1.1 overflows double",
-			"Warning 1690 constant -2.1 overflows float", "Warning 1690 constant -2.1 overflows double"))
+		Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1", "Warning 1264 Out of range value for column 'b' at row 1",
+			"Warning 1264 Out of range value for column 'a' at row 2", "Warning 1264 Out of range value for column 'b' at row 2"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("0 0", "0 0", "0 0", "1.1 1.1"))
 
 	// issue 7061
@@ -300,16 +300,16 @@ func TestInsert(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 
 	tk.MustExec("create view v as select * from t")
-	_, err = tk.Exec("insert into v values(1,2)")
+	err = tk.ExecToErr("insert into v values(1,2)")
 	require.EqualError(t, err, "insert into view v is not supported now")
-	_, err = tk.Exec("replace into v values(1,2)")
+	err = tk.ExecToErr("replace into v values(1,2)")
 	require.EqualError(t, err, "replace into view v is not supported now")
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
-	_, err = tk.Exec("insert into seq values()")
+	err = tk.ExecToErr("insert into seq values()")
 	require.EqualError(t, err, "insert into sequence seq is not supported now")
-	_, err = tk.Exec("replace into seq values()")
+	err = tk.ExecToErr("replace into seq values()")
 	require.EqualError(t, err, "replace into sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 
@@ -317,16 +317,15 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(name varchar(255), b int, c int, primary key(name(2)))")
 	tk.MustExec("insert into t(name, b) values(\"cha\", 3)")
-	_, err = tk.Exec("insert into t(name, b) values(\"chb\", 3)")
+	err = tk.ExecToErr("insert into t(name, b) values(\"chb\", 3)")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'ch' for key 'PRIMARY'")
 	tk.MustExec("insert into t(name, b) values(\"测试\", 3)")
-	_, err = tk.Exec("insert into t(name, b) values(\"测试\", 3)")
+	err = tk.ExecToErr("insert into t(name, b) values(\"测试\", 3)")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '测试' for key 'PRIMARY'")
 }
 
 func TestMultiBatch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t0")
@@ -339,8 +338,7 @@ func TestMultiBatch(t *testing.T) {
 }
 
 func TestInsertAutoInc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
@@ -447,7 +445,7 @@ func TestInsertAutoInc(t *testing.T) {
 	rowStr4 = fmt.Sprintf("%v %v", "0", "4")
 	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3))
 	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 5)`
-	_, err := tk.Exec(insertSQL)
+	err := tk.ExecToErr(insertSQL)
 	// ERROR 1062 (23000): Duplicate entry '0' for key 'PRIMARY'
 	require.Error(t, err)
 	insertSQL = `insert into insert_autoinc_test(c1) values (6)`
@@ -474,8 +472,7 @@ func TestInsertAutoInc(t *testing.T) {
 }
 
 func TestInsertIgnore(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(t, kv.NewInjectedStore(store, &cfg))
 	tk.MustExec("use test")
@@ -511,7 +508,7 @@ func TestInsertIgnore(t *testing.T) {
 	tk.MustExec("commit")
 
 	cfg.SetGetError(errors.New("foo"))
-	_, err := tk.Exec("insert ignore into t values (1, 3)")
+	err := tk.ExecToErr("insert ignore into t values (1, 3)")
 	require.Error(t, err)
 	cfg.SetGetError(nil)
 
@@ -520,17 +517,18 @@ func TestInsertIgnore(t *testing.T) {
 	create table t (a bigint);`
 	tk.MustExec(testSQL)
 	testSQL = "insert ignore into t select '1a';"
-	_, err = tk.Exec(testSQL)
+	err = tk.ExecToErr(testSQL)
 	require.NoError(t, err)
 	require.Equal(t, tk.Session().LastMessage(), "Records: 1  Duplicates: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS")
 	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '1a'"))
 	testSQL = "insert ignore into t values ('1a')"
-	_, err = tk.Exec(testSQL)
+	err = tk.ExecToErr(testSQL)
 	require.NoError(t, err)
 	require.Empty(t, tk.Session().LastMessage())
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '1a'"))
+	// TODO: MySQL8.0 reports Warning 1265 Data truncated for column 'a' at row 1
+	r.Check(testkit.Rows("Warning 1366 Incorrect bigint value: '1a' for column 'a' at row 1"))
 
 	// for duplicates with warning
 	testSQL = `drop table if exists t;
@@ -539,7 +537,7 @@ func TestInsertIgnore(t *testing.T) {
 	testSQL = "insert ignore into t values (1,1);"
 	tk.MustExec(testSQL)
 	require.Empty(t, tk.Session().LastMessage())
-	_, err = tk.Exec(testSQL)
+	err = tk.ExecToErr(testSQL)
 	require.Empty(t, tk.Session().LastMessage())
 	require.NoError(t, err)
 	r = tk.MustQuery("SHOW WARNINGS")
@@ -594,8 +592,7 @@ commit;`
 }
 
 func TestInsertOnDup(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(t, kv.NewInjectedStore(store, &cfg))
 	tk.MustExec("use test")
@@ -747,7 +744,7 @@ commit;`
 	tk.MustExec(`INSERT t1 VALUES (1, 1), (1, 1) ON DUPLICATE KEY UPDATE f1 = 2, f2 = 2;`)
 	require.Equal(t, tk.Session().LastMessage(), "Records: 2  Duplicates: 1  Warnings: 0")
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 1", "2 2"))
-	_, err := tk.Exec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
+	err := tk.ExecToErr(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
 	require.Error(t, err)
 	tk.MustExec(`INSERT IGNORE t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
 	require.Empty(t, tk.Session().LastMessage())
@@ -761,8 +758,7 @@ commit;`
 }
 
 func TestInsertIgnoreOnDup(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists t;
@@ -815,8 +811,7 @@ func TestInsertIgnoreOnDup(t *testing.T) {
 }
 
 func TestInsertSetWithDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Assign `DEFAULT` in `INSERT ... SET ...` statement
@@ -901,8 +896,7 @@ func TestInsertSetWithDefault(t *testing.T) {
 }
 
 func TestInsertOnDupUpdateDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Assign `DEFAULT` in `INSERT ... ON DUPLICATE KEY UPDATE ...` statement
@@ -954,8 +948,7 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 }
 
 func TestReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -967,25 +960,25 @@ func TestReplace(t *testing.T) {
 
 	errReplaceSQL := `replace replace_test (c1) values ();`
 	tk.MustExec("begin")
-	_, err := tk.Exec(errReplaceSQL)
+	err := tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSQL = `replace replace_test (c1, c2) values (1,2),(1);`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSQL)
+	err = tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSQL = `replace replace_test (xxx) values (3);`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSQL)
+	err = tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSQL = `replace replace_test_xxx (c1) values ();`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSQL)
+	err = tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -995,13 +988,13 @@ func TestReplace(t *testing.T) {
 
 	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSetSQL)
+	err = tk.ExecToErr(errReplaceSetSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSetSQL = `replace replace_test set xxx = 6;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSetSQL)
+	err = tk.ExecToErr(errReplaceSetSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -1019,7 +1012,7 @@ func TestReplace(t *testing.T) {
 
 	errReplaceSelectSQL := `replace replace_test_1 select c1 from replace_test;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSelectSQL)
+	err = tk.ExecToErr(errReplaceSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -1137,8 +1130,7 @@ func TestReplace(t *testing.T) {
 }
 
 func TestReplaceWithCICollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1149,8 +1141,7 @@ func TestReplaceWithCICollation(t *testing.T) {
 }
 
 func TestGeneratedColumnForInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1200,8 +1191,7 @@ func TestGeneratedColumnForInsert(t *testing.T) {
 }
 
 func TestPartitionedTableReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -1218,25 +1208,25 @@ func TestPartitionedTableReplace(t *testing.T) {
 
 	errReplaceSQL := `replace replace_test (c1) values ();`
 	tk.MustExec("begin")
-	_, err := tk.Exec(errReplaceSQL)
+	err := tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSQL = `replace replace_test (c1, c2) values (1,2),(1);`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSQL)
+	err = tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSQL = `replace replace_test (xxx) values (3);`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSQL)
+	err = tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSQL = `replace replace_test_xxx (c1) values ();`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSQL)
+	err = tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -1246,13 +1236,13 @@ func TestPartitionedTableReplace(t *testing.T) {
 
 	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSetSQL)
+	err = tk.ExecToErr(errReplaceSetSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSetSQL = `replace replace_test set xxx = 6;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSetSQL)
+	err = tk.ExecToErr(errReplaceSetSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -1277,7 +1267,7 @@ func TestPartitionedTableReplace(t *testing.T) {
 
 	errReplaceSelectSQL := `replace replace_test_1 select c1 from replace_test;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSelectSQL)
+	err = tk.ExecToErr(errReplaceSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -1341,8 +1331,7 @@ func TestPartitionedTableReplace(t *testing.T) {
 }
 
 func TestHashPartitionedTableReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
@@ -1356,37 +1345,37 @@ func TestHashPartitionedTableReplace(t *testing.T) {
 
 	errReplaceSQL := `replace replace_test (c1) values ();`
 	tk.MustExec("begin")
-	_, err := tk.Exec(errReplaceSQL)
+	err := tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSQL = `replace replace_test (c1, c2) values (1,2),(1);`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSQL)
+	err = tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSQL = `replace replace_test (xxx) values (3);`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSQL)
+	err = tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSQL = `replace replace_test_xxx (c1) values ();`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSQL)
+	err = tk.ExecToErr(errReplaceSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSetSQL)
+	err = tk.ExecToErr(errReplaceSetSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
 	errReplaceSetSQL = `replace replace_test set xxx = 6;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSetSQL)
+	err = tk.ExecToErr(errReplaceSetSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -1407,7 +1396,7 @@ func TestHashPartitionedTableReplace(t *testing.T) {
 
 	errReplaceSelectSQL := `replace replace_test_1 select c1 from replace_test;`
 	tk.MustExec("begin")
-	_, err = tk.Exec(errReplaceSelectSQL)
+	err = tk.ExecToErr(errReplaceSelectSQL)
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -1460,8 +1449,7 @@ func TestHashPartitionedTableReplace(t *testing.T) {
 }
 
 func TestPartitionedTableUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1514,7 +1502,7 @@ func TestPartitionedTableUpdate(t *testing.T) {
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows("8 aa", "9 bb"))
 
-	_, err := tk.Exec("update t set id = null where name = 'aa'")
+	err := tk.ExecToErr("update t set id = null where name = 'aa'")
 	require.EqualError(t, err, "[table:1048]Column 'id' cannot be null")
 
 	// Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
@@ -1526,7 +1514,7 @@ func TestPartitionedTableUpdate(t *testing.T) {
 			PARTITION p2 VALUES LESS THAN (16),
 			PARTITION p3 VALUES LESS THAN (21))`)
 	tk.MustExec("insert t values (1, 1), (2, 2);")
-	_, err = tk.Exec("update t set name = 1 where id = 2")
+	err = tk.ExecToErr("update t set name = 1 where id = 2")
 	require.Error(t, err)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
 
@@ -1538,7 +1526,7 @@ func TestPartitionedTableUpdate(t *testing.T) {
 			PARTITION p1 VALUES LESS THAN (11))`)
 	tk.MustExec("insert into t values (5)")
 	tk.MustExec("insert into t values (7)")
-	_, err = tk.Exec("update ignore t set a = 5 where a = 7;")
+	err = tk.ExecToErr("update ignore t set a = 5 where a = 7;")
 	require.NoError(t, err)
 	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS;")
@@ -1546,7 +1534,7 @@ func TestPartitionedTableUpdate(t *testing.T) {
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
 
 	// test update ignore for truncate as warning
-	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
+	err = tk.ExecToErr("update ignore t set a = 1 where a = (select '2a')")
 	require.NoError(t, err)
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '2a'", "Warning 1292 Truncated incorrect DOUBLE value: '2a'"))
@@ -1559,7 +1547,7 @@ func TestPartitionedTableUpdate(t *testing.T) {
 			PARTITION p1 VALUES LESS THAN (11))`)
 	tk.MustExec("insert into t values (5)")
 	tk.MustExec("insert into t values (7)")
-	_, err = tk.Exec("update ignore t set a = 5 where a = 7;")
+	err = tk.ExecToErr("update ignore t set a = 5 where a = 7;")
 	require.NoError(t, err)
 	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS;")
@@ -1569,8 +1557,7 @@ func TestPartitionedTableUpdate(t *testing.T) {
 
 // TestUpdateCastOnlyModifiedValues for issue #4514.
 func TestUpdateCastOnlyModifiedValues(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table update_modified (col_1 int, col_2 enum('a', 'b'))")
@@ -1583,7 +1570,7 @@ func TestUpdateCastOnlyModifiedValues(t *testing.T) {
 	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 1  Warnings: 0")
 	r = tk.MustQuery("SELECT * FROM update_modified")
 	r.Check(testkit.Rows("1 "))
-	_, err := tk.Exec("update update_modified set col_1 = 2, col_2 = 'c'")
+	err := tk.ExecToErr("update update_modified set col_1 = 2, col_2 = 'c'")
 	require.Error(t, err)
 	r = tk.MustQuery("SELECT * FROM update_modified")
 	r.Check(testkit.Rows("1 "))
@@ -1617,8 +1604,7 @@ func fillMultiTableForUpdate(tk *testkit.TestKit) {
 }
 
 func TestMultipleTableUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	fillMultiTableForUpdate(tk)
@@ -1684,8 +1670,7 @@ func TestMultipleTableUpdate(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	fillData(tk, "delete_test")
 
@@ -1711,9 +1696,9 @@ func TestDelete(t *testing.T) {
 
 	// Test delete ignore
 	tk.MustExec("insert into delete_test values (2, 'abc')")
-	_, err := tk.Exec("delete from delete_test where id = (select '2a')")
+	err := tk.ExecToErr("delete from delete_test where id = (select '2a')")
 	require.Error(t, err)
-	_, err = tk.Exec("delete ignore from delete_test where id = (select '2a')")
+	err = tk.ExecToErr("delete ignore from delete_test where id = (select '2a')")
 	require.NoError(t, err)
 	tk.CheckExecResult(1, 0)
 	r := tk.MustQuery("SHOW WARNINGS;")
@@ -1723,12 +1708,12 @@ func TestDelete(t *testing.T) {
 	tk.CheckExecResult(1, 0)
 
 	tk.MustExec("create view v as select * from delete_test")
-	_, err = tk.Exec("delete from v where name = 'aaa'")
+	err = tk.ExecToErr("delete from v where name = 'aaa'")
 	require.EqualError(t, err, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
-	_, err = tk.Exec("delete from seq")
+	err = tk.ExecToErr("delete from seq")
 	require.EqualError(t, err, "delete sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 }
@@ -1741,8 +1726,7 @@ func TestPartitionedTableDelete(t *testing.T) {
 			  PARTITION p2 VALUES LESS THAN (16),
 			  PARTITION p3 VALUES LESS THAN (21))`
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1764,9 +1748,9 @@ func TestPartitionedTableDelete(t *testing.T) {
 
 	// Test delete ignore
 	tk.MustExec("insert into t values (2, 'abc')")
-	_, err := tk.Exec("delete from t where id = (select '2a')")
+	err := tk.ExecToErr("delete from t where id = (select '2a')")
 	require.Error(t, err)
-	_, err = tk.Exec("delete ignore from t where id = (select '2a')")
+	err = tk.ExecToErr("delete ignore from t where id = (select '2a')")
 	require.NoError(t, err)
 	tk.CheckExecResult(1, 0)
 	r := tk.MustQuery("SHOW WARNINGS;")
@@ -1806,8 +1790,7 @@ func fillDataMultiTable(tk *testkit.TestKit) {
 }
 
 func TestMultiTableDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	fillDataMultiTable(tk)
 
@@ -1820,8 +1803,7 @@ func TestMultiTableDelete(t *testing.T) {
 }
 
 func TestQualifiedDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1853,7 +1835,7 @@ func TestQualifiedDelete(t *testing.T) {
 	tk.MustExec("delete a, b from t1 as a join t2 as b where a.c2 = b.c1")
 	tk.CheckExecResult(2, 0)
 
-	_, err := tk.Exec("delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1")
+	err := tk.ExecToErr("delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1")
 	require.Error(t, err)
 }
 
@@ -1869,7 +1851,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *t
 	origin := ld.IgnoreLines
 	for _, tt := range tests {
 		ld.IgnoreLines = origin
-		require.Nil(t, ctx.NewTxn(context.Background()))
+		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
@@ -1899,8 +1881,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *t
 }
 
 func TestLoadDataMissingColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createSQL := `create table load_data_missing (id int, t timestamp not null)`
@@ -1940,8 +1921,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 }
 
 func TestIssue18681(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
@@ -1973,18 +1953,53 @@ func TestIssue18681(t *testing.T) {
 	require.Equal(t, uint16(0), sc.WarningCount())
 }
 
+func TestIssue33298(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test")
+	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
+
+	// According to https://dev.mysql.com/doc/refman/8.0/en/load-data.html , fixed-row format should be used when fields
+	// terminated by '' and enclosed by ''. However, tidb doesn't support it yet and empty terminator leads to infinite
+	// loop in `indexOfTerminator` (see https://github.com/pingcap/tidb/issues/33298).
+	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''"))
+	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"))
+}
+
+func TestIssue34358(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test")
+	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
+
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ( @v1, @v2 ) set a = @v1, b = @v2")
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	require.True(t, ok)
+	require.NotNil(t, ld)
+	checkCases([]testCase{
+		{nil, []byte("\\N\n"), []string{"<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
+}
+
 func TestLoadData(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
 		create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int);`
-	_, err := tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	err := tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	require.Error(t, err)
 	tk.MustExec(createSQL)
-	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
+	err = tk.ExecToErr("load data infile '/tmp/nonexistence.csv' into table load_data_test")
 	require.Error(t, err)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
 	ctx := tk.Session().(sessionctx.Context)
@@ -2172,8 +2187,7 @@ func TestLoadData(t *testing.T) {
 
 func TestLoadDataEscape(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
@@ -2206,8 +2220,7 @@ func TestLoadDataEscape(t *testing.T) {
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
 func TestLoadDataSpecifiedColumns(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
@@ -2234,8 +2247,7 @@ func TestLoadDataSpecifiedColumns(t *testing.T) {
 }
 
 func TestLoadDataIgnoreLines(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
@@ -2255,8 +2267,7 @@ func TestLoadDataIgnoreLines(t *testing.T) {
 }
 
 func TestLoadDataReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
 	tk.MustExec("CREATE TABLE load_data_replace (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
@@ -2278,8 +2289,7 @@ func TestLoadDataReplace(t *testing.T) {
 
 // TestLoadDataOverflowBigintUnsigned related to issue 6360
 func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
@@ -2299,8 +2309,7 @@ func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
 }
 
 func TestLoadDataIntoPartitionedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table range_t (a int, b int) partition by range (a) ( " +
@@ -2310,7 +2319,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','")
 	ctx := tk.Session().(sessionctx.Context)
 	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.Nil(t, ctx.NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 
 	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	require.NoError(t, err)
@@ -2326,8 +2335,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 }
 
 func TestNullDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists test_null_default;")
 	tk.MustExec("set timestamp = 1234")
@@ -2340,8 +2348,7 @@ func TestNullDefault(t *testing.T) {
 }
 
 func TestNotNullDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists t1,t2;")
 	defer tk.MustExec("drop table t1,t2")
@@ -2365,6 +2372,8 @@ func TestLatch(t *testing.T) {
 	require.Nil(t, err1)
 	defer dom.Close()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("drop table if exists t")
@@ -2400,8 +2409,7 @@ func TestLatch(t *testing.T) {
 	tk1.MustExec("begin")
 	tk1.MustExec("update t set id = id + 1")
 	tk2.MustExec("update t set id = id + 1")
-	_, err = tk1.Exec("commit")
-	require.True(t, kv.ErrWriteConflictInTiDB.Equal(err))
+	tk1.MustGetDBError("commit", kv.ErrWriteConflictInTiDB)
 
 	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk1.MustExec("update t set id = id + 1")
@@ -2411,8 +2419,7 @@ func TestLatch(t *testing.T) {
 
 // TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
 func TestIssue4067(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -2427,8 +2434,7 @@ func TestIssue4067(t *testing.T) {
 }
 
 func TestInsertCalculatedValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2550,23 +2556,21 @@ func TestInsertCalculatedValue(t *testing.T) {
 }
 
 func TestDataTooLongErrMsg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(2));")
-	_, err := tk.Exec("insert into t values('123');")
+	err := tk.ExecToErr("insert into t values('123');")
 	require.True(t, types.ErrDataTooLong.Equal(err))
 	require.EqualError(t, err, "[types:1406]Data too long for column 'a' at row 1")
 	tk.MustExec("insert into t values('12')")
-	_, err = tk.Exec("update t set a = '123' where a = '12';")
+	err = tk.ExecToErr("update t set a = '123' where a = '12';")
 	require.True(t, types.ErrDataTooLong.Equal(err))
 	require.EqualError(t, err, "[types:1406]Data too long for column 'a' at row 1")
 }
 
 func TestUpdateSelect(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table msg (id varchar(8), b int, status int, primary key (id, b))")
@@ -2579,8 +2583,7 @@ func TestUpdateSelect(t *testing.T) {
 }
 
 func TestUpdateDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE ttt (id bigint(20) NOT NULL, host varchar(30) NOT NULL, PRIMARY KEY (id), UNIQUE KEY i_host (host));")
@@ -2601,8 +2604,7 @@ func TestUpdateDelete(t *testing.T) {
 }
 
 func TestUpdateAffectRowCnt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table a(id int auto_increment, a int default null, primary key(id))")
@@ -2622,8 +2624,7 @@ func TestUpdateAffectRowCnt(t *testing.T) {
 }
 
 func TestReplaceLog(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table testLog (a int not null primary key, b int unique key);`)
@@ -2647,7 +2648,7 @@ func TestReplaceLog(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	_, err = tk.Exec(`replace into testLog values (0, 0), (1, 1);`)
+	err = tk.ExecToErr(`replace into testLog values (0, 0), (1, 1);`)
 	require.Error(t, err)
 	require.EqualError(t, err, `can not be duplicated row, due to old row not found. handle 1 not found`)
 	tk.MustQuery(`admin cleanup index testLog b;`).Check(testkit.Rows("1"))
@@ -2657,8 +2658,7 @@ func TestReplaceLog(t *testing.T) {
 // There is no need to do the rebase when updating a record if the auto-increment ID not changed.
 // This could make the auto ID increasing speed slower.
 func TestRebaseIfNeeded(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int not null primary key auto_increment, b int unique key);`)
@@ -2668,14 +2668,14 @@ func TestRebaseIfNeeded(t *testing.T) {
 	ctx.Store = store
 	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	require.Nil(t, ctx.NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(ctx, types.MakeDatums(30001, 2))
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
-	require.Nil(t, txn.Commit(context.Background()))
+	require.NoError(t, txn.Commit(context.Background()))
 
 	tk.MustExec(`update t set b = 3 where a = 30001;`)
 	tk.MustExec(`insert into t (b) values (4);`)
@@ -2691,8 +2691,7 @@ func TestRebaseIfNeeded(t *testing.T) {
 }
 
 func TestDeferConstraintCheckForDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tidb_constraint_check_in_place = 0")
 	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
@@ -2704,8 +2703,7 @@ func TestDeferConstraintCheckForDelete(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values(1, 3)")
 	tk.MustExec("delete from t1 where j = 3")
-	_, err := tk.Exec("commit")
-	require.EqualError(t, err, "previous statement: delete from t1 where j = 3: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	tk.MustGetErrMsg("commit", "previous statement: delete from t1 where j = 3: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 	tk.MustExec("rollback")
 
 	tk.MustExec("create table t2(i int, j int, unique index idx(i))")
@@ -2713,8 +2711,7 @@ func TestDeferConstraintCheckForDelete(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t2 values(1, 3)")
 	tk.MustExec("delete from t2 where j = 3")
-	_, err = tk.Exec("commit")
-	require.EqualError(t, err, "previous statement: delete from t2 where j = 3: [kv:1062]Duplicate entry '1' for key 'idx'")
+	tk.MustGetErrMsg("commit", "previous statement: delete from t2 where j = 3: [kv:1062]Duplicate entry '1' for key 'idx'")
 	tk.MustExec("admin check table t2")
 
 	tk.MustExec("create table t3(i int, j int, primary key(i))")
@@ -2743,21 +2740,22 @@ func TestDeferConstraintCheckForDelete(t *testing.T) {
 }
 
 func TestDeferConstraintCheckForInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 
 	tk.MustExec(`drop table if exists t;create table t (a int primary key, b int);`)
 	tk.MustExec(`insert into t values (1,2),(2,2)`)
-	_, err := tk.Exec("update t set a=a+1 where b=2")
+	err := tk.ExecToErr("update t set a=a+1 where b=2")
 	require.Error(t, err)
 
 	tk.MustExec(`drop table if exists t;create table t (i int key);`)
 	tk.MustExec(`insert t values (1);`)
 	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
 	tk.MustExec(`begin;`)
-	_, err = tk.Exec(`insert t values (1);`)
+	err = tk.ExecToErr(`insert t values (1);`)
 	require.Error(t, err)
 	tk.MustExec(`update t set i = 2 where i = 1;`)
 	tk.MustExec(`commit;`)
@@ -2766,9 +2764,9 @@ func TestDeferConstraintCheckForInsert(t *testing.T) {
 	tk.MustExec(`set tidb_constraint_check_in_place = 0;`)
 	tk.MustExec("replace into t values (1),(2)")
 	tk.MustExec("begin")
-	_, err = tk.Exec("update t set i = 2 where i = 1")
+	err = tk.ExecToErr("update t set i = 2 where i = 1")
 	require.Error(t, err)
-	_, err = tk.Exec("insert into t values (1) on duplicate key update i = i + 1")
+	err = tk.ExecToErr("insert into t values (1) on duplicate key update i = i + 1")
 	require.Error(t, err)
 	tk.MustExec("rollback")
 
@@ -2777,16 +2775,16 @@ func TestDeferConstraintCheckForInsert(t *testing.T) {
 	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
 	tk.MustExec(`set @@autocommit = 0;`)
 
-	_, err = tk.Exec("insert into t values (3, 1)")
+	err = tk.ExecToErr("insert into t values (3, 1)")
 	require.Error(t, err)
-	_, err = tk.Exec("insert into t values (1, 3)")
+	err = tk.ExecToErr("insert into t values (1, 3)")
 	require.Error(t, err)
 	tk.MustExec("commit")
 
 	tk.MustExec(`set tidb_constraint_check_in_place = 0;`)
 	tk.MustExec("insert into t values (3, 1)")
 	tk.MustExec("insert into t values (1, 3)")
-	_, err = tk.Exec("commit")
+	err = tk.ExecToErr("commit")
 	require.Error(t, err)
 
 	// Cover the temporary table.
@@ -2797,12 +2795,12 @@ func TestDeferConstraintCheckForInsert(t *testing.T) {
 		tk.MustExec("create global temporary table t (a int primary key, b int) on commit delete rows")
 		tk.MustExec("begin")
 		tk.MustExec("insert into t values (1, 1)")
-		_, err = tk.Exec(`insert into t values (1, 3)`)
+		err = tk.ExecToErr(`insert into t values (1, 3)`)
 		require.Error(t, err)
 		tk.MustExec("insert into t values (2, 2)")
-		_, err = tk.Exec("update t set a = a + 1 where a = 1")
+		err = tk.ExecToErr("update t set a = a + 1 where a = 1")
 		require.Error(t, err)
-		_, err = tk.Exec("insert into t values (1, 3) on duplicated key update a = a + 1")
+		err = tk.ExecToErr("insert into t values (1, 3) on duplicated key update a = a + 1")
 		require.Error(t, err)
 		tk.MustExec("commit")
 
@@ -2810,12 +2808,12 @@ func TestDeferConstraintCheckForInsert(t *testing.T) {
 		tk.MustExec("create global temporary table t (a int, b int unique) on commit delete rows")
 		tk.MustExec("begin")
 		tk.MustExec("insert into t values (1, 1)")
-		_, err = tk.Exec(`insert into t values (3, 1)`)
+		err = tk.ExecToErr(`insert into t values (3, 1)`)
 		require.Error(t, err)
 		tk.MustExec("insert into t values (2, 2)")
-		_, err = tk.Exec("update t set b = b + 1 where a = 1")
+		err = tk.ExecToErr("update t set b = b + 1 where a = 1")
 		require.Error(t, err)
-		_, err = tk.Exec("insert into t values (3, 1) on duplicated key update b = b + 1")
+		err = tk.ExecToErr("insert into t values (3, 1) on duplicated key update b = b + 1")
 		require.Error(t, err)
 		tk.MustExec("commit")
 
@@ -2824,22 +2822,22 @@ func TestDeferConstraintCheckForInsert(t *testing.T) {
 		tk.MustExec("create temporary table tl (a int primary key, b int)")
 		tk.MustExec("begin")
 		tk.MustExec("insert into tl values (1, 1)")
-		_, err = tk.Exec(`insert into tl values (1, 3)`)
+		err = tk.ExecToErr(`insert into tl values (1, 3)`)
 		require.Error(t, err)
 		tk.MustExec("insert into tl values (2, 2)")
-		_, err = tk.Exec("update tl set a = a + 1 where a = 1")
+		err = tk.ExecToErr("update tl set a = a + 1 where a = 1")
 		require.Error(t, err)
-		_, err = tk.Exec("insert into tl values (1, 3) on duplicated key update a = a + 1")
+		err = tk.ExecToErr("insert into tl values (1, 3) on duplicated key update a = a + 1")
 		require.Error(t, err)
 		tk.MustExec("commit")
 
 		tk.MustExec("begin")
 		tk.MustQuery("select * from tl").Check(testkit.Rows("1 1", "2 2"))
-		_, err = tk.Exec(`insert into tl values (1, 3)`)
+		err = tk.ExecToErr(`insert into tl values (1, 3)`)
 		require.Error(t, err)
-		_, err = tk.Exec("update tl set a = a + 1 where a = 1")
+		err = tk.ExecToErr("update tl set a = a + 1 where a = 1")
 		require.Error(t, err)
-		_, err = tk.Exec("insert into tl values (1, 3) on duplicated key update a = a + 1")
+		err = tk.ExecToErr("insert into tl values (1, 3) on duplicated key update a = a + 1")
 		require.Error(t, err)
 		tk.MustExec("rollback")
 
@@ -2847,30 +2845,29 @@ func TestDeferConstraintCheckForInsert(t *testing.T) {
 		tk.MustExec("create temporary table tl (a int, b int unique)")
 		tk.MustExec("begin")
 		tk.MustExec("insert into tl values (1, 1)")
-		_, err = tk.Exec(`insert into tl values (3, 1)`)
+		err = tk.ExecToErr(`insert into tl values (3, 1)`)
 		require.Error(t, err)
 		tk.MustExec("insert into tl values (2, 2)")
-		_, err = tk.Exec("update tl set b = b + 1 where a = 1")
+		err = tk.ExecToErr("update tl set b = b + 1 where a = 1")
 		require.Error(t, err)
-		_, err = tk.Exec("insert into tl values (3, 1) on duplicated key update b = b + 1")
+		err = tk.ExecToErr("insert into tl values (3, 1) on duplicated key update b = b + 1")
 		require.Error(t, err)
 		tk.MustExec("commit")
 
 		tk.MustExec("begin")
 		tk.MustQuery("select * from tl").Check(testkit.Rows("1 1", "2 2"))
-		_, err = tk.Exec(`insert into tl values (3, 1)`)
+		err = tk.ExecToErr(`insert into tl values (3, 1)`)
 		require.Error(t, err)
-		_, err = tk.Exec("update tl set b = b + 1 where a = 1")
+		err = tk.ExecToErr("update tl set b = b + 1 where a = 1")
 		require.Error(t, err)
-		_, err = tk.Exec("insert into tl values (3, 1) on duplicated key update b = b + 1")
+		err = tk.ExecToErr("insert into tl values (3, 1) on duplicated key update b = b + 1")
 		require.Error(t, err)
 		tk.MustExec("rollback")
 	}
 }
 
 func TestPessimisticDeleteYourWrites(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	session1 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test")
@@ -2898,8 +2895,7 @@ func TestPessimisticDeleteYourWrites(t *testing.T) {
 }
 
 func TestDefEnumInsert(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
@@ -2908,20 +2904,18 @@ func TestDefEnumInsert(t *testing.T) {
 }
 
 func TestIssue11059(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (pk int primary key, uk int unique, v int)")
 	tk.MustExec("insert into t values (2, 11, 215)")
 	tk.MustExec("insert into t values (3, 7, 2111)")
-	_, err := tk.Exec("update t set pk = 2 where uk = 7")
+	err := tk.ExecToErr("update t set pk = 2 where uk = 7")
 	require.Error(t, err)
 }
 
 func TestSetWithRefGenCol(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (i int, j int as (i+1) not null);`)
@@ -2952,7 +2946,7 @@ func TestSetWithRefGenCol(t *testing.T) {
 	tk.MustExec(`create table t2 (j int(11) GENERATED ALWAYS AS (i + 1) stored not null, i int(11) DEFAULT '5');`)
 	tk.MustExec(`insert into t2 set i = j + 9`)
 	tk.MustQuery("select * from t2").Check(testkit.Rows("10 9"))
-	_, err := tk.Exec(`insert into t2 set j = i + 1`)
+	err := tk.ExecToErr(`insert into t2 set j = i + 1`)
 	require.Error(t, err)
 	tk.MustExec(`insert into t2 set i = j + 100`)
 	tk.MustQuery("select * from t2").Check(testkit.Rows("10 9", "101 100"))
@@ -2960,13 +2954,12 @@ func TestSetWithRefGenCol(t *testing.T) {
 	tk.MustExec(`create table t3(j int(11) GENERATED ALWAYS AS (i + 1) stored, i int(11) DEFAULT '5');`)
 	tk.MustExec(`insert into t3 set i = j + 100`)
 	tk.MustQuery("select * from t3").Check(testkit.Rows("<nil> <nil>"))
-	_, err = tk.Exec(`insert into t3 set j = i + 1`)
+	err = tk.ExecToErr(`insert into t3 set j = i + 1`)
 	require.Error(t, err)
 }
 
 func TestSetWithCurrentTimestampAndNow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists tbl;`)
@@ -2979,8 +2972,7 @@ func TestSetWithCurrentTimestampAndNow(t *testing.T) {
 }
 
 func TestApplyWithPointAndBatchPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
@@ -3022,8 +3014,7 @@ from t order by c_str;`).Check(testkit.Rows("10"))
 }
 
 func TestWriteListPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3053,10 +3044,8 @@ func TestWriteListPartitionTable(t *testing.T) {
 
 	// Test insert error
 	tk.MustExec("insert into t values  (1, 'a')")
-	_, err := tk.Exec("insert into t values (1, 'd')")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 'idx'")
-	_, err = tk.Exec("insert into t values (100, 'd')")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value 100")
+	tk.MustGetErrMsg("insert into t values (1, 'd')", "[kv:1062]Duplicate entry '1' for key 'idx'")
+	tk.MustGetErrMsg("insert into t values (100, 'd')", "[table:1526]Table has no partition for value 100")
 	tk.MustExec("admin check table t;")
 
 	// Test select partition
@@ -3072,8 +3061,7 @@ func TestWriteListPartitionTable(t *testing.T) {
 }
 
 func TestWriteListColumnsPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3103,9 +3091,9 @@ func TestWriteListColumnsPartitionTable(t *testing.T) {
 
 	// Test insert error
 	tk.MustExec("insert into t values  (1, 'a')")
-	_, err := tk.Exec("insert into t values (1, 'd')")
+	err := tk.ExecToErr("insert into t values (1, 'd')")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 'idx'")
-	_, err = tk.Exec("insert into t values (100, 'd')")
+	err = tk.ExecToErr("insert into t values (100, 'd')")
 	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
 	tk.MustExec("admin check table t;")
 
@@ -3123,8 +3111,7 @@ func TestWriteListColumnsPartitionTable(t *testing.T) {
 
 // TestWriteListPartitionTable1 test for write list partition when the partition expression is simple.
 func TestWriteListPartitionTable1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3138,7 +3125,7 @@ func TestWriteListPartitionTable1(t *testing.T) {
 
 	// Test add unique index failed.
 	tk.MustExec("insert into t values  (1, 'a'),(1,'b')")
-	_, err := tk.Exec("alter table t add unique index idx (id)")
+	err := tk.ExecToErr("alter table t add unique index idx (id)")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 'idx'")
 	// Test add unique index success.
 	tk.MustExec("delete from t where name='b'")
@@ -3163,7 +3150,7 @@ func TestWriteListPartitionTable1(t *testing.T) {
 	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
 	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows())
 	// Test insert on duplicate error
-	_, err = tk.Exec("insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1")
+	err = tk.ExecToErr("insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '4' for key 'idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g"))
 	// Test insert ignore with duplicate
@@ -3178,7 +3165,7 @@ func TestWriteListPartitionTable1(t *testing.T) {
 	tk.MustQuery("select * from t partition(p0,p1,p2) order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g", "17 a"))
 	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows("<nil> y", "15 a"))
 	// Test insert meet no partition error.
-	_, err = tk.Exec("insert into t values (100, 'd')")
+	err = tk.ExecToErr("insert into t values (100, 'd')")
 	require.EqualError(t, err, "[table:1526]Table has no partition for value 100")
 
 	// --------------------------Test update---------------------------
@@ -3192,7 +3179,7 @@ func TestWriteListPartitionTable1(t *testing.T) {
 	tk.MustExec("update t set name='y' where id < 3")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 	// Test update meet duplicate error.
-	_, err = tk.Exec("update t set id=2 where id = 1")
+	err = tk.ExecToErr("update t set id=2 where id = 1")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '2' for key 'idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 
@@ -3204,11 +3191,11 @@ func TestWriteListPartitionTable1(t *testing.T) {
 	tk.MustExec("update t set id=id*10 where id in (1,2)")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet duplicate error.
-	_, err = tk.Exec("update t set id=id+17 where id in (3,10)")
+	err = tk.ExecToErr("update t set id=id+17 where id in (3,10)")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '20' for key 'idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet no partition error.
-	_, err = tk.Exec("update t set id=id*2 where id in (3,20)")
+	err = tk.ExecToErr("update t set id=id*2 where id in (3,20)")
 	require.EqualError(t, err, "[table:1526]Table has no partition for value 40")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 
@@ -3227,7 +3214,7 @@ func TestWriteListPartitionTable1(t *testing.T) {
 	tk.MustExec("replace into t values  (1, 'x'),(7,'x')")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "2 b", "3 c", "4 d", "7 x"))
 	// Test replace meet no partition error.
-	_, err = tk.Exec("replace into t values  (10,'x'),(50,'x')")
+	err = tk.ExecToErr("replace into t values  (10,'x'),(50,'x')")
 	require.EqualError(t, err, "[table:1526]Table has no partition for value 50")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "2 b", "3 c", "4 d", "7 x"))
 
@@ -3250,8 +3237,7 @@ func TestWriteListPartitionTable1(t *testing.T) {
 
 // TestWriteListPartitionTable2 test for write list partition when the partition expression is complicated and contain generated column.
 func TestWriteListPartitionTable2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3266,7 +3252,7 @@ func TestWriteListPartitionTable2(t *testing.T) {
 
 	// Test add unique index failed.
 	tk.MustExec("insert into t (id,name) values  (1, 'a'),(1,'b')")
-	_, err := tk.Exec("alter table t add unique index idx (id,b)")
+	err := tk.ExecToErr("alter table t add unique index idx (id,b)")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-2' for key 'idx'")
 	// Test add unique index success.
 	tk.MustExec("delete from t where name='b'")
@@ -3291,7 +3277,7 @@ func TestWriteListPartitionTable2(t *testing.T) {
 	tk.MustQuery("select id,name from t partition(p2) order by id").Check(testkit.Rows("4 e"))
 	tk.MustQuery("select id,name from t partition(p3) order by id").Check(testkit.Rows())
 	// Test insert on duplicate error
-	_, err = tk.Exec("insert into t (id,name) values (3, 'a'), (11,'x') on duplicate key update id=id+1")
+	err = tk.ExecToErr("insert into t (id,name) values (3, 'a'), (11,'x') on duplicate key update id=id+1")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '4-2' for key 'idx'")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g"))
 	// Test insert ignore with duplicate
@@ -3306,7 +3292,7 @@ func TestWriteListPartitionTable2(t *testing.T) {
 	tk.MustQuery("select id,name from t partition(p0,p1,p2) order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g", "17 a"))
 	tk.MustQuery("select id,name from t partition(p3) order by id").Check(testkit.Rows("<nil> y", "15 a"))
 	// Test insert meet no partition error.
-	_, err = tk.Exec("insert into t (id,name) values (100, 'd')")
+	err = tk.ExecToErr("insert into t (id,name) values (100, 'd')")
 	require.EqualError(t, err, "[table:1526]Table has no partition for value 100")
 
 	// --------------------------Test update---------------------------
@@ -3320,8 +3306,7 @@ func TestWriteListPartitionTable2(t *testing.T) {
 	tk.MustExec("update t set name='y' where id < 3")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 	// Test update meet duplicate error.
-	_, err = tk.Exec("update t set id=2 where id = 1")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '2-2' for key 'idx'")
+	tk.MustGetErrMsg("update t set id=2 where id = 1", "[kv:1062]Duplicate entry '2-2' for key 'idx'")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 
 	// Test update multi-partitions
@@ -3332,12 +3317,10 @@ func TestWriteListPartitionTable2(t *testing.T) {
 	tk.MustExec("update t set id=id*10 where id in (1,2)")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet duplicate error.
-	_, err = tk.Exec("update t set id=id+17 where id in (3,10)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '20-2' for key 'idx'")
+	tk.MustGetErrMsg("update t set id=id+17 where id in (3,10)", "[kv:1062]Duplicate entry '20-2' for key 'idx'")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet no partition error.
-	_, err = tk.Exec("update t set id=id*2 where id in (3,20)")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value 40")
+	tk.MustGetErrMsg("update t set id=id*2 where id in (3,20)", "[table:1526]Table has no partition for value 40")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 
 	// --------------------------Test replace---------------------------
@@ -3355,8 +3338,7 @@ func TestWriteListPartitionTable2(t *testing.T) {
 	tk.MustExec("replace into t (id,name) values  (1, 'x'),(7,'x')")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("1 x", "2 b", "3 c", "4 d", "7 x"))
 	// Test replace meet no partition error.
-	_, err = tk.Exec("replace into t (id,name) values  (10,'x'),(50,'x')")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value 50")
+	tk.MustGetErrMsg("replace into t (id,name) values  (10,'x'),(50,'x')", "[table:1526]Table has no partition for value 50")
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("1 x", "2 b", "3 c", "4 d", "7 x"))
 
 	// --------------------------Test delete---------------------------
@@ -3377,8 +3359,7 @@ func TestWriteListPartitionTable2(t *testing.T) {
 }
 
 func TestWriteListColumnsPartitionTable1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3393,8 +3374,7 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 
 	// Test add unique index failed.
 	tk.MustExec("insert into t values  (1, 'a'),(1,'b')")
-	_, err := tk.Exec("alter table t add unique index idx (id)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 'idx'")
+	tk.MustGetErrMsg("alter table t add unique index idx (id)", "[kv:1062]Duplicate entry '1' for key 'idx'")
 	// Test add unique index success.
 	tk.MustExec("delete from t where name='b'")
 	tk.MustExec("alter table t add unique index idx (id)")
@@ -3418,8 +3398,7 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
 	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows())
 	// Test insert on duplicate error
-	_, err = tk.Exec("insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '4' for key 'idx'")
+	tk.MustGetErrMsg("insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1", "[kv:1062]Duplicate entry '4' for key 'idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g"))
 	// Test insert ignore with duplicate
 	tk.MustExec("insert ignore into t values  (1, 'b'), (5,'a'),(null,'y')")
@@ -3433,8 +3412,7 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 	tk.MustQuery("select * from t partition(p0,p1,p2) order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g", "17 a"))
 	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows("<nil> y", "15 a"))
 	// Test insert meet no partition error.
-	_, err = tk.Exec("insert into t values (100, 'd')")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("insert into t values (100, 'd')", "[table:1526]Table has no partition for value from column_list")
 
 	// --------------------------Test update---------------------------
 	// Test update 1 partition.
@@ -3447,8 +3425,7 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 	tk.MustExec("update t set name='y' where id < 3")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 	// Test update meet duplicate error.
-	_, err = tk.Exec("update t set id=2 where id = 1")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '2' for key 'idx'")
+	tk.MustGetErrMsg("update t set id=2 where id = 1", "[kv:1062]Duplicate entry '2' for key 'idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
 
 	// Test update multi-partitions
@@ -3459,12 +3436,10 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 	tk.MustExec("update t set id=id*10 where id in (1,2)")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet duplicate error.
-	_, err = tk.Exec("update t set id=id+17 where id in (3,10)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '20' for key 'idx'")
+	tk.MustGetErrMsg("update t set id=id+17 where id in (3,10)", "[kv:1062]Duplicate entry '20' for key 'idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 	// Test update meet no partition error.
-	_, err = tk.Exec("update t set id=id*2 where id in (3,20)")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("update t set id=id*2 where id in (3,20)", "[table:1526]Table has no partition for value from column_list")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
 
 	// --------------------------Test replace---------------------------
@@ -3482,8 +3457,7 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 	tk.MustExec("replace into t values  (1, 'x'),(7,'x')")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "2 b", "3 c", "4 d", "7 x"))
 	// Test replace meet no partition error.
-	_, err = tk.Exec("replace into t values  (10,'x'),(100,'x')")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("replace into t values  (10,'x'),(100,'x')", "[table:1526]Table has no partition for value from column_list")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "2 b", "3 c", "4 d", "7 x"))
 
 	// --------------------------Test delete---------------------------
@@ -3505,8 +3479,7 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 
 // TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
 func TestWriteListColumnsPartitionTable2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3520,7 +3493,7 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 
 	// Test add unique index failed.
 	tk.MustExec("insert into t values  ('w', 1, 1),('w', 1, 2)")
-	_, err := tk.Exec("alter table t add unique index idx (location,id)")
+	err := tk.ExecToErr("alter table t add unique index idx (location,id)")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'w-1' for key 'idx'")
 	// Test add unique index success.
 	tk.MustExec("delete from t where a=2")
@@ -3547,8 +3520,7 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	tk.MustQuery("select * from t partition(p_west) order by id").Check(testkit.Rows())
 	// Test insert on duplicate error
 	tk.MustExec("insert into t values  ('w', 2, 2), ('w', 1, 1)")
-	_, err = tk.Exec("insert into t values  ('w', 2, 3) on duplicate key update id=1")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry 'w-1' for key 'idx'")
+	tk.MustGetErrMsg("insert into t values  ('w', 2, 3) on duplicate key update id=1", "[kv:1062]Duplicate entry 'w-1' for key 'idx'")
 	tk.MustQuery("select * from t partition(p_west) order by id").Check(testkit.Rows("w 1 1", "w 2 2"))
 	// Test insert ignore with duplicate
 	tk.MustExec("insert ignore into t values  ('w', 2, 2), ('w', 3, 3), ('n', 10, 10)")
@@ -3560,14 +3532,10 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	tk.MustQuery("select * from t partition(p_west) order by id").Check(testkit.Rows("w 1 1", "w 2 2", "w 3 3", "w 4 4"))
 	tk.MustQuery("select * from t partition(p_south) order by id").Check(testkit.Rows("s 13 2", "s 14 14"))
 	// Test insert meet no partition error.
-	_, err = tk.Exec("insert into t values  ('w', 5, 5)")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
-	_, err = tk.Exec("insert into t values  ('s', 5, 5)")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
-	_, err = tk.Exec("insert into t values  ('s', 100, 5)")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
-	_, err = tk.Exec("insert into t values  ('x', 1, 5)")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("insert into t values  ('w', 5, 5)", "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("insert into t values  ('s', 5, 5)", "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("insert into t values  ('s', 100, 5)", "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("insert into t values  ('x', 1, 5)", "[table:1526]Table has no partition for value from column_list")
 
 	// --------------------------Test update---------------------------
 	// Test update 1 partition.
@@ -3584,7 +3552,7 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	tk.MustExec("update t set a=a+id where id>1")
 	tk.MustQuery("select * from t partition(p_west) order by id,a").Check(testkit.Rows("w 1 5", "w 2 5", "w 3 6"))
 	// Test update meet duplicate error.
-	_, err = tk.Exec("update t set id=id+1 where location='w' and id<2")
+	err = tk.ExecToErr("update t set id=id+1 where location='w' and id<2")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'w-2' for key 'idx'")
 	tk.MustQuery("select * from t partition(p_west) order by id,a").Check(testkit.Rows("w 1 5", "w 2 5", "w 3 6"))
 
@@ -3602,11 +3570,11 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	tk.MustExec("update t set a=a+1 where location='n' and id=11")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("w 1 4", "w 2 4", "e 8 9", "n 11 15"))
 	// Test update meet duplicate error.
-	_, err = tk.Exec("update t set id=id+1 where location='w' and id in (1,2)")
+	err = tk.ExecToErr("update t set id=id+1 where location='w' and id in (1,2)")
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'w-2' for key 'idx'")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("w 1 4", "w 2 4", "e 8 9", "n 11 15"))
 	// Test update meet no partition error.
-	_, err = tk.Exec("update t set id=id+3 where location='w' and id in (1,2)")
+	err = tk.ExecToErr("update t set id=id+3 where location='w' and id in (1,2)")
 	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("w 1 4", "w 2 4", "e 8 9", "n 11 15"))
 	// Test update that move from partition 1 to partition 2.
@@ -3627,14 +3595,10 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	tk.MustExec("replace into t values  ('w', 1, 2),('n', 10, 10)")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("w 1 2", "e 5 5", "n 9 9", "n 10 10"))
 	// Test replace meet no partition error.
-	_, err = tk.Exec("replace into t values  ('w', 5, 5)")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
-	_, err = tk.Exec("replace into t values  ('s', 5, 5)")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
-	_, err = tk.Exec("replace into t values  ('s', 100, 5)")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
-	_, err = tk.Exec("replace into t values  ('x', 1, 5)")
-	require.EqualError(t, err, "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("replace into t values  ('w', 5, 5)", "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("replace into t values  ('s', 5, 5)", "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("replace into t values  ('s', 100, 5)", "[table:1526]Table has no partition for value from column_list")
+	tk.MustGetErrMsg("replace into t values  ('x', 1, 5)", "[table:1526]Table has no partition for value from column_list")
 
 	// --------------------------Test delete---------------------------
 	// Test delete 1 partition.
@@ -3656,20 +3620,18 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 
 // TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
 func TestWriteListPartitionTableIssue21437(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (a int) partition by list (a%10) (partition p0 values in (0,1));`)
-	_, err := tk.Exec("replace into t values  (null)")
+	err := tk.ExecToErr("replace into t values  (null)")
 	require.EqualError(t, err, "[table:1526]Table has no partition for value NULL")
 }
 
 func TestListPartitionWithAutoRandom(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3693,8 +3655,7 @@ func TestListPartitionWithAutoRandom(t *testing.T) {
 }
 
 func TestListPartitionWithAutoIncrement(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3718,8 +3679,7 @@ func TestListPartitionWithAutoIncrement(t *testing.T) {
 }
 
 func TestListPartitionWithGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3756,17 +3716,16 @@ func TestListPartitionWithGeneratedColumn(t *testing.T) {
 		tk.MustQuery("select count(1) from t").Check(testkit.Rows("4"))
 
 		// Test for insert meet no partition error
-		_, err := tk.Exec("insert into t (a) values (11)")
+		err := tk.ExecToErr("insert into t (a) values (11)")
 		require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
 		// Test for update meet no partition error
-		_, err = tk.Exec("update t set a=a+10 where a = 2")
+		err = tk.ExecToErr("update t set a=a+10 where a = 2")
 		require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
 	}
 }
 
 func TestListPartitionWithGeneratedColumn1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3799,10 +3758,10 @@ func TestListPartitionWithGeneratedColumn1(t *testing.T) {
 		tk.MustQuery("select count(1) from t").Check(testkit.Rows("4"))
 
 		// Test for insert meet no partition error
-		_, err := tk.Exec("insert into t (a) values (11)")
+		err := tk.ExecToErr("insert into t (a) values (11)")
 		require.EqualError(t, err, "[table:1526]Table has no partition for value 2011")
 		// Test for update meet no partition error
-		_, err = tk.Exec("update t set a=a+10 where a = 2")
+		err = tk.ExecToErr("update t set a=a+10 where a = 2")
 		require.EqualError(t, err, "[table:1526]Table has no partition for value 2012")
 		tk.MustExec("delete from t")
 
@@ -3825,17 +3784,14 @@ func TestListPartitionWithGeneratedColumn1(t *testing.T) {
 		tk.MustQuery("select count(1) from t").Check(testkit.Rows("4"))
 
 		// Test for insert meet no partition error
-		_, err = tk.Exec("insert into t (a) values (2011)")
-		require.EqualError(t, err, "[table:1526]Table has no partition for value 2011")
+		tk.MustGetErrMsg("insert into t (a) values (2011)", "[table:1526]Table has no partition for value 2011")
 		// Test for update meet no partition error
-		_, err = tk.Exec("update t set a=a+10 where a = 2002")
-		require.EqualError(t, err, "[table:1526]Table has no partition for value 2012")
+		tk.MustGetErrMsg("update t set a=a+10 where a = 2002", "[table:1526]Table has no partition for value 2012")
 	}
 }
 
 func TestListPartitionWithGeneratedColumn2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3878,8 +3834,7 @@ func TestListPartitionWithGeneratedColumn2(t *testing.T) {
 }
 
 func TestListColumnsPartitionWithGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3904,13 +3859,12 @@ func TestListColumnsPartitionWithGeneratedColumn(t *testing.T) {
 }
 
 func TestIssue22496(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t12")
 	tk.MustExec("create table t12(d decimal(15,2));")
-	_, err := tk.Exec("insert into t12 values('1,9999.00')")
+	err := tk.ExecToErr("insert into t12 values('1,9999.00')")
 	require.Error(t, err)
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert into t12 values('1,999.00');")
@@ -3947,8 +3901,7 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 }
 
 func TestIssue21232(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -3977,8 +3930,7 @@ func testEqualDatumsAsBinary(t *testing.T, a []interface{}, b []interface{}, sam
 }
 
 func TestUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	fillData(tk, "update_test")
@@ -4020,7 +3972,7 @@ func TestUpdate(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("create table update_test(id int not null auto_increment, name varchar(255), index(id))")
 	tk.MustExec("insert into update_test(name) values ('aa')")
-	_, err := tk.Exec("update update_test set id = null where name = 'aa'")
+	err := tk.ExecToErr("update update_test set id = null where name = 'aa'")
 	require.EqualError(t, err, "[table:1048]Column 'id' cannot be null")
 
 	tk.MustExec("drop table update_test")
@@ -4037,7 +3989,7 @@ func TestUpdate(t *testing.T) {
 	tk.MustExec("create table update_unique (id int primary key, name int unique)")
 	tk.MustExec("insert update_unique values (1, 1), (2, 2);")
 	tk.MustExec("begin")
-	_, err = tk.Exec("update update_unique set name = 1 where id = 2")
+	err = tk.ExecToErr("update update_unique set name = 1 where id = 2")
 	require.Error(t, err)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from update_unique").Check(testkit.Rows("1 1", "2 2"))
@@ -4047,7 +3999,7 @@ func TestUpdate(t *testing.T) {
 	tk.MustExec("create table t(a bigint, primary key (a));")
 	tk.MustExec("insert into t values (1)")
 	tk.MustExec("insert into t values (2)")
-	_, err = tk.Exec("update ignore t set a = 1 where a = 2;")
+	err = tk.ExecToErr("update ignore t set a = 1 where a = 2;")
 	require.NoError(t, err)
 	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS;")
@@ -4055,7 +4007,7 @@ func TestUpdate(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
 	// test update ignore for truncate as warning
-	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
+	err = tk.ExecToErr("update ignore t set a = 1 where a = (select '2a')")
 	require.NoError(t, err)
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '2a'", "Warning 1292 Truncated incorrect DOUBLE value: '2a'", "Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
@@ -4068,7 +4020,7 @@ func TestUpdate(t *testing.T) {
 	tk.MustExec("create table t(a bigint, unique key I_uniq (a));")
 	tk.MustExec("insert into t values (1)")
 	tk.MustExec("insert into t values (2)")
-	_, err = tk.Exec("update ignore t set a = 1 where a = 2;")
+	err = tk.ExecToErr("update ignore t set a = 1 where a = 2;")
 	require.NoError(t, err)
 	require.Equal(t, tk.Session().LastMessage(), "Rows matched: 1  Changed: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS;")
@@ -4142,7 +4094,7 @@ func TestUpdate(t *testing.T) {
 
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`))")
-	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
+	err = tk.ExecToErr("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
 	require.NoError(t, err)
 
 	tk.MustGetErrCode("update (select * from t) t set c1 = 1111111", mysql.ErrNonUpdatableTable)
@@ -4160,7 +4112,7 @@ func TestUpdate(t *testing.T) {
 	// issue 7237, update subquery table should be forbidden
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (k int, v int)")
-	_, err = tk.Exec("update t, (select * from t) as b set b.k = t.k")
+	err = tk.ExecToErr("update t, (select * from t) as b set b.k = t.k")
 	require.EqualError(t, err, "[planner:1288]The target table b of the UPDATE is not updatable")
 	tk.MustExec("update t, (select * from t) as b set t.k = b.k")
 
@@ -4175,7 +4127,7 @@ func TestUpdate(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (c1 float(1,1));")
 	tk.MustExec("insert into t values (0.0);")
-	_, err = tk.Exec("update t set c1 = 2.0;")
+	err = tk.ExecToErr("update t set c1 = 2.0;")
 	require.True(t, types.ErrWarnDataOutOfRange.Equal(err))
 
 	tk.MustExec("drop table if exists t")
@@ -4190,7 +4142,7 @@ func TestUpdate(t *testing.T) {
 	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 
 	tk.MustExec("create view v as select * from t")
-	_, err = tk.Exec("update v set a = '2000-11-11'")
+	err = tk.ExecToErr("update v set a = '2000-11-11'")
 	require.EqualError(t, err, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
 
@@ -4248,8 +4200,7 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -4280,7 +4231,7 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 		//tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb"))
 		tk.MustQuery("select * from t where a = 'bbb' order by a").Check(testkit.Rows("bbb b"))
 		// Test insert meet duplicate error.
-		_, err := tk.Exec("insert into t (a) values  ('abc')")
+		err := tk.ExecToErr("insert into t (a) values  ('abc')")
 		require.Error(t, err)
 		// Test insert on duplicate update
 		tk.MustExec("insert into t (a) values ('abc') on duplicate key update a='bbc'")
@@ -4293,8 +4244,7 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestIssue20724(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -4306,8 +4256,7 @@ func TestIssue20724(t *testing.T) {
 }
 
 func TestIssue20840(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -4320,8 +4269,7 @@ func TestIssue20840(t *testing.T) {
 }
 
 func TestIssueInsertPrefixIndexForNonUTF8Collation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")

@@ -23,8 +23,7 @@ import (
 )
 
 func TestSimplifyExpressionByFlag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -37,7 +36,7 @@ func TestSimplifyExpressionByFlag(t *testing.T) {
 		Plan []string
 	}
 	flagSimplifyData := expression.GetFlagSimplifyData()
-	flagSimplifyData.GetTestCases(t, &input, &output)
+	flagSimplifyData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

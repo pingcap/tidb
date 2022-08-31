@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/promutil"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestDumpBlock(t *testing.T) {
@@ -113,16 +113,16 @@ func TestGetListTableTypeByConf(t *testing.T) {
 		consistency string
 		expected    listTableType
 	}{
-		{version.ParseServerInfo("5.7.25-TiDB-3.0.6"), consistencyTypeSnapshot, listTableByShowTableStatus},
+		{version.ParseServerInfo("5.7.25-TiDB-3.0.6"), ConsistencyTypeSnapshot, listTableByShowTableStatus},
 		// no bug version
-		{version.ParseServerInfo("8.0.2"), consistencyTypeLock, listTableByInfoSchema},
-		{version.ParseServerInfo("8.0.2"), consistencyTypeFlush, listTableByShowTableStatus},
-		{version.ParseServerInfo("8.0.23"), consistencyTypeNone, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.2"), ConsistencyTypeLock, listTableByInfoSchema},
+		{version.ParseServerInfo("8.0.2"), ConsistencyTypeFlush, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.23"), ConsistencyTypeNone, listTableByShowTableStatus},
 
 		// bug version
-		{version.ParseServerInfo("8.0.3"), consistencyTypeLock, listTableByInfoSchema},
-		{version.ParseServerInfo("8.0.3"), consistencyTypeFlush, listTableByShowFullTables},
-		{version.ParseServerInfo("8.0.3"), consistencyTypeNone, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.3"), ConsistencyTypeLock, listTableByInfoSchema},
+		{version.ParseServerInfo("8.0.3"), ConsistencyTypeFlush, listTableByShowFullTables},
+		{version.ParseServerInfo("8.0.3"), ConsistencyTypeNone, listTableByShowTableStatus},
 	}
 
 	for _, x := range cases {
@@ -178,6 +178,7 @@ func TestAdjustTableCollation(t *testing.T) {
 		"create table `test`.`t1` (id int, name varchar(20), work varchar(20)) CHARSET=utf8mb4",
 		"create table `test`.`t1` (id int, name varchar(20) COLLATE utf8mb4_general_ci, work varchar(20)) CHARSET=utf8mb4",
 		"create table `test`.`t1` (id int, name varchar(20) COLLATE utf8mb4_general_ci, work varchar(20) CHARACTER SET utf8mb4) CHARSET=utf8mb4",
+		"create table `test`.`t1` (name varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin) CHARSET=latin1 COLLATE=latin1_bin",
 	}
 
 	expectedSQLs := []string{
@@ -191,6 +192,7 @@ func TestAdjustTableCollation(t *testing.T) {
 		"CREATE TABLE `test`.`t1` (`id` INT,`name` VARCHAR(20),`work` VARCHAR(20)) DEFAULT CHARACTER SET = UTF8MB4 DEFAULT COLLATE = UTF8MB4_GENERAL_CI",
 		"CREATE TABLE `test`.`t1` (`id` INT,`name` VARCHAR(20) COLLATE utf8mb4_general_ci,`work` VARCHAR(20)) DEFAULT CHARACTER SET = UTF8MB4 DEFAULT COLLATE = UTF8MB4_GENERAL_CI",
 		"CREATE TABLE `test`.`t1` (`id` INT,`name` VARCHAR(20) COLLATE utf8mb4_general_ci,`work` VARCHAR(20) CHARACTER SET UTF8MB4 COLLATE utf8mb4_general_ci) DEFAULT CHARACTER SET = UTF8MB4 DEFAULT COLLATE = UTF8MB4_GENERAL_CI",
+		"CREATE TABLE `test`.`t1` (`name` VARCHAR(20) CHARACTER SET UTF8MB4 COLLATE utf8mb4_bin) DEFAULT CHARACTER SET = LATIN1 DEFAULT COLLATE = LATIN1_BIN",
 	}
 
 	charsetAndDefaultCollationMap := map[string]string{"utf8mb4": "utf8mb4_general_ci"}
@@ -206,5 +208,20 @@ func TestAdjustTableCollation(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, expectedSQLs[i], newSQL)
 	}
+}
 
+func TestUnregisterMetrics(t *testing.T) {
+	ctx := context.Background()
+	conf := &Config{
+		SQL:          "not empty",
+		Where:        "not empty",
+		PromFactory:  promutil.NewDefaultFactory(),
+		PromRegistry: promutil.NewDefaultRegistry(),
+	}
+
+	_, err := NewDumper(ctx, conf)
+	require.Error(t, err)
+	_, err = NewDumper(ctx, conf)
+	// should not panic
+	require.Error(t, err)
 }

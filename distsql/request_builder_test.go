@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -270,10 +271,11 @@ func TestRequestBuilder1(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     false,
-		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -352,10 +354,11 @@ func TestRequestBuilder2(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     false,
-		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -400,10 +403,11 @@ func TestRequestBuilder3(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     false,
-		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -432,7 +436,6 @@ func TestRequestBuilder4(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetStreaming(true).
 		SetFromSessionVars(variable.NewSessionVars()).
 		Build()
 	require.NoError(t, err)
@@ -447,11 +450,12 @@ func TestRequestBuilder4(t *testing.T) {
 		Concurrency:      variable.DefDistSQLScanConcurrency,
 		IsolationLevel:   0,
 		Priority:         0,
-		Streaming:        true,
 		NotFillCache:     false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -477,7 +481,7 @@ func TestRequestBuilder5(t *testing.T) {
 	}
 
 	actual, err := (&RequestBuilder{}).SetKeyRanges(keyRanges).
-		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
+		SetAnalyzeRequest(&tipb.AnalyzeReq{}, kv.RC).
 		SetKeepOrder(true).
 		SetConcurrency(15).
 		Build()
@@ -493,7 +497,6 @@ func TestRequestBuilder5(t *testing.T) {
 		IsolationLevel:   kv.RC,
 		Priority:         1,
 		NotFillCache:     true,
-		Streaming:        false,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
@@ -523,7 +526,6 @@ func TestRequestBuilder6(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     true,
-		Streaming:        false,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
@@ -559,10 +561,11 @@ func TestRequestBuilder7(t *testing.T) {
 				IsolationLevel:   0,
 				Priority:         0,
 				NotFillCache:     false,
-				Streaming:        false,
 				ReplicaRead:      replicaRead.replicaReadType,
 				ReadReplicaScope: kv.GlobalReplicaScope,
 			}
+			expect.Paging.MinPagingSize = paging.MinPagingSize
+			expect.Paging.MaxPagingSize = paging.MaxPagingSize
 			actual.ResourceGroupTagger = nil
 			require.Equal(t, expect, actual)
 		})
@@ -586,6 +589,8 @@ func TestRequestBuilder8(t *testing.T) {
 		SchemaVar:        0,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }

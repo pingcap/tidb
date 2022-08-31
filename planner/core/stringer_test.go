@@ -26,8 +26,7 @@ import (
 )
 
 func TestPlanStringer(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -71,6 +70,46 @@ func TestPlanStringer(t *testing.T) {
 		{
 			sql:  "show tables in test like '%T%'",
 			plan: "Show(table_pattern:[%t%])",
+		},
+		{
+			sql:  "show databases like 't'",
+			plan: "Show(database:[t])",
+		},
+		{
+			sql:  "show databases like 'T'",
+			plan: "Show(database:[t])",
+		},
+		{
+			sql:  "show databases like 't%'",
+			plan: "Show(database_pattern:[t%])",
+		},
+		{
+			sql:  "show databases like '%T%'",
+			plan: "Show(database_pattern:[%t%])",
+		},
+		{
+			sql:  "show table status in test like 'T%'",
+			plan: "Show(table_pattern:[t%])",
+		},
+		{
+			sql:  "show table status in test like '%T%'",
+			plan: "Show(table_pattern:[%t%])",
+		},
+		{
+			sql:  "show collation like 't'",
+			plan: "Show(collation:[t])",
+		},
+		{
+			sql:  "show collation like 'T'",
+			plan: "Show(collation:[t])",
+		},
+		{
+			sql:  "show collation like 't%'",
+			plan: "Show(collation_pattern:[t%])",
+		},
+		{
+			sql:  "show collation like '%T%'",
+			plan: "Show(collation_pattern:[%t%])",
 		},
 	}
 	parser := parser.New()

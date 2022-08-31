@@ -16,7 +16,6 @@ package variable
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"golang.org/x/exp/slices"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
@@ -59,12 +59,12 @@ func GetDDLReorgBatchSize() int32 {
 
 // SetDDLErrorCountLimit sets ddlErrorCountlimit size.
 func SetDDLErrorCountLimit(cnt int64) {
-	atomic.StoreInt64(&ddlErrorCountlimit, cnt)
+	atomic.StoreInt64(&ddlErrorCountLimit, cnt)
 }
 
 // GetDDLErrorCountLimit gets ddlErrorCountlimit size.
 func GetDDLErrorCountLimit() int64 {
-	return atomic.LoadInt64(&ddlErrorCountlimit)
+	return atomic.LoadInt64(&ddlErrorCountLimit)
 }
 
 // SetDDLReorgRowFormat sets ddlReorgRowFormat version.
@@ -159,74 +159,6 @@ func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValu
 		vars.StmtCtx.AppendWarning(returnErr)
 	}
 	return normalizedValue, nil
-}
-
-// GetSessionOrGlobalSystemVar gets a system variable.
-// If it is a session only variable, use the default value defined in code.
-// Returns error if there is no such variable.
-func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	if sv.HasNoneScope() {
-		return sv.Value, nil
-	}
-	if sv.HasSessionScope() {
-		// Populate the value to s.systems if it is not there already.
-		// in future should be already loaded on session init
-		if sv.GetSession != nil {
-			// shortcut to the getter, we won't use the value
-			return sv.GetSessionFromHook(s)
-		}
-		if _, ok := s.systems[sv.Name]; !ok {
-			if sv.HasGlobalScope() {
-				if val, err := s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name); err == nil {
-					s.systems[sv.Name] = val
-				}
-			} else {
-				s.systems[sv.Name] = sv.Value // no global scope, use default
-			}
-		}
-		return sv.GetSessionFromHook(s)
-	}
-	return sv.GetGlobalFromHook(s)
-}
-
-// GetGlobalSystemVar gets a global system variable.
-func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	return sv.GetGlobalFromHook(s)
-}
-
-// SetSessionSystemVar sets system variable and updates SessionVars states.
-func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	sVal, err := sysVar.Validate(vars, value, ScopeSession)
-	if err != nil {
-		return err
-	}
-	return vars.SetSystemVar(name, sVal)
-}
-
-// SetStmtVar sets system variable and updates SessionVars states.
-func SetStmtVar(vars *SessionVars, name string, value string) error {
-	name = strings.ToLower(name)
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	sVal, err := sysVar.Validate(vars, value, ScopeSession)
-	if err != nil {
-		return err
-	}
-	return vars.SetStmtVar(name, sVal)
 }
 
 // Deprecated: Read the value from the mysql.tidb table.
@@ -407,7 +339,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
 	// The time zone's value should in [-12:59,+14:00].
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
-		d, err := types.ParseDuration(nil, s[1:], 0)
+		d, _, err := types.ParseDuration(nil, s[1:], 0)
 		if err == nil {
 			if s[0] == '-' {
 				if d.Duration > 12*time.Hour+59*time.Minute {
@@ -494,12 +426,22 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	return nil
 }
 
+// switchDDL turns on/off DDL in an instance.
+func switchDDL(on bool) error {
+	if on && EnableDDL != nil {
+		return EnableDDL()
+	} else if !on && DisableDDL != nil {
+		return DisableDDL()
+	}
+	return nil
+}
+
 func collectAllowFuncName4ExpressionIndex() string {
 	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {
 		str = append(str, funcName)
 	}
-	sort.Strings(str)
+	slices.Sort(str)
 	return strings.Join(str, ", ")
 }
 
@@ -511,37 +453,4 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Reverse:    {},
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
-}
-
-func checkGCTxnMaxWaitTime(vars *SessionVars,
-	normalizedValue string,
-	originalValue string,
-	scope ScopeFlag) (string, error) {
-	ival, err := strconv.Atoi(normalizedValue)
-	if err != nil {
-		return originalValue, errors.Trace(err)
-	}
-	GcLifeTimeStr, _ := getTiDBTableValue(vars, "tikv_gc_life_time", "10m0s")
-	GcLifeTimeDuration, err := time.ParseDuration(GcLifeTimeStr)
-	if err != nil {
-		return originalValue, errors.Trace(err)
-	}
-	if GcLifeTimeDuration.Seconds() > (float64)(ival) {
-		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCMaxWaitTime, normalizedValue))
-	}
-	return normalizedValue, nil
-}
-
-func checkTiKVGCLifeTime(vars *SessionVars,
-	normalizedValue string,
-	originalValue string,
-	scope ScopeFlag) (string, error) {
-	gcLifetimeDuration, err := time.ParseDuration(normalizedValue)
-	if err != nil {
-		return originalValue, errors.Trace(err)
-	}
-	if gcLifetimeDuration.Seconds() > float64(GCMaxWaitTime.Load()) {
-		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCLifetime, normalizedValue))
-	}
-	return normalizedValue, nil
 }

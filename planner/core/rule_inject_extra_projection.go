@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -32,6 +33,12 @@ import (
 // 2. TiDB can be used as a coprocessor, when a plan tree been pushed down to
 // TiDB, we need to inject extra projections for the plan tree as well.
 func InjectExtraProjection(plan PhysicalPlan) PhysicalPlan {
+	failpoint.Inject("DisableProjectionPostOptimization", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(plan)
+		}
+	})
+
 	return NewProjInjector().inject(plan)
 }
 

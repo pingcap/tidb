@@ -29,8 +29,7 @@ import (
 )
 
 func TestHashPartitionPruner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
@@ -53,7 +52,7 @@ func TestHashPartitionPruner(t *testing.T) {
 		Result []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -64,8 +63,7 @@ func TestHashPartitionPruner(t *testing.T) {
 }
 
 func TestRangeColumnPartitionPruningForIn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_range_col_in")
 	tk.MustExec("create database test_range_col_in")
@@ -144,8 +142,7 @@ func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 }
 
 func TestRangeColumnPartitionPruningForInString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_range_col_in_string")
 	tk.MustExec("create database test_range_col_in_string")
@@ -169,7 +166,11 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 				partitions = append(partitions, strings.Split(parts, ",")...)
 			}
 		}
-		return strings.Join(partitions, ",")
+		out := strings.Join(partitions, ",")
+		if out == "pNull,pAAAA,pCCC,pShrimpsandwich,paaa,pSushi,pMax" {
+			out = "all"
+		}
+		return out
 	}
 	checkColumnStringPruningTests := func(tests []testStruct) {
 		modes := []string{"dynamic", "static"}
@@ -177,7 +178,7 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 			tk.MustExec(`set @@tidb_partition_prune_mode = '` + mode + `'`)
 			for _, test := range tests {
 				explainResult := tk.MustQuery("explain format = 'brief' " + test.sql)
-				partitions := strings.ToLower(extractPartitions(explainResult))
+				partitions := extractPartitions(explainResult)
 				require.Equal(t, test.partitions, partitions, "Mode: %s sql: %s", mode, test.sql)
 				tk.MustQuery(test.sql).Sort().Check(testkit.Rows(test.rows...))
 			}
@@ -193,20 +194,21 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 		`partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest"),("AA"),("aa"),("AAA"),("aaa")`)
 	tests := []testStruct{
-		// Lower case partition names due to issue#32719
-		{sql: `select * from t where a IS NULL`, partitions: "pnull", rows: []string{"<nil>"}},
-		{sql: `select * from t where a = 'AA'`, partitions: "paaaa", rows: []string{"AA"}},
-		{sql: `select * from t where a = 'AA' collate utf8mb4_general_ci`, partitions: "paaaa", rows: []string{"AA"}}, // Notice that the it not uses _bin collation for partition => 'aa' not found! #32749
+		{sql: `select * from t where a IS NULL`, partitions: "pNull", rows: []string{"<nil>"}},
+		{sql: `select * from t where a = 'AA'`, partitions: "pAAAA", rows: []string{"AA"}},
+		{sql: `select * from t where a = 'AA' collate utf8mb4_general_ci`, partitions: "all", rows: []string{"AA", "aa"}},
 		{sql: `select * from t where a = 'aa'`, partitions: "paaa", rows: []string{"aa"}},
-		{sql: `select * from t where a = 'aa' collate utf8mb4_general_ci`, partitions: "paaaa", rows: []string{"AA"}}, // Notice that the it not uses _bin collation for partition => 'aa' not found! #32749
-		{sql: `select * from t where a = 'AAA'`, partitions: "paaaa", rows: []string{"AAA"}},
-		{sql: `select * from t where a = 'AB'`, partitions: "pccc", rows: []string{}},
+		{sql: `select * from t where a = 'aa' collate utf8mb4_general_ci`, partitions: "all", rows: []string{"AA", "aa"}},
+		{sql: `select * from t where a collate utf8mb4_general_ci = 'aa'`, partitions: "all", rows: []string{"AA", "aa"}},
+		{sql: `select * from t where a = 'AAA'`, partitions: "pAAAA", rows: []string{"AAA"}},
+		{sql: `select * from t where a = 'AB'`, partitions: "pCCC", rows: []string{}},
 		{sql: `select * from t where a = 'aB'`, partitions: "paaa", rows: []string{}},
-		{sql: `select * from t where a = '🍣'`, partitions: "psushi", rows: []string{}},
-		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax", rows: []string{"Räkmacka", "🍣 is life"}},
-		{sql: `select * from t where a in ('AAA', 'aa')`, partitions: "paaaa,paaa", rows: []string{"AAA", "aa"}},
-		{sql: `select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa')`, partitions: "paaaa,paaa", rows: []string{"AA", "AAA", "aa"}}, // aaa missing due to #32749
-		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci)`, partitions: "paaaa", rows: []string{"AA", "AAA"}},            // aa, aaa missing due to #32749
+		{sql: `select * from t where a = '🍣'`, partitions: "pSushi", rows: []string{}},
+		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pShrimpsandwich,pSushi,pMax", rows: []string{"Räkmacka", "🍣 is life"}},
+		{sql: `select * from t where a in ('AAA', 'aa')`, partitions: "pAAAA,paaa", rows: []string{"AAA", "aa"}},
+		{sql: `select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa')`, partitions: "all", rows: []string{"AA", "AAA", "aa", "aaa"}},
+		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci)`, partitions: "all", rows: []string{"AA", "AAA", "aa", "aaa"}},
+		{sql: `select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa')`, partitions: "all", rows: []string{"AA", "AAA", "aa", "aaa"}},
 	}
 	checkColumnStringPruningTests(tests)
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_general_ci`)
@@ -225,19 +227,18 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 	tk.MustExec(`insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest"),("AA"),("aa"),("AAA"),("aaa")`)
 
 	tests = []testStruct{
-		// Lower case partition names due to issue#32719
-		{sql: `select * from t where a IS NULL`, partitions: "pnull", rows: []string{"<nil>"}},
+		{sql: `select * from t where a IS NULL`, partitions: "pNull", rows: []string{"<nil>"}},
 		{sql: `select * from t where a = 'AA'`, partitions: "paaa", rows: []string{"AA", "aa"}},
 		{sql: `select * from t where a = 'AA' collate utf8mb4_bin`, partitions: "paaa", rows: []string{"AA"}},
-		{sql: `select * from t where a = 'AAA'`, partitions: "paaaa", rows: []string{"AAA", "aaa"}},
-		{sql: `select * from t where a = 'AAA' collate utf8mb4_bin`, partitions: "paaa", rows: []string{}}, // Notice that the it uses _bin collation for partition => not found! #32749
-		{sql: `select * from t where a = 'AB'`, partitions: "pccc", rows: []string{}},
-		{sql: `select * from t where a = 'aB'`, partitions: "pccc", rows: []string{}},
-		{sql: `select * from t where a = '🍣'`, partitions: "psushi", rows: []string{}},
-		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax", rows: []string{"Räkmacka", "🍣 is life"}},
-		{sql: `select * from t where a in ('AA', 'aaa')`, partitions: "paaa,paaaa", rows: []string{"AA", "AAA", "aa", "aaa"}},
-		{sql: `select * from t where a in ('AAA' collate utf8mb4_bin, 'aa')`, partitions: "paaa", rows: []string{"aa"}},          // AAA missing due to #32749, why is AA missing?
-		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_bin)`, partitions: "paaaa,psushi", rows: []string{"AAA"}}, // aa, aaa missing due to #32749 also all missing paaa
+		{sql: `select * from t where a = 'AAA'`, partitions: "pAAAA", rows: []string{"AAA", "aaa"}},
+		{sql: `select * from t where a = 'AAA' collate utf8mb4_bin`, partitions: "pAAAA", rows: []string{"AAA"}},
+		{sql: `select * from t where a = 'AB'`, partitions: "pCCC", rows: []string{}},
+		{sql: `select * from t where a = 'aB'`, partitions: "pCCC", rows: []string{}},
+		{sql: `select * from t where a = '🍣'`, partitions: "pSushi", rows: []string{}},
+		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pShrimpsandwich,pSushi,pMax", rows: []string{"Räkmacka", "🍣 is life"}},
+		{sql: `select * from t where a in ('AA', 'aaa')`, partitions: "paaa,pAAAA", rows: []string{"AA", "AAA", "aa", "aaa"}},
+		{sql: `select * from t where a in ('AAA' collate utf8mb4_bin, 'aa')`, partitions: "paaa,pAAAA", rows: []string{"AAA", "aa"}},
+		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_bin)`, partitions: "paaa,pAAAA", rows: []string{"AAA", "aa"}},
 	}
 
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_bin`)
@@ -249,8 +250,7 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 }
 
 func TestListPartitionPruner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
@@ -300,7 +300,7 @@ func TestListPartitionPruner(t *testing.T) {
 		Plan   []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -321,8 +321,7 @@ func TestListPartitionPruner(t *testing.T) {
 }
 
 func TestListColumnsPartitionPruner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop database if exists test_partition;")
@@ -357,6 +356,9 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 	tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
 	tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk1.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	var input []struct {
 		SQL    string
 		Pruner string
@@ -368,7 +370,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		IndexPlan []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
 		// Test for table without index.
@@ -420,14 +422,15 @@ type testTablePartitionInfo struct {
 }
 
 // getPartitionInfoFromPlan uses to extract table partition information from the plan tree string. Here is an example, the plan is like below:
-//          "Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
-//          "└─HashJoin_9 80.00 root  CARTESIAN inner join",
-//          "  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
-//          "  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
-//          "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-//          "  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
-//          "    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
-//          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+//
+//	"Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
+//	"└─HashJoin_9 80.00 root  CARTESIAN inner join",
+//	"  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
+//	"  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
+//	"  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+//	"  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
+//	"    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
+//	"      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
 //
 // The return table partition info is: t1: p0; t2: p1
 func getPartitionInfoFromPlan(plan []string) string {
@@ -475,8 +478,7 @@ func getFieldValue(prefix, row string) string {
 }
 
 func TestListColumnsPartitionPrunerRandom(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	valueNum := 10
 	// Create table.
@@ -530,8 +532,7 @@ func TestListColumnsPartitionPrunerRandom(t *testing.T) {
 }
 
 func TestIssue22635(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS t1")
@@ -558,8 +559,7 @@ PARTITIONS 4`)
 }
 
 func TestIssue22898(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS test;")
@@ -571,8 +571,7 @@ func TestIssue22898(t *testing.T) {
 }
 
 func TestIssue23622(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("drop table if exists t2;")
@@ -582,8 +581,7 @@ func TestIssue23622(t *testing.T) {
 }
 
 func Test22396(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS test;")
@@ -596,8 +594,7 @@ func Test22396(t *testing.T) {
 }
 
 func TestIssue23608(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
@@ -642,10 +639,9 @@ partition by range (a) (
 	tk.MustQuery("select * from t3 where not (a != 1)").Check(testkit.Rows("1"))
 }
 
-//issue 22079
+// issue 22079
 func TestRangePartitionPredicatePruner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec("drop database if exists test_partition;")
@@ -666,7 +662,7 @@ func TestRangePartitionPredicatePruner(t *testing.T) {
 		Result []string
 	}
 	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
+	partitionPrunerData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -677,8 +673,7 @@ func TestRangePartitionPredicatePruner(t *testing.T) {
 }
 
 func TestHashPartitionPruning(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("USE test;")
@@ -697,9 +692,23 @@ func TestHashPartitionPruning(t *testing.T) {
 	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
 }
 
+func TestIssue32815(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("create table t (a int primary key, b int, key (b)) partition by hash(a) (partition P0, partition p1, partition P2)")
+	tk.MustExec("insert into t values (1, 1),(2, 2),(3, 3)")
+	tk.MustQuery("explain select * from t where a IN (1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get_1 2.00 root table:t, partition:p1,P2 handle:[1 2], keep order:false, desc:false"))
+	tk.MustQuery("explain select * from t where a IN (1, 2, 1)").Check(testkit.Rows(
+		"Batch_Point_Get_1 3.00 root table:t, partition:p1,P2 handle:[1 2 1], keep order:false, desc:false"))
+}
+
 func TestIssue32007(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database Issue32007")
 	tk.MustExec("USE Issue32007")
@@ -720,8 +729,7 @@ func TestIssue32007(t *testing.T) {
 }
 
 func TestIssue33231(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue33231")
 	tk.MustExec("use issue33231")

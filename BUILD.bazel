@@ -1,0 +1,15 @@
+load("@bazel_gazelle//:def.bzl", "gazelle")
+
+# gazelle:proto disable_global
+# gazelle:prefix github.com/pingcap/tidb
+# gazelle:exclude tidb-binlog/proto/proto
+# gazelle:exclude plugin/conn_ip_example
+# gazelle:exclude build/linter/staticcheck
+gazelle(name = "gazelle")
+
+package(default_visibility = ["//visibility:public"])
+
+xcode_version(
+    name = "xcode_version",
+    version = "10.0",
+)

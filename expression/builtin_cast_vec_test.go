@@ -159,7 +159,7 @@ func TestVectorizedBuiltinCastFunc(t *testing.T) {
 
 func TestVectorizedCastRealAsTime(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeDatetime))
 	if err != nil {
 		panic(err)
 	}
@@ -201,13 +201,12 @@ func genCastRealAsTime() *chunk.Chunk {
 // for issue https://github.com/pingcap/tidb/issues/16825
 func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
 	if err != nil {
 		panic(err)
 	}
 	// set `inUnion` to `true`
 	baseCast := newBaseBuiltinCastFunc(baseFunc, true)
-	baseCast.tp = types.NewFieldType(mysql.TypeNewDecimal)
 	// set the `UnsignedFlag` bit
 	baseCast.tp.AddFlag(mysql.UnsignedFlag)
 	cast := &builtinCastStringAsDecimalSig{baseCast}

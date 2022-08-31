@@ -13,6 +13,7 @@
 
 package mysql
 
+// ErrMessage is a error message with the format specifier.
 type ErrMessage struct {
 	Raw          string
 	RedactArgPos []int

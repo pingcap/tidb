@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser"
@@ -62,6 +63,7 @@ func TestNewTableRestore(t *testing.T) {
 
 		dbInfo.Tables[tc.name] = &checkpoints.TidbTableInfo{
 			Name: tc.name,
+			DB:   dbInfo.Name,
 			Core: tableInfo,
 		}
 	}
@@ -69,7 +71,7 @@ func TestNewTableRestore(t *testing.T) {
 	for _, tc := range testCases {
 		tableInfo := dbInfo.Tables[tc.name]
 		tableName := common.UniqueTable("mockdb", tableInfo.Name)
-		tr, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+		tr, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 		require.NotNil(t, tr)
 		require.NoError(t, err)
 	}
@@ -78,6 +80,7 @@ func TestNewTableRestore(t *testing.T) {
 func TestNewTableRestoreFailure(t *testing.T) {
 	tableInfo := &checkpoints.TidbTableInfo{
 		Name: "failure",
+		DB:   "mockdb",
 		Core: &model.TableInfo{},
 	}
 	dbInfo := &checkpoints.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints.TidbTableInfo{
@@ -85,7 +88,7 @@ func TestNewTableRestoreFailure(t *testing.T) {
 	}}
 	tableName := common.UniqueTable("mockdb", "failure")
 
-	_, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+	_, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.Regexp(t, `failed to tables\.TableFromMeta.*`, err.Error())
 }
 
@@ -127,8 +130,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		cfg.TaskID = 123
 		cfg.TiDB.Port = 4000
 		cfg.TiDB.PdAddr = "127.0.0.1:2379"
-		cfg.TikvImporter.Backend = config.BackendImporter
-		cfg.TikvImporter.Addr = "127.0.0.1:8287"
+		cfg.TikvImporter.Backend = config.BackendTiDB
 		cfg.TikvImporter.SortedKVDir = "/tmp/sorted-kv"
 
 		return cfg
@@ -140,9 +142,6 @@ func TestVerifyCheckpoint(t *testing.T) {
 	adjustFuncs := map[string]func(cfg *config.Config){
 		"tikv-importer.backend": func(cfg *config.Config) {
 			cfg.TikvImporter.Backend = config.BackendLocal
-		},
-		"tikv-importer.addr": func(cfg *config.Config) {
-			cfg.TikvImporter.Addr = "128.0.0.1:8287"
 		},
 		"mydumper.data-source-dir": func(cfg *config.Config) {
 			cfg.Mydumper.SourceDir = "/tmp/test"
@@ -168,6 +167,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		cfg := newCfg()
 		fn(cfg)
 		err := verifyCheckpoint(cfg, taskCp)
+		require.Error(t, err)
 		if conf == "version" {
 			build.ReleaseVersion = actualReleaseVersion
 			require.Regexp(t, "lightning version is 'some newer version', but checkpoint was created at '"+actualReleaseVersion+"'.*", err.Error())
@@ -214,14 +214,27 @@ func TestPreCheckFailed(t *testing.T) {
 	require.NoError(t, err)
 	g := glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 
+	targetInfoGetter := &TargetInfoGetterImpl{
+		cfg:          cfg,
+		targetDBGlue: g,
+	}
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:              cfg,
+		targetInfoGetter: targetInfoGetter,
+		dbMetas:          make([]*mydump.MDDatabaseMeta, 0),
+	}
+	cpdb := panicCheckpointDB{}
+	theCheckBuilder := NewPrecheckItemBuilder(cfg, make([]*mydump.MDDatabaseMeta, 0), preInfoGetter, cpdb)
 	ctl := &Controller{
-		cfg:            cfg,
-		saveCpCh:       make(chan saveCp),
-		checkpointsDB:  panicCheckpointDB{},
-		metaMgrBuilder: failMetaMgrBuilder{},
-		checkTemplate:  NewSimpleTemplate(),
-		tidbGlue:       g,
-		errorMgr:       errormanager.New(nil, cfg),
+		cfg:                 cfg,
+		saveCpCh:            make(chan saveCp),
+		checkpointsDB:       cpdb,
+		metaMgrBuilder:      failMetaMgrBuilder{},
+		checkTemplate:       NewSimpleTemplate(),
+		tidbGlue:            g,
+		errorMgr:            errormanager.New(nil, cfg, log.L()),
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
 	}
 
 	mock.ExpectBegin()

@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
@@ -43,7 +42,7 @@ func TestBootstrap(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
-
+	mustExec(t, se, "set global tidb_txn_mode=''")
 	mustExec(t, se, "use mysql")
 	r := mustExec(t, se, "select * from user")
 	require.NotNil(t, r)
@@ -55,10 +54,10 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
+	r.Close()
 
-	ok := se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""))
-	require.True(t, ok)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")))
 
 	mustExec(t, se, "use test")
 
@@ -146,14 +145,14 @@ func TestBootstrapWithError(t *testing.T) {
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
-
+		err := InitDDLJobTables(store)
+		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		domain.BindDomain(se, dom)
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
-
 		doDDLWorks(se)
 	}
 
@@ -176,18 +175,18 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
 	require.NoError(t, r.Close())
 
 	mustExec(t, se, "USE test")
 	// Check privilege tables.
-	mustExec(t, se, "SELECT * from mysql.global_priv")
-	mustExec(t, se, "SELECT * from mysql.db")
-	mustExec(t, se, "SELECT * from mysql.tables_priv")
-	mustExec(t, se, "SELECT * from mysql.columns_priv")
+	mustExec(t, se, "SELECT * from mysql.global_priv").Close()
+	mustExec(t, se, "SELECT * from mysql.db").Close()
+	mustExec(t, se, "SELECT * from mysql.tables_priv").Close()
+	mustExec(t, se, "SELECT * from mysql.columns_priv").Close()
 	// Check role tables.
-	mustExec(t, se, "SELECT * from mysql.role_edges")
-	mustExec(t, se, "SELECT * from mysql.default_roles")
+	mustExec(t, se, "SELECT * from mysql.role_edges").Close()
+	mustExec(t, se, "SELECT * from mysql.default_roles").Close()
 	// Check global variables.
 	r = mustExec(t, se, "SELECT COUNT(*) from mysql.global_variables")
 	req = r.NewChunk(nil)
@@ -210,13 +209,6 @@ func TestBootstrapWithError(t *testing.T) {
 
 // TestUpgrade tests upgrading
 func TestUpgrade(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
-
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -297,12 +289,6 @@ func TestUpgrade(t *testing.T) {
 }
 
 func TestIssue17979_1(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -333,18 +319,11 @@ func TestIssue17979_1(t *testing.T) {
 	r := mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, "log", req.GetRow(0).GetString(0))
-	require.Equal(t, config.OOMActionLog, config.GetGlobalConfig().OOMAction)
+	require.Equal(t, variable.OOMActionLog, req.GetRow(0).GetString(0))
 	domV4.Close()
 }
 
 func TestIssue17979_2(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -378,7 +357,6 @@ func TestIssue17979_2(t *testing.T) {
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 0, req.NumRows())
-	require.Equal(t, config.OOMActionCancel, config.GetGlobalConfig().OOMAction)
 }
 
 // TestIssue20900_2 tests that a user can upgrade from TiDB 2.1 to latest,
@@ -388,13 +366,6 @@ func TestIssue17979_2(t *testing.T) {
 // but from 4.0 -> 5.0, the new default is picked up.
 
 func TestIssue20900_2(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
-
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -471,8 +442,7 @@ func TestOldPasswordUpgrade(t *testing.T) {
 }
 
 func TestBootstrapInitExpensiveQueryHandle(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
+	store, _ := createStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -1052,4 +1022,32 @@ func TestUpgradeToVer85(t *testing.T) {
 
 	require.NoError(t, r.Close())
 	mustExec(t, se, "delete from mysql.bind_info where default_db = 'test'")
+}
+
+func TestTiDBEnablePagingVariable(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	se := createSessionAndSetID(t, store)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	for _, sql := range []string{
+		"select @@global.tidb_enable_paging",
+		"select @@session.tidb_enable_paging",
+	} {
+		r := mustExec(t, se, sql)
+		require.NotNil(t, r)
+
+		req := r.NewChunk(nil)
+		err := r.Next(context.Background(), req)
+		require.NoError(t, err)
+		require.NotEqual(t, 0, req.NumRows())
+
+		rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
+		if variable.DefTiDBEnablePaging {
+			match(t, rows, "1")
+		} else {
+			match(t, rows, "0")
+		}
+		r.Close()
+	}
 }

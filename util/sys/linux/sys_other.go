@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //go:build !linux && !windows
-// +build !linux,!windows
 
 package linux
 
@@ -31,7 +30,7 @@ func OSVersion() (osVersion string, err error) {
 }
 
 // SetAffinity sets cpu affinity.
-func SetAffinity(cpus []int) error {
+func SetAffinity(_ []int) error {
 	return nil
 }
 

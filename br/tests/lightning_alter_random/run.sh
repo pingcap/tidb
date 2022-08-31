@@ -22,7 +22,7 @@ check_cluster_version 4 0 0 AUTO_RANDOM || exit 0
 # test lightning with autocommit disabled
 run_sql "SET @@global.autocommit = '0';"
 
-for backend in tidb importer local; do
+for backend in tidb local; do
     if [ "$backend" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi

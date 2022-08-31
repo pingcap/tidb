@@ -85,6 +85,7 @@ func Run(tests ...func(b *testing.B)) {
 // readBenchResultFromFile is used by the daily bench test.
 // nolint: unused, deadcode
 func readBenchResultFromFile(file string) []BenchResult {
+	//nolint: gosec
 	f, err := os.Open(file)
 	if err != nil {
 		log.Panic(err)

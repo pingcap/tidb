@@ -20,12 +20,10 @@ import (
 	"math"
 	"strconv"
 
-	utilMath "github.com/pingcap/tidb/util/math"
-
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
@@ -738,9 +736,9 @@ func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(input *chunk.Chunk, result 
 	for i := 0; i < n; i++ {
 		// When the seed is null we need to use 0 as the seed.
 		// The behavior same as MySQL.
-		rng := utilMath.NewWithSeed(0)
+		rng := mathutil.NewWithSeed(0)
 		if !buf.IsNull(i) {
-			rng = utilMath.NewWithSeed(i64s[i])
+			rng = mathutil.NewWithSeed(i64s[i])
 		}
 		f64s[i] = rng.Gen()
 	}

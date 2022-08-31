@@ -36,6 +36,14 @@ var (
 		"*.*",
 		fmt.Sprintf("!%s.*", utils.TemporaryDBName("*")),
 		"!mysql.*",
+		"mysql.user",
+		"mysql.db",
+		"mysql.tables_priv",
+		"mysql.columns_priv",
+		"mysql.global_priv",
+		"mysql.global_grants",
+		"mysql.default_roles",
+		"mysql.role_edges",
 		"!sys.*",
 		"!INFORMATION_SCHEMA.*",
 		"!PERFORMANCE_SCHEMA.*",
@@ -113,7 +121,7 @@ func Init(cmd *cobra.Command) (err error) {
 			tidbLogCfg.File.Filename = timestampLogFileName()
 		} else {
 			// Don't print slow log in br
-			config.GetGlobalConfig().Log.EnableSlowLog.Store(false)
+			config.GetGlobalConfig().Instance.EnableSlowLog.Store(false)
 		}
 		e = logutil.InitLogger(&tidbLogCfg)
 		if e != nil {

@@ -18,13 +18,13 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -32,7 +32,9 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"golang.org/x/exp/slices"
 )
 
 type (
@@ -117,6 +119,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 	}
 	e.retrieved = true
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	// Some data of cluster-level memory tables will be retrieved many times in different inspection rules,
 	// and the cost of retrieving some data is expensive. We use the `TableSnapshot` to cache those data
 	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
@@ -166,20 +169,20 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 			continue
 		}
 		// make result stable
-		sort.Slice(results, func(i, j int) bool {
-			if results[i].degree != results[j].degree {
-				return results[i].degree > results[j].degree
+		slices.SortFunc(results, func(i, j inspectionResult) bool {
+			if i.degree != j.degree {
+				return i.degree > j.degree
 			}
-			if lhs, rhs := results[i].item, results[j].item; lhs != rhs {
+			if lhs, rhs := i.item, j.item; lhs != rhs {
 				return lhs < rhs
 			}
-			if results[i].actual != results[j].actual {
-				return results[i].actual < results[j].actual
+			if i.actual != j.actual {
+				return i.actual < j.actual
 			}
-			if lhs, rhs := results[i].tp, results[j].tp; lhs != rhs {
+			if lhs, rhs := i.tp, j.tp; lhs != rhs {
 				return lhs < rhs
 			}
-			return results[i].instance < results[j].instance
+			return i.instance < j.instance
 		})
 		for _, result := range results {
 			if len(result.instance) == 0 {
@@ -267,10 +270,10 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		}
 		groups := make([]string, 0, len(m))
 		for k, v := range m {
-			sort.Strings(v)
+			slices.Sort(v)
 			groups = append(groups, fmt.Sprintf("%s config value is %s", strings.Join(v, ","), k))
 		}
-		sort.Strings(groups)
+		slices.Sort(groups)
 		return strings.Join(groups, "\n")
 	}
 
@@ -423,23 +426,17 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 }
 
 func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, error) {
-	const KB = uint64(1024)
-	const MB = KB * 1024
-	const GB = MB * 1024
-	const TB = GB * 1024
-	const PB = TB * 1024
-
 	rate := uint64(1)
 	if strings.HasSuffix(sizeStr, "KiB") {
-		rate = KB
+		rate = size.KB
 	} else if strings.HasSuffix(sizeStr, "MiB") {
-		rate = MB
+		rate = size.MB
 	} else if strings.HasSuffix(sizeStr, "GiB") {
-		rate = GB
+		rate = size.GB
 	} else if strings.HasSuffix(sizeStr, "TiB") {
-		rate = TB
+		rate = size.TB
 	} else if strings.HasSuffix(sizeStr, "PiB") {
-		rate = PB
+		rate = size.PB
 	}
 	if rate != 1 && len(sizeStr) > 3 {
 		sizeStr = sizeStr[:len(sizeStr)-3]
@@ -727,6 +724,7 @@ func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.C
 		c.inspectThreshold3,
 		c.inspectForLeaderDrop,
 	}
+	//nolint: prealloc
 	var results []inspectionResult
 	for _, inspect := range inspects {
 		re := inspect(ctx, sctx, filter)

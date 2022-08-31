@@ -20,22 +20,51 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	atomicutil "go.uber.org/atomic"
 )
 
 type testCancelJob struct {
 	sql         string
 	ok          bool
-	cancelState model.SchemaState
+	cancelState interface{} // model.SchemaState | []model.SchemaState
 	onJobBefore bool
 	onJobUpdate bool
 	prepareSQL  []string
+}
+
+type subStates = []model.SchemaState
+
+func testMatchCancelState(t *testing.T, job *model.Job, cancelState interface{}, sql string) bool {
+	switch v := cancelState.(type) {
+	case model.SchemaState:
+		if job.Type == model.ActionMultiSchemaChange {
+			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s)", sql, v)
+			require.Failf(t, msg, "use []model.SchemaState as cancel states instead")
+			return false
+		}
+		return job.SchemaState == v
+	case subStates: // For multi-schema change sub-jobs.
+		if job.MultiSchemaInfo == nil {
+			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v)", sql, v)
+			require.Failf(t, msg, "use model.SchemaState as the cancel state instead")
+			return false
+		}
+		require.Equal(t, len(job.MultiSchemaInfo.SubJobs), len(v), sql)
+		for i, subJobSchemaState := range v {
+			if job.MultiSchemaInfo.SubJobs[i].SchemaState != subJobSchemaState {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 var allTestCase = []testCancelJob{
@@ -49,8 +78,7 @@ var allTestCase = []testCancelJob{
 	{"alter table t add primary key idx_pc2 (c2)", true, model.StateWriteReorganization, true, true, nil},
 	{"alter table t add primary key idx_pc2 (c2)", false, model.StatePublic, false, true, nil},
 	// Drop primary key
-	// TODO: fix schema state.
-	{"alter table t drop primary key", true, model.StateNone, true, false, nil},
+	{"alter table t drop primary key", true, model.StatePublic, true, false, nil},
 	{"alter table t drop primary key", false, model.StateWriteOnly, true, false, nil},
 	{"alter table t drop primary key", false, model.StateWriteOnly, true, false, []string{"alter table t add primary key idx_pc2 (c2)"}},
 	{"alter table t drop primary key", false, model.StateDeleteOnly, true, false, []string{"alter table t add primary key idx_pc2 (c2)"}},
@@ -75,36 +103,32 @@ var allTestCase = []testCancelJob{
 	{"create table test_create_table(a int)", true, model.StateNone, true, false, nil},
 	{"create table test_create_table(a int)", false, model.StatePublic, false, true, nil},
 	// Drop table.
-	// TODO: fix schema state.
-	{"drop table test_create_table", true, model.StateNone, true, false, nil},
+	{"drop table test_create_table", true, model.StatePublic, true, false, nil},
 	{"drop table test_create_table", false, model.StateWriteOnly, true, true, []string{"create table if not exists test_create_table(a int)"}},
 	{"drop table test_create_table", false, model.StateDeleteOnly, true, true, []string{"create table if not exists test_create_table(a int)"}},
-	{"drop table test_create_table", false, model.StatePublic, false, true, []string{"create table if not exists test_create_table(a int)"}},
+	{"drop table test_create_table", false, model.StateNone, false, true, []string{"create table if not exists test_create_table(a int)"}},
 	// Create schema.
 	{"create database test_create_db", true, model.StateNone, true, false, nil},
 	{"create database test_create_db", false, model.StatePublic, false, true, nil},
 	// Drop schema.
-	// TODO: fix schema state.
-	{"drop database test_create_db", true, model.StateNone, true, false, nil},
+	{"drop database test_create_db", true, model.StatePublic, true, false, nil},
 	{"drop database test_create_db", false, model.StateWriteOnly, true, true, []string{"create database if not exists test_create_db"}},
 	{"drop database test_create_db", false, model.StateDeleteOnly, true, true, []string{"create database if not exists test_create_db"}},
-	{"drop database test_create_db", false, model.StatePublic, false, true, []string{"create database if not exists test_create_db"}},
+	{"drop database test_create_db", false, model.StateNone, false, true, []string{"create database if not exists test_create_db"}},
 	// Drop column.
-	// TODO: fix schema state.
-	{"alter table t drop column c3", true, model.StateNone, true, false, nil},
+	{"alter table t drop column c3", true, model.StatePublic, true, false, nil},
 	{"alter table t drop column c3", false, model.StateDeleteOnly, true, false, nil},
 	{"alter table t drop column c3", false, model.StateDeleteOnly, false, true, []string{"alter table t add column c3 bigint"}},
 	{"alter table t drop column c3", false, model.StateWriteOnly, true, true, []string{"alter table t add column c3 bigint"}},
 	{"alter table t drop column c3", false, model.StateDeleteReorganization, true, true, []string{"alter table t add column c3 bigint"}},
-	{"alter table t drop column c3", false, model.StatePublic, false, true, []string{"alter table t add column c3 bigint"}},
+	{"alter table t drop column c3", false, model.StateNone, false, true, []string{"alter table t add column c3 bigint"}},
 	// Drop column with index.
-	// TODO: fix schema state.
-	{"alter table t drop column c3", true, model.StateNone, true, false, []string{"alter table t add column c3 bigint", "alter table t add index idx_c3(c3)"}},
+	{"alter table t drop column c3", true, model.StatePublic, true, false, []string{"alter table t add column c3 bigint", "alter table t add index idx_c3(c3)"}},
 	{"alter table t drop column c3", false, model.StateDeleteOnly, true, false, nil},
 	{"alter table t drop column c3", false, model.StateDeleteOnly, false, true, []string{"alter table t add column c3 bigint", "alter table t add index idx_c3(c3)"}},
 	{"alter table t drop column c3", false, model.StateWriteOnly, true, true, []string{"alter table t add column c3 bigint", "alter table t add index idx_c3(c3)"}},
 	{"alter table t drop column c3", false, model.StateDeleteReorganization, true, true, []string{"alter table t add column c3 bigint", "alter table t add index idx_c3(c3)"}},
-	{"alter table t drop column c3", false, model.StatePublic, false, true, []string{"alter table t add column c3 bigint", "alter table t add index idx_c3(c3)"}},
+	{"alter table t drop column c3", false, model.StateNone, false, true, []string{"alter table t add column c3 bigint", "alter table t add index idx_c3(c3)"}},
 	// rebase auto ID.
 	{"alter table t_rebase auto_increment = 6000", true, model.StateNone, true, false, []string{"create table t_rebase (c1 bigint auto_increment primary key, c2 bigint);"}},
 	{"alter table t_rebase auto_increment = 9000", false, model.StatePublic, false, true, nil},
@@ -128,9 +152,8 @@ var allTestCase = []testCancelJob{
 	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", true, model.StateNone, true, false, []string{"create table t_ref (c1 int, c2 int, c3 int, c11 tinyint);"}},
 	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", false, model.StatePublic, false, true, nil},
 	// Drop foreign key.
-	// TODO: fix schema state.
-	{"alter table t drop foreign key fk", true, model.StateNone, true, false, nil},
-	{"alter table t drop foreign key fk", false, model.StatePublic, false, true, nil},
+	{"alter table t drop foreign key fk", true, model.StatePublic, true, false, nil},
+	{"alter table t drop foreign key fk", false, model.StateNone, false, true, nil},
 	// Rename table.
 	{"rename table t_rename1 to t_rename11", true, model.StateNone, true, false, []string{"create table t_rename1 (c1 bigint , c2 bigint);", "create table t_rename2 (c1 bigint , c2 bigint);"}},
 	{"rename table t_rename1 to t_rename11", false, model.StatePublic, false, true, nil},
@@ -147,27 +170,25 @@ var allTestCase = []testCancelJob{
 	{"alter table t_partition truncate partition p3", true, model.StateNone, true, false, nil},
 	{"alter table t_partition truncate partition p3", false, model.StatePublic, false, true, nil},
 	// Add columns.
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateNone, true, false, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateDeleteOnly, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteOnly, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteReorganization, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", false, model.StatePublic, false, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateNone, model.StateNone}, true, false, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateDeleteOnly, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateWriteOnly, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateWriteReorganization, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", false, subStates{model.StatePublic, model.StatePublic}, false, true, nil},
 	// Drop columns.
-	// TODO: fix schema state.
-	{"alter table t drop column c41, drop column c42", true, model.StateNone, true, false, nil},
-	{"alter table t drop column c41, drop column c42", false, model.StateDeleteOnly, true, false, nil},
-	{"alter table t drop column c41, drop column c42", false, model.StateDeleteOnly, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
-	{"alter table t drop column c41, drop column c42", false, model.StateWriteOnly, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
-	{"alter table t drop column c41, drop column c42", false, model.StateDeleteReorganization, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
-	{"alter table t drop column c41, drop column c42", false, model.StatePublic, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", true, subStates{model.StatePublic, model.StatePublic}, true, false, nil},
+	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteOnly, model.StateDeleteOnly}, true, false, nil},
+	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteOnly, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", false, subStates{model.StateWriteOnly, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteReorganization, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", false, subStates{model.StateNone, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
 	// Drop columns with index.
-	// TODO: fix schema state.
-	{"alter table t drop column c41, drop column c42", true, model.StateNone, true, false, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
-	{"alter table t drop column c41, drop column c42", false, model.StateDeleteOnly, true, false, nil},
-	{"alter table t drop column c41, drop column c42", false, model.StateDeleteOnly, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
-	{"alter table t drop column c41, drop column c42", false, model.StateWriteOnly, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
-	{"alter table t drop column c41, drop column c42", false, model.StateDeleteReorganization, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
-	{"alter table t drop column c41, drop column c42", false, model.StatePublic, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
+	{"alter table t drop column c41, drop column c42", true, subStates{model.StatePublic, model.StatePublic}, true, false, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
+	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteOnly, model.StateDeleteOnly}, true, false, nil},
+	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteOnly, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
+	{"alter table t drop column c41, drop column c42", false, subStates{model.StateWriteOnly, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
+	{"alter table t drop column c41, drop column c42", false, subStates{model.StateDeleteReorganization, model.StateDeleteOnly}, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
+	{"alter table t drop column c41, drop column c42", false, subStates{model.StateNone, model.StateDeleteOnly}, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
 	// Alter index visibility.
 	{"alter table t alter index idx_v invisible", true, model.StateNone, true, false, []string{"alter table t add index idx_v(c1)"}},
 	{"alter table t alter index idx_v invisible", false, model.StatePublic, false, true, nil},
@@ -179,21 +200,19 @@ var allTestCase = []testCancelJob{
 	{"alter table t_partition add partition (partition p6 values less than (8192))", true, model.StateReplicaOnly, true, true, nil},
 	{"alter table t_partition add partition (partition p6 values less than (8192))", false, model.StatePublic, false, true, nil},
 	// Drop partition.
-	// TODO: fix schema state.
-	{"alter table t_partition drop partition p6", true, model.StateNone, true, false, nil},
+	{"alter table t_partition drop partition p6", true, model.StatePublic, true, false, nil},
 	{"alter table t_partition drop partition p6", false, model.StateDeleteOnly, true, false, nil},
 	{"alter table t_partition drop partition p6", false, model.StateDeleteOnly, false, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	{"alter table t_partition drop partition p6", false, model.StateDeleteReorganization, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
-	{"alter table t_partition drop partition p6", false, model.StatePublic, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
+	{"alter table t_partition drop partition p6", false, model.StateNone, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	// Drop indexes.
-	// TODO: fix schema state.
-	{"alter table t drop index mul_idx1, drop index mul_idx2", true, model.StateNone, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateWriteOnly, true, false, nil},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateWriteOnly, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteOnly, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteOnly, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteReorganization, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteReorganization, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", true, subStates{model.StatePublic, model.StatePublic}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateWriteOnly, model.StateWriteOnly}, true, false, nil},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateWriteOnly, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteOnly, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteOnly, model.StateWriteOnly}, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteReorganization, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteReorganization, model.StateWriteOnly}, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
 	// Alter db placement.
 	{"alter database db_placement placement policy = 'alter_x'", true, model.StateNone, true, false, []string{"create placement policy alter_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";", "create database db_placement"}},
 	{"alter database db_placement placement policy = 'alter_x'", false, model.StatePublic, false, true, nil},
@@ -207,8 +226,7 @@ func cancelSuccess(rs *testkit.Result) bool {
 }
 
 func TestCancel(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -236,21 +254,29 @@ func TestCancel(t *testing.T) {
 	}
 
 	// Change some configurations.
-	ddl.ReorgWaitTimeout = 10 * time.Microsecond
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 8")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillSlow"))
+	}()
 
 	hook := &ddl.TestDDLCallback{Do: dom}
-	i := 0
+	i := atomicutil.NewInt64(0)
 	cancel := false
+	cancelResult := false
 	cancelWhenReorgNotStart := false
 
 	hookFunc := func(job *model.Job) {
-		if job.SchemaState == allTestCase[i].cancelState && !cancel {
+		if testMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel {
 			if !cancelWhenReorgNotStart && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
 			rs := tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
-			require.Equal(t, allTestCase[i].ok, cancelSuccess(rs))
+			cancelResult = cancelSuccess(rs)
 			cancel = true
 		}
 	}
@@ -269,21 +295,23 @@ func TestCancel(t *testing.T) {
 	}
 
 	for j, tc := range allTestCase {
-		i = j
+		i.Store(int64(j))
+		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
 		if tc.onJobBefore {
 			restHook(hook)
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-
 			cancel = false
 			cancelWhenReorgNotStart = true
 			registHook(hook, true)
-			logutil.BgLogger().Info("test case", zap.Int("", i))
 			if tc.ok {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
 				tk.MustExec(tc.sql)
+			}
+			if cancel {
+				require.Equal(t, tc.ok, cancelResult, msg)
 			}
 		}
 		if tc.onJobUpdate {
@@ -291,15 +319,16 @@ func TestCancel(t *testing.T) {
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-
 			cancel = false
 			cancelWhenReorgNotStart = false
 			registHook(hook, false)
-			logutil.BgLogger().Info("test case", zap.Int("", i))
 			if tc.ok {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
 				tk.MustExec(tc.sql)
+			}
+			if cancel {
+				require.Equal(t, tc.ok, cancelResult, msg)
 			}
 		}
 	}

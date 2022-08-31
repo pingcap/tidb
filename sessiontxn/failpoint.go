@@ -16,6 +16,7 @@ package sessiontxn
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
@@ -33,6 +34,21 @@ var AssertTxnInfoSchemaKey stringutil.StringerStr = "assertTxnInfoSchemaKey"
 // AssertTxnInfoSchemaAfterRetryKey is used to set the expected infoschema that should be check in failPoint after retry
 // Only for test
 var AssertTxnInfoSchemaAfterRetryKey stringutil.StringerStr = "assertTxnInfoSchemaAfterRetryKey"
+
+// BreakPointBeforeExecutorFirstRun is the key for the stop point where session stops before executor's first run
+// Only for test
+var BreakPointBeforeExecutorFirstRun = "beforeExecutorFirstRun"
+
+// BreakPointOnStmtRetryAfterLockError s the key for the stop point where session stops after OnStmtRetry when lock error happens
+// Only for test
+var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
+
+// TsoRequestCount is the key for recording tso request counts in some places
+var TsoRequestCount stringutil.StringerStr = "tsoRequestCount"
+
+// AssertLockErr is used to record the lock errors we encountered
+// Only for test
+var AssertLockErr stringutil.StringerStr = "assertLockError"
 
 // RecordAssert is used only for test
 func RecordAssert(sctx sessionctx.Context, name string, value interface{}) {
@@ -59,9 +75,9 @@ func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is interface{}) {
 	}
 
 	if localTables := sctx.GetSessionVars().LocalTemporaryTables; localTables != nil {
-		got, ok := GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.TemporaryTableAttachedInfoSchema)
+		got, ok := GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.SessionExtendedInfoSchema)
 		if !ok {
-			panic("Expected to be a TemporaryTableAttachedInfoSchema")
+			panic("Expected to be a SessionExtendedInfoSchema")
 		}
 
 		if got.LocalTemporaryTables != localTables {
@@ -75,12 +91,50 @@ func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is interface{}) {
 
 // AssertTxnManagerReadTS is used only for test
 func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
-	actual, err := GetTxnManager(sctx).GetReadTS()
+	actual, err := GetTxnManager(sctx).GetStmtReadTS()
 	if err != nil {
 		panic(err)
 	}
 
 	if actual != expected {
 		panic(fmt.Sprintf("Txn read ts not match, expect:%d, got:%d", expected, actual))
+	}
+}
+
+// AddAssertEntranceForLockError is used only for test
+func AddAssertEntranceForLockError(sctx sessionctx.Context, name string) {
+	records, ok := sctx.Value(AssertLockErr).(map[string]int)
+	if !ok {
+		records = make(map[string]int)
+		sctx.SetValue(AssertLockErr, records)
+	}
+	if v, ok := records[name]; ok {
+		records[name] = v + 1
+	} else {
+		records[name] = 1
+	}
+}
+
+// TsoRequestCountInc is used only for test
+// When it is called, there is a tso cmd request.
+func TsoRequestCountInc(sctx sessionctx.Context) {
+	count, ok := sctx.Value(TsoRequestCount).(uint64)
+	if !ok {
+		count = 0
+	}
+	count++
+	sctx.SetValue(TsoRequestCount, count)
+}
+
+// ExecTestHook is used only for test. It consumes hookKey in session wait do what it gets from it.
+func ExecTestHook(sctx sessionctx.Context, hookKey fmt.Stringer) {
+	c := sctx.Value(hookKey)
+	if ch, ok := c.(chan func()); ok {
+		select {
+		case fn := <-ch:
+			fn()
+		case <-time.After(time.Second * 10):
+			panic("timeout waiting for chan")
+		}
 	}
 }

@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableColumnID, comment string) string {
+func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableItemID, comment string) string {
 	var tblInfo *model.TableInfo
 	var prefix string
 	if tbl, ok := is.TableByID(tblColID.TableID); ok {
@@ -57,7 +57,7 @@ func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableC
 
 	var colName string
 	for _, col := range tblInfo.Columns {
-		if tblColID.ColumnID == col.ID {
+		if tblColID.ID == col.ID {
 			colName = prefix + col.Name.L
 		}
 	}
@@ -66,7 +66,7 @@ func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableC
 }
 
 func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, histNeededOnly bool, expected []string, comment string) {
-	var tblColIDs []model.TableColumnID
+	var tblColIDs []model.TableItemID
 	if histNeededOnly {
 		_, tblColIDs = CollectColumnStatsUsage(lp, false, true)
 	} else {

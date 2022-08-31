@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -188,6 +189,7 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 			continue
 		}
 		memDelta += p.valSet.Insert(decStr)
+		memDelta += int64(len(decStr))
 	}
 
 	return memDelta, nil
@@ -285,6 +287,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 		}
 		input = stringutil.Copy(input)
 		memDelta += p.valSet.Insert(input)
+		memDelta += int64(len(input))
 	}
 
 	return memDelta, nil
@@ -347,6 +350,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 			continue
 		}
 		memDelta += p.valSet.Insert(encodedString)
+		memDelta += int64(len(encodedString))
 	}
 
 	return memDelta, nil
@@ -540,14 +544,6 @@ func (p *partialResult4ApproxCountDistinct) reset() {
 	p.alloc(uniquesHashSetInitialSizeDegree)
 }
 
-func max(a, b uint8) uint8 {
-	if a > b {
-		return a
-	}
-
-	return b
-}
-
 func (p *partialResult4ApproxCountDistinct) bufSize() uint32 {
 	return uint32(1) << p.sizeDegree
 }
@@ -601,7 +597,7 @@ func (p *partialResult4ApproxCountDistinct) readAndMerge(rb []byte) error {
 	}
 
 	if p.bufSize() < uint32(rhsSize) {
-		newSizeDegree := max(uniquesHashSetInitialSizeDegree, uint8(math.Log2(float64(rhsSize-1)))+2)
+		newSizeDegree := mathutil.Max(uniquesHashSetInitialSizeDegree, uint8(math.Log2(float64(rhsSize-1)))+2)
 		p.resize(newSizeDegree)
 	}
 

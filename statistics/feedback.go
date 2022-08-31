@@ -22,7 +22,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -37,9 +36,11 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // Feedback represents the total scan count in range [lower, upper).
@@ -123,7 +124,7 @@ func (m *QueryFeedbackMap) append(k QueryFeedbackKey, qs []*QueryFeedback) bool 
 	if !ok || s == nil {
 		s = make([]*QueryFeedback, 0, 8)
 	}
-	l := mathutil.MinInt64(int64(len(qs)), remained)
+	l := mathutil.Min(int64(len(qs)), remained)
 	s = append(s, qs[:l]...)
 	m.Feedbacks[k] = s
 	m.Size = m.Size + int(l)
@@ -350,15 +351,15 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 	// Sort feedbacks by end point and start point incrementally, then pick every feedback that is not overlapped
 	// with the previous chosen feedbacks.
 	var existsErr bool
-	sort.Slice(fbs, func(i, j int) bool {
-		res, err := fbs[i].Upper.Compare(sc, fbs[j].Upper, collate.GetBinaryCollator())
+	slices.SortFunc(fbs, func(i, j Feedback) bool {
+		res, err := i.Upper.Compare(sc, j.Upper, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
 		if existsErr || res != 0 {
 			return res < 0
 		}
-		res, err = fbs[i].Lower.Compare(sc, fbs[j].Lower, collate.GetBinaryCollator())
+		res, err = i.Lower.Compare(sc, j.Lower, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
@@ -726,7 +727,7 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, bucketCount int, totalCoun
 	for i := 0; i < mergeCount; i++ {
 		ids = append(ids, bs[i].id)
 	}
-	sort.Ints(ids)
+	slices.Sort(ids)
 	idCursor, bktCursor := 0, 0
 	for i := range bkts {
 		// Merge this bucket with last one.
@@ -798,8 +799,8 @@ func UpdateHistogramWithBucketCount(h *Histogram, feedback *QueryFeedback, stats
 	// Update the NDV of primary key column.
 	if feedback.Tp == PkType {
 		hist.NDV = int64(hist.TotalRowCount())
-		// If we maintained the NDV of bucket. We can also update the total ndv.
 	} else if feedback.Tp == IndexType && statsVer == 2 {
+		// If we maintained the NDV of bucket. We can also update the total ndv.
 		totNdv := int64(0)
 		for _, bkt := range buckets {
 			totNdv += bkt.Ndv

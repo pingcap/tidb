@@ -15,17 +15,20 @@
 package stmtctx
 
 import (
+	"bytes"
+	"encoding/json"
 	"math"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -36,6 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -60,6 +64,43 @@ type SQLWarn struct {
 	Err   error
 }
 
+type jsonSQLWarn struct {
+	Level  string        `json:"level"`
+	SQLErr *terror.Error `json:"err,omitempty"`
+	Msg    string        `json:"msg,omitempty"`
+}
+
+// MarshalJSON implements the Marshaler.MarshalJSON interface.
+func (warn *SQLWarn) MarshalJSON() ([]byte, error) {
+	w := &jsonSQLWarn{
+		Level: warn.Level,
+	}
+	e := errors.Cause(warn.Err)
+	switch x := e.(type) {
+	case *terror.Error:
+		// Omit outter errors because only the most inner error matters.
+		w.SQLErr = x
+	default:
+		w.Msg = e.Error()
+	}
+	return json.Marshal(w)
+}
+
+// UnmarshalJSON implements the Unmarshaler.UnmarshalJSON interface.
+func (warn *SQLWarn) UnmarshalJSON(data []byte) error {
+	var w jsonSQLWarn
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	warn.Level = w.Level
+	if w.SQLErr != nil {
+		warn.Err = w.SQLErr
+	} else {
+		warn.Err = errors.New(w.Msg)
+	}
+	return nil
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -69,6 +110,7 @@ type StatementContext struct {
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
 	IsDDLJobInQueue        bool
+	DDLJobID               int64
 	InInsertStmt           bool
 	InUpdateStmt           bool
 	InDeleteStmt           bool
@@ -76,6 +118,7 @@ type StatementContext struct {
 	InLoadDataStmt         bool
 	InExplainStmt          bool
 	InCreateOrAlterStmt    bool
+	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
@@ -96,10 +139,12 @@ type StatementContext struct {
 	SkipUTF8Check          bool
 	SkipASCIICheck         bool
 	SkipUTF8MB4Check       bool
+	MultiSchemaInfo        *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
-	IsStaleness bool
+	IsStaleness     bool
+	InRestrictedSQL bool
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -164,12 +209,25 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
-	// planNormalized use for cache the normalized plan, avoid duplicate builds.
-	planNormalized        string
-	planDigest            *parser.Digest
-	encodedPlan           string
-	planHint              string
-	planHintSet           bool
+
+	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
+	// We cache the values here to avoid calculating them multiple times.
+	// Note:
+	//   Avoid accessing these fields directly, use their Setter/Getter methods instead.
+	//   Other fields should be the zero value or be consistent with the plan field.
+	// TODO: more clearly distinguish between the value is empty and the value has not been set
+	planNormalized string
+	planDigest     *parser.Digest
+	encodedPlan    string
+	planHint       string
+	planHintSet    bool
+	binaryPlan     string
+	// To avoid cycle import, we use interface{} for the following two fields.
+	// flatPlan should be a *plannercore.FlatPhysicalPlan if it's not nil
+	flatPlan interface{}
+	// plan should be a plannercore.Plan if it's not nil
+	plan interface{}
+
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
@@ -182,7 +240,12 @@ type StatementContext struct {
 	TaskMapBakTS          uint64 // counter for
 
 	// stmtCache is used to store some statement-related values.
-	stmtCache map[StmtCacheKey]interface{}
+	// add mutex to protect stmtCache concurrent access
+	// https://github.com/pingcap/tidb/issues/36159
+	stmtCache struct {
+		mu   sync.Mutex
+		data map[StmtCacheKey]interface{}
+	}
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
@@ -228,10 +291,10 @@ type StatementContext struct {
 	StatsLoad struct {
 		// Timeout to wait for sync-load
 		Timeout time.Duration
-		// NeededColumns stores the columns whose stats are needed for planner.
-		NeededColumns []model.TableColumnID
+		// NeededItems stores the columns/indices whose stats are needed for planner.
+		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan model.TableColumnID
+		ResultCh chan StatsLoadResult
 		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
 		Fallback bool
 		// LoadStartTime is to record the load start time to calculate latency
@@ -248,6 +311,11 @@ type StatementContext struct {
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
+
+	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
+	StatsLoadStatus map[model.TableItemID]string
+	// IsSyncStatsFailed indicates whether any failure happened during sync stats
+	IsSyncStatsFailed bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -259,6 +327,7 @@ type StmtHints struct {
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
+	StraightJoinOrder       bool
 	// EnableCascadesPlanner is use cascades planner for a single query only.
 	EnableCascadesPlanner bool
 	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
@@ -294,23 +363,29 @@ const (
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
 func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interface{}) interface{} {
-	if sc.stmtCache == nil {
-		sc.stmtCache = make(map[StmtCacheKey]interface{})
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	if sc.stmtCache.data == nil {
+		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
 	}
-	if _, ok := sc.stmtCache[key]; !ok {
-		sc.stmtCache[key] = value
+	if _, ok := sc.stmtCache.data[key]; !ok {
+		sc.stmtCache.data[key] = value
 	}
-	return sc.stmtCache[key]
+	return sc.stmtCache.data[key]
 }
 
 // ResetInStmtCache resets the cache of given key.
 func (sc *StatementContext) ResetInStmtCache(key StmtCacheKey) {
-	delete(sc.stmtCache, key)
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	delete(sc.stmtCache.data, key)
 }
 
 // ResetStmtCache resets all cached values.
 func (sc *StatementContext) ResetStmtCache() {
-	sc.stmtCache = make(map[StmtCacheKey]interface{})
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	sc.stmtCache.data = make(map[StmtCacheKey]interface{})
 }
 
 // SQLDigest gets normalized and digest for provided sql.
@@ -329,9 +404,44 @@ func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Dige
 	})
 }
 
+// ResetSQLDigest sets the normalized and digest for sql anyway, **DO NOT USE THIS UNLESS YOU KNOW WHAT YOU ARE DOING NOW**.
+func (sc *StatementContext) ResetSQLDigest(s string) {
+	sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(s)
+}
+
 // GetPlanDigest gets the normalized plan and plan digest.
 func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *parser.Digest) {
 	return sc.planNormalized, sc.planDigest
+}
+
+// GetPlan gets the plan field of stmtctx
+func (sc *StatementContext) GetPlan() interface{} {
+	return sc.plan
+}
+
+// SetPlan sets the plan field of stmtctx
+func (sc *StatementContext) SetPlan(plan interface{}) {
+	sc.plan = plan
+}
+
+// GetFlatPlan gets the flatPlan field of stmtctx
+func (sc *StatementContext) GetFlatPlan() interface{} {
+	return sc.flatPlan
+}
+
+// SetFlatPlan sets the flatPlan field of stmtctx
+func (sc *StatementContext) SetFlatPlan(flat interface{}) {
+	sc.flatPlan = flat
+}
+
+// GetBinaryPlan gets the binaryPlan field of stmtctx
+func (sc *StatementContext) GetBinaryPlan() string {
+	return sc.binaryPlan
+}
+
+// SetBinaryPlan sets the binaryPlan field of stmtctx
+func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
+	sc.binaryPlan = binaryPlan
 }
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
@@ -401,6 +511,13 @@ func (sc *StatementContext) AddAffectedRows(rows uint64) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.affectedRows += rows
+}
+
+// SetAffectedRows sets affected rows.
+func (sc *StatementContext) SetAffectedRows(rows uint64) {
+	sc.mu.Lock()
+	sc.mu.affectedRows = rows
+	sc.mu.Unlock()
 }
 
 // AffectedRows gets affected rows.
@@ -555,6 +672,7 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.warnings = warns
+	sc.mu.errorCount = 0
 	for _, w := range warns {
 		if w.Level == WarnLevelError {
 			sc.mu.errorCount++
@@ -761,6 +879,9 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	if sc.InLoadDataStmt {
 		flags |= model.FlagInLoadDataStmt
 	}
+	if sc.InRestrictedSQL {
+		flags |= model.FlagInRestrictedSQL
+	}
 	return flags
 }
 
@@ -784,15 +905,15 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
-	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-		return sc.mu.allExecDetails[i].TimeDetail.ProcessTime < sc.mu.allExecDetails[j].TimeDetail.ProcessTime
+	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.ExecDetails) bool {
+		return i.TimeDetail.ProcessTime < j.TimeDetail.ProcessTime
 	})
 	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
 	d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
 	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
-	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-		return sc.mu.allExecDetails[i].TimeDetail.WaitTime < sc.mu.allExecDetails[j].TimeDetail.WaitTime
+	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.ExecDetails) bool {
+		return i.TimeDetail.WaitTime < j.TimeDetail.WaitTime
 	})
 	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
 	d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
@@ -818,8 +939,8 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 		if len(items) == 0 {
 			continue
 		}
-		sort.Slice(items, func(i, j int) bool {
-			return items[i].sleepTime < items[j].sleepTime
+		slices.SortFunc(items, func(i, j backoffItem) bool {
+			return i.sleepTime < j.sleepTime
 		})
 		n := len(items)
 		d.MaxBackoffAddress[backoff] = items[n-1].callee
@@ -898,4 +1019,31 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
 	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
 	return fields
+}
+
+// StatsLoadResult indicates result for StatsLoad
+type StatsLoadResult struct {
+	Item  model.TableItemID
+	Error error
+}
+
+// HasError returns whether result has error
+func (r StatsLoadResult) HasError() bool {
+	return r.Error != nil
+}
+
+// ErrorMsg returns StatsLoadResult err msg
+func (r StatsLoadResult) ErrorMsg() string {
+	if r.Error == nil {
+		return ""
+	}
+	b := bytes.NewBufferString("tableID:")
+	b.WriteString(strconv.FormatInt(r.Item.TableID, 10))
+	b.WriteString(", id:")
+	b.WriteString(strconv.FormatInt(r.Item.ID, 10))
+	b.WriteString(", isIndex:")
+	b.WriteString(strconv.FormatBool(r.Item.IsIndex))
+	b.WriteString(", err:")
+	b.WriteString(r.Error.Error())
+	return b.String()
 }

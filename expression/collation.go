@@ -157,7 +157,7 @@ const (
 	UNICODE = ASCII | EXTENDED
 )
 
-func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
+func deriveCoercibilityForScalarFunc(sf *ScalarFunction) Coercibility {
 	panic("this function should never be called")
 }
 

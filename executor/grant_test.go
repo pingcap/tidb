@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
@@ -29,8 +30,7 @@ import (
 )
 
 func TestGrantGlobal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
@@ -69,8 +69,7 @@ func TestGrantGlobal(t *testing.T) {
 }
 
 func TestGrantDBScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
@@ -108,8 +107,7 @@ func TestGrantDBScope(t *testing.T) {
 }
 
 func TestWithGrantOption(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
@@ -132,8 +130,7 @@ func TestWithGrantOption(t *testing.T) {
 }
 
 func TestGrantTableScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
@@ -176,8 +173,7 @@ func TestGrantTableScope(t *testing.T) {
 }
 
 func TestGrantColumnScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
@@ -222,8 +218,7 @@ func TestGrantColumnScope(t *testing.T) {
 }
 
 func TestIssue2456(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
@@ -234,8 +229,7 @@ func TestIssue2456(t *testing.T) {
 }
 
 func TestNoAutoCreateUser(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
@@ -246,8 +240,7 @@ func TestNoAutoCreateUser(t *testing.T) {
 }
 
 func TestCreateUserWhenGrant(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
@@ -259,11 +252,17 @@ func TestCreateUserWhenGrant(t *testing.T) {
 		testkit.Rows("test"),
 	)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	// Grant without a password.
+	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%'`)
+	// Make sure user is created automatically when grant to a non-exists one.
+	tk.MustQuery(`SELECT user, plugin FROM mysql.user WHERE user='test' and host='%'`).Check(
+		testkit.Rows("test mysql_native_password"),
+	)
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 }
 
 func TestCreateUserWithTooLongName(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	err := tk.ExecToErr("CREATE USER '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost'")
@@ -273,8 +272,7 @@ func TestCreateUserWithTooLongName(t *testing.T) {
 }
 
 func TestGrantPrivilegeAtomic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`drop role if exists r1, r2, r3, r4;`)
@@ -323,12 +321,10 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 
 	tk.MustExec(`drop role if exists r1, r2, r3, r4;`)
 	tk.MustExec(`drop table test.testatomic;`)
-
 }
 
 func TestIssue2654(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
@@ -339,8 +335,7 @@ func TestIssue2654(t *testing.T) {
 }
 
 func TestGrantUnderANSIQuotes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Fix a bug that the GrantExec fails in ANSI_QUOTES sql mode
@@ -353,8 +348,7 @@ func TestGrantUnderANSIQuotes(t *testing.T) {
 }
 
 func TestMaintainRequire(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -426,8 +420,7 @@ func TestMaintainRequire(t *testing.T) {
 }
 
 func TestMaintainAuthString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'maint_auth_str1'@'%' IDENTIFIED BY 'foo'`)
@@ -437,8 +430,7 @@ func TestMaintainAuthString(t *testing.T) {
 }
 
 func TestGrantOnNonExistTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user genius")
@@ -449,9 +441,9 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
 
 	tk.MustExec("create table if not exists xx (id int)")
-	// Case sensitive
-	_, err = tk.Exec("grant Select,Insert on XX to 'genius'")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	// Case insensitive, differ from MySQL default behaviour.
+	// In TiDB, system variable lower_case_table_names = 2, which means compare table name using lower case.
+	tk.MustExec("grant Select,Insert on XX to 'genius'")
 
 	_, err = tk.Exec("grant Select,Insert on xx to 'genius'")
 	require.NoError(t, err)
@@ -498,8 +490,7 @@ func TestGrantOnNonExistTable(t *testing.T) {
 }
 
 func TestIssue22721(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -512,8 +503,7 @@ func TestIssue22721(t *testing.T) {
 }
 
 func TestPerformanceSchemaPrivGrant(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -521,47 +511,28 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 	defer func() {
 		tk.MustExec("drop user issue27867;")
 	}()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
-	err := tk.ExecToErr("grant all on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	tk.MustGetErrCode("grant all on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
 	// Check case insensitivity
-	err = tk.ExecToErr("grant all on PERFormanCE_scHemA.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'")
+	tk.MustGetErrCode("grant all on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
 	// Check other database privileges
 	tk.MustExec("grant select on performance_schema.* to issue27867;")
-	tk.MustExec("grant insert on performance_schema.* to issue27867;")
-	tk.MustExec("grant update on performance_schema.* to issue27867;")
-	tk.MustExec("grant delete on performance_schema.* to issue27867;")
-	tk.MustExec("grant drop on performance_schema.* to issue27867;")
-	tk.MustExec("grant lock tables on performance_schema.* to issue27867;")
-	err = tk.ExecToErr("grant create on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
-	err = tk.ExecToErr("grant references on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
-	err = tk.ExecToErr("grant alter on PERFormAnCE_scHemA.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormAnCE_scHemA'")
-	err = tk.ExecToErr("grant execute on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
-	err = tk.ExecToErr("grant index on PERFormanCE_scHemA.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'")
-	err = tk.ExecToErr("grant create view on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
-	err = tk.ExecToErr("grant show view on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
+	tk.MustGetErrCode("grant insert on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant update on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant delete on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant drop on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant lock tables on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant create on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant references on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant alter on PERFormAnCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant execute on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant index on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant create view on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant show view on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
 }
 
 func TestGrantDynamicPrivs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user dyn")
@@ -594,8 +565,7 @@ func TestGrantDynamicPrivs(t *testing.T) {
 }
 
 func TestNonExistTableIllegalGrant(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user u29302")
@@ -605,4 +575,22 @@ func TestNonExistTableIllegalGrant(t *testing.T) {
 	tk.MustGetErrCode("grant lock tables on test.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
 	// Column level, not existing table, illegal privilege
 	tk.MustGetErrCode("grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;", mysql.ErrWrongUsage)
+}
+
+func TestIssue34610(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("DROP DATABASE IF EXISTS d1;")
+	tk.MustExec("CREATE DATABASE d1;")
+	tk.MustExec("USE d1;")
+	tk.MustExec("CREATE USER user_1@localhost;")
+	defer func() {
+		tk.MustExec("DROP DATABASE d1;")
+		tk.MustExec("DROP USER user_1@localhost;")
+	}()
+
+	tk.MustExec("CREATE TABLE T1(f1 INT);")
+	tk.MustGetErrCode("CREATE TABLE t1(f1 INT);", mysql.ErrTableExists)
+	tk.MustExec("GRANT SELECT ON T1 to user_1@localhost;")
+	tk.MustExec("GRANT SELECT ON t1 to user_1@localhost;")
 }

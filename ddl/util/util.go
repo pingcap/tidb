@@ -27,9 +27,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -42,12 +45,22 @@ const (
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
 	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
+	// KeyOpDefaultTimeout is the default timeout for each key operation.
+	KeyOpDefaultTimeout = 2 * time.Second
+	// KeyOpRetryInterval is the interval between two key operations.
+	KeyOpRetryInterval = 30 * time.Millisecond
+	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
+	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
+	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
+	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {
-	JobID, ElementID int64
-	StartKey, EndKey kv.Key
+	StartKey  kv.Key
+	EndKey    kv.Key
+	JobID     int64
+	ElementID int64
 }
 
 // Range returns the range [start, end) to delete.
@@ -56,17 +69,17 @@ func (t DelRangeTask) Range() (kv.Key, kv.Key) {
 }
 
 // LoadDeleteRanges loads delete range tasks from gc_delete_range table.
-func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	return loadDeleteRangesFromTable(ctx, deleteRangesTable, safePoint)
+func LoadDeleteRanges(ctx context.Context, sctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
+	return loadDeleteRangesFromTable(ctx, sctx, deleteRangesTable, safePoint)
 }
 
 // LoadDoneDeleteRanges loads deleted ranges from gc_delete_range_done table.
-func LoadDoneDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	return loadDeleteRangesFromTable(ctx, doneDeleteRangesTable, safePoint)
+func LoadDoneDeleteRanges(ctx context.Context, sctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
+	return loadDeleteRangesFromTable(ctx, sctx, doneDeleteRangesTable, safePoint)
 }
 
-func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	rs, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), loadDeleteRangeSQL, table, safePoint)
+func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, loadDeleteRangeSQL, table, safePoint)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
@@ -106,28 +119,30 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 }
 
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
-func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "BEGIN")
+func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = RemoveFromGCDeleteRange(ctx, dr.JobID, dr.ElementID)
+	err = RemoveFromGCDeleteRange(sctx, dr.JobID, dr.ElementID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "COMMIT")
+	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "COMMIT")
 	return errors.Trace(err)
 }
 
 // RemoveFromGCDeleteRange is exported for ddl pkg to use.
-func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) error {
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), completeDeleteRangeSQL, jobID, elementID)
+func RemoveFromGCDeleteRange(sctx sessionctx.Context, jobID, elementID int64) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, completeDeleteRangeSQL, jobID, elementID)
 	return errors.Trace(err)
 }
 
@@ -150,16 +165,18 @@ func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, 
 }
 
 // DeleteDoneRecord removes a record from gc_delete_range_done table.
-func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), deleteDoneRecordSQL, dr.JobID, dr.ElementID)
+func DeleteDoneRecord(sctx sessionctx.Context, dr DelRangeTask) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, deleteDoneRecordSQL, dr.JobID, dr.ElementID)
 	return errors.Trace(err)
 }
 
 // UpdateDeleteRange is only for emulator.
-func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
+func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	return errors.Trace(err)
 }
 
@@ -177,6 +194,7 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 
 // LoadGlobalVars loads global variable from mysql.global_variables.
 func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
 		var buf strings.Builder
 		buf.WriteString(loadGlobalVars)
@@ -196,7 +214,7 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 		for _, row := range rows {
 			varName := row.GetString(0)
 			varValue := row.GetString(1)
-			if err = sctx.GetSessionVars().SetSystemVar(varName, varValue); err != nil {
+			if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
 				return err
 			}
 		}
@@ -250,4 +268,54 @@ func GetInternalResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 // IsInternalResourceGroupTaggerForTopSQL use for testing.
 func IsInternalResourceGroupTaggerForTopSQL(tag []byte) bool {
 	return bytes.Equal(tag, internalResourceGroupTag)
+}
+
+// DeleteKeyFromEtcd deletes key value from etcd.
+func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
+	var err error
+	ctx := context.Background()
+	for i := 0; i < retryCnt; i++ {
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
+		_, err = etcdCli.Delete(childCtx, key)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		logutil.BgLogger().Warn("[ddl] etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
+	}
+	return errors.Trace(err)
+}
+
+// PutKVToEtcd puts key value to etcd.
+// etcdCli is client of etcd.
+// retryCnt is retry time when an error occurs.
+// opts are configures of etcd Operations.
+func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
+	opts ...clientv3.OpOption) error {
+	var err error
+	for i := 0; i < retryCnt; i++ {
+		if IsContextDone(ctx) {
+			return errors.Trace(ctx.Err())
+		}
+
+		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+		_, err = etcdCli.Put(childCtx, key, val, opts...)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		logutil.BgLogger().Warn("[ddl] etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+		time.Sleep(KeyOpRetryInterval)
+	}
+	return errors.Trace(err)
+}
+
+// IsContextDone checks if context is done.
+func IsContextDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+	}
+	return false
 }

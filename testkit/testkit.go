@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build !codes
-// +build !codes
 
 package testkit
 
@@ -21,18 +20,22 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
 )
 
@@ -45,17 +48,20 @@ type TestKit struct {
 	t       testing.TB
 	store   kv.Storage
 	session session.Session
+
+	useGeneralPlanCache bool
 }
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
-	return &TestKit{
+	tk := &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
 		t:       t,
 		store:   store,
-		session: newSession(t, store),
 	}
+	tk.RefreshSession()
+	return tk
 }
 
 // NewTestKitWithSession returns a new *TestKit.
@@ -69,14 +75,25 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 	}
 }
 
+// NewTestKitWithGeneralPlanCache returns a new *TestKit.
+func NewTestKitWithGeneralPlanCache(t testing.TB, store kv.Storage) *TestKit {
+	tk := NewTestKit(t, store)
+	tk.useGeneralPlanCache = true
+	return tk
+}
+
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = newSession(tk.t, tk.store)
+	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
+	tk.MustExec("select 3")
 }
 
 // SetSession set the session of testkit
 func (tk *TestKit) SetSession(session session.Session) {
 	tk.session = session
+	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
+	tk.MustExec("select 3")
 }
 
 // Session return the session associated with the testkit
@@ -86,7 +103,12 @@ func (tk *TestKit) Session() session.Session {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
-	res, err := tk.Exec(sql, args...)
+	tk.MustExecWithContext(context.Background(), sql, args...)
+}
+
+// MustExecWithContext executes a sql statement and asserts nil error.
+func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...interface{}) {
+	res, err := tk.ExecWithContext(ctx, sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
 	tk.require.NoError(err, comment)
 
@@ -98,11 +120,16 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+	return tk.MustQueryWithContext(context.Background(), sql, args...)
+}
+
+// MustQueryWithContext query the statements and returns result rows.
+func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ...interface{}) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
-	rs, err := tk.Exec(sql, args...)
+	rs, err := tk.ExecWithContext(ctx, sql, args...)
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(rs, comment)
-	return tk.ResultSetToResult(rs, comment)
+	return tk.ResultSetToResultWithCtx(ctx, rs, comment)
 }
 
 // MustIndexLookup checks whether the plan for the sql is IndexLookUp.
@@ -140,7 +167,6 @@ func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...
 				partitions = append(partitions[:index], partitions[index+1:]...)
 			}
 		}
-
 	}
 	if !ok {
 		tk.require.Len(partitions, 0)
@@ -183,6 +209,28 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasKeywordInOperatorInfo checks if the result execution plan contains specific keyword in the operator info.
+func (tk *TestKit) HasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][4], keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// NotHasKeywordInOperatorInfo checks if the result execution plan doesn't contain specific keyword in the operator info.
+func (tk *TestKit) NotHasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][4], keyword) {
+			return false
+		}
+	}
+	return true
+}
+
 // HasPlan4ExplainFor checks if the result execution plan contains specific plan.
 func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 	for i := range result.rows {
@@ -195,13 +243,26 @@ func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	ctx := context.Background()
+	return tk.ExecWithContext(context.Background(), sql, args...)
+}
+
+// ExecWithContext executes a sql statement using the prepared stmt API
+func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
-		stmts, err := tk.session.Parse(ctx, sql)
-		if err != nil {
-			return nil, errors.Trace(err)
+		var stmts []ast.StmtNode
+		if tk.useGeneralPlanCache {
+			if execStmt, ok := tk.session.Parameterize(ctx, sql); ok {
+				stmts = append(stmts, execStmt)
+			}
+		}
+		if len(stmts) == 0 {
+			var err error
+			stmts, err = tk.session.Parse(ctx, sql)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		warns := sc.GetWarnings()
 		parserWarns := warns[len(prevWarns):]
@@ -219,7 +280,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 			}
 			if err != nil {
 				tk.session.GetSessionVars().StmtCtx.AppendError(err)
-				return nil, errors.Trace(err)
+				return rs, errors.Trace(err)
 			}
 		}
 		if len(parserWarns) > 0 {
@@ -232,17 +293,14 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	params := make([]types.Datum, len(args))
-	for i := 0; i < len(params); i++ {
-		params[i] = types.NewDatum(args[i])
-	}
+	params := expression.Args2Expressions4Test(args...)
 	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return rs, errors.Trace(err)
 	}
 	err = tk.session.DropPreparedStmt(stmtID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return rs, errors.Trace(err)
 	}
 	return rs, nil
 }
@@ -254,6 +312,15 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 		tk.require.NoError(res.Close())
 	}
 	return err
+}
+
+// MustExecToErr executes a sql statement and must return Error.
+func (tk *TestKit) MustExecToErr(sql string, args ...interface{}) {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.require.NoError(res.Close())
+	}
+	tk.require.Error(err)
 }
 
 func newSession(t testing.TB, store kv.Storage) session.Session {
@@ -273,18 +340,24 @@ func (tk *TestKit) RefreshConnectionID() {
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
-	tk.require.Error(err)
+	tk.require.Errorf(err, "sql: %s", sql)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	tk.require.Truef(ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	tk.require.Truef(ok, "sql: %s, expect type 'terror.Error', but obtain '%T': %v", sql, originErr, originErr)
 	sqlErr := terror.ToSQLError(tErr)
-	tk.require.Equalf(errCode, int(sqlErr.Code), "Assertion failed, origin err:\n  %v", sqlErr)
+	tk.require.Equalf(errCode, int(sqlErr.Code), "sql: %s, Assertion failed, origin err:\n  %v", sql, sqlErr)
 }
 
 // MustGetErrMsg executes a sql statement and assert its error message.
 func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
 	err := tk.ExecToErr(sql)
 	tk.require.EqualError(err, errStr)
+}
+
+// MustGetDBError executes a sql statement and assert its terror.
+func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
+	err := tk.ExecToErr(sql)
+	tk.require.Truef(terror.ErrorEqual(err, dberr), "err %v", err)
 }
 
 // MustContainErrMsg executes a sql statement and assert its error message containing errStr.
@@ -390,4 +463,29 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 // CheckLastMessage checks last message after executing MustExec
 func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
+}
+
+// RegionProperityClient is to get region properties.
+type RegionProperityClient struct {
+	tikv.Client
+	mu struct {
+		sync.Mutex
+		failedOnce bool
+		count      int64
+	}
+}
+
+// SendRequest is to mock send request.
+func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdDebugGetRegionProperties {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.mu.count++
+		// Mock failure once.
+		if !c.mu.failedOnce {
+			c.mu.failedOnce = true
+			return &tikvrpc.Response{}, nil
+		}
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }

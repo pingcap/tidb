@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
@@ -28,6 +29,62 @@ var (
 			Name:      "non_recursive_cte_usage",
 			Help:      "Counter of usage of CTE",
 		}, []string{LblCTEType})
+	TelemetryMultiSchemaChangeCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "multi_schema_change_usage",
+			Help:      "Counter of usage of multi-schema change",
+		})
+	TelemetryTablePartitionCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_usage",
+			Help:      "Counter of CREATE TABLE which includes of table partitioning",
+		})
+	TelemetryTablePartitionListCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_list_usage",
+			Help:      "Counter of CREATE TABLE which includes LIST partitioning",
+		})
+	TelemetryTablePartitionRangeCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_range_usage",
+			Help:      "Counter of CREATE TABLE which includes RANGE partitioning",
+		})
+	TelemetryTablePartitionHashCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_hash_usage",
+			Help:      "Counter of CREATE TABLE which includes HASH partitioning",
+		})
+	TelemetryTablePartitionRangeColumnsCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_range_columns_usage",
+			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning",
+		})
+	TelemetryTablePartitionListColumnsCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_list_columns_usage",
+			Help:      "Counter of CREATE TABLE which includes LIST COLUMNS partitioning",
+		})
+	TelemetryTablePartitionMaxPartitionsCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_max_partition_usage",
+			Help:      "Counter of partitions created by CREATE TABLE statements",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -66,4 +123,97 @@ func GetCTECounter() CTEUsageCounter {
 		RecursiveUsed:       readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "recurCTE"})),
 		NonCTEUsed:          readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "notCTE"})),
 	}
+}
+
+// MultiSchemaChangeUsageCounter records the usages of multi-schema change.
+type MultiSchemaChangeUsageCounter struct {
+	MultiSchemaChangeUsed int64 `json:"multi_schema_change_used"`
+}
+
+// Sub returns the difference of two counters.
+func (c MultiSchemaChangeUsageCounter) Sub(rhs MultiSchemaChangeUsageCounter) MultiSchemaChangeUsageCounter {
+	return MultiSchemaChangeUsageCounter{
+		MultiSchemaChangeUsed: c.MultiSchemaChangeUsed - rhs.MultiSchemaChangeUsed,
+	}
+}
+
+// GetMultiSchemaCounter gets the TxnCommitCounter.
+func GetMultiSchemaCounter() MultiSchemaChangeUsageCounter {
+	return MultiSchemaChangeUsageCounter{
+		MultiSchemaChangeUsed: readCounter(TelemetryMultiSchemaChangeCnt),
+	}
+}
+
+// TablePartitionUsageCounter records the usages of table partition.
+type TablePartitionUsageCounter struct {
+	TablePartitionCnt              int64 `json:"table_partition_cnt"`
+	TablePartitionListCnt          int64 `json:"table_partition_list_cnt"`
+	TablePartitionRangeCnt         int64 `json:"table_partition_range_cnt"`
+	TablePartitionHashCnt          int64 `json:"table_partition_hash_cnt"`
+	TablePartitionRangeColumnsCnt  int64 `json:"table_partition_range_columns_cnt"`
+	TablePartitionListColumnsCnt   int64 `json:"table_partition_list_columns_cnt"`
+	TablePartitionMaxPartitionsCnt int64 `json:"table_partition_max_partitions_cnt"`
+}
+
+// Cal returns the difference of two counters.
+func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePartitionUsageCounter {
+	return TablePartitionUsageCounter{
+		TablePartitionCnt:              c.TablePartitionCnt - rhs.TablePartitionCnt,
+		TablePartitionListCnt:          c.TablePartitionListCnt - rhs.TablePartitionListCnt,
+		TablePartitionRangeCnt:         c.TablePartitionRangeCnt - rhs.TablePartitionRangeCnt,
+		TablePartitionHashCnt:          c.TablePartitionHashCnt - rhs.TablePartitionHashCnt,
+		TablePartitionRangeColumnsCnt:  c.TablePartitionRangeColumnsCnt - rhs.TablePartitionRangeColumnsCnt,
+		TablePartitionListColumnsCnt:   c.TablePartitionListColumnsCnt - rhs.TablePartitionListColumnsCnt,
+		TablePartitionMaxPartitionsCnt: mathutil.Max(c.TablePartitionMaxPartitionsCnt-rhs.TablePartitionMaxPartitionsCnt, rhs.TablePartitionMaxPartitionsCnt),
+	}
+}
+
+// ResetTablePartitionCounter gets the TxnCommitCounter.
+func ResetTablePartitionCounter(pre TablePartitionUsageCounter) TablePartitionUsageCounter {
+	return TablePartitionUsageCounter{
+		TablePartitionCnt:              readCounter(TelemetryTablePartitionCnt),
+		TablePartitionListCnt:          readCounter(TelemetryTablePartitionListCnt),
+		TablePartitionRangeCnt:         readCounter(TelemetryTablePartitionRangeCnt),
+		TablePartitionHashCnt:          readCounter(TelemetryTablePartitionHashCnt),
+		TablePartitionRangeColumnsCnt:  readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionListColumnsCnt:   readCounter(TelemetryTablePartitionListColumnsCnt),
+		TablePartitionMaxPartitionsCnt: mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
+	}
+}
+
+// GetTablePartitionCounter gets the TxnCommitCounter.
+func GetTablePartitionCounter() TablePartitionUsageCounter {
+	return TablePartitionUsageCounter{
+		TablePartitionCnt:              readCounter(TelemetryTablePartitionCnt),
+		TablePartitionListCnt:          readCounter(TelemetryTablePartitionListCnt),
+		TablePartitionRangeCnt:         readCounter(TelemetryTablePartitionRangeCnt),
+		TablePartitionHashCnt:          readCounter(TelemetryTablePartitionHashCnt),
+		TablePartitionRangeColumnsCnt:  readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionListColumnsCnt:   readCounter(TelemetryTablePartitionListColumnsCnt),
+		TablePartitionMaxPartitionsCnt: readCounter(TelemetryTablePartitionMaxPartitionsCnt),
+	}
+}
+
+// NonTransactionalStmtCounter records the usages of non-transactional statements.
+type NonTransactionalStmtCounter struct {
+	DeleteCount int64 `json:"delete"`
+}
+
+// Sub returns the difference of two counters.
+func (n NonTransactionalStmtCounter) Sub(rhs NonTransactionalStmtCounter) NonTransactionalStmtCounter {
+	return NonTransactionalStmtCounter{
+		DeleteCount: n.DeleteCount - rhs.DeleteCount,
+	}
+}
+
+// GetNonTransactionalStmtCounter gets the NonTransactionalStmtCounter.
+func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
+	return NonTransactionalStmtCounter{
+		DeleteCount: readCounter(NonTransactionalDeleteCount),
+	}
+}
+
+// GetSavepointStmtCounter gets the savepoint statement executed counter.
+func GetSavepointStmtCounter() int64 {
+	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint"}))
 }

@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "gci",
+    srcs = ["analysis.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/gci",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_daixiang0_gci//pkg/config",
+        "@com_github_daixiang0_gci//pkg/gci",
+        "@org_golang_x_tools//go/analysis",
+    ],
+)

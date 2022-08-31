@@ -1,0 +1,58 @@
+name: Dumpling
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        type: boolean
+        description: 'Run the build with tmate debugging enabled'
+        required: false
+        default: false
+  push:
+    branches:
+      - master
+      - release-*
+    paths:
+      - 'dumpling/**'
+      - 'br/pkg/storage/**'
+      - 'br/pkg/utils/**'
+      - 'br/pkg/summary/**'
+      - 'store/helper/**'
+      - 'tablecodec/**'
+      - 'util/codec/**'
+      - 'parser/model/**'
+  pull_request:
+    branches:
+      - master
+      - release-*
+    paths:
+      - 'dumpling/**'
+      - 'br/pkg/storage/**'
+      - 'br/pkg/utils/**'
+      - 'br/pkg/summary/**'
+      - 'store/helper/**'
+      - 'tablecodec/**'
+      - 'util/codec/**'
+      - 'parser/model/**'
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  mysql-5735:
+    uses: ./.github/workflows/integration-test-dumpling-common.yml
+    with:
+      debug: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug }}
+      mysql_version: 5.7.35
+
+  mysql-8022:
+    uses: ./.github/workflows/integration-test-dumpling-common.yml
+    with:
+      debug: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug }}
+      mysql_version: 8.0.22
+
+  mysql-8026:
+    uses: ./.github/workflows/integration-test-dumpling-common.yml
+    with:
+      debug: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug }}
+      mysql_version: 8.0.26

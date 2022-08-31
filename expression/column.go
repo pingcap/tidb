@@ -16,7 +16,6 @@ package expression
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"golang.org/x/exp/slices"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -490,6 +490,11 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	return col.hashcode
 }
 
+// CleanHashCode will clean the hashcode you may be cached before. It's used especially in schema-cloned & reallocated-uniqueID's cases.
+func (col *Column) CleanHashCode() {
+	col.hashcode = make([]byte, 0, 9)
+}
+
 // ResolveIndices implements Expression interface.
 func (col *Column) ResolveIndices(schema *Schema) (Expression, error) {
 	newCol := col.Clone()
@@ -665,6 +670,9 @@ func (col *Column) Coercibility() Coercibility {
 
 // Repertoire returns the repertoire value which is used to check collations.
 func (col *Column) Repertoire() Repertoire {
+	if col.repertoire != 0 {
+		return col.repertoire
+	}
 	switch col.RetType.EvalType() {
 	case types.ETJson:
 		return UNICODE
@@ -682,8 +690,8 @@ func (col *Column) Repertoire() Repertoire {
 func SortColumns(cols []*Column) []*Column {
 	sorted := make([]*Column, len(cols))
 	copy(sorted, cols)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].UniqueID < sorted[j].UniqueID
+	slices.SortFunc(sorted, func(i, j *Column) bool {
+		return i.UniqueID < j.UniqueID
 	})
 	return sorted
 }

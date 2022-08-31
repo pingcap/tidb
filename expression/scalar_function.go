@@ -375,10 +375,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
 			if ctx := sf.GetCtx(); ctx != nil {
 				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
-					if sc.TruncateAsWarning {
-						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-						err = nil
-					}
+					err = sc.HandleTruncate(err)
 				}
 			}
 		} else {
@@ -560,7 +557,7 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 // Coercibility returns the coercibility value which is used to check collations.
 func (sf *ScalarFunction) Coercibility() Coercibility {
 	if !sf.Function.HasCoercibility() {
-		sf.SetCoercibility(deriveCoercibilityForScarlarFunc(sf))
+		sf.SetCoercibility(deriveCoercibilityForScalarFunc(sf))
 	}
 	return sf.Function.Coercibility()
 }

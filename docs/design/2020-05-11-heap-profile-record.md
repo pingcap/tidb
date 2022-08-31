@@ -24,7 +24,7 @@ And `runtime.MemProfileRate` controls the fraction of memory allocations that ar
 
 To verify whether `kvcache.(*SimpleLRUCache).Put` would reflect the real heap usage, I use following test to ensure it:
 
-1. fufill the `SimpleLRUCache` by `set @randomString = ? with 20000 times`.
+1. fulfill the `SimpleLRUCache` by `set @randomString = ? with 20000 times`.
 2. profile the heap Usage of `github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put` and the result is 2.55 MB
 
 Let's dig into the Put then we can find the where the heap consumed:
@@ -60,7 +60,7 @@ ROUTINE ======================== github.com/pingcap/tidb/util/kvcache.(*SimpleLR
          .          .    114:   if l.quota == 0 {
 
 ```  
-We can find that the `hash` (the key of cache) and the `element`(the value of the cache) totolly consume 2.55 MB.
+We can find that the `hash` (the key of cache) and the `element`(the value of the cache) totally consume 2.55 MB.
 
 3. we use [sizeof](https://github.com/templarbit/sizeof) (the result is similar, but lower, not exact) to calculate the size of each key and element is 80byte and 40byte.
 4. As 2.28 MB (120 byte * 20000) is similar to the 2.55MB, we can ensure that the heap profile would reflect the heap usage of `SimpleLRUCache`.

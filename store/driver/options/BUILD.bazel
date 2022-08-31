@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "options",
+    srcs = ["options.go"],
+    importpath = "github.com/pingcap/tidb/store/driver/options",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv",
+        "@com_github_tikv_client_go_v2//kv",
+    ],
+)

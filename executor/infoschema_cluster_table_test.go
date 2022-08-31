@@ -33,20 +33,18 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
 type infosSchemaClusterTableSuite struct {
-	suite.Suite
 	store      kv.Storage
 	dom        *domain.Domain
-	clean      func()
 	rpcServer  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
@@ -54,37 +52,43 @@ type infosSchemaClusterTableSuite struct {
 	startTime  time.Time
 }
 
-func TestInfoSchemaClusterTable(t *testing.T) {
-	suite.Run(t, new(infosSchemaClusterTableSuite))
-}
-
-func (s *infosSchemaClusterTableSuite) SetupSuite() {
-	s.store, s.dom, s.clean = testkit.CreateMockStoreAndDomain(s.T())
-	s.rpcServer, s.listenAddr = s.setUpRPCService("127.0.0.1:0")
+func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSuite {
+	s := new(infosSchemaClusterTableSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
+	t.Cleanup(func() {
+		if s.rpcServer != nil {
+			s.rpcServer.Stop()
+		}
+		if s.httpServer != nil {
+			s.httpServer.Close()
+		}
+	})
+	return s
 }
 
-func (s *infosSchemaClusterTableSuite) setUpRPCService(addr string) (*grpc.Server, string) {
+func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
-	s.Require().NoError(err)
+	require.NoError(t, err)
 
 	// Fix issue 9836
-	sm := &mockSessionManager{
-		processInfoMap: make(map[uint64]*util.ProcessInfo, 1),
-		serverID:       1,
+	sm := &testutil.MockSessionManager{
+		PS:    make([]*util.ProcessInfo, 1),
+		SerID: 1,
 	}
-	sm.processInfoMap[1] = &util.ProcessInfo{
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
-	}
-	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
+	})
+	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
-		s.Require().NoError(srv.Serve(lis))
+		require.NoError(t, srv.Serve(lis))
 	}()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
@@ -165,54 +169,6 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 	return srv, mockAddr
 }
 
-func (s *infosSchemaClusterTableSuite) TearDownSuite() {
-	s.rpcServer.Stop()
-	s.httpServer.Close()
-	s.clean()
-}
-
-type mockSessionManager struct {
-	processInfoMap map[uint64]*util.ProcessInfo
-	serverID       uint64
-}
-
-func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	return sm.processInfoMap
-}
-
-func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	rs, ok := sm.processInfoMap[id]
-	return rs, ok
-}
-
-func (sm *mockSessionManager) StoreInternalSession(se interface{}) {
-}
-
-func (sm *mockSessionManager) DeleteInternalSession(se interface{}) {
-}
-
-func (sm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
-
-func (sm *mockSessionManager) Kill(_ uint64, _ bool) {}
-
-func (sm *mockSessionManager) KillAllConnections() {}
-
-func (sm *mockSessionManager) UpdateTLSConfig(_ *tls.Config) {}
-
-func (sm *mockSessionManager) ServerID() uint64 {
-	return sm.serverID
-}
-
-func (sm *mockSessionManager) SetServerID(serverID uint64) {
-	sm.serverID = serverID
-}
-
 type mockStore struct {
 	helper.Storage
 	host string
@@ -224,7 +180,9 @@ func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
 func (s *mockStore) Name() string                 { return "mockStore" }
 func (s *mockStore) Describe() string             { return "" }
 
-func (s *infosSchemaClusterTableSuite) TestTiDBClusterInfo() {
+func TestTiDBClusterInfo(t *testing.T) {
+	s := createInfosSchemaClusterTableSuite(t)
+
 	mockAddr := s.mockAddr
 	store := &mockStore{
 		s.store.(helper.Storage),
@@ -232,7 +190,7 @@ func (s *infosSchemaClusterTableSuite) TestTiDBClusterInfo() {
 	}
 
 	// information_schema.cluster_info
-	tk := testkit.NewTestKit(s.T(), store)
+	tk := testkit.NewTestKit(t, store)
 	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
 	row := func(cols ...string) string { return strings.Join(cols, " ") }
 	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
@@ -246,9 +204,9 @@ func (s *infosSchemaClusterTableSuite) TestTiDBClusterInfo() {
 		row("tikv", "store1", ""),
 	))
 
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockStoreTombstone", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockStoreTombstone", `return(true)`))
 	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows())
-	s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockStoreTombstone"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockStoreTombstone"))
 
 	// information_schema.cluster_config
 	instances := []string{
@@ -257,8 +215,8 @@ func (s *infosSchemaClusterTableSuite) TestTiDBClusterInfo() {
 		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,0",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr))
-	defer func() { s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo")) }()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr))
+	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo")) }()
 	tk.MustQuery("select type, instance, status_address, version, git_hash, server_id from information_schema.cluster_info").Check(testkit.Rows(
 		row("pd", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "0"),
 		row("tidb", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "1001"),
@@ -294,10 +252,12 @@ func (s *infosSchemaClusterTableSuite) TestTiDBClusterInfo() {
 	))
 }
 
-func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestTableStorageStats(t *testing.T) {
+	s := createInfosSchemaClusterTableSuite(t)
+
+	tk := testkit.NewTestKit(t, s.store)
 	err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test'")
-	s.Require().EqualError(err, "pd unavailable")
+	require.EqualError(t, err, "pd unavailable")
 	mockAddr := s.mockAddr
 	store := &mockStore{
 		s.store.(helper.Storage),
@@ -305,11 +265,12 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 	}
 
 	// Test information_schema.TABLE_STORAGE_STATS.
-	tk = testkit.NewTestKit(s.T(), store)
+	tk = testkit.NewTestKit(t, store)
 
-	// Test not set the schema.
+	// Test table_schema is not specified.
 	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS")
-	s.Require().EqualError(err, "Please specify the 'table_schema'")
+	require.EqualError(t, err, "Please add where clause to filter the column TABLE_SCHEMA. "+
+		"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
 
 	// Test it would get null set when get the sys schema.
 	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]interface{}{})
@@ -330,21 +291,21 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 31
-	s.Require().Len(rows, result)
+	result := 35
+	require.Len(t, rows, result)
 
 	// More tests about the privileges.
 	tk.MustExec("create user 'testuser'@'localhost'")
 	tk.MustExec("create user 'testuser2'@'localhost'")
 	tk.MustExec("create user 'testuser3'@'localhost'")
-	tk1 := testkit.NewTestKit(s.T(), store)
+	tk1 := testkit.NewTestKit(t, store)
 	defer tk1.MustExec("drop user 'testuser'@'localhost'")
 	defer tk1.MustExec("drop user 'testuser2'@'localhost'")
 	defer tk1.MustExec("drop user 'testuser3'@'localhost'")
 
 	tk.MustExec("grant all privileges on *.* to 'testuser2'@'localhost'")
 	tk.MustExec("grant select on *.* to 'testuser3'@'localhost'")
-	s.Require().True(tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -352,14 +313,14 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 	// User has no access to this schema, so the result set is empty.
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("0"))
 
-	s.Require().True(tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil))
 
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
 
-	s.Require().True(tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser3",
 		Hostname: "localhost",
 	}, nil, nil))

@@ -1,6 +1,6 @@
 set -eu
 
-for BACKEND in local importer tidb; do
+for BACKEND in local tidb; do
     if [ "$BACKEND" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi

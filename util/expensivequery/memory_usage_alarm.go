@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"runtime"
 	rpprof "runtime/pprof"
-	"sort"
 	"strings"
 	"time"
 
@@ -31,19 +30,19 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 type memoryUsageAlarm struct {
+	lastCheckTime          time.Time
 	err                    error
-	initialized            bool
-	isServerMemoryQuotaSet bool
+	tmpDir                 string
+	lastLogFileName        []string
+	lastProfileFileName    [][]string
 	serverMemoryQuota      uint64
 	memoryUsageAlarmRatio  float64
-	lastCheckTime          time.Time
-
-	tmpDir              string
-	lastLogFileName     []string
-	lastProfileFileName [][]string // heap, goroutine
+	initialized            bool
+	isServerMemoryQuotaSet bool
 }
 
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
@@ -183,8 +182,8 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 			logutil.BgLogger().Error("close oom record file fail", zap.Error(err))
 		}
 	}()
-	printTop10 := func(cmp func(i, j int) bool) {
-		sort.Slice(pinfo, cmp)
+	printTop10 := func(cmp func(i, j *util.ProcessInfo) bool) {
+		slices.SortFunc(pinfo, cmp)
 		list := pinfo
 		if len(list) > 10 {
 			list = list[:10]
@@ -210,43 +209,54 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 	}
 
 	_, err = f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n")
-	printTop10(func(i, j int) bool {
-		return pinfo[i].StmtCtx.MemTracker.MaxConsumed() > pinfo[j].StmtCtx.MemTracker.MaxConsumed()
+	printTop10(func(i, j *util.ProcessInfo) bool {
+		return i.StmtCtx.MemTracker.MaxConsumed() > j.StmtCtx.MemTracker.MaxConsumed()
 	})
 
 	_, err = f.WriteString("The 10 SQLs with the most time usage for OOM analysis\n")
-	printTop10(func(i, j int) bool {
-		return pinfo[i].Time.Before(pinfo[j].Time)
+	printTop10(func(i, j *util.ProcessInfo) bool {
+		return i.Time.Before(j.Time)
 	})
 }
 
+type item struct {
+	Name  string
+	Debug int
+}
+
 func (record *memoryUsageAlarm) recordProfile() {
-	items := []struct {
-		name  string
-		debug int
-	}{
-		{name: "heap"},
-		{name: "goroutine", debug: 2},
+	items := []item{
+		{Name: "heap"},
+		{Name: "goroutine", Debug: 2},
 	}
 	for i, item := range items {
-		fileName := filepath.Join(record.tmpDir, item.name+record.lastCheckTime.Format(time.RFC3339))
-		record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
-		f, err := os.Create(fileName)
+		err := record.write(i, item)
 		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
-			return
-		}
-		defer func() {
-			err := f.Close()
-			if err != nil {
-				logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.name), zap.Error(err))
-			}
-		}()
-		p := rpprof.Lookup(item.name)
-		err = p.WriteTo(f, item.debug)
-		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
 			return
 		}
 	}
+}
+
+func (record *memoryUsageAlarm) write(i int, item item) error {
+	fileName := filepath.Join(record.tmpDir, item.Name+record.lastCheckTime.Format(time.RFC3339))
+	record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
+	f, err := os.Create(fileName)
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.Name), zap.Error(err))
+		return err
+	}
+	//nolint: revive
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.Name), zap.Error(err))
+		}
+	}()
+	p := rpprof.Lookup(item.Name)
+	err = p.WriteTo(f, item.Debug)
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.Name), zap.Error(err))
+		return err
+	}
+	return nil
 }

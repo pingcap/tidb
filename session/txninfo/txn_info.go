@@ -18,9 +18,11 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -33,13 +35,69 @@ const (
 	TxnIdle TxnRunningState = iota
 	// TxnRunning means the transaction is running, i.e. executing a statement
 	TxnRunning
-	// TxnLockWaiting means the transaction is blocked on a lock
-	TxnLockWaiting
-	// TxnCommitting means the transaction is (at least trying to) committing
+	// TxnLockAcquiring means the transaction is trying to acquire a lock
+	TxnLockAcquiring
+	// TxnCommitting means`` the transaction is (at least trying to) committing
 	TxnCommitting
 	// TxnRollingBack means the transaction is rolling back
 	TxnRollingBack
+	// TxnStateCounter is a marker of the number of states, ensuring we don't miss any of them
+	TxnStateCounter
 )
+
+var txnDurationHistogramForState [][]prometheus.Observer = [][]prometheus.Observer{
+	{
+		metrics.TxnDurationHistogram.WithLabelValues("idle", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("idle", "true"),
+	},
+	{
+		metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "true"),
+	},
+	{
+		metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "true"),
+	},
+	{
+		metrics.TxnDurationHistogram.WithLabelValues("committing", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("committing", "true"),
+	},
+	{
+		metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "false"),
+		metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "true"),
+	},
+}
+
+var txnStatusEnteringCounterForState []prometheus.Counter = []prometheus.Counter{
+	metrics.TxnStatusEnteringCounter.WithLabelValues("idle"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("executing_sql"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("acquiring_lock"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("committing"),
+	metrics.TxnStatusEnteringCounter.WithLabelValues("rolling_back"),
+}
+
+func init() {
+	if len(txnDurationHistogramForState) != int(TxnStateCounter) {
+		panic("len(txnDurationHistogramForState) != TxnStateCounter")
+	}
+	if len(txnStatusEnteringCounterForState) != int(TxnStateCounter) {
+		panic("len(txnStatusEnteringCounterForState) != TxnStateCounter")
+	}
+}
+
+// TxnDurationHistogram returns the observer for the given state and hasLock type.
+func TxnDurationHistogram(state TxnRunningState, hasLock bool) prometheus.Observer {
+	hasLockInt := 0
+	if hasLock {
+		hasLockInt = 1
+	}
+	return txnDurationHistogramForState[state][hasLockInt]
+}
+
+// TxnStatusEnteringCounter returns the counter for the given state.
+func TxnStatusEnteringCounter(state TxnRunningState) prometheus.Counter {
+	return txnStatusEnteringCounterForState[state]
+}
 
 const (
 	// IDStr is the column name of the TIDB_TRX table's ID column.
@@ -90,7 +148,9 @@ type TxnInfo struct {
 
 	// Current execution state of the transaction.
 	State TxnRunningState
-	// Last trying to block start time. Invalid if State is not TxnLockWaiting.
+	// When last time `State` changes, for metrics
+	LastStateChangeTime time.Time
+	// Last trying to block start time. Invalid if State is not TxnLockAcquiring.
 	BlockStartTime struct {
 		Valid bool
 		time.Time
@@ -115,7 +175,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		return types.NewDatum(info.StartTS)
 	},
 	StartTimeStr: func(info *TxnInfo) types.Datum {
-		humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+		humanReadableStartTime := time.UnixMilli(oracle.ExtractPhysical(info.StartTS))
 		return types.NewDatum(types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp))
 	},
 	CurrentSQLDigestStr: func(info *TxnInfo) types.Datum {

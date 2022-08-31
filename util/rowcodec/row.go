@@ -112,11 +112,11 @@ func (r *row) findColID(colID int64) (idx int, isNil, notFound bool) {
 		}
 		if v < colID {
 			i = h + 1
-		} else if v > colID {
-			j = h
-		} else {
+		} else if v == colID {
 			idx = h
 			return
+		} else {
+			j = h
 		}
 	}
 
@@ -133,11 +133,11 @@ func (r *row) findColID(colID int64) (idx int, isNil, notFound bool) {
 		}
 		if v < colID {
 			i = h + 1
-		} else if v > colID {
-			j = h
-		} else {
+		} else if v == colID {
 			isNil = true
 			return
+		} else {
+			j = h
 		}
 	}
 	notFound = true

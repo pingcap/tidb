@@ -121,10 +121,11 @@ FROM golang:1.16.4-buster as ycsb-builder
 WORKDIR /go/src/github.com/pingcap/
 RUN git clone https://github.com/pingcap/go-ycsb.git && \
     cd go-ycsb && \
+    go mod tidy && \
     make && \
     cp bin/go-ycsb /go-ycsb
 
-FROM golang:1.16.4-buster
+FROM golang:1.18.4-buster
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -150,7 +151,7 @@ COPY --from=tiflash-builder   /tiflash/tiflash               /br/bin/tiflash
 COPY --from=tiflash-builder   /tiflash/libtiflash_proxy.so   /br/bin/libtiflash_proxy.so
 COPY --from=tiflash-builder   /tiflash/flash_cluster_manager /br/bin/flash_cluster_manager
 COPY --from=lightning-builder /tikv-importer                 /br/bin/tikv-importer
-COPY --from=minio-builder     /usr/bin/minio                 /br/bin/minio
+COPY --from=minio-builder     /opt/bin/minio                 /br/bin/minio
 COPY --from=mc-builder        /usr/bin/mc                    /br/bin/mc
 COPY --from=gcs-builder       /bin/fake-gcs-server           /br/bin/fake-gcs-server
 

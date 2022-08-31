@@ -29,7 +29,9 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -50,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	error2 "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -57,13 +60,14 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -77,6 +81,7 @@ func checkFileName(s string) bool {
 		"meta.txt",
 		"stats/test.t_dump_single.json",
 		"schema/test.t_dump_single.schema.txt",
+		"table_tiflash_replica.txt",
 		"variables.toml",
 		"sqls.sql",
 		"session_bindings.sql",
@@ -92,8 +97,7 @@ func checkFileName(s string) bool {
 }
 
 func TestPessimisticSelectForUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, a int)")
@@ -106,8 +110,7 @@ func TestPessimisticSelectForUpdate(t *testing.T) {
 }
 
 func TestBind(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists testbind")
@@ -123,8 +126,7 @@ func TestBind(t *testing.T) {
 }
 
 func TestChangePumpAndDrainer(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// change pump or drainer's state need connect to etcd
 	// so will meet error "URL scheme must be http, https, unix, or unixs: /tmp/tidb"
@@ -133,8 +135,7 @@ func TestChangePumpAndDrainer(t *testing.T) {
 }
 
 func TestLoadStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	require.Error(t, tk.ExecToErr("load stats"))
@@ -142,18 +143,31 @@ func TestLoadStats(t *testing.T) {
 }
 
 func TestPlanReplayer(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
+	}()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
+	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("plan replayer dump explain select * from t where a=10")
+	tk.MustExec("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
+
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select * from t1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as select * from v1")
+	tk.MustExec("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
+	tk.MustExec("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
+	tk.MustExec("plan replayer dump explain select * from v1")
+	tk.MustExec("plan replayer dump explain select * from v2")
 }
 
 func TestShow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_show;")
 	tk.MustExec("use test_show")
@@ -216,19 +230,20 @@ func TestShow(t *testing.T) {
 }
 
 func TestSelectWithoutFrom(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("select 1 + 2*3;").Check(testkit.Rows("7"))
 	tk.MustQuery(`select _utf8"string";`).Check(testkit.Rows("string"))
 	tk.MustQuery("select 1 order by 1;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT  'a' as f1 having f1 = 'a';").Check(testkit.Rows("a"))
+	tk.MustQuery("SELECT (SELECT * FROM (SELECT 'a') t) AS f1 HAVING (f1 = 'a' OR TRUE);").Check(testkit.Rows("a"))
+	tk.MustQuery("SELECT (SELECT * FROM (SELECT 'a') t) + 1 AS f1 HAVING (f1 = 'a' OR TRUE)").Check(testkit.Rows("1"))
 }
 
 // TestSelectBackslashN Issue 3685.
 func TestSelectBackslashN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	sql := `select \N;`
@@ -320,8 +335,7 @@ func TestSelectBackslashN(t *testing.T) {
 
 // TestSelectNull Issue #4053.
 func TestSelectNull(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	sql := `select nUll;`
@@ -355,8 +369,7 @@ func TestSelectNull(t *testing.T) {
 
 // TestSelectStringLiteral Issue #3686.
 func TestSelectStringLiteral(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	sql := `select 'abc';`
@@ -519,8 +532,7 @@ func TestSelectStringLiteral(t *testing.T) {
 }
 
 func TestSelectLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table select_limit(id int not null default 1, name varchar(255), PRIMARY KEY(id));")
@@ -550,8 +562,7 @@ func TestSelectLimit(t *testing.T) {
 }
 
 func TestSelectOrderBy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table select_order_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));")
@@ -632,8 +643,7 @@ func TestSelectOrderBy(t *testing.T) {
 }
 
 func TestOrderBy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int, c2 int, c3 varchar(20))")
@@ -657,8 +667,7 @@ func TestOrderBy(t *testing.T) {
 }
 
 func TestSelectErrorRow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	require.Error(t, tk.ExecToErr("select row(1, 1) from test"))
@@ -672,8 +681,7 @@ func TestSelectErrorRow(t *testing.T) {
 }
 
 func TestNeighbouringProj(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int)")
@@ -689,8 +697,7 @@ func TestNeighbouringProj(t *testing.T) {
 }
 
 func TestIn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t`)
@@ -706,8 +713,7 @@ func TestIn(t *testing.T) {
 }
 
 func TestTablePKisHandleScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -769,8 +775,7 @@ func TestTablePKisHandleScan(t *testing.T) {
 }
 
 func TestIndexReverseOrder(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -786,8 +791,7 @@ func TestIndexReverseOrder(t *testing.T) {
 }
 
 func TestTableReverseOrder(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -798,8 +802,7 @@ func TestTableReverseOrder(t *testing.T) {
 }
 
 func TestDefaultNull(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -816,8 +819,7 @@ func TestDefaultNull(t *testing.T) {
 }
 
 func TestUnsignedPKColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -829,8 +831,7 @@ func TestUnsignedPKColumn(t *testing.T) {
 }
 
 func TestJSON(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -873,7 +874,7 @@ func TestJSON(t *testing.T) {
 
 	// check CAST AS JSON.
 	tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`).Check(testkit.Rows(`3 {} <nil>`))
-
+	//nolint:revive,all_revive
 	tk.MustQuery("select a, count(1) from test_json group by a order by a").Check(testkit.Rows(
 		"<nil> 1",
 		"null 1",
@@ -902,8 +903,7 @@ func TestJSON(t *testing.T) {
 }
 
 func TestMultiUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_mu (a int primary key, b int, c int)`)
@@ -928,8 +928,7 @@ func TestMultiUpdate(t *testing.T) {
 }
 
 func TestGeneratedColumnWrite(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustGetErrMsg(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (a+8) virtual)`, dbterror.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("c").Error())
@@ -980,8 +979,7 @@ func TestGeneratedColumnWrite(t *testing.T) {
 // TestGeneratedColumnRead tests select generated columns from table.
 // They should be calculated from their generation expressions.
 func TestGeneratedColumnRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored, e int as (c*2))`)
@@ -1116,8 +1114,7 @@ func TestGeneratedColumnRead(t *testing.T) {
 
 // TestGeneratedColumnRead tests generated columns using point get and batch point get
 func TestGeneratedColumnPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tu")
@@ -1146,8 +1143,7 @@ func TestGeneratedColumnPointGet(t *testing.T) {
 }
 
 func TestUnionAutoSignedCast(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
@@ -1188,8 +1184,7 @@ func TestUnionAutoSignedCast(t *testing.T) {
 }
 
 func TestUpdateClustered(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1357,8 +1352,7 @@ func TestUpdateClustered(t *testing.T) {
 }
 
 func TestSelectPartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
@@ -1420,8 +1414,7 @@ func TestSelectPartition(t *testing.T) {
 }
 
 func TestDeletePartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1`)
@@ -1442,15 +1435,13 @@ func TestDeletePartition(t *testing.T) {
 }
 
 func TestPrepareLoadData(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, mysql.ErrUnsupportedPs)
 }
 
 func TestSetOperation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1, t2, t3`)
@@ -1467,7 +1458,7 @@ func TestSetOperation(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1480,8 +1471,7 @@ func TestSetOperation(t *testing.T) {
 }
 
 func TestSetOperationOnDiffColType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1, t2, t3`)
@@ -1498,7 +1488,7 @@ func TestSetOperationOnDiffColType(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1512,8 +1502,7 @@ func TestSetOperationOnDiffColType(t *testing.T) {
 
 // issue-23038: wrong key range of index scan for year column
 func TestIndexScanWithYearCol(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1526,7 +1515,7 @@ func TestIndexScanWithYearCol(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1539,8 +1528,7 @@ func TestIndexScanWithYearCol(t *testing.T) {
 }
 
 func TestClusterIndexOuterJoinElimination(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -1554,8 +1542,7 @@ func TestClusterIndexOuterJoinElimination(t *testing.T) {
 }
 
 func TestPlanReplayerDumpSingle(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_dump_single")
@@ -1571,24 +1558,8 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	}
 }
 
-func TestDropColWithPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, c1 int, c2 int, c3 int, index idx1(c1, c2), index idx2(c3))")
-	tk.MustExec("set global tidb_enable_change_multi_schema = off")
-	tk.MustGetErrMsg("alter table t drop column id", "[ddl:8200]Unsupported drop integer primary key")
-	tk.MustGetErrMsg("alter table t drop column c1", "[ddl:8200]can't drop column c1 with composite index covered or Primary Key covered now")
-	tk.MustGetErrMsg("alter table t drop column c3", "[ddl:8200]can't drop column c3 with tidb_enable_change_multi_schema is disable")
-	tk.MustExec("set global tidb_enable_change_multi_schema = on")
-	tk.MustExec("alter table t drop column c3")
-}
-
 func TestUnsignedFeedback(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	oriProbability := statistics.FeedbackProbability.Load()
@@ -1605,8 +1576,7 @@ func TestUnsignedFeedback(t *testing.T) {
 }
 
 func TestAlterTableComment(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1619,8 +1589,7 @@ func TestAlterTableComment(t *testing.T) {
 }
 
 func TestTimezonePushDown(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (ts timestamp)")
@@ -1633,24 +1602,25 @@ func TestTimezonePushDown(t *testing.T) {
 	ctx := context.Background()
 	count := 0
 	ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
-		count += 1
+		count++
 		dagReq := new(tipb.DAGRequest)
 		require.NoError(t, proto.Unmarshal(req.Data, dagReq))
 		require.Equal(t, systemTZ.String(), dagReq.GetTimeZoneName())
 	})
-	_, err := tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	rs, err := tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 	require.NoError(t, err)
+	rs[0].Close()
 
 	tk.MustExec(`set time_zone="System"`)
-	_, err = tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	rs, err = tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 	require.NoError(t, err)
+	rs[0].Close()
 
 	require.Equal(t, 2, count) // Make sure the hook function is called.
 }
 
 func TestNotFillCacheFlag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1681,8 +1651,7 @@ func TestNotFillCacheFlag(t *testing.T) {
 }
 
 func TestHandleTransfer(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1708,8 +1677,7 @@ func TestHandleTransfer(t *testing.T) {
 }
 
 func TestExecutorBit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1772,8 +1740,7 @@ func TestExecutorBit(t *testing.T) {
 }
 
 func TestExecutorEnum(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1794,8 +1761,7 @@ func TestExecutorEnum(t *testing.T) {
 }
 
 func TestExecutorSet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1814,8 +1780,7 @@ func TestExecutorSet(t *testing.T) {
 }
 
 func TestSubQueryInValues(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1827,8 +1792,7 @@ func TestSubQueryInValues(t *testing.T) {
 }
 
 func TestEnhancedRangeAccess(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1840,8 +1804,7 @@ func TestEnhancedRangeAccess(t *testing.T) {
 
 // TestMaxInt64Handle Issue #4810
 func TestMaxInt64Handle(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1857,8 +1820,7 @@ func TestMaxInt64Handle(t *testing.T) {
 }
 
 func TestTableScanWithPointRanges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1868,8 +1830,7 @@ func TestTableScanWithPointRanges(t *testing.T) {
 }
 
 func TestUnsignedPk(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1888,8 +1849,7 @@ func TestUnsignedPk(t *testing.T) {
 }
 
 func TestSignedCommonHandle(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -1906,8 +1866,7 @@ func TestSignedCommonHandle(t *testing.T) {
 }
 
 func TestContainDotColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1918,8 +1877,7 @@ func TestContainDotColumn(t *testing.T) {
 }
 
 func TestCheckIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	ctx := mock.NewContext()
 	ctx.Store = store
@@ -1959,7 +1917,7 @@ func TestCheckIndex(t *testing.T) {
 	// table     data (handle, data): (1, 10), (2, 20)
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
-	require.NoError(t, ctx.NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	_, err = tb.AddRecord(ctx, recordVal1)
 	require.NoError(t, err)
 	_, err = tb.AddRecord(ctx, recordVal2)
@@ -2017,6 +1975,7 @@ func TestCheckIndex(t *testing.T) {
 	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "admin check index t c")
 	require.Error(t, err)
+	//nolint:revive,all_revive
 	require.Contains(t, err.Error(), "table count 3 != index(c) count 2")
 
 	// TODO: pass the case below：
@@ -2037,8 +1996,7 @@ func setColValue(t *testing.T, txn kv.Transaction, key kv.Key, v types.Datum) {
 }
 
 func TestCheckTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Test 'admin check table' when the table has a unique index with null values.
@@ -2050,8 +2008,7 @@ func TestCheckTable(t *testing.T) {
 }
 
 func TestCheckTableClusterIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -2062,45 +2019,8 @@ func TestCheckTableClusterIndex(t *testing.T) {
 	tk.MustExec("admin check table admin_test;")
 }
 
-func TestCoprocessorStreamingFlag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, value int, index idx(id))")
-	// Add some data to make statistics work.
-	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
-
-	tests := []struct {
-		sql    string
-		expect bool
-	}{
-		{"select * from t", true},                         // TableReader
-		{"select * from t where id = 5", true},            // IndexLookup
-		{"select * from t where id > 5", true},            // Filter
-		{"select * from t limit 3", false},                // Limit
-		{"select avg(id) from t", false},                  // Aggregate
-		{"select * from t order by value limit 3", false}, // TopN
-	}
-
-	ctx := context.Background()
-	for _, test := range tests {
-		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
-			comment := fmt.Sprintf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.Streaming)
-			require.Equal(t, test.expect, req.Streaming, comment)
-		})
-		rs, err := tk.Session().Execute(ctx1, test.sql)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs[0], fmt.Sprintf("sql: %v", test.sql))
-	}
-}
-
 func TestIncorrectLimitArg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -2115,8 +2035,7 @@ func TestIncorrectLimitArg(t *testing.T) {
 }
 
 func TestExecutorLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -2148,8 +2067,7 @@ func TestExecutorLimit(t *testing.T) {
 }
 
 func TestIndexScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2228,8 +2146,7 @@ func TestIndexScan(t *testing.T) {
 }
 
 func TestUpdateJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2308,8 +2225,7 @@ func TestUpdateJoin(t *testing.T) {
 }
 
 func TestScanControlSelection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
@@ -2318,8 +2234,7 @@ func TestScanControlSelection(t *testing.T) {
 }
 
 func TestSimpleDAG(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2366,8 +2281,7 @@ func TestSimpleDAG(t *testing.T) {
 }
 
 func TestTimestampTimeZone(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2427,8 +2341,7 @@ func TestTimestampTimeZone(t *testing.T) {
 }
 
 func TestTimestampDefaultValueTimeZone(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2525,8 +2438,7 @@ func TestTimestampDefaultValueTimeZone(t *testing.T) {
 }
 
 func TestTiDBCurrentTS(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
@@ -2551,8 +2463,7 @@ func TestTiDBCurrentTS(t *testing.T) {
 }
 
 func TestTiDBLastTxnInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2608,8 +2519,7 @@ func TestTiDBLastTxnInfo(t *testing.T) {
 }
 
 func TestTiDBLastQueryInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2670,9 +2580,10 @@ func TestTiDBLastQueryInfo(t *testing.T) {
 }
 
 func TestSelectForUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -2744,12 +2655,10 @@ func TestSelectForUpdate(t *testing.T) {
 
 	err = tk1.ExecToErr("commit")
 	require.Error(t, err)
-
 }
 
 func TestSelectForUpdateOf(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2782,8 +2691,7 @@ func TestSelectForUpdateOf(t *testing.T) {
 }
 
 func TestEmptyEnum(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2814,8 +2722,7 @@ func TestEmptyEnum(t *testing.T) {
 }
 
 func TestPartitionHashCode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2834,8 +2741,7 @@ func TestPartitionHashCode(t *testing.T) {
 }
 
 func TestAlterDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, primary key(a))")
@@ -2847,8 +2753,7 @@ func TestAlterDefaultValue(t *testing.T) {
 
 // this is from jira issue #5856
 func TestInsertValuesWithSubQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -2883,12 +2788,10 @@ func TestInsertValuesWithSubQuery(t *testing.T) {
 	tk.MustGetErrMsg(
 		"insert into t set a = 81, b =  (select ( SELECT '1' AS `c0` WHERE '1' >= `subq_0`.`c0` ) as `c1` FROM ( SELECT '1' AS `c0` ) AS `subq_0` );",
 		"Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
-
 }
 
 func TestDIVZeroInPartitionExpr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -2901,8 +2804,7 @@ func TestDIVZeroInPartitionExpr(t *testing.T) {
 }
 
 func TestInsertIntoGivenPartitionSet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -2971,8 +2873,7 @@ func TestInsertIntoGivenPartitionSet(t *testing.T) {
 
 // fix issue https://github.com/pingcap/tidb/issues/32871
 func TestBitColumnIn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2985,8 +2886,7 @@ func TestBitColumnIn(t *testing.T) {
 }
 
 func TestUpdateGivenPartitionSet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -3041,8 +2941,7 @@ func TestUpdateGivenPartitionSet(t *testing.T) {
 }
 
 func TestIndexLookupRuntimeStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3059,8 +2958,7 @@ func TestIndexLookupRuntimeStats(t *testing.T) {
 }
 
 func TestHashAggRuntimeStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3074,8 +2972,7 @@ func TestHashAggRuntimeStats(t *testing.T) {
 }
 
 func TestIndexMergeRuntimeStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3101,8 +2998,7 @@ func TestIndexMergeRuntimeStats(t *testing.T) {
 
 // For issue 17256
 func TestGenerateColumnReplace(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -3115,8 +3011,7 @@ func TestGenerateColumnReplace(t *testing.T) {
 }
 
 func TestPrevStmtDesensitization(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -3130,8 +3025,7 @@ func TestPrevStmtDesensitization(t *testing.T) {
 }
 
 func TestIssue19372(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -3143,8 +3037,7 @@ func TestIssue19372(t *testing.T) {
 }
 
 func TestIssue19148(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3158,8 +3051,7 @@ func TestIssue19148(t *testing.T) {
 }
 
 func TestIssue19667(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3170,8 +3062,7 @@ func TestIssue19667(t *testing.T) {
 }
 
 func TestZeroDateTimeCompatibility(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3232,8 +3123,7 @@ func TestZeroDateTimeCompatibility(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/24165.
 func TestInvalidDateValueInCreateTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -3283,8 +3173,7 @@ func TestInvalidDateValueInCreateTable(t *testing.T) {
 }
 
 func TestOOMActionPriority(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3310,8 +3199,7 @@ func TestOOMActionPriority(t *testing.T) {
 }
 
 func TestTrackAggMemoryUsage(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3330,8 +3218,7 @@ func TestTrackAggMemoryUsage(t *testing.T) {
 }
 
 func TestProjectionBitType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3353,8 +3240,7 @@ func TestProjectionBitType(t *testing.T) {
 }
 
 func TestExprBlackListForEnum(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3433,8 +3319,7 @@ func TestExprBlackListForEnum(t *testing.T) {
 
 // Test invoke Close without invoking Open before for each operators.
 func TestUnreasonablyClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
@@ -3467,7 +3352,6 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalShuffle{},
 		&plannercore.PhysicalUnionAll{},
 	}
-	executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
 
 	opsNeedsCoveredMask := uint64(1<<len(opsNeedsCovered) - 1)
 	opsAlreadyCoveredMask := uint64(0)
@@ -3497,8 +3381,13 @@ func TestUnreasonablyClose(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tc)
 		stmt, err := p.ParseOneStmt(tc, "", "")
 		require.NoError(t, err, comment)
-		err = tk.Session().NewTxn(context.Background())
+		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err, comment)
+
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
+		require.NoError(t, err, comment)
+
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NotNil(t, p)
@@ -3558,8 +3447,7 @@ func TestUnreasonablyClose(t *testing.T) {
 }
 
 func TestEncodingSet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3575,8 +3463,7 @@ func TestEncodingSet(t *testing.T) {
 }
 
 func TestDeleteWithMulTbl(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3608,22 +3495,19 @@ func TestDeleteWithMulTbl(t *testing.T) {
 }
 
 func TestOOMPanicAction(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b double);")
 	tk.MustExec("insert into t values (1,1)")
-	sm := &testkit.MockSessionManager{
+	sm := &testutil.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
 	require.Error(t, err)
@@ -3666,8 +3550,7 @@ func TestOOMPanicAction(t *testing.T) {
 }
 
 func TestPointGetPreparedPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists ps_text")
@@ -3684,151 +3567,152 @@ func TestPointGetPreparedPlan(t *testing.T) {
 
 	pspk1Id, _, _, err := tk.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 	pspk2Id, _, _, err := tk.Session().PrepareStmt("select * from t where ? = a ")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
-	rs, err := tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err := tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	// using the generated plan but with different params
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3"))
 
 	// unique index
 	psuk1Id, _, _, err := tk.Session().PrepareStmt("select * from t where b = ? ")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	// test schema changed, cached plan should be invalidated
 	tk.MustExec("alter table t add column col4 int default 10 after c")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 
 	tk.MustExec("alter table t drop index k_b")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	tk.MustExec(`insert into t values(4, 3, 3, 11)`)
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10", "4 3 3 11"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	tk.MustExec("delete from t where a = 4")
 	tk.MustExec("alter table t add index k_b(b)")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	// use pk again
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(3))
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 }
 
 func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("drop database if exists ps_text")
 	defer tk1.MustExec("drop database if exists ps_text")
@@ -3844,16 +3728,16 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 
 	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(0))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
 
 	// using the generated plan but with different params
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
@@ -3861,7 +3745,7 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	tk1.MustExec("set autocommit = 0")
 	tk1.MustExec("begin")
 	// try to exec using point get plan(this plan should not go short path)
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
@@ -3871,7 +3755,7 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	tk2.MustExec("update t set c = c + 10 where c = 1")
 
 	// try to point get again
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
 
@@ -3881,11 +3765,11 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
 
 	// verify
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 11"))
 
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
 
@@ -3893,8 +3777,7 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 }
 
 func TestPointUpdatePreparedPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists pu_test")
@@ -3911,38 +3794,38 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 
 	updateID1, pc, _, err := tk.Session().PrepareStmt(`update t set c = c + 1 where a = ?`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 	require.Equal(t, 1, pc)
 	updateID2, pc, _, err := tk.Session().PrepareStmt(`update t set c = c + 2 where ? = a`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updateID2].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updateID2].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 	require.Equal(t, 1, pc)
 
 	ctx := context.Background()
 	// first time plan generated
-	rs, err := tk.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err := tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
 
 	// using the generated plan but with different params
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
 
 	// updateID2
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID2, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID2, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 8"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID2, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID2, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 10"))
@@ -3950,47 +3833,47 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 	// unique index
 	updUkID1, _, _, err := tk.Session().PrepareStmt(`update t set c = c + 10 where b = ?`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updUkID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	tk.Session().GetSessionVars().PreparedStmts[updUkID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 20"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 30"))
 
 	// test schema changed, cached plan should be invalidated
 	tk.MustExec("alter table t add column col4 int default 10 after c")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 31 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 32 10"))
 
 	tk.MustExec("alter table t drop index k_b")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 42 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 52 10"))
 
 	tk.MustExec("alter table t add unique index k_b(b)")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 62 10"))
 
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 72 10"))
@@ -4000,9 +3883,10 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 }
 
 func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("drop database if exists pu_test2")
 	defer tk1.MustExec("drop database if exists pu_test2")
@@ -4018,16 +3902,16 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 
 	ctx := context.Background()
 	updateID1, _, _, err := tk1.Session().PrepareStmt(`update t set c = c + 1 where a = ?`)
-	tk1.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 	require.NoError(t, err)
 
 	// first time plan generated
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
 
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
@@ -4036,7 +3920,7 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 	tk1.MustExec("set autocommit = 0")
 	tk1.MustExec("begin")
 	// try to exec using point get plan(this plan should not go short path)
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
@@ -4067,12 +3951,12 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 	// again next start a non autocommit txn
 	tk1.MustExec("set autocommit = 0")
 	tk1.MustExec("begin")
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 10"))
 
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 11"))
@@ -4082,8 +3966,7 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 }
 
 func TestApplyCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -4127,8 +4010,7 @@ func TestApplyCache(t *testing.T) {
 }
 
 func TestCollectDMLRuntimeStats(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4193,8 +4075,7 @@ func TestCollectDMLRuntimeStats(t *testing.T) {
 }
 
 func TestIssue13758(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4210,8 +4091,7 @@ func TestIssue13758(t *testing.T) {
 }
 
 func TestIssue20237(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4224,8 +4104,7 @@ func TestIssue20237(t *testing.T) {
 }
 
 func TestIssue24933(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -4301,8 +4180,7 @@ func TestIssue24933(t *testing.T) {
 }
 
 func TestTableSampleTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -4355,8 +4233,7 @@ func TestTableSampleTemporaryTable(t *testing.T) {
 }
 
 func TestCTEWithIndexLookupJoinDeadLock(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4370,8 +4247,7 @@ func TestCTEWithIndexLookupJoinDeadLock(t *testing.T) {
 }
 
 func TestGetResultRowsCount(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4401,14 +4277,13 @@ func TestGetResultRowsCount(t *testing.T) {
 		require.NotNil(t, info)
 		p, ok := info.Plan.(plannercore.Plan)
 		require.True(t, ok)
-		cnt := executor.GetResultRowsCount(tk.Session(), p)
-		require.Equal(t, cnt, ca.row, fmt.Sprintf("sql: %v", ca.sql))
+		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
+		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
 
 func TestAdminShowDDLJobs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
 	tk.MustExec("use test_admin_show_ddl_jobs")
@@ -4420,19 +4295,18 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	jobID, err := strconv.Atoi(row[0].(string))
 	require.NoError(t, err)
 
-	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMeta(txn)
-		job, err := tt.GetHistoryDDLJob(int64(jobID))
-		require.NoError(t, err)
-		require.NotNil(t, job)
-		// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
-		// See PR: 11561.
-		job.BinlogInfo = nil
-		job.SchemaName = ""
-		err = tt.AddHistoryDDLJob(job, true)
-		require.NoError(t, err)
-		return nil
-	})
+	job, err := ddl.GetHistoryJobByID(tk.Session(), int64(jobID))
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
+	// See PR: 11561.
+	job.BinlogInfo = nil
+	job.SchemaName = ""
+	err = sessiontxn.NewTxnInStmt(context.Background(), tk.Session())
+	require.NoError(t, err)
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
 
 	re = tk.MustQuery("admin show ddl jobs 1")
@@ -4487,9 +4361,26 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.Equal(t, t2.In(time.UTC), tt.In(time.UTC))
 }
 
+func TestAdminShowDDLJobsRowCount(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/25968
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id bigint key,b int);")
+	tk.MustExec("split table t by (10),(20),(30);")
+	tk.MustExec("insert into t values (0,0),(10,10),(20,20),(30,30);")
+	tk.MustExec("alter table t add index idx1(b);")
+	require.Equal(t, "4", tk.MustQuery("admin show ddl jobs 1").Rows()[0][7])
+
+	tk.MustExec("insert into t values (1,0),(2,10),(3,20),(4,30);")
+	tk.MustExec("alter table t add index idx2(b);")
+	require.Equal(t, "8", tk.MustQuery("admin show ddl jobs 1").Rows()[0][7])
+}
+
 func TestAdminShowDDLJobsInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// Test for issue: https://github.com/pingcap/tidb/issues/29915
@@ -4525,8 +4416,7 @@ func TestAdminShowDDLJobsInfo(t *testing.T) {
 }
 
 func TestAdminChecksumOfPartitionedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS admin_checksum_partition_test;")
@@ -4538,8 +4428,7 @@ func TestAdminChecksumOfPartitionedTable(t *testing.T) {
 }
 
 func TestUnion2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -4786,8 +4675,7 @@ func TestUnion2(t *testing.T) {
 }
 
 func TestUnionLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists union_limit")
@@ -4800,8 +4688,7 @@ func TestUnionLimit(t *testing.T) {
 }
 
 func TestLowResolutionTSORead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@autocommit=1")
@@ -4824,8 +4711,7 @@ func TestLowResolutionTSORead(t *testing.T) {
 }
 
 func TestStaleReadAtFutureTime(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
@@ -4835,8 +4721,7 @@ func TestStaleReadAtFutureTime(t *testing.T) {
 }
 
 func TestYearTypeDeleteIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4847,8 +4732,7 @@ func TestYearTypeDeleteIndex(t *testing.T) {
 }
 
 func TestToPBExpr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -4897,8 +4781,7 @@ func TestToPBExpr(t *testing.T) {
 }
 
 func TestDatumXAPI(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -4924,8 +4807,7 @@ func TestDatumXAPI(t *testing.T) {
 }
 
 func TestSQLMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -4974,8 +4856,7 @@ func TestSQLMode(t *testing.T) {
 }
 
 func TestTableDual(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	result := tk.MustQuery("Select 1")
@@ -4993,8 +4874,7 @@ func TestTableDual(t *testing.T) {
 }
 
 func TestTableScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use information_schema")
 	result := tk.MustQuery("select * from schemata")
@@ -5014,8 +4894,7 @@ func TestTableScan(t *testing.T) {
 }
 
 func TestAdapterStatement(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.Session().GetSessionVars().TxnCtx.InfoSchema = domain.GetDomain(tk.Session()).InfoSchema()
@@ -5035,8 +4914,7 @@ func TestAdapterStatement(t *testing.T) {
 }
 
 func TestIsPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql")
 	ctx := tk.Session().(sessionctx.Context)
@@ -5062,8 +4940,7 @@ func TestIsPointGet(t *testing.T) {
 }
 
 func TestClusteredIndexIsPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_cluster_index_is_point_get;")
 	tk.MustExec("create database test_cluster_index_is_point_get;")
@@ -5096,8 +4973,7 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 }
 
 func TestRow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -5173,8 +5049,7 @@ func TestRow(t *testing.T) {
 }
 
 func TestColumnName(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -5264,8 +5139,7 @@ func TestColumnName(t *testing.T) {
 }
 
 func TestSelectVar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -5281,8 +5155,7 @@ func TestSelectVar(t *testing.T) {
 }
 
 func TestHistoryRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists history_read")
@@ -5352,9 +5225,133 @@ func TestHistoryRead(t *testing.T) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
 
+func TestHistoryReadInTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+    ON DUPLICATE KEY
+    UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("drop table if exists his_t0, his_t1")
+	tk.MustExec("create table his_t0(id int primary key, v int)")
+	tk.MustExec("insert into his_t0 values(1, 10)")
+
+	time.Sleep(time.Millisecond)
+	tk.MustExec("set @a=now(6)")
+	time.Sleep(time.Millisecond)
+	tk.MustExec("create table his_t1(id int primary key, v int)")
+	tk.MustExec("update his_t0 set v=v+1")
+	time.Sleep(time.Millisecond)
+	tk.MustExec("set tidb_snapshot=now(6)")
+	ts2 := tk.Session().GetSessionVars().SnapshotTS
+	tk.MustExec("set tidb_snapshot=''")
+	time.Sleep(time.Millisecond)
+	tk.MustExec("update his_t0 set v=v+1")
+	tk.MustExec("insert into his_t1 values(10, 100)")
+
+	init := func(isolation string, setSnapshotBeforeTxn bool) {
+		if isolation == "none" {
+			tk.MustExec("set @@tidb_snapshot=@a")
+			return
+		}
+
+		if setSnapshotBeforeTxn {
+			tk.MustExec("set @@tidb_snapshot=@a")
+		}
+
+		if isolation == "optimistic" {
+			tk.MustExec("begin optimistic")
+		} else {
+			tk.MustExec(fmt.Sprintf("set @@tx_isolation='%s'", isolation))
+			tk.MustExec("begin pessimistic")
+		}
+
+		if !setSnapshotBeforeTxn {
+			tk.MustExec("set @@tidb_snapshot=@a")
+		}
+	}
+
+	for _, isolation := range []string{
+		"none", // not start an explicit txn
+		"optimistic",
+		"REPEATABLE-READ",
+		"READ-COMMITTED",
+	} {
+		for _, setSnapshotBeforeTxn := range []bool{false, true} {
+			t.Run(fmt.Sprintf("[%s] setSnapshotBeforeTxn[%v]", isolation, setSnapshotBeforeTxn), func(t *testing.T) {
+				tk.MustExec("rollback")
+				tk.MustExec("set @@tidb_snapshot=''")
+
+				init(isolation, setSnapshotBeforeTxn)
+				// When tidb_snapshot is set, should use the snapshot info schema
+				tk.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0"))
+
+				// When tidb_snapshot is set, select should use select ts
+				tk.MustQuery("select * from his_t0").Check(testkit.Rows("1 10"))
+				tk.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 10"))
+
+				// When tidb_snapshot is set, write statements should not be allowed
+				if isolation != "none" && isolation != "optimistic" {
+					notAllowedSQLs := []string{
+						"insert into his_t0 values(5, 1)",
+						"delete from his_t0 where id=1",
+						"update his_t0 set v=v+1",
+						"select * from his_t0 for update",
+						"select * from his_t0 where id=1 for update",
+						"create table his_t2(id int)",
+					}
+
+					for _, sql := range notAllowedSQLs {
+						err := tk.ExecToErr(sql)
+						require.Errorf(t, err, "can not execute write statement when 'tidb_snapshot' is set")
+					}
+				}
+
+				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
+				// See issue: https://github.com/pingcap/tidb/issues/34529
+				exec := tk.Session().(sqlexec.RestrictedSQLExecutor)
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+				rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
+				require.NoError(t, err)
+				require.Equal(t, 1, len(rows))
+				require.Equal(t, int64(1), rows[0].GetInt64(0))
+				require.Equal(t, int64(11), rows[0].GetInt64(1))
+				tk.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 10"))
+				tk.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0"))
+
+				// CLEAR
+				tk.MustExec("set @@tidb_snapshot=''")
+
+				// When tidb_snapshot is not set, should use the transaction's info schema
+				tk.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0", "his_t1"))
+
+				// When tidb_snapshot is not set, select should use the transaction's ts
+				tk.MustQuery("select * from his_t0").Check(testkit.Rows("1 12"))
+				tk.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 12"))
+				tk.MustQuery("select * from his_t1").Check(testkit.Rows("10 100"))
+				tk.MustQuery("select * from his_t1 where id=10").Check(testkit.Rows("10 100"))
+
+				// When tidb_snapshot is not set, select ... for update should not be effected
+				tk.MustQuery("select * from his_t0 for update").Check(testkit.Rows("1 12"))
+				tk.MustQuery("select * from his_t0 where id=1 for update").Check(testkit.Rows("1 12"))
+				tk.MustQuery("select * from his_t1 for update").Check(testkit.Rows("10 100"))
+				tk.MustQuery("select * from his_t1 where id=10 for update").Check(testkit.Rows("10 100"))
+
+				tk.MustExec("rollback")
+			})
+		}
+	}
+}
+
 func TestCurrentTimestampValueSelection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t1")
@@ -5389,8 +5386,7 @@ func TestCurrentTimestampValueSelection(t *testing.T) {
 }
 
 func TestStrToDateBuiltin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%!') from dual`).Check(testkit.Rows("2019-01-01"))
 	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%f') from dual`).Check(testkit.Rows("2019-01-01 00:00:00.000000"))
@@ -5438,8 +5434,7 @@ func TestStrToDateBuiltin(t *testing.T) {
 }
 
 func TestAddDateBuiltinWithWarnings(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@sql_mode='NO_ZERO_DATE'")
 	result := tk.MustQuery(`select date_add('2001-01-00', interval -2 hour);`)
@@ -5448,8 +5443,7 @@ func TestAddDateBuiltinWithWarnings(t *testing.T) {
 }
 
 func TestStrToDateBuiltinWithWarnings(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@sql_mode='NO_ZERO_DATE'")
 	tk.MustExec("use test")
@@ -5459,8 +5453,7 @@ func TestStrToDateBuiltinWithWarnings(t *testing.T) {
 
 func TestReadPartitionedTable(t *testing.T) {
 	// Test three reader on partitioned table.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists pt")
@@ -5477,8 +5470,7 @@ func TestReadPartitionedTable(t *testing.T) {
 }
 
 func TestIssue10435(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -5494,11 +5486,10 @@ func TestIssue10435(t *testing.T) {
 
 func TestAdmin(t *testing.T) {
 	var cluster testutils.Cluster
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -5525,9 +5516,10 @@ func TestAdmin(t *testing.T) {
 	require.NoError(t, err)
 	row = req.GetRow(0)
 	require.Equal(t, 6, row.Len())
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	ddlInfo, err := admin.GetDDLInfo(txn)
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("begin")
+	sess := tk.Session()
+	ddlInfo, err := ddl.GetDDLInfo(sess)
 	require.NoError(t, err)
 	require.Equal(t, ddlInfo.SchemaVer, row.GetInt64(0))
 	// TODO: Pass this test.
@@ -5542,8 +5534,7 @@ func TestAdmin(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Zero(t, req.NumRows())
-	err = txn.Rollback()
-	require.NoError(t, err)
+	tk.MustExec("rollback")
 
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
@@ -5553,9 +5544,9 @@ func TestAdmin(t *testing.T) {
 	require.NoError(t, err)
 	row = req.GetRow(0)
 	require.Equal(t, 12, row.Len())
-	txn, err = store.Begin()
+	txn, err := store.Begin()
 	require.NoError(t, err)
-	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
 	require.Greater(t, len(historyJobs), 1)
 	require.Greater(t, len(row.GetString(1)), 0)
 	require.NoError(t, err)
@@ -5580,9 +5571,34 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJobs, err = admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
+	require.NoError(t, err)
+
+	// show DDL job queries with range test
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test2")
+	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test3")
+	tk.MustExec("create table admin_test3 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test4")
+	tk.MustExec("create table admin_test4 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test5")
+	tk.MustExec("create table admin_test5 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test6")
+	tk.MustExec("create table admin_test6 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test7")
+	tk.MustExec("create table admin_test7 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test8")
+	tk.MustExec("create table admin_test8 (c1 int, c2 int, c3 int default 1, index (c1))")
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
+	result = tk.MustQuery(`admin show ddl job queries limit 3`)
+	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[0].ID, historyJobs[0].Query), fmt.Sprintf("%d %s", historyJobs[1].ID, historyJobs[1].Query), fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query)))
+	result = tk.MustQuery(`admin show ddl job queries limit 3, 2`)
+	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
+	result = tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
+	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query), fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
 	require.NoError(t, err)
 
 	// check table test
@@ -5644,7 +5660,7 @@ func TestAdmin(t *testing.T) {
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err = admin.GetHistoryDDLJobs(txn, 20)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), 20)
 	require.NoError(t, err)
 
 	// Split region for history ddl job queues.
@@ -5653,14 +5669,15 @@ func TestAdmin(t *testing.T) {
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
 	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
-	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
+	historyJobs2, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), 20)
 	require.NoError(t, err)
 	require.Equal(t, historyJobs2, historyJobs)
 }
 
 func TestForSelectScopeInUnion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	// A union B for update, the "for update" option belongs to union statement, so
 	// it should works on both A and B.
 	tk1 := testkit.NewTestKit(t, store)
@@ -5692,8 +5709,7 @@ func TestForSelectScopeInUnion(t *testing.T) {
 }
 
 func TestUnsignedDecimalOverflow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tests := []struct {
 		input  interface{}
@@ -5738,8 +5754,7 @@ func TestUnsignedDecimalOverflow(t *testing.T) {
 }
 
 func TestIndexJoinTableDualPanic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists a")
@@ -5751,8 +5766,7 @@ func TestIndexJoinTableDualPanic(t *testing.T) {
 }
 
 func TestSortLeftJoinWithNullColumnInRightChildPanic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -5764,8 +5778,7 @@ func TestSortLeftJoinWithNullColumnInRightChildPanic(t *testing.T) {
 }
 
 func TestMaxOneRow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1`)
@@ -5785,8 +5798,7 @@ func TestMaxOneRow(t *testing.T) {
 }
 
 func TestRowID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -5810,8 +5822,7 @@ func TestRowID(t *testing.T) {
 }
 
 func TestDoSubquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -5824,8 +5835,7 @@ func TestDoSubquery(t *testing.T) {
 }
 
 func TestSubqueryTableAlias(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -5852,8 +5862,7 @@ func TestSubqueryTableAlias(t *testing.T) {
 }
 
 func TestSelectHashPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists th`)
@@ -5868,8 +5877,7 @@ func TestSelectHashPartitionTable(t *testing.T) {
 }
 
 func TestSelectView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table view_t (a int,b int)")
@@ -5917,23 +5925,20 @@ func TestSelectView(t *testing.T) {
 }
 
 func TestSummaryFailedUpdate(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int as(-a))")
 	tk.MustExec("insert into t(a) values(1), (3), (7)")
-	sm := &testkit.MockSessionManager{
+	sm := &testutil.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=1")
 	tk.MustMatchErrMsg("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)", "Out Of Memory Quota!.*")
 	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
@@ -5941,8 +5946,7 @@ func TestSummaryFailedUpdate(t *testing.T) {
 }
 
 func TestIsFastPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, a int)")
@@ -5974,4 +5978,26 @@ func TestIsFastPlan(t *testing.T) {
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
 	}
+}
+
+func TestBinaryStrNumericOperator(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test normal warnings.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varbinary(10))")
+	tk.MustExec("insert into t values ('123.12')")
+	tk.MustQuery("select 1+a from t").Check(testkit.Rows(
+		"124.12"))
+	tk.MustQuery("select a-1 from t").Check(testkit.Rows(
+		"122.12"))
+	tk.MustQuery("select -10*a from t").Check(testkit.Rows(
+		"-1231.2"))
+	tk.MustQuery("select a/-2 from t").Check(testkit.Rows(
+		"-61.56"))
+	// there should be no warning.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }

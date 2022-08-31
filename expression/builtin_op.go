@@ -882,7 +882,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.SetDecimal(argExprTp.GetDecimal())
+		bf.tp.SetDecimalUnderLimit(argExprTp.GetDecimal())
 		sig = &builtinUnaryMinusDecimalSig{bf, false}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 	case types.ETReal:
@@ -910,7 +910,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 		}
 	}
-	bf.tp.SetFlen(argExprTp.GetFlen() + 1)
+	bf.tp.SetFlenUnderLimit(argExprTp.GetFlen() + 1)
 	return sig, err
 }
 

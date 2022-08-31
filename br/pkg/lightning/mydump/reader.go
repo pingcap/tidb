@@ -107,7 +107,7 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile
 
 	data, err = decodeCharacterSet(data, characterSet)
 	if err != nil {
-		log.L().Error("cannot decode input file, please convert to target encoding manually",
+		log.FromContext(ctx).Error("cannot decode input file, please convert to target encoding manually",
 			zap.String("encoding", characterSet),
 			zap.String("Path", sqlFile.FileMeta.Path),
 		)

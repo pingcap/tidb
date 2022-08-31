@@ -1,0 +1,48 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "placement",
+    srcs = [
+        "bundle.go",
+        "common.go",
+        "constraint.go",
+        "constraints.go",
+        "errors.go",
+        "rule.go",
+    ],
+    importpath = "github.com/pingcap/tidb/ddl/placement",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/model",
+        "//tablecodec",
+        "//util/codec",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@in_gopkg_yaml_v2//:yaml_v2",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+go_test(
+    name = "placement_test",
+    timeout = "short",
+    srcs = [
+        "bundle_test.go",
+        "common_test.go",
+        "constraint_test.go",
+        "constraints_test.go",
+        "meta_bundle_test.go",
+        "rule_test.go",
+    ],
+    embed = [":placement"],
+    flaky = True,
+    deps = [
+        "//kv",
+        "//meta",
+        "//parser/model",
+        "//store/mockstore",
+        "//tablecodec",
+        "//util/codec",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

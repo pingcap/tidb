@@ -166,11 +166,10 @@ func (p *packetIO) writePacket(data []byte) error {
 	writePacketBytes.Add(float64(len(data)))
 
 	for length >= mysql.MaxPayloadLen {
+		data[3] = p.sequence
 		data[0] = 0xff
 		data[1] = 0xff
 		data[2] = 0xff
-
-		data[3] = p.sequence
 
 		if n, err := p.bufWriter.Write(data[:4+mysql.MaxPayloadLen]); err != nil {
 			return errors.Trace(mysql.ErrBadConn)
@@ -182,11 +181,10 @@ func (p *packetIO) writePacket(data []byte) error {
 			data = data[mysql.MaxPayloadLen:]
 		}
 	}
-
+	data[3] = p.sequence
 	data[0] = byte(length)
 	data[1] = byte(length >> 8)
 	data[2] = byte(length >> 16)
-	data[3] = p.sequence
 
 	if n, err := p.bufWriter.Write(data); err != nil {
 		terror.Log(errors.Trace(err))

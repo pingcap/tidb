@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
@@ -25,8 +26,7 @@ import (
 )
 
 func TestTxnUsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	t.Run("Used", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
@@ -88,8 +88,7 @@ func TestTxnUsageInfo(t *testing.T) {
 }
 
 func TestTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -105,8 +104,7 @@ func TestTemporaryTable(t *testing.T) {
 }
 
 func TestCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -126,9 +124,85 @@ func TestCachedTable(t *testing.T) {
 	require.False(t, usage.CachedTable)
 }
 
+func TestMultiSchemaChange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.MultiSchemaChange.MultiSchemaChangeUsed)
+
+	tk.MustExec("drop table if exists tele_multi_t")
+	tk.MustExec("create table tele_multi_t(id int)")
+	tk.MustExec("alter table tele_multi_t add column b int")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.MultiSchemaChange.MultiSchemaChangeUsed)
+
+	tk.MustExec("alter table tele_multi_t add column c int, drop column b")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.MultiSchemaChange.MultiSchemaChangeUsed)
+
+	tk.MustExec("alter table tele_multi_t add column b int, drop column c")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.MultiSchemaChange.MultiSchemaChangeUsed)
+
+	tk.MustExec("alter table tele_multi_t drop column b")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.MultiSchemaChange.MultiSchemaChangeUsed)
+}
+
+func TestTablePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec("create table pt (a int,b int) partition by hash(a) partitions 4")
+
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionHashCnt)
+	require.Equal(t, int64(4), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
+
+	telemetry.PostReportTelemetryDataForTest()
+	tk.MustExec("drop table if exists pt1")
+	tk.MustExec("create table pt1 (a int,b int) partition by range(a) (" +
+		"partition p0 values less than (3)," +
+		"partition p1 values less than (6), " +
+		"partition p2 values less than (9)," +
+		"partition p3 values less than (12)," +
+		"partition p4 values less than (15))")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionHashCnt)
+	require.Equal(t, int64(5), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
+}
+
 func TestPlacementPolicies(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -170,8 +244,7 @@ func TestPlacementPolicies(t *testing.T) {
 }
 
 func TestAutoCapture(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -187,4 +260,104 @@ func TestAutoCapture(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.True(t, usage.AutoCapture)
+}
+
+func TestClusterIndexUsageInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int key clustered);")
+	tk.MustExec("create table t2(a int);")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.NotNil(t, usage.ClusterIndex)
+	require.Equal(t, uint64(1), usage.NewClusterIndex.NumClusteredTables)
+	require.Equal(t, uint64(2), usage.NewClusterIndex.NumTotalTables)
+}
+
+func TestNonTransactionalUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.NonTransactionalUsage.DeleteCount)
+
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("batch limit 1 delete from t")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.NonTransactionalUsage.DeleteCount)
+}
+
+func TestGlobalKillUsageInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.GlobalKill)
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalKill = false
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.GlobalKill)
+}
+
+func TestPagingUsageInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.EnablePaging == variable.DefTiDBEnablePaging)
+
+	tk.Session().GetSessionVars().EnablePaging = false
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.EnablePaging)
+}
+
+func TestCostModelVer2UsageInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.EnableCostModelVer2)
+
+	tk.Session().GetSessionVars().CostModelVersion = 2
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.EnableCostModelVer2)
+}
+
+func TestTxnSavepointUsageInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("savepoint sp1")
+	tk.MustExec("savepoint sp2")
+	txnUsage := telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(2), txnUsage.SavepointCounter)
+
+	tk.MustExec("savepoint sp3")
+	txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(3), txnUsage.SavepointCounter)
+
+	telemetry.PostSavepointCount()
+	tk.MustExec("savepoint sp1")
+	txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(1), txnUsage.SavepointCounter)
 }

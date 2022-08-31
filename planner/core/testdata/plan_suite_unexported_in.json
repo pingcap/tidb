@@ -2,6 +2,13 @@
   {
     "name": "TestEagerAggregation",
     "cases": [
+      "select count(*) from t t1 left join t2 on t1.a = t2.c",
+      "select count(*) from t t1 join t2 on t1.a = t2.c",
+      "select count(t2.c) from t t1 left join t2 on t1.a = t2.c",
+      "select count(t1.d) from t t1 right join t2 on t1.d = t2.c",
+      "select count(*) from t t1 right join t2 on t1.a = t2.c",
+      "select count(t2.c) from t t1 right join t2 on t1.a = t2.c",
+      "select sum(t2.c is null) from t t1 left join t2 on t1.a = t2.c;",
       "select sum(t.a), sum(t.a+1), sum(t.a), count(t.a), sum(t.a) + count(t.a) from t",
       "select sum(t.a + t.b), sum(t.a + t.c), sum(t.a + t.b), count(t.a) from t having sum(t.a + t.b) > 0 order by sum(t.a + t.c)",
       "select sum(a.a) from t a, t b where a.c = b.c",
@@ -130,9 +137,21 @@
       "select t1.b from t t1 where t1.b = (select max(t2.a) from t t2 where t1.b=t2.b order by t1.a)",
       "select t1.b from t t1 where t1.b in (select t2.b from t t2 where t2.a = t1.a order by t2.a)",
       "select t1.b from t t1 where exists(select t2.b from t t2 where t2.a = t1.a order by t2.a)",
+      "select t1.b from t t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ t2.b from t t2 where t2.a = t1.a order by t2.a)",
+      "select a from t where exists(select 1 from t as x where x.a < t.a)",
+      "select a from t where exists(select 1 from t as x where x.a = t.a and t.a < 1 and x.a < 1)",
+      "select a from t where exists(select 1 from t as x where x.a = t.a and x.a < 1) and a < 1",
+      "select a from t where exists(select 1 from t as x where x.a = t.a) and exists(select 1 from t as x where x.a = t.a)",
+      "select a from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t as x where x.a < t.a)",
+      "select a from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t as x where x.a = t.a and t.a < 1 and x.a < 1)",
+      "select a from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t as x where x.a = t.a and x.a < 1) and a < 1",
+      "select a from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t as x where x.a = t.a) and exists(select 1 from t as x where x.a = t.a)",
+      "select a from t where exists(select 1 from t as x where x.a = t.a) and exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t as x where x.a = t.a)",
+      "select a from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t as x where x.a = t.a) and exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t as x where x.a = t.a)",
       // `Sort` will not be eliminated, if it is not the top level operator.
       "select t1.b from t t1 where t1.b = (select t2.b from t t2 where t2.a = t1.a order by t2.a limit 1)",
-      "select (select 1 from t t1 where t1.a = t2.a) from t t2"
+      "select (select 1 from t t1 where t1.a = t2.a) from t t2",
+      "select count(1) from (select (select count(t1.a) as a  from t t1 where t1.c = t2.c) as a from t t2) as t3"
     ]
   },
   {

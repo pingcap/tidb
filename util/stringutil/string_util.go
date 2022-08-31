@@ -17,13 +17,13 @@ package stringutil
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/hack"
+	"golang.org/x/exp/slices"
 )
 
 // ErrSyntax indicates that a value does not have the right syntax for the target type.
@@ -323,7 +323,10 @@ func (i StringerStr) String() string {
 }
 
 // Escape the identifier for pretty-printing.
-// For instance, the identifier "foo `bar`" will become "`foo ``bar```".
+// For instance, the identifier
+/*
+	"foo `bar`" will become "`foo ``bar```".
+*/
 // The sqlMode controls whether to escape with backquotes (`) or double quotes
 // (`"`) depending on whether mysql.ModeANSIQuotes is enabled.
 func Escape(str string, sqlMode mysql.SQLMode) string {
@@ -346,7 +349,7 @@ func BuildStringFromLabels(labels map[string]string) string {
 	for k := range labels {
 		s = append(s, k)
 	}
-	sort.Strings(s)
+	slices.Sort(s)
 	r := new(bytes.Buffer)
 	// visit labels by sorted key in order to make sure that result should be consistency
 	for _, key := range s {

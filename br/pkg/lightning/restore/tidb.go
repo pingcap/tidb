@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
@@ -96,15 +98,13 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	}
 
 	if dsn.Vars != nil {
-		for k, v := range dsn.Vars {
-			vars[k] = v
-		}
+		maps.Copy(vars, dsn.Vars)
 	}
 
 	for k, v := range vars {
 		q := fmt.Sprintf("SET SESSION %s = '%s';", k, v)
 		if _, err1 := db.ExecContext(ctx, q); err1 != nil {
-			log.L().Warn("set session variable failed, will skip this query", zap.String("query", q),
+			log.FromContext(ctx).Warn("set session variable failed, will skip this query", zap.String("query", q),
 				zap.Error(err1))
 			delete(vars, k)
 		}
@@ -142,7 +142,7 @@ func (timgr *TiDBManager) Close() {
 }
 
 func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema map[string]string) error {
-	logger := log.With(zap.String("db", database))
+	logger := log.FromContext(ctx).With(zap.String("db", database))
 	sqlExecutor := g.GetSQLExecutor()
 
 	var createDatabase strings.Builder
@@ -195,7 +195,7 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 	for _, stmt := range stmts {
 		switch node := stmt.(type) {
 		case *ast.CreateDatabaseStmt:
-			node.Name = dbName
+			node.Name = model.NewCIStr(dbName)
 			node.IfNotExists = true
 		case *ast.CreateTableStmt:
 			node.Table.Schema = model.NewCIStr(dbName)
@@ -223,7 +223,7 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
 	sql := common.SQLWithRetry{
 		DB:     timgr.db,
-		Logger: log.With(zap.String("table", tableName)),
+		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
 	}
 	return sql.Exec(ctx, "drop table", "DROP TABLE "+tableName)
 }
@@ -258,10 +258,14 @@ func LoadSchemaInfo(
 			tableName := tblInfo.Name.String()
 			if tblInfo.State != model.StatePublic {
 				err := errors.Errorf("table [%s.%s] state is not public", schema.Name, tableName)
-				metric.RecordTableCount(metric.TableStatePending, err)
+				if m, ok := metric.FromContext(ctx); ok {
+					m.RecordTableCount(metric.TableStatePending, err)
+				}
 				return nil, err
 			}
-			metric.RecordTableCount(metric.TableStatePending, err)
+			if m, ok := metric.FromContext(ctx); ok {
+				m.RecordTableCount(metric.TableStatePending, err)
+			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -283,7 +287,7 @@ func LoadSchemaInfo(
 
 func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
 	var gcLifeTime string
-	err := common.SQLWithRetry{DB: db, Logger: log.L()}.QueryRow(
+	err := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}.QueryRow(
 		ctx,
 		"obtain GC lifetime",
 		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
@@ -295,7 +299,7 @@ func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
 func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
 	sql := common.SQLWithRetry{
 		DB:     db,
-		Logger: log.With(zap.String("gcLifeTime", gcLifeTime)),
+		Logger: log.FromContext(ctx).With(zap.String("gcLifeTime", gcLifeTime)),
 	}
 	return sql.Exec(ctx, "update GC lifetime",
 		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
@@ -322,10 +326,10 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 		}
 	}
 	query.WriteString("')")
-	kvs, err := g.QueryStringsWithLog(ctx, query.String(), "obtain system variables", log.L())
+	kvs, err := g.QueryStringsWithLog(ctx, query.String(), "obtain system variables", log.FromContext(ctx))
 	if err != nil {
 		// error is not fatal
-		log.L().Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
+		log.FromContext(ctx).Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
 	}
 
 	// convert result into a map. fill in any missing variables with default values.
@@ -355,7 +359,7 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, e
 		ctx,
 		"SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'",
 		"obtain new collation enabled",
-		log.L(),
+		log.FromContext(ctx),
 	)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
@@ -373,9 +377,17 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, e
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
 // the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
-func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr int64) error {
-	logger := log.With(zap.String("table", tableName), zap.Int64("auto_increment", incr))
-	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr uint64) error {
+	var query string
+	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
+	if incr > math.MaxInt64 {
+		// automatically set max value
+		logger.Warn("auto_increment out of the maximum value TiDB supports, automatically set to the max", zap.Uint64("auto_increment", incr))
+		incr = math.MaxInt64
+		query = fmt.Sprintf("ALTER TABLE %s FORCE AUTO_INCREMENT=%d", tableName, incr)
+	} else {
+		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+	}
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_increment", logger)
 	task.End(zap.ErrorLevel, err)
@@ -388,8 +400,16 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 	return errors.Annotatef(err, "%s", query)
 }
 
-func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase int64) error {
-	logger := log.With(zap.String("table", tableName), zap.Int64("auto_random", randomBase))
+func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64, maxAutoRandom uint64) error {
+	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
+	if randomBase == maxAutoRandom+1 {
+		// insert a tuple with key maxAutoRandom
+		randomBase = maxAutoRandom
+	} else if randomBase > maxAutoRandom {
+		// TiDB does nothing when inserting an overflow value
+		logger.Warn("auto_random out of the maximum value TiDB supports")
+		return nil
+	}
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_random_base", logger)

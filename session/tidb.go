@@ -26,6 +26,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -43,24 +46,25 @@ import (
 )
 
 type domainMap struct {
+	mu      sync.Mutex
 	domains map[string]*domain.Domain
-	mu      sync.RWMutex
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	dm.mu.RLock()
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
 
-	// If this is the only domain instance, and the caller doesn't provide store.
-	if len(dm.domains) == 1 && store == nil {
-		for _, r := range dm.domains {
-			dm.mu.RUnlock()
-			return r, nil
+	if store == nil {
+		for _, d := range dm.domains {
+			// return available domain if any
+			return d, nil
 		}
+		return nil, errors.New("can not find available domain for a nil store")
 	}
 
 	key := store.UUID()
+
 	d = dm.domains[key]
-	dm.mu.RUnlock()
 	if d != nil {
 		return
 	}
@@ -81,7 +85,12 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			dm.Delete(store)
 		}
 		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
-		err1 = d.Init(ddlLease, sysFactory)
+
+		var ddlInjector func(ddl.DDL) *schematracker.Checker
+		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
+			ddlInjector = injector.Injector
+		}
+		err1 = d.Init(ddlLease, sysFactory, ddlInjector)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
@@ -93,7 +102,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if err != nil {
 		return nil, err
 	}
-	dm.Set(store, d)
+
+	dm.domains[key] = d
 
 	return
 }
@@ -101,12 +111,6 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 func (dm *domainMap) Delete(store kv.Storage) {
 	dm.mu.Lock()
 	delete(dm.domains, store.UUID())
-	dm.mu.Unlock()
-}
-
-func (dm *domainMap) Set(store kv.Storage, domain *domain.Domain) {
-	dm.mu.Lock()
-	dm.domains[store.UUID()] = domain
 	dm.mu.Unlock()
 }
 
@@ -299,7 +303,7 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 				history.Count(), sessVars.IsAutocommit())
 		}
-		err = se.NewTxn(ctx)
+		err = sessiontxn.NewTxn(ctx, se)
 		// The transaction does not committed yet, we need to keep it in transaction.
 		// The last history could not be "commit"/"rollback" statement.
 		// It means it is impossible to start a new transaction at the end of the transaction.

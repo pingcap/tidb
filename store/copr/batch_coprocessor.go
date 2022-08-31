@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -40,6 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // batchCopTask comprises of multiple copTask that will send to same store.
@@ -208,13 +208,13 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 	storeTasks := deepCopyStoreTaskMap(storeTaskMap)
 
 	// Sort regions by their key ranges.
-	sort.Slice(candidateRegionInfos, func(i, j int) bool {
+	slices.SortFunc(candidateRegionInfos, func(i, j RegionInfo) bool {
 		// Special case: Sort empty ranges to the end.
-		if candidateRegionInfos[i].Ranges.Len() < 1 || candidateRegionInfos[j].Ranges.Len() < 1 {
-			return candidateRegionInfos[i].Ranges.Len() > candidateRegionInfos[j].Ranges.Len()
+		if i.Ranges.Len() < 1 || j.Ranges.Len() < 1 {
+			return i.Ranges.Len() > j.Ranges.Len()
 		}
 		// StartKey0 < StartKey1
-		return bytes.Compare(candidateRegionInfos[i].Ranges.At(0).StartKey, candidateRegionInfos[j].Ranges.At(0).StartKey) == -1
+		return bytes.Compare(i.Ranges.At(0).StartKey, j.Ranges.At(0).StartKey) == -1
 	})
 
 	balanceStart := time.Now()
@@ -282,11 +282,12 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 }
 
 // balanceBatchCopTask balance the regions between available stores, the basic rule is
-// 1. the first region of each original batch cop task belongs to its original store because some
-//    meta data(like the rpc context) in batchCopTask is related to it
-// 2. for the remaining regions:
-//    if there is only 1 available store, then put the region to the related store
-//    otherwise, these region will be balance between TiFlash stores.
+//  1. the first region of each original batch cop task belongs to its original store because some
+//     meta data(like the rpc context) in batchCopTask is related to it
+//  2. for the remaining regions:
+//     if there is only 1 available store, then put the region to the related store
+//     otherwise, these region will be balance between TiFlash stores.
+//
 // Currently, there are two balance strategies.
 // The first balance strategy: use a greedy algorithm to put it into the store with highest weight. This strategy only consider the region count between TiFlash stores.
 //
@@ -406,7 +407,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 				// if more than one store is valid, put the region
 				// to store candidate map
 				totalRegionCandidateNum += validStoreNum
-				totalRemainingRegionNum += 1
+				totalRemainingRegionNum++
 				candidateRegionInfos = append(candidateRegionInfos, ri)
 				taskKey := ri.Region.String()
 				for _, storeID := range ri.AllStores {

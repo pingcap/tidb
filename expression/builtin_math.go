@@ -25,13 +25,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	utilMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -139,8 +138,8 @@ func (c *absFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		bf.tp.SetFlen(flen)
 		bf.tp.SetDecimal(decimal)
 	} else {
-		bf.tp.SetFlen(argFieldTp.GetFlen())
-		bf.tp.SetDecimal(argFieldTp.GetDecimal())
+		bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen())
+		bf.tp.SetDecimalUnderLimit(argFieldTp.GetDecimal())
 	}
 	var sig builtinFunc
 	switch argTp {
@@ -277,14 +276,14 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
 	if argTp == types.ETDecimal {
-		bf.tp.SetFlen(argFieldTp.GetFlen())
-		bf.tp.SetDecimal(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
+		bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen())
+		bf.tp.SetDecimalUnderLimit(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
 		if bf.tp.GetDecimal() != types.UnspecifiedLength {
 			if argFieldTp.GetDecimal() != types.UnspecifiedLength {
 				decimalDelta := bf.tp.GetDecimal() - argFieldTp.GetDecimal()
-				bf.tp.SetFlen(bf.tp.GetFlen() + mathutil.Max(decimalDelta, 0))
+				bf.tp.SetFlenUnderLimit(bf.tp.GetFlen() + mathutil.Max(decimalDelta, 0))
 			} else {
-				bf.tp.SetFlen(argFieldTp.GetFlen() + bf.tp.GetDecimal())
+				bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen() + bf.tp.GetDecimal())
 			}
 		}
 	}
@@ -494,7 +493,7 @@ func (c *ceilFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	setFlag4FloorAndCeil(bf.tp, args[0])
 	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
 	if retTp == types.ETDecimal {
-		bf.tp.SetFlen(args[0].GetType().GetFlen())
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen())
 		bf.tp.SetDecimal(0)
 	}
 
@@ -686,7 +685,7 @@ func (c *floorFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
 	if retTp == types.ETDecimal {
-		bf.tp.SetFlen(args[0].GetType().GetFlen())
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen())
 		bf.tp.SetDecimal(0)
 	}
 	switch argTp {
@@ -1043,7 +1042,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			// The behavior same as MySQL.
 			seed = 0
 		}
-		sig = &builtinRandSig{bt, utilMath.NewWithSeed(seed)}
+		sig = &builtinRandSig{bt, mathutil.NewWithSeed(seed)}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
 		sig = &builtinRandWithSeedFirstGenSig{bt}
@@ -1054,7 +1053,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinRandSig struct {
 	baseBuiltinFunc
-	mysqlRng *utilMath.MysqlRng
+	mysqlRng *mathutil.MysqlRng
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
@@ -1090,11 +1089,11 @@ func (b *builtinRandWithSeedFirstGenSig) evalReal(row chunk.Row) (float64, bool,
 	// b.args[0] is promised to be a non-constant(such as a column name) in
 	// builtinRandWithSeedFirstGenSig, the seed is initialized with the value for each
 	// invocation of RAND().
-	var rng *utilMath.MysqlRng
+	var rng *mathutil.MysqlRng
 	if !isNull {
-		rng = utilMath.NewWithSeed(seed)
+		rng = mathutil.NewWithSeed(seed)
 	} else {
-		rng = utilMath.NewWithSeed(0)
+		rng = mathutil.NewWithSeed(0)
 	}
 	return rng.Gen(), false, nil
 }
@@ -1912,8 +1911,8 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
 	if argTp == types.ETDecimal {
-		bf.tp.SetDecimal(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
-		bf.tp.SetFlen(args[0].GetType().GetFlen() - args[0].GetType().GetDecimal() + bf.tp.GetDecimal())
+		bf.tp.SetDecimalUnderLimit(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen() - args[0].GetType().GetDecimal() + bf.tp.GetDecimal())
 	}
 	bf.tp.AddFlag(args[0].GetType().GetFlag())
 

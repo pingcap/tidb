@@ -31,16 +31,17 @@ import (
 )
 
 var (
-	stmtNodeCounterUse      = metrics.StmtNodeCounter.WithLabelValues("Use")
-	stmtNodeCounterShow     = metrics.StmtNodeCounter.WithLabelValues("Show")
-	stmtNodeCounterBegin    = metrics.StmtNodeCounter.WithLabelValues("Begin")
-	stmtNodeCounterCommit   = metrics.StmtNodeCounter.WithLabelValues("Commit")
-	stmtNodeCounterRollback = metrics.StmtNodeCounter.WithLabelValues("Rollback")
-	stmtNodeCounterInsert   = metrics.StmtNodeCounter.WithLabelValues("Insert")
-	stmtNodeCounterReplace  = metrics.StmtNodeCounter.WithLabelValues("Replace")
-	stmtNodeCounterDelete   = metrics.StmtNodeCounter.WithLabelValues("Delete")
-	stmtNodeCounterUpdate   = metrics.StmtNodeCounter.WithLabelValues("Update")
-	stmtNodeCounterSelect   = metrics.StmtNodeCounter.WithLabelValues("Select")
+	stmtNodeCounterUse       = metrics.StmtNodeCounter.WithLabelValues("Use")
+	stmtNodeCounterShow      = metrics.StmtNodeCounter.WithLabelValues("Show")
+	stmtNodeCounterBegin     = metrics.StmtNodeCounter.WithLabelValues("Begin")
+	stmtNodeCounterCommit    = metrics.StmtNodeCounter.WithLabelValues("Commit")
+	stmtNodeCounterRollback  = metrics.StmtNodeCounter.WithLabelValues("Rollback")
+	stmtNodeCounterInsert    = metrics.StmtNodeCounter.WithLabelValues("Insert")
+	stmtNodeCounterReplace   = metrics.StmtNodeCounter.WithLabelValues("Replace")
+	stmtNodeCounterDelete    = metrics.StmtNodeCounter.WithLabelValues("Delete")
+	stmtNodeCounterUpdate    = metrics.StmtNodeCounter.WithLabelValues("Update")
+	stmtNodeCounterSelect    = metrics.StmtNodeCounter.WithLabelValues("Select")
+	stmtNodeCounterSavepoint = metrics.StmtNodeCounter.WithLabelValues("Savepoint")
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
@@ -57,11 +58,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	ret := &plannercore.PreprocessorReturn{}
-	pe := &plannercore.PreprocessExecuteISUpdate{ExecuteInfoSchemaUpdate: planner.GetExecuteForUpdateReadIS, Node: stmtNode}
 	err := plannercore.Preprocess(c.Ctx,
 		stmtNode,
 		plannercore.WithPreprocessorReturn(ret),
-		plannercore.WithExecuteInfoSchemaUpdate(pe),
 		plannercore.InitTxnContextProvider,
 	)
 	if err != nil {
@@ -78,6 +77,22 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	})
 
 	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
+	sessVars := c.Ctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+	// handle the execute statement
+	var (
+		pointPlanShortPathOK bool
+		preparedObj          *plannercore.PlanCacheStmt
+	)
+
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars); err != nil {
+			return nil, err
+		}
+		if pointPlanShortPathOK, err = plannercore.IsPointPlanShortPathOK(c.Ctx, is, preparedObj); err != nil {
+			return nil, err
+		}
+	}
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
 	if err != nil {
 		return nil, err
@@ -87,23 +102,38 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		staleread.AssertStmtStaleness(c.Ctx, val.(bool))
 	})
 
-	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
+	// TODO: Should we use the Execute statement or the corresponding Prepare statement to record？
+	CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		lowerPriority = needLowerPriority(finalPlan)
 	}
-	return &ExecStmt{
-		GoCtx:            ctx,
-		ReplicaReadScope: ret.ReadReplicaScope,
-		InfoSchema:       is,
-		Plan:             finalPlan,
-		LowerPriority:    lowerPriority,
-		Text:             stmtNode.Text(),
-		StmtNode:         stmtNode,
-		Ctx:              c.Ctx,
-		OutputNames:      names,
-		Ti:               &TelemetryInfo{},
-	}, nil
+	stmtCtx.SetPlan(finalPlan)
+	stmt := &ExecStmt{
+		GoCtx:         ctx,
+		InfoSchema:    is,
+		Plan:          finalPlan,
+		LowerPriority: lowerPriority,
+		Text:          stmtNode.Text(),
+		StmtNode:      stmtNode,
+		Ctx:           c.Ctx,
+		OutputNames:   names,
+		Ti:            &TelemetryInfo{},
+	}
+	if pointPlanShortPathOK {
+		if ep, ok := stmt.Plan.(*plannercore.Execute); ok {
+			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
+				stmtCtx.SetPlan(stmt.Plan)
+				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
+				stmt.Plan = pointPlan
+				stmt.PsStmt = preparedObj
+			} else {
+				// invalid the previous cached point plan
+				preparedObj.PreparedAst.CachedPlan = nil
+			}
+		}
+	}
+	return stmt, nil
 }
 
 // needLowerPriority checks whether it's needed to lower the execution priority
@@ -176,6 +206,8 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 		stmtNodeCounterUpdate.Inc()
 	case "Select":
 		stmtNodeCounterSelect.Inc()
+	case "Savepoint":
+		stmtNodeCounterSavepoint.Inc()
 	default:
 		metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
 	}
@@ -341,6 +373,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Change"
 	case *ast.CommitStmt:
 		return "Commit"
+	case *ast.CompactTableStmt:
+		return "CompactTable"
 	case *ast.CreateDatabaseStmt:
 		return "CreateDatabase"
 	case *ast.CreateIndexStmt:
@@ -411,6 +445,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Trace"
 	case *ast.ShutdownStmt:
 		return "Shutdown"
+	case *ast.SavepointStmt:
+		return "Savepoint"
 	}
 	return "other"
 }

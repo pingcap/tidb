@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2019 PingCAP, Inc.
 #
@@ -52,7 +52,7 @@ done
 # one file (after writing totally $ROW_COUNT rows) is imported.
 # If checkpoint does work, this should kill exactly $CHUNK_COUNT instances of lightnings.
 TASKID_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/SetTaskID=return(1234567890)"
-export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfImportedChunk=return($ROW_COUNT)"
+export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfImportedChunk=return"
 
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS cpch_tsr'
@@ -76,31 +76,12 @@ run_sql 'DROP DATABASE IF EXISTS `tidb_lightning_checkpoint_test_cpch.1234567890
 
 # Set the failpoint to kill the lightning instance as soon as one chunk is imported, via signal mechanism
 # If checkpoint does work, this should only kill $CHUNK_COUNT instances of lightnings.
-export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/restore/KillIfImportedChunk=return($ROW_COUNT)"
+export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/restore/KillIfImportedChunk=return"
 
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk Now (step $i/$CHUNK_COUNT) ********"
     do_run_lightning config
 done
-
-set +e
-i=0
-wait_max_time=20
-while [ $i -lt $wait_max_time ]; do
-    lightning_proc=$(ps -ef|grep "[b]in/tidb-lightning\\.test.*$TEST_NAME")
-    ret="$?"
-    if [ "$ret" -eq 0 ]; then
-        echo "lightning is still running: $lightning_proc"
-        sleep 1
-    else
-        break
-    fi
-done
-if [ $i -ge $wait_max_time ]; then
-    echo "wait lightning exit failed"
-    exit 1
-fi
-set -e
 
 verify_checkpoint_noop
 
@@ -111,7 +92,7 @@ rm -f "$TEST_DIR"/cpch.pb*
 
 # Set the failpoint to kill the lightning instance as soon as one chunk is imported
 # If checkpoint does work, this should only kill $CHUNK_COUNT instances of lightnings.
-export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfImportedChunk=return($ROW_COUNT)"
+export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfImportedChunk=return"
 set +e
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk using File checkpoint Now (step $i/$CHUNK_COUNT) ********"

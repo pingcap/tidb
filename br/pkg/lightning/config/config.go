@@ -51,8 +51,6 @@ const (
 
 	// BackendTiDB is a constant for choosing the "TiDB" backend in the configuration.
 	BackendTiDB = "tidb"
-	// BackendImporter is a constant for choosing the "Importer" backend in the configuration.
-	BackendImporter = "importer"
 	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
 	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
@@ -518,12 +516,14 @@ type FileRouteRule struct {
 }
 
 type TikvImporter struct {
+	// Deprecated: only used to keep the compatibility.
 	Addr                string                       `toml:"addr" json:"addr"`
 	Backend             string                       `toml:"backend" json:"backend"`
 	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
 	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
 	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	RegionSplitKeys     int                          `toml:"region-split-keys" json:"region-split-keys"`
 	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
 	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
@@ -532,6 +532,7 @@ type TikvImporter struct {
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
+	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
 }
 
 type Checkpoint struct {
@@ -729,7 +730,6 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
 	cfg.Mydumper.Filter = global.Mydumper.Filter
-	cfg.TikvImporter.Addr = global.TikvImporter.Addr
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
 	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
 	cfg.Checkpoint.Enable = global.Checkpoint.Enable
@@ -861,62 +861,8 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 			zap.ByteString("invalid-char-replacement", []byte(cfg.Mydumper.DataInvalidCharReplace)))
 	}
 
-	if cfg.TikvImporter.Backend == "" {
-		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
-	}
-	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
-	mustHaveInternalConnections := true
-	switch cfg.TikvImporter.Backend {
-	case BackendTiDB:
-		cfg.DefaultVarsForTiDBBackend()
-		mustHaveInternalConnections = false
-		cfg.PostRestore.Checksum = OpLevelOff
-		cfg.PostRestore.Analyze = OpLevelOff
-		cfg.PostRestore.Compact = false
-	case BackendImporter, BackendLocal:
-		// RegionConcurrency > NumCPU is meaningless.
-		cpuCount := runtime.NumCPU()
-		if cfg.App.RegionConcurrency > cpuCount {
-			cfg.App.RegionConcurrency = cpuCount
-		}
-		cfg.DefaultVarsForImporterAndLocalBackend()
-	default:
-		return common.ErrInvalidConfig.GenWithStack("unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
-	}
-
-	// TODO calculate these from the machine's free memory.
-	if cfg.TikvImporter.EngineMemCacheSize == 0 {
-		cfg.TikvImporter.EngineMemCacheSize = defaultEngineMemCacheSize
-	}
-	if cfg.TikvImporter.LocalWriterMemCacheSize == 0 {
-		cfg.TikvImporter.LocalWriterMemCacheSize = defaultLocalWriterMemCacheSize
-	}
-
-	if cfg.TikvImporter.Backend == BackendLocal {
-		if err := cfg.CheckAndAdjustForLocalBackend(); err != nil {
-			return err
-		}
-	} else {
-		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
-	}
-
-	if cfg.TikvImporter.Backend == BackendTiDB {
-		cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
-		switch cfg.TikvImporter.OnDuplicate {
-		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
-		default:
-			return common.ErrInvalidConfig.GenWithStack(
-				"unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
-		}
-	}
-
-	var err error
-	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
+	mustHaveInternalConnections, err := cfg.AdjustCommon()
 	if err != nil {
-		return common.ErrInvalidConfig.Wrap(err).GenWithStack("`mydumper.tidb.sql_mode` must be a valid SQL_MODE")
-	}
-
-	if err := cfg.CheckAndAdjustSecurity(); err != nil {
 		return err
 	}
 
@@ -943,6 +889,68 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	cfg.AdjustMydumper()
 	cfg.AdjustCheckPoint()
 	return cfg.CheckAndAdjustFilePath()
+}
+
+func (cfg *Config) AdjustCommon() (bool, error) {
+	if cfg.TikvImporter.Backend == "" {
+		return false, common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
+	}
+	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
+	mustHaveInternalConnections := true
+	switch cfg.TikvImporter.Backend {
+	case BackendTiDB:
+		cfg.DefaultVarsForTiDBBackend()
+		mustHaveInternalConnections = false
+		cfg.PostRestore.Checksum = OpLevelOff
+		cfg.PostRestore.Analyze = OpLevelOff
+		cfg.PostRestore.Compact = false
+	case BackendLocal:
+		// RegionConcurrency > NumCPU is meaningless.
+		cpuCount := runtime.NumCPU()
+		if cfg.App.RegionConcurrency > cpuCount {
+			cfg.App.RegionConcurrency = cpuCount
+		}
+		cfg.DefaultVarsForImporterAndLocalBackend()
+	default:
+		return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack("unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
+	}
+
+	// TODO calculate these from the machine's free memory.
+	if cfg.TikvImporter.EngineMemCacheSize == 0 {
+		cfg.TikvImporter.EngineMemCacheSize = defaultEngineMemCacheSize
+	}
+	if cfg.TikvImporter.LocalWriterMemCacheSize == 0 {
+		cfg.TikvImporter.LocalWriterMemCacheSize = defaultLocalWriterMemCacheSize
+	}
+
+	if cfg.TikvImporter.Backend == BackendLocal {
+		if err := cfg.CheckAndAdjustForLocalBackend(); err != nil {
+			return mustHaveInternalConnections, err
+		}
+	} else {
+		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
+	}
+
+	if cfg.TikvImporter.Backend == BackendTiDB {
+		cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
+		switch cfg.TikvImporter.OnDuplicate {
+		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
+		default:
+			return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack(
+				"unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
+		}
+	}
+
+	var err error
+	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
+	if err != nil {
+		return mustHaveInternalConnections, common.ErrInvalidConfig.Wrap(err).GenWithStack("`mydumper.tidb.sql_mode` must be a valid SQL_MODE")
+	}
+
+	if err := cfg.CheckAndAdjustSecurity(); err != nil {
+		return mustHaveInternalConnections, err
+	}
+	return mustHaveInternalConnections, err
 }
 
 func (cfg *Config) CheckAndAdjustForLocalBackend() error {
@@ -1156,7 +1164,7 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 			return common.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
 		}
 	case "false", "skip-verify", "preferred":
-		break
+		return nil
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", cfg.TiDB.TLS)
 	}

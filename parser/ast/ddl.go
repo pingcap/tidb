@@ -132,7 +132,7 @@ type CreateDatabaseStmt struct {
 	ddlNode
 
 	IfNotExists bool
-	Name        string
+	Name        model.CIStr
 	Options     []*DatabaseOption
 }
 
@@ -142,7 +142,7 @@ func (n *CreateDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
-	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Name.O)
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
 		err := option.Restore(ctx)
@@ -168,7 +168,7 @@ func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type AlterDatabaseStmt struct {
 	ddlNode
 
-	Name                 string
+	Name                 model.CIStr
 	AlterDefaultDatabase bool
 	Options              []*DatabaseOption
 }
@@ -191,7 +191,7 @@ func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER DATABASE")
 	if !n.AlterDefaultDatabase {
 		ctx.WritePlain(" ")
-		ctx.WriteName(n.Name)
+		ctx.WriteName(n.Name.O)
 	}
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
@@ -230,7 +230,7 @@ type DropDatabaseStmt struct {
 	ddlNode
 
 	IfExists bool
-	Name     string
+	Name     model.CIStr
 }
 
 // Restore implements Node interface.
@@ -239,7 +239,7 @@ func (n *DropDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Name.O)
 	return nil
 }
 
@@ -533,9 +533,9 @@ type ColumnOption struct {
 	// Stored is only for ColumnOptionGenerated, default is false.
 	Stored bool
 	// Refer is used for foreign key.
-	Refer               *ReferenceDef
-	StrValue            string
-	AutoRandomBitLength int
+	Refer       *ReferenceDef
+	StrValue    string
+	AutoRandOpt AutoRandomOption
 	// Enforced is only for Check, default is true.
 	Enforced bool
 	// Name is only used for Check Constraint name.
@@ -631,8 +631,13 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 	case ColumnOptionAutoRandom:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAutoRandom, func() error {
 			ctx.WriteKeyWord("AUTO_RANDOM")
-			if n.AutoRandomBitLength != types.UnspecifiedLength {
-				ctx.WritePlainf("(%d)", n.AutoRandomBitLength)
+			opt := n.AutoRandOpt
+			if opt.ShardBits != types.UnspecifiedLength {
+				if opt.RangeBits != types.UnspecifiedLength {
+					ctx.WritePlainf("(%d, %d)", opt.ShardBits, opt.RangeBits)
+				} else {
+					ctx.WritePlainf("(%d)", opt.ShardBits)
+				}
 			}
 			return nil
 		})
@@ -659,6 +664,14 @@ func (n *ColumnOption) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// AutoRandomOption contains the length of shard bits and range bits.
+type AutoRandomOption struct {
+	// ShardBits is the number of bits used to store the shard.
+	ShardBits int
+	// RangeBits is the number of int primary key bits that will be used by TiDB.
+	RangeBits int
+}
+
 // IndexVisibility is the option for index visibility.
 type IndexVisibility int
 
@@ -670,10 +683,12 @@ const (
 )
 
 // IndexOption is the index options.
-//    KEY_BLOCK_SIZE [=] value
-//  | index_type
-//  | WITH PARSER parser_name
-//  | COMMENT 'string'
+//
+//	  KEY_BLOCK_SIZE [=] value
+//	| index_type
+//	| WITH PARSER parser_name
+//	| COMMENT 'string'
+//
 // See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 type IndexOption struct {
 	node
@@ -2020,7 +2035,7 @@ const (
 	TableOptionEngine
 	TableOptionCharset
 	TableOptionCollate
-	TableOptionAutoIdCache
+	TableOptionAutoIdCache //nolint:revive
 	TableOptionAutoIncrement
 	TableOptionAutoRandomBase
 	TableOptionComment
@@ -2075,6 +2090,7 @@ const (
 	TokuDBRowFormatLzma
 	TokuDBRowFormatSnappy
 	TokuDBRowFormatUncompressed
+	TokuDBRowFormatZstd
 )
 
 // OnDuplicateKeyHandlingType is the option that handle unique key values in 'CREATE TABLE ... SELECT' or `LOAD DATA`.
@@ -2236,6 +2252,8 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("TOKUDB_LZMA")
 		case TokuDBRowFormatSnappy:
 			ctx.WriteKeyWord("TOKUDB_SNAPPY")
+		case TokuDBRowFormatZstd:
+			ctx.WriteKeyWord("TOKUDB_ZSTD")
 		case TokuDBRowFormatUncompressed:
 			ctx.WriteKeyWord("TOKUDB_UNCOMPRESSED")
 		default:
@@ -2529,7 +2547,7 @@ const (
 	AlterTableAddPartitions
 	// A tombstone for `AlterTableAlterPartition`. It will never be used anymore.
 	// Just left a tombstone here to keep the enum number unchanged.
-	__DEPRECATED_AlterTableAlterPartition
+	__DEPRECATED_AlterTableAlterPartition //nolint:revive
 	AlterTablePartitionAttributes
 	AlterTablePartitionOptions
 	AlterTableCoalescePartitions
@@ -2562,13 +2580,17 @@ const (
 	AlterTableSetTiFlashReplica
 	// A tombstone for `AlterTablePlacement`. It will never be used anymore.
 	// Just left a tombstone here to keep the enum number unchanged.
-	__DEPRECATED_AlterTablePlacement
+	__DEPRECATED_AlterTablePlacement //nolint:revive
 	AlterTableAddStatistics
 	AlterTableDropStatistics
 	AlterTableAttributes
 	AlterTableCache
 	AlterTableNoCache
 	AlterTableStatsOptions
+	AlterTableDropFirstPartition
+	AlterTableAddLastPartition
+	AlterTableReorganizeLastPartition
+	AlterTableReorganizeFirstPartition
 )
 
 // LockType is the type for AlterTableSpec.
@@ -2974,6 +2996,24 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord(" PARTITIONS ")
 			ctx.WritePlainf("%d", n.Num)
 		}
+	case AlterTableDropFirstPartition:
+		ctx.WriteKeyWord("FIRST PARTITION LESS THAN (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableDropFirstPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
+		if n.NoWriteToBinlog {
+			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
+		}
+	case AlterTableAddLastPartition:
+		ctx.WriteKeyWord("LAST PARTITION LESS THAN (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableAddLastPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
+		if n.NoWriteToBinlog {
+			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
+		}
 	case AlterTablePartitionOptions:
 		restoreWithoutSpecialComment := func() error {
 			origFlags := ctx.Flags
@@ -3142,6 +3182,18 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteName(name.O)
 		}
+	case AlterTableReorganizeLastPartition:
+		ctx.WriteKeyWord("SPLIT MAXVALUE PARTITION LESS THAN (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableReorganizeLastPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
+	case AlterTableReorganizeFirstPartition:
+		ctx.WriteKeyWord("MERGE FIRST PARTITION LESS THAN (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableReorganizeLastPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
 	case AlterTableReorganizePartition:
 		ctx.WriteKeyWord("REORGANIZE PARTITION")
 		if n.NoWriteToBinlog {
@@ -3303,14 +3355,12 @@ type AlterTableStmt struct {
 
 func (n *AlterTableStmt) HaveOnlyPlacementOptions() bool {
 	for _, n := range n.Specs {
-		if n.Tp == AlterTablePartitionOptions {
-			if !n.IsAllPlacementRule() {
-				return false
-			}
-		} else {
+		if n.Tp != AlterTablePartitionOptions {
 			return false
 		}
-
+		if !n.IsAllPlacementRule() {
+			return false
+		}
 	}
 	return true
 }
@@ -3441,15 +3491,15 @@ type PartitionDefinitionClause interface {
 
 type PartitionDefinitionClauseNone struct{}
 
-func (n *PartitionDefinitionClauseNone) restore(ctx *format.RestoreCtx) error {
+func (*PartitionDefinitionClauseNone) restore(_ *format.RestoreCtx) error {
 	return nil
 }
 
-func (n *PartitionDefinitionClauseNone) acceptInPlace(v Visitor) bool {
+func (*PartitionDefinitionClauseNone) acceptInPlace(_ Visitor) bool {
 	return true
 }
 
-func (n *PartitionDefinitionClauseNone) Validate(pt model.PartitionType, columns int) error {
+func (*PartitionDefinitionClauseNone) Validate(pt model.PartitionType, _ int) error {
 	switch pt {
 	case 0:
 	case model.PartitionTypeRange:
@@ -3599,11 +3649,11 @@ func (n *PartitionDefinitionClauseHistory) restore(ctx *format.RestoreCtx) error
 	return nil
 }
 
-func (n *PartitionDefinitionClauseHistory) acceptInPlace(v Visitor) bool {
+func (*PartitionDefinitionClauseHistory) acceptInPlace(_ Visitor) bool {
 	return true
 }
 
-func (n *PartitionDefinitionClauseHistory) Validate(pt model.PartitionType, columns int) error {
+func (*PartitionDefinitionClauseHistory) Validate(pt model.PartitionType, _ int) error {
 	switch pt {
 	case 0, model.PartitionTypeSystemTime:
 	default:
@@ -3668,15 +3718,34 @@ func (n *PartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type PartitionIntervalExpr struct {
+	Expr ExprNode
+	// TimeUnitInvalid if not Time based INTERVAL!
+	TimeUnit TimeUnitType
+}
+
+type PartitionInterval struct {
+	// To be able to get original text and replace the syntactic sugar with generated
+	// partition definitions
+	node
+	IntervalExpr  PartitionIntervalExpr
+	FirstRangeEnd *ExprNode
+	LastRangeEnd  *ExprNode
+	MaxValPart    bool
+	NullPart      bool
+}
+
 // PartitionMethod describes how partitions or subpartitions are constructed.
 type PartitionMethod struct {
+	// To be able to get original text and replace the syntactic sugar with generated
+	// partition definitions
+	node
 	// Tp is the type of the partition function
 	Tp model.PartitionType
 	// Linear is a modifier to the HASH and KEY type for choosing a different
 	// algorithm
 	Linear bool
-	// Expr is an expression used as argument of HASH, RANGE, LIST and
-	// SYSTEM_TIME types
+	// Expr is an expression used as argument of HASH, RANGE AND LIST types
 	Expr ExprNode
 	// ColumnNames is a list of column names used as argument of KEY,
 	// RANGE COLUMNS and LIST COLUMNS types
@@ -3691,6 +3760,8 @@ type PartitionMethod struct {
 
 	// KeyAlgorithm is the optional hash algorithm type for `PARTITION BY [LINEAR] KEY` syntax.
 	KeyAlgorithm *PartitionKeyAlgorithm
+
+	Interval *PartitionInterval
 }
 
 type PartitionKeyAlgorithm struct {
@@ -3719,6 +3790,10 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(" ")
 			ctx.WriteKeyWord(n.Unit.String())
 		}
+		if n.Limit > 0 {
+			ctx.WriteKeyWord(" LIMIT ")
+			ctx.WritePlainf("%d", n.Limit)
+		}
 
 	case n.Expr != nil:
 		ctx.WritePlain(" (")
@@ -3743,9 +3818,30 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if n.Limit > 0 {
-		ctx.WriteKeyWord(" LIMIT ")
-		ctx.WritePlainf("%d", n.Limit)
+	if n.Interval != nil {
+		ctx.WritePlain(" INTERVAL (")
+		n.Interval.IntervalExpr.Expr.Restore(ctx)
+		if n.Interval.IntervalExpr.TimeUnit != TimeUnitInvalid {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(n.Interval.IntervalExpr.TimeUnit.String())
+		}
+		ctx.WritePlain(")")
+		if n.Interval.FirstRangeEnd != nil {
+			ctx.WritePlain(" FIRST PARTITION LESS THAN (")
+			(*n.Interval.FirstRangeEnd).Restore(ctx)
+			ctx.WritePlain(")")
+		}
+		if n.Interval.LastRangeEnd != nil {
+			ctx.WritePlain(" LAST PARTITION LESS THAN (")
+			(*n.Interval.LastRangeEnd).Restore(ctx)
+			ctx.WritePlain(")")
+		}
+		if n.Interval.NullPart {
+			ctx.WritePlain(" NULL PARTITION")
+		}
+		if n.Interval.MaxValPart {
+			ctx.WritePlain(" MAXVALUE PARTITION")
+		}
 	}
 
 	return nil
@@ -3772,7 +3868,6 @@ func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 
 // PartitionOptions specifies the partition options.
 type PartitionOptions struct {
-	node
 	PartitionMethod
 	Sub         *PartitionMethod
 	Definitions []*PartitionDefinition
@@ -3814,7 +3909,7 @@ func (n *PartitionOptions) Validate() error {
 			n.Num = 1
 		}
 	case model.PartitionTypeRange, model.PartitionTypeList:
-		if len(n.Definitions) == 0 {
+		if n.Interval == nil && len(n.Definitions) == 0 {
 			return ErrPartitionsMustBeDefined.GenWithStackByArgs(n.Tp)
 		}
 	case model.PartitionTypeSystemTime:
