@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	filter "github.com/pingcap/tidb/util/table-filter"
@@ -933,9 +932,9 @@ func TestMaxScanFilesOption(t *testing.T) {
 		))
 	}
 	cfg := newConfigWithSourceDir("/test-src")
-	mdl, err := mydump.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
-		mydump.WithMDLoaderSetupOptions(
-			mydump.WithMaxScanFiles(maxScanFilesCount),
+	mdl, err := md.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
+		md.WithMDLoaderSetupOptions(
+			md.WithMaxScanFiles(maxScanFilesCount),
 		),
 	)
 	require.NoError(t, err)
@@ -947,12 +946,12 @@ func TestMaxScanFilesOption(t *testing.T) {
 	require.Equal(t, dataFilesCount, len(tbl.DataFiles))
 
 	maxScanFilesCount = 100
-	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
-		mydump.WithMDLoaderSetupOptions(
-			mydump.WithMaxScanFiles(maxScanFilesCount),
+	mdl, err = md.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
+		md.WithMDLoaderSetupOptions(
+			md.WithMaxScanFiles(maxScanFilesCount),
 		),
 	)
-	require.EqualError(t, err, mydump.ErrTooManySourceFiles.Error())
+	require.EqualError(t, err, md.ErrTooManySourceFiles.Error())
 	dbMetas = mdl.GetDatabases()
 	require.Equal(t, 1, len(dbMetas))
 	dbMeta = dbMetas[0]
