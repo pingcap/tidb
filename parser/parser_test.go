@@ -352,8 +352,9 @@ func TestParameterizer(t *testing.T) {
 
 	parseSQL, params, err := p.ParseOneStmt(`SELECT * FROM t WHERE a > 1 AND b < 2`, "", "")
 	require.NoError(t, err)
-	require.Equal(t, "SELECT * FROM t WHERE a > 1 AND b < 2", parseSQL)
-	require.Len(t, len(params), 2)
+	// TODO: support
+	require.Equal(t, "SELECT*FROMtWHEREa>?ANDb<?", parseSQL)
+	require.Equal(t, len(params), 2)
 }
 
 type testCase struct {

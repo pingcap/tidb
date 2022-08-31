@@ -326,6 +326,18 @@ func (parameterizer *parameterizeParser) Parse(sql, charset, collation string) (
 	return parameterizer.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
 }
 
+func (parameterizer *parameterizeParser) Parameterize(sql, charset, collation string) (paramSQL string, params []ast.ValueExpr, ok bool) {
+	var (
+		warns []error
+		err   error
+	)
+	paramSQL, params, warns, err = parameterizer.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
+	if len(warns) == 0 && err == nil {
+		ok = true
+	}
+	return
+}
+
 func (parameterizer *parameterizeParser) lastErrorAsWarn() {
 	parameterizer.lexer.lastErrorAsWarn()
 }

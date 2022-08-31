@@ -55,4 +55,5 @@ func BenchmarkNormalize(b *testing.B) {
 		}
 	}
 	b.StopTimer()
+	digesterPool.Put(d)
 }

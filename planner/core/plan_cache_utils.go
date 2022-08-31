@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -301,17 +302,53 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 // e.g. 'select * from t where a>23' --> 'select * from t where a>?' + 23
 type Parameterizer interface {
 	// Parameterize this specific sql, ok indicates whether this sql is supported.
-	Parameterize(originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error)
+	// TODO: support charset and collation later
+	Parameterize(sql, charset, collation string) (paramSQL string, params []ast.ValueExpr, ok bool)
 }
 
 // ParameterizerKey is used to get a parameterizer from a ctx, only for test.
 const ParameterizerKey = stringutil.StringerStr("parameterizerKey")
 
 // Parameterize parameterizes this sql, used by general plan cache.
-func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error) {
+func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, paramsExpr []expression.Expression, ok bool) {
+	var params []ast.ValueExpr
 	if v := sctx.Value(ParameterizerKey); v != nil { // for test
-		return v.(Parameterizer).Parameterize(originSQL)
+		paramSQL, params, ok = v.(Parameterizer).Parameterize(originSQL, "", "")
+	} else {
+		parameterizer := parser.NewParameterizer()
+		paramSQL, params, ok = parameterizer.Parameterize(originSQL, "", "")
 	}
-	// TODO: implement it
-	return "", nil, false, nil
+
+	if !ok {
+		return "", nil, false
+	}
+	paramsExpr = make([]expression.Expression, 0, len(params))
+	for _, param := range params {
+		v, isValue := param.(*driver.ValueExpr)
+		if !isValue {
+			ok = false
+			break
+		}
+		retType := v.Type.Clone()
+		switch v.Datum.Kind() {
+		case types.KindNull:
+			retType.DelFlag(mysql.NotNullFlag)
+		default:
+			retType.AddFlag(mysql.NotNullFlag)
+		}
+		v.Datum.SetValue(v.Datum.GetValue(), retType)
+		value := &expression.Constant{Value: v.Datum, RetType: retType}
+		value.SetRepertoire(expression.ASCII)
+		if retType.EvalType() == types.ETString {
+			for _, b := range v.Datum.GetBytes() {
+				// if any character in constant is not ascii, set the repertoire to UNICODE.
+				if b >= 0x80 {
+					value.SetRepertoire(expression.UNICODE)
+					break
+				}
+			}
+		}
+		paramsExpr = append(paramsExpr, value)
+	}
+	return
 }
