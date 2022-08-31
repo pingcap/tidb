@@ -243,6 +243,8 @@ type SessionOptions struct {
 	SysVars   map[string]string
 	// a seed used for tableKvEncoder's auto random bits value
 	AutoRandomSeed int64
+	// IndexID is used by the duplicate detector. Only the key range with the specified index ID is scanned.
+	IndexID int64
 }
 
 // NewSession creates a new trimmed down Session matching the options.
