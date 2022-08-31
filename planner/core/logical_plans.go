@@ -146,6 +146,7 @@ type LogicalJoin struct {
 	preferJoinOrder bool
 
 	EqualConditions []*expression.ScalarFunction
+	NAEQConditions  []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
@@ -178,6 +179,10 @@ type LogicalJoin struct {
 
 	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	equalCondOutCnt float64
+}
+
+func (p *LogicalJoin) isNAAJ() bool {
+	return len(p.NAEQConditions) > 0
 }
 
 // Shallow shallow copies a LogicalJoin struct.
@@ -363,6 +368,16 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
 		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
 		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
+	}
+	return
+}
+
+// GetNAJoinKeys extracts join keys(columns) from NAEqualCondition, where shouldn't care about null value
+// since null values is always considered.
+func (p *LogicalJoin) GetNAJoinKeys() (leftKeys, rightKeys []*expression.Column) {
+	for _, expr := range p.NAEQConditions {
+		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
+		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
 	}
 	return
 }

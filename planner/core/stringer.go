@@ -120,6 +120,11 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			r := eq.GetArgs()[1].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
+		for _, naeq := range x.NAEqualConditions {
+			l := naeq.GetArgs()[0].String()
+			r := naeq.GetArgs()[1].String()
+			str += fmt.Sprintf("NA(%s,%s)", l, r)
+		}
 	case *PhysicalMergeJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
