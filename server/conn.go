@@ -809,8 +809,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 			logutil.BgLogger().Warn("verify session token failed", zap.String("username", cc.user), zap.Error(err))
 			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 		}
-	} else if !cc.ctx.Auth(userIdentity, authData, cc.salt) {
-		return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+	} else if err = cc.ctx.Auth(userIdentity, authData, cc.salt); err != nil {
+		return err
 	}
 	cc.ctx.SetPort(port)
 	if cc.dbname != "" {
