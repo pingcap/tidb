@@ -15,10 +15,10 @@ package core
 
 import (
 	"container/list"
+	"github.com/pingcap/tidb/util/logutil"
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -57,7 +57,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)) *LRUPlanCache {
 	if capacity < 1 {
 		capacity = 100
-		log.Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
+		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
 	return &LRUPlanCache{
 		capacity:       capacity,

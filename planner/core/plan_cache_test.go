@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"errors"
+	"github.com/stretchr/testify/require"
 	"strconv"
 	"strings"
 	"testing"
@@ -94,4 +95,14 @@ func TestGeneralPlanCacheParameterizer(t *testing.T) {
 	mp.action = ""
 	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestInitLRUWithSystemVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@session.tidb_prepared_plan_cache_size = 0")
+	sessionVar := tk.Session().GetSessionVars()
+
+	lru := plannercore.NewLRUPlanCache(uint(sessionVar.PreparedPlanCacheSize), 0, 0, plannercore.PickPlanFromBucket)
+	require.NotNil(t, lru)
 }
