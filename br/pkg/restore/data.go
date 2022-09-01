@@ -197,7 +197,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 			break
 		case <-ectx.Done(): // err or cancel, eg.wait will catch the error
 			break
-		case tikvMeta := <-metaChan:
+		case storeMeta := <-metaChan:
 			recovery.storeMetas[i] = tikvMeta
 			log.Info("receieved region meta from", zap.Int("store", int(tikvMeta.storeId)))
 		}
