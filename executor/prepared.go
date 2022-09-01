@@ -16,20 +16,20 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/sqlexec"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
@@ -83,14 +83,12 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return nil
 		}
 	}
-
-	sctx := e.ctx
 	charset, collation := vars.GetCharsetInfo()
 	var (
 		stmts []ast.StmtNode
 		err   error
 	)
-	if sqlParser, ok := sctx.(sqlexec.SQLParser); ok {
+	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
 		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText,
 			parser.CharsetConnection(charset),
@@ -103,7 +101,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			parser.CharsetConnection(charset),
 			parser.CollationConnection(collation))
 		for _, warn := range warns {
-			vars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
 	}
 	if err != nil {
