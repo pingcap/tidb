@@ -432,6 +432,18 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Set columns' stats status.
+	for _, table := range cache.Values() {
+		for _, col := range table.Columns {
+			if col.StatsVer != statistics.Version0 || col.Count > 0 {
+				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
+					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+				} else {
+					col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+				}
+			}
+		}
+	}
 	cache.FreshMemUsage()
 	h.updateStatsCache(cache)
 	v := h.statsCache.Load()
