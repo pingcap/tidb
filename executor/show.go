@@ -1764,10 +1764,6 @@ func (e *ShowExec) tableAccessDenied(access string, table string) error {
 
 func (e *ShowExec) appendRow(row []interface{}) {
 	for i, col := range row {
-		if col == nil {
-			e.result.AppendNull(i)
-			continue
-		}
 		switch x := col.(type) {
 		case nil:
 			e.result.AppendNull(i)

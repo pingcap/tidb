@@ -169,7 +169,6 @@ type Config struct {
 	Path             string `toml:"path" json:"path"`
 	Socket           string `toml:"socket" json:"socket"`
 	Lease            string `toml:"lease" json:"lease"`
-	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool   `toml:"split-table" json:"split-table"`
 	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
 	TempDir          string `toml:"temp-dir" json:"temp-dir"`
@@ -215,8 +214,6 @@ type Config struct {
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
 	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
 	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
-	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
-	MaxServerConnections uint32 `toml:"max-server-connections" json:"max-server-connections"`
 	// NewCollationsEnabledOnFirstBootstrap indicates if the new collations are enabled, it effects only when a TiDB cluster bootstrapped on the first time.
 	NewCollationsEnabledOnFirstBootstrap bool `toml:"new_collations_enabled_on_first_bootstrap" json:"new_collations_enabled_on_first_bootstrap"`
 	// Experimental contains parameters for experimental features.
@@ -274,10 +271,12 @@ type Config struct {
 	// OOMUseTmpStorage unused since bootstrap v93
 	OOMUseTmpStorage bool `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 
-	// CheckMb4ValueInUTF8, EnableCollectExecutionInfo, Plugin are deprecated.
+	// These items are deprecated because they are turned into instance system variables.
 	CheckMb4ValueInUTF8        AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	EnableCollectExecutionInfo bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
+	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
+	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -486,11 +485,12 @@ type Instance struct {
 	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
 	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
-	EnableCollectExecutionInfo bool       `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
-	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
-	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
-	MaxConnections             uint32     `toml:"max_connections" json:"max_connections"`
-	TiDBEnableDDL              AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
+	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
+	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
+	// MaxConnections is the maximum permitted number of simultaneous client connections.
+	MaxConnections uint32     `toml:"max_connections" json:"max_connections"`
+	TiDBEnableDDL  AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -1036,6 +1036,8 @@ var removedConfig = map[string]struct{}{
 	"performance.feedback-probability":       {}, // This feature is deprecated
 	"performance.query-feedback-limit":       {},
 	"oom-use-tmp-storage":                    {}, // use tidb_enable_tmp_storage_on_oom
+	"max-server-connections":                 {}, // use sysvar max_connections
+	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate

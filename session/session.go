@@ -73,7 +73,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
@@ -122,7 +121,7 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsageRecurCTE                 = metrics.TelemetrySQLCTECnt.WithLabelValues("recursive_cte")
+	telemetryCTEUsageRecurCTE                 = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
 	telemetryCTEUsageNonRecurCTE              = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
 	telemetryCTEUsageNotCTE                   = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
 	telemetryMultiSchemaChangeUsage           = metrics.TelemetryMultiSchemaChangeCnt
@@ -148,6 +147,10 @@ type Session interface {
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+	// Parameterize tries to convert the general statement to an execute statement and then uses general plan cache to handle it.
+	// e.g. "select * from t where a>23" --> "execute 'select * from t where a>?' using 23".
+	// By using the general plan cache, it can skip the parse and optimization stage so to gain some performance benefits.
+	Parameterize(ctx context.Context, originSQL string) (*ast.ExecuteStmt, bool)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
@@ -156,11 +159,11 @@ type Session interface {
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
-	CacheGeneralStmt(sql string) error
+	CacheGeneralStmt(sql string) (interface{}, error)
 	// ExecutePreparedStmt executes a prepared statement.
+	// Deprecated: please use ExecuteStmt, this function is left for testing only.
+	// TODO: remove ExecutePreparedStmt.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
-	// ExecuteGeneralStmt executes a general statement.
-	ExecuteGeneralStmt(ctx context.Context, sql string, param []expression.Expression) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	// SetSessionStatesHandler sets SessionStatesHandler for type stateType.
 	SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler)
@@ -172,7 +175,7 @@ type Session interface {
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
-	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
+	Auth(user *auth.UserIdentity, auth []byte, salt []byte) error
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
 	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
@@ -792,13 +795,13 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessionData := sessVars.TemporaryTableData
 	var (
 		stage           kv.StagingHandle
-		localTempTables *infoschema.LocalTemporaryTables
+		localTempTables *infoschema.SessionTables
 	)
 
 	if sessVars.LocalTemporaryTables != nil {
-		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.SessionTables)
 	} else {
-		localTempTables = new(infoschema.LocalTemporaryTables)
+		localTempTables = new(infoschema.SessionTables)
 	}
 
 	defer func() {
@@ -1570,6 +1573,26 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return []sqlexec.RecordSet{rs}, err
 }
 
+// Parameterize Parameterizes this sql.
+func (s *session) Parameterize(ctx context.Context, originSQL string) (exec *ast.ExecuteStmt, ok bool) {
+	if !s.GetSessionVars().EnableGeneralPlanCache {
+		return nil, false
+	}
+	paramSQL, params, ok, err := plannercore.Parameterize(s, originSQL)
+	if !ok || err != nil {
+		return nil, false
+	}
+	cachedStmt, err := s.CacheGeneralStmt(paramSQL)
+	if err != nil {
+		return nil, false
+	}
+	return &ast.ExecuteStmt{
+		BinaryArgs:      params,
+		PrepStmt:        cachedStmt,
+		FromGeneralStmt: true,
+	}, true
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	parseStartTime := time.Now()
@@ -2025,6 +2048,12 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
 	}
 	s.currentPlan = stmt.Plan
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if execStmt.Name == "" {
+			// for exec-stmt on bin-protocol, ignore the plan detail in `show process` to gain performance benefits.
+			s.currentPlan = nil
+		}
+	}
 
 	// Execute the physical plan.
 	logStmt(stmt, s)
@@ -2263,15 +2292,18 @@ func (s *session) rollbackOnError(ctx context.Context) {
 
 // CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
 // The sql have to be parameterized, e.g. select * from t where a>?.
-func (s *session) CacheGeneralStmt(sql string) error {
+func (s *session) CacheGeneralStmt(sql string) (interface{}, error) {
 	if stmt := s.sessionVars.GetGeneralPlanCacheStmt(sql); stmt != nil {
 		// skip this step if there is already a PlanCacheStmt for this ql
-		return nil
+		return stmt, nil
 	}
 
 	prepareExec := executor.NewPrepareExec(s, sql)
 	prepareExec.IsGeneralStmt = true
-	return prepareExec.Next(context.Background(), nil)
+	if err := prepareExec.Next(context.Background(), nil); err != nil {
+		return nil, err
+	}
+	return prepareExec.Stmt, nil
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol
@@ -2313,71 +2345,6 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStmt, prepareStmt *plannercore.PlanCacheStmt) (sqlexec.RecordSet, error) {
-	failpoint.Inject("assertTxnManagerInPreparedStmtExec", func() {
-		sessiontxn.RecordAssert(s, "assertTxnManagerInPreparedStmtExec", true)
-		if prepareStmt.SnapshotTSEvaluator != nil {
-			staleread.AssertStmtStaleness(s, true)
-			ts, err := prepareStmt.SnapshotTSEvaluator(s)
-			if err != nil {
-				panic(err)
-			}
-			sessiontxn.AssertTxnManagerReadTS(s, ts)
-		}
-	})
-
-	s.sessionVars.StartTime = time.Now()
-	preparedObj, err := plannercore.GetPreparedStmt(execStmt, s.GetSessionVars())
-	if err != nil {
-		return nil, err
-	}
-
-	compiler := executor.Compiler{Ctx: s}
-	stmt, err := compiler.Compile(ctx, execStmt)
-	if err == nil {
-		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
-	}
-	if err != nil {
-		return nil, err
-	}
-	durCompile := time.Since(s.sessionVars.StartTime)
-	s.GetSessionVars().DurationCompile = durCompile
-
-	stmtCtx := s.GetSessionVars().StmtCtx
-	stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-	stmtCtx.OriginalSQL = stmt.Text
-	stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
-
-	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
-		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
-		telemetry.CurrentExecuteCount.Inc()
-		if tiFlashPushDown {
-			telemetry.CurrentTiFlashPushDownCount.Inc()
-		}
-		if tiFlashExchangePushDown {
-			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
-		}
-	}
-	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
-	logGeneralQuery(stmt, s, true)
-
-	if stmt.PsStmt != nil { // point plan short path
-		resultSet, err := stmt.PointGet(ctx)
-		s.txn.changeToInvalid()
-		return resultSet, err
-	}
-
-	var recordSet sqlexec.RecordSet
-
-	if stmt.PsStmt != nil { // point plan short path
-		recordSet, err = stmt.PointGet(ctx)
-		s.txn.changeToInvalid()
-	} else {
-		recordSet, err = runStmt(ctx, s, stmt)
-	}
-	return recordSet, err
-}
-
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params []expression.Expression) (sqlexec.RecordSet, error) {
 	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
@@ -2390,67 +2357,11 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 	if !ok {
 		return nil, errors.Errorf("invalid PlanCacheStmt type")
 	}
-	return s.executePlanCacheStmt(ctx, stmt, params)
-}
-
-// ExecuteGeneralStmt executes a general statement.
-func (s *session) ExecuteGeneralStmt(ctx context.Context, sql string, params []expression.Expression) (sqlexec.RecordSet, error) {
-	generalStmt := s.sessionVars.GetGeneralPlanCacheStmt(sql)
-	if generalStmt == nil {
-		err := plannercore.ErrStmtNotFound
-		logutil.Logger(ctx).Error("general statement not found", zap.String("sql", sql))
-		return nil, err
+	execStmt := &ast.ExecuteStmt{
+		BinaryArgs: params,
+		PrepStmt:   stmt,
 	}
-	stmt, ok := generalStmt.(*plannercore.PlanCacheStmt)
-	if !ok {
-		return nil, errors.Errorf("invalid PlanCacheStmt type")
-	}
-	return s.executePlanCacheStmt(ctx, stmt, params)
-}
-
-func (s *session) executePlanCacheStmt(ctx context.Context, stmt *plannercore.PlanCacheStmt, params []expression.Expression) (sqlexec.RecordSet, error) {
-	var err error
-	if err = s.PrepareTxnCtx(ctx); err != nil {
-		return nil, err
-	}
-
-	s.sessionVars.StartTime = time.Now()
-	execStmt := &ast.ExecuteStmt{PrepStmt: stmt, BinaryArgs: params}
-	if err := executor.ResetContextOfStmt(s, execStmt); err != nil {
-		return nil, err
-	}
-
-	staleReadProcessor := staleread.NewStaleReadProcessor(s)
-	if err = staleReadProcessor.OnExecutePreparedStmt(stmt.SnapshotTSEvaluator); err != nil {
-		return nil, err
-	}
-
-	if staleReadProcessor.IsStaleness() {
-		s.sessionVars.StmtCtx.IsStaleness = true
-		err = sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
-			Type: sessiontxn.EnterNewTxnWithReplaceProvider,
-			Provider: staleread.NewStalenessTxnContextProvider(
-				s,
-				staleReadProcessor.GetStalenessReadTS(),
-				staleReadProcessor.GetStalenessInfoSchema(),
-			),
-		})
-
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	s.txn.onStmtStart(stmt.SQLDigest.String())
-	defer s.txn.onStmtEnd()
-
-	if err = s.onTxnManagerStmtStartOrRetry(ctx, execStmt); err != nil {
-		return nil, err
-	}
-	s.setRequestSource(ctx, stmt.PreparedAst.StmtType, stmt.PreparedAst.Stmt)
-	// even the txn is valid, still need to set session variable for coprocessor usage.
-	s.sessionVars.RequestSourceType = stmt.PreparedAst.StmtType
-	return s.preparedStmtExec(ctx, execStmt, stmt)
+	return s.ExecuteStmt(ctx, execStmt)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -2546,20 +2457,24 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 // Auth validates a user using an authentication string and salt.
 // If the password fails, it will keep trying other users until exhausted.
 // This means it can not be refactored to use MatchIdentity yet.
-func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
+func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) error {
+	hasPassword := "YES"
+	if len(authentication) == 0 {
+		hasPassword = "NO"
+	}
 	pm := privilege.GetPrivilegeManager(s)
 	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
 	if err != nil {
-		return false
+		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if pm.ConnectionVerification(authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState) {
-		user.AuthUsername = authUser.Username
-		user.AuthHostname = authUser.Hostname
-		s.sessionVars.User = user
-		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
-		return true
+	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
+		return err
 	}
-	return false
+	user.AuthUsername = authUser.Username
+	user.AuthHostname = authUser.Hostname
+	s.sessionVars.User = user
+	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+	return nil
 }
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
@@ -2744,9 +2659,6 @@ func InitDDLJobTables(store kv.Storage) error {
 			tblInfo.State = model.StatePublic
 			tblInfo.ID = tbl.id
 			tblInfo.UpdateTS = t.StartTS
-			if err != nil {
-				return errors.Trace(err)
-			}
 			err = t.CreateTableOrView(dbID, tblInfo)
 			if err != nil {
 				return errors.Trace(err)
@@ -3448,7 +3360,7 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 	// Data in local temporary tables is hard to encode, so we do not support it.
 	// Check temporary tables here to avoid circle dependency.
 	if s.sessionVars.LocalTemporaryTables != nil {
-		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.SessionTables)
 		if localTempTables.Count() > 0 {
 			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
 		}

@@ -83,10 +83,10 @@ func (rp *point) Clone(value types.Datum) *point {
 }
 
 type pointSorter struct {
-	points   []*point
 	err      error
-	sc       *stmtctx.StatementContext
 	collator collate.Collator
+	sc       *stmtctx.StatementContext
+	points   []*point
 }
 
 func (r *pointSorter) Len() int {
