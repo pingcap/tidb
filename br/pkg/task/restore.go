@@ -210,6 +210,12 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
 	}
+
+	if cfg.StartTS > 0 && len(cfg.FullBackupStorage) > 0 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "just need fill one for %v and %v.",
+			FlagStreamStartTS, FlagStreamFullBackupStorage)
+	}
+
 	return nil
 }
 
