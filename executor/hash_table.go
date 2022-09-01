@@ -76,7 +76,7 @@ func (hc *hashContext) initHash(rows int) {
 		} else {
 			for i := 0; i < rows; i++ {
 				hc.naHasNull[i] = false
-				hc.naColNullBitMap[i].Reset(rows)
+				hc.naColNullBitMap[i].Reset(len(hc.naKeyColIdx))
 			}
 		}
 	}
@@ -157,10 +157,10 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 				entryAddr = entryAddr.next
 			}
 		})
+	matched = matched[:0]
 	if len(innerPtrs) == 0 {
 		return matched, nil
 	}
-	matched = matched[:0]
 	var mayMatchedRow chunk.Row
 	for _, ptr := range innerPtrs {
 		mayMatchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(ptr, c.chkBuf)
@@ -388,7 +388,8 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 			if hasNullMark[i] {
 				// collect the null rows to slice.
 				rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
-				c.hashNANullBucket = append(c.hashNANullBucket, &naEntry{rowPtr, c.hCtx.naColNullBitMap[i]})
+				// do not directly ref the null bits map here, because the bit map will be reset and reused in next batch of chunk data.
+				c.hashNANullBucket = append(c.hashNANullBucket, &naEntry{rowPtr, c.hCtx.naColNullBitMap[i].Clone()})
 			} else {
 				// insert the not-null rows to hash table.
 				key := c.hCtx.hashVals[i].Sum64()
