@@ -1171,6 +1171,7 @@ var symmetricOp = map[string]string{
 // ColWithCmpFuncManager is used in index join to handle the column with compare functions(>=, >, <, <=).
 // It stores the compare functions and build ranges in execution phase.
 type ColWithCmpFuncManager struct {
+	ctx               sessionctx.Context
 	TargetCol         *expression.Column
 	colLength         int
 	OpType            []string
@@ -1188,7 +1189,7 @@ func (cwc *ColWithCmpFuncManager) appendNewExpr(opName string, arg expression.Ex
 		if cwc.affectedColSchema.Contains(col) {
 			continue
 		}
-		cwc.compareFuncs = append(cwc.compareFuncs, chunk.GetCompareFunc(col.RetType))
+		cwc.compareFuncs = append(cwc.compareFuncs, chunk.GetCompareFunc(col.RetType, cwc.ctx.GetSessionVars().StmtCtx.AppendWarning))
 		cwc.affectedColSchema.Append(col)
 	}
 }
@@ -1450,6 +1451,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
 	lastColManager := &ColWithCmpFuncManager{
+		ctx:               ijHelper.join.ctx,
 		TargetCol:         lastPossibleCol,
 		colLength:         path.IdxColLens[lastColPos],
 		affectedColSchema: expression.NewSchema(),

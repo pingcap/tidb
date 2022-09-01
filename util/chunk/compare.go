@@ -21,13 +21,19 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/dbterror"
 )
+
+var errNotSupportedYet = dbterror.ClassUtil.NewStd(mysql.ErrNotSupportedYet)
 
 // CompareFunc is a function to compare the two values in Row, the two columns must have the same type.
 type CompareFunc = func(l Row, lCol int, r Row, rCol int) int
 
+// WarningReporter is a function to report warning to the session
+type WarningReporter = func(err error)
+
 // GetCompareFunc gets a compare function for the field type.
-func GetCompareFunc(tp *types.FieldType) CompareFunc {
+func GetCompareFunc(tp *types.FieldType, wp WarningReporter) CompareFunc {
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		if mysql.HasUnsignedFlag(tp.GetFlag()) {
@@ -52,7 +58,7 @@ func GetCompareFunc(tp *types.FieldType) CompareFunc {
 	case mysql.TypeBit:
 		return cmpBit
 	case mysql.TypeJSON:
-		return cmpJSON
+		return getCmpJSONFunction(wp)
 	}
 	return nil
 }
@@ -160,13 +166,19 @@ func cmpBit(l Row, lCol int, r Row, rCol int) int {
 	return lBit.Compare(rBit)
 }
 
-func cmpJSON(l Row, lCol int, r Row, rCol int) int {
-	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
-	if lNull || rNull {
-		return cmpNull(lNull, rNull)
+func getCmpJSONFunction(wp WarningReporter) CompareFunc {
+	// TODO: deduplicate the warning in a wider range
+	notSupportedWarningReported := false
+	return func(l Row, lCol int, r Row, rCol int) int {
+		lJ, rJ := l.GetJSON(lCol), r.GetJSON(rCol)
+
+		if !notSupportedWarningReported && wp != nil && (lJ.TypeCode == json.TypeCodeArray || lJ.TypeCode == json.TypeCodeObject ||
+			rJ.TypeCode == json.TypeCodeArray || rJ.TypeCode == json.TypeCodeObject) {
+			wp(errNotSupportedYet.GenWithStack("This version of TiDB doesn't yet support sorting of non-scalar JSON values"))
+			notSupportedWarningReported = true
+		}
+		return json.CompareBinary(lJ, rJ)
 	}
-	lJ, rJ := l.GetJSON(lCol), r.GetJSON(rCol)
-	return json.CompareBinary(lJ, rJ)
 }
 
 // Compare compares the value with ad.

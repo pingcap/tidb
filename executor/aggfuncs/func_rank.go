@@ -83,16 +83,18 @@ type rowComparer struct {
 	colIdx   []int
 }
 
-func buildRowComparer(cols []*expression.Column) rowComparer {
+func buildRowComparer(ctx sessionctx.Context, cols []*expression.Column) rowComparer {
+	wp := ctx.GetSessionVars().StmtCtx.AppendWarning
+
 	rc := rowComparer{}
 	rc.colIdx = make([]int, 0, len(cols))
 	rc.cmpFuncs = make([]chunk.CompareFunc, 0, len(cols))
 	for _, col := range cols {
-		cmpFunc := chunk.GetCompareFunc(col.RetType)
+		cmpFunc := chunk.GetCompareFunc(col.RetType, wp)
 		if cmpFunc == nil {
 			continue
 		}
-		rc.cmpFuncs = append(rc.cmpFuncs, chunk.GetCompareFunc(col.RetType))
+		rc.cmpFuncs = append(rc.cmpFuncs, chunk.GetCompareFunc(col.RetType, wp))
 		rc.colIdx = append(rc.colIdx, col.Index)
 	}
 	return rc

@@ -79,9 +79,9 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.AggFuncDesc, ordinal int, orderByCols []*expression.Column) AggFunc {
 	switch windowFuncDesc.Name {
 	case ast.WindowFuncRank:
-		return buildRank(ordinal, orderByCols, false)
+		return buildRank(ctx, ordinal, orderByCols, false)
 	case ast.WindowFuncDenseRank:
-		return buildRank(ordinal, orderByCols, true)
+		return buildRank(ctx, ordinal, orderByCols, true)
 	case ast.WindowFuncRowNumber:
 		return buildRowNumber(windowFuncDesc, ordinal)
 	case ast.WindowFuncFirstValue:
@@ -89,13 +89,13 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	case ast.WindowFuncLastValue:
 		return buildLastValue(windowFuncDesc, ordinal)
 	case ast.WindowFuncCumeDist:
-		return buildCumeDist(ordinal, orderByCols)
+		return buildCumeDist(ctx, ordinal, orderByCols)
 	case ast.WindowFuncNthValue:
 		return buildNthValue(windowFuncDesc, ordinal)
 	case ast.WindowFuncNtile:
 		return buildNtile(windowFuncDesc, ordinal)
 	case ast.WindowFuncPercentRank:
-		return buildPercentRank(ordinal, orderByCols)
+		return buildPercentRank(ctx, ordinal, orderByCols)
 	case ast.WindowFuncLead:
 		return buildLead(ctx, windowFuncDesc, ordinal)
 	case ast.WindowFuncLag:
@@ -635,11 +635,11 @@ func buildRowNumber(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return &rowNumber{base}
 }
 
-func buildRank(ordinal int, orderByCols []*expression.Column, isDense bool) AggFunc {
+func buildRank(ctx sessionctx.Context, ordinal int, orderByCols []*expression.Column, isDense bool) AggFunc {
 	base := baseAggFunc{
 		ordinal: ordinal,
 	}
-	r := &rank{baseAggFunc: base, isDense: isDense, rowComparer: buildRowComparer(orderByCols)}
+	r := &rank{baseAggFunc: base, isDense: isDense, rowComparer: buildRowComparer(ctx, orderByCols)}
 	return r
 }
 
@@ -659,11 +659,11 @@ func buildLastValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return &lastValue{baseAggFunc: base, tp: aggFuncDesc.RetTp}
 }
 
-func buildCumeDist(ordinal int, orderByCols []*expression.Column) AggFunc {
+func buildCumeDist(ctx sessionctx.Context, ordinal int, orderByCols []*expression.Column) AggFunc {
 	base := baseAggFunc{
 		ordinal: ordinal,
 	}
-	r := &cumeDist{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
+	r := &cumeDist{baseAggFunc: base, rowComparer: buildRowComparer(ctx, orderByCols)}
 	return r
 }
 
@@ -686,11 +686,11 @@ func buildNtile(aggFuncDes *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return &ntile{baseAggFunc: base, n: n}
 }
 
-func buildPercentRank(ordinal int, orderByCols []*expression.Column) AggFunc {
+func buildPercentRank(ctx sessionctx.Context, ordinal int, orderByCols []*expression.Column) AggFunc {
 	base := baseAggFunc{
 		ordinal: ordinal,
 	}
-	return &percentRank{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
+	return &percentRank{baseAggFunc: base, rowComparer: buildRowComparer(ctx, orderByCols)}
 }
 
 func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {

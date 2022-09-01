@@ -7471,3 +7471,16 @@ func TestCompareJSONWithOtherType(t *testing.T) {
 	tk.MustQuery("select * from t where a < 6;").Check(testkit.Rows("5"))
 	tk.MustQuery("select * from t where a > 5;").Check(testkit.Rows("{}", "true"))
 }
+
+func TestSortJSONWarning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(i INT, j JSON)")
+	tk.MustExec("insert into t values (0, json_array(5)), (1, json_array(1,2)), (2, json_array(1,2,3))")
+	tk.MustQuery("select i from t order by j;").Check(testkit.Rows("1", "2", "0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1235 This version of TiDB doesn't yet support sorting of non-scalar JSON values"))
+
+	tk.MustQuery("select i,percent_rank() over (order by j) from t").Check(testkit.Rows("1 0", "2 0.5", "0 1"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1235 This version of TiDB doesn't yet support sorting of non-scalar JSON values", "Warning 1235 This version of TiDB doesn't yet support sorting of non-scalar JSON values"))
+}

@@ -237,7 +237,7 @@ func (e *SortExec) initCompareFuncs() {
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
 		keyType := e.ByItems[i].Expr.GetType()
-		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
+		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType, e.ctx.GetSessionVars().StmtCtx.AppendWarning)
 	}
 }
 
