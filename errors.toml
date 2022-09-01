@@ -516,6 +516,11 @@ error = '''
 open duplicate db error
 '''
 
+["Lightning:Restore:ErrResolveDuplicateRows"]
+error = '''
+resolve duplicate rows error on table '%s'
+'''
+
 ["Lightning:Restore:ErrRestoreTable"]
 error = '''
 restore table %s failed
@@ -954,6 +959,11 @@ Non matching attribute '%-.64s' between partition and table
 ["ddl:1732"]
 error = '''
 Table to exchange with partition is partitioned: '%-.64s'
+'''
+
+["ddl:1733"]
+error = '''
+Table to exchange with partition is temporary: '%-.64s'
 '''
 
 ["ddl:1736"]
@@ -1578,7 +1588,7 @@ Invalid JSON text: %-.192s
 
 ["json:3143"]
 error = '''
-Invalid JSON path expression %s.
+Invalid JSON path expression. The error is around character position %d.
 '''
 
 ["json:3144"]
@@ -2129,6 +2139,11 @@ variable %s has no effect in TiDB
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.
+'''
+
+["privilege:1045"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s' (using password: %s)
 '''
 
 ["privilege:1141"]

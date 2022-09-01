@@ -22,6 +22,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDDLWorkerPool(t *testing.T) {
+	f := func() func() (pools.Resource, error) {
+		return func() (pools.Resource, error) {
+			wk := newWorker(nil, addIdxWorker, nil, nil, nil, true)
+			return wk, nil
+		}
+	}
+	pool := newDDLWorkerPool(pools.NewResourcePool(f(), 1, 2, 0), reorg)
+	pool.close()
+	pool.put(nil)
+}
+
 func TestBackfillWorkerPool(t *testing.T) {
 	reorgInfo := &reorgInfo{Job: &model.Job{ID: 1}}
 	f := func() func() (pools.Resource, error) {

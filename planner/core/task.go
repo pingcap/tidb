@@ -329,7 +329,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	p.SetChildren(lTask.plan(), rTask.plan())
 	task := &rootTask{
 		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count(), false, 0),
+		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count(), false, 0, nil),
 	}
 	p.cost = task.cost()
 	return task
@@ -550,7 +550,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		outerTask = rTask
 	}
 	task := &mppTask{
-		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count(), false, 0),
+		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count(), false, 0, nil),
 		p:        p,
 		partTp:   outerTask.partTp,
 		hashCols: outerTask.hashCols,
@@ -581,7 +581,7 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...task) task {
 		tblColHists:       rTask.tblColHists,
 		indexPlanFinished: true,
 		tablePlan:         p,
-		cst:               lCost + rCost + p.GetCost(lTask.count(), rTask.count(), false, 0),
+		cst:               lCost + rCost + p.GetCost(lTask.count(), rTask.count(), false, 0, nil),
 	}
 	p.cost = task.cst
 	return task

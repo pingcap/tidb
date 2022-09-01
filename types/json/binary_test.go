@@ -44,6 +44,10 @@ func TestBinaryJSONExtract(t *testing.T) {
 	bj4 := mustParseBinaryFromString(t, `{"properties": {"$type$type": {"$a$a" : "TiDB"}}}`)
 	bj5 := mustParseBinaryFromString(t, `{"properties": {"$type": {"$a" : {"$b" : "TiDB"}}}}`)
 	bj6 := mustParseBinaryFromString(t, `{"properties": {"$type": {"$a$a" : "TiDB"}},"hello": {"$b$b": "world","$c": "amazing"}}`)
+	bj7 := mustParseBinaryFromString(t, `{ "a": { "x" : { "b": { "y": { "b": { "z": { "c": 100 } } } } } } }`)
+	bj8 := mustParseBinaryFromString(t, `{ "a": { "b" : [ 1, 2, 3 ] } }`)
+	bj9 := mustParseBinaryFromString(t, `[[0,1],[2,3],[4,[5,6]]]`)
+	bj10 := mustParseBinaryFromString(t, `[1]`)
 
 	var tests = []struct {
 		bj              BinaryJSON
@@ -74,6 +78,10 @@ func TestBinaryJSONExtract(t *testing.T) {
 		{bj2, []string{"$.a", "$[0]"}, mustParseBinaryFromString(t, `[{"a": 1, "b": true}]`), true, nil},
 		{bj6, []string{"$.properties", "$[1]"}, mustParseBinaryFromString(t, `[{"$type": {"$a$a" : "TiDB"}}]`), true, nil},
 		{bj6, []string{"$.hello", "$[2]"}, mustParseBinaryFromString(t, `[{"$b$b": "world","$c": "amazing"}]`), true, nil},
+		{bj7, []string{"$.a**.b**.c"}, mustParseBinaryFromString(t, `[100]`), true, nil},
+		{bj8, []string{"$**[0]"}, mustParseBinaryFromString(t, `[{"a": {"b": [1, 2, 3]}}, {"b": [1, 2, 3]}, 1, 2, 3]`), true, nil},
+		{bj9, []string{"$**[0]"}, mustParseBinaryFromString(t, `[[0, 1], 0, 1, 2, 3, 4, 5, 6] `), true, nil},
+		{bj10, []string{"$**[0]"}, mustParseBinaryFromString(t, `[1]`), true, nil},
 	}
 
 	for _, test := range tests {
@@ -146,15 +154,15 @@ func TestQuoteString(t *testing.T) {
 		raw    string
 		quoted string
 	}{
-		{raw: "3", quoted: `3`},
+		{raw: "3", quoted: `"3"`},
 		{raw: "hello, \"escaped quotes\" world", quoted: `"hello, \"escaped quotes\" world"`},
 		{raw: "你", quoted: `你`},
 		{raw: "true", quoted: `true`},
 		{raw: "null", quoted: `null`},
 		{raw: `"`, quoted: `"\""`},
-		{raw: `'`, quoted: `'`},
-		{raw: `''`, quoted: `''`},
-		{raw: ``, quoted: ``},
+		{raw: `'`, quoted: `"'"`},
+		{raw: `''`, quoted: `"''"`},
+		{raw: ``, quoted: `""`},
 		{raw: "\\ \" \b \f \n \r \t", quoted: `"\\ \" \b \f \n \r \t"`},
 	}
 
@@ -634,5 +642,47 @@ func TestBinaryJSONWalk(t *testing.T) {
 		}
 		require.NoError(t, err)
 		require.Equal(t, len(test.expected), count)
+	}
+}
+
+func TestBinaryJSONOpaque(t *testing.T) {
+	var tests = []struct {
+		bj             BinaryJSON
+		expectedOpaque Opaque
+		expectedOutput string
+	}{
+		{
+			BinaryJSON{
+				TypeCode: TypeCodeOpaque,
+				Value:    []byte{233, 1, '9'},
+			},
+			Opaque{
+				TypeCode: 233,
+				Buf:      []byte{'9'},
+			},
+			`"base64:type233:OQ=="`,
+		},
+		{
+			BinaryJSON{
+				TypeCode: TypeCodeOpaque,
+				Value:    append([]byte{233, 0x80, 0x01}, make([]byte, 128)...),
+			},
+			Opaque{
+				TypeCode: 233,
+				Buf:      make([]byte, 128),
+			},
+			`"base64:type233:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="`,
+		},
+	}
+
+	for _, test := range tests {
+		buf := []byte{}
+
+		require.Equal(t, test.expectedOpaque.TypeCode, test.bj.GetOpaqueFieldType())
+		require.Equal(t, test.expectedOpaque, test.bj.GetOpaque())
+
+		buf, err := test.bj.marshalTo(buf)
+		require.NoError(t, err)
+		require.Equal(t, string(buf), test.expectedOutput)
 	}
 }

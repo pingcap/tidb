@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -41,11 +42,84 @@ import (
 	"go.uber.org/zap"
 )
 
+func planCachePreprocess(sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema,
+	stmt *PlanCacheStmt, params []expression.Expression) error {
+	vars := sctx.GetSessionVars()
+	stmtAst := stmt.PreparedAst
+	vars.StmtCtx.StmtType = stmtAst.StmtType
+
+	// step 1: check parameter number
+	if len(stmtAst.Params) != len(params) {
+		return errors.Trace(ErrWrongParamCount)
+	}
+
+	// step 2: set parameter values
+	for i, usingParam := range params {
+		val, err := usingParam.Eval(chunk.Row{})
+		if err != nil {
+			return err
+		}
+		param := stmtAst.Params[i].(*driver.ParamMarkerExpr)
+		if isGetVarBinaryLiteral(sctx, usingParam) {
+			binVal, convErr := val.ToBytes()
+			if convErr != nil {
+				return convErr
+			}
+			val.SetBinaryLiteral(binVal)
+		}
+		param.Datum = val
+		param.InExecute = true
+		vars.PreparedParams = append(vars.PreparedParams, val)
+	}
+
+	// step 3: check schema version
+	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {
+		// In order to avoid some correctness issues, we have to clear the
+		// cached plan once the schema version is changed.
+		// Cached plan in prepared struct does NOT have a "cache key" with
+		// schema version like prepared plan cache key
+		stmtAst.CachedPlan = nil
+		stmt.Executor = nil
+		stmt.ColumnInfos = nil
+		// If the schema version has changed we need to preprocess it again,
+		// if this time it failed, the real reason for the error is schema changed.
+		// Example:
+		// When running update in prepared statement's schema version distinguished from the one of execute statement
+		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
+		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
+		ret := &PreprocessorReturn{InfoSchema: is}
+		err := Preprocess(sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
+		if err != nil {
+			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+		}
+		stmtAst.SchemaVersion = is.SchemaMetaVersion()
+	}
+
+	// step 4: handle expiration
+	// If the lastUpdateTime less than expiredTimeStamp4PC,
+	// it means other sessions have executed 'admin flush instance plan_cache'.
+	// So we need to clear the current session's plan cache.
+	// And update lastUpdateTime to the newest one.
+	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
+	if stmtAst.UseCache && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
+		sctx.GetPlanCache(isGeneralPlanCache).DeleteAll()
+		stmtAst.CachedPlan = nil
+		vars.LastUpdateTime4PC = expiredTimeStamp4PC
+	}
+	return nil
+}
+
 // GetPlanFromSessionPlanCache is the entry point of Plan Cache.
 // It tries to get a valid cached plan from this session's plan cache.
 // If there is no such a plan, it'll call the optimizer to generate a new one.
-func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt,
+// isGeneralPlanCache indicates whether to use the general plan cache or the prepared plan cache.
+func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
+	isGeneralPlanCache bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
+	if err := planCachePreprocess(sctx, isGeneralPlanCache, is, stmt, params); err != nil {
+		return nil, nil, err
+	}
+
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -82,13 +156,13 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	}
 
 	if stmtAst.UseCache && !ignorePlanCache { // for general plans
-		if plan, names, ok, err := getGeneralPlan(sctx, cacheKey, bindSQL, is, stmt,
+		if plan, names, ok, err := getGeneralPlan(sctx, isGeneralPlanCache, cacheKey, bindSQL, is, stmt,
 			paramTypes); err != nil || ok {
 			return plan, names, err
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, is, stmt, ignorePlanCache, cacheKey,
+	return generateNewPlan(ctx, sctx, isGeneralPlanCache, is, stmt, ignorePlanCache, cacheKey,
 		latestSchemaVersion, paramNum, paramTypes, bindSQL)
 }
 
@@ -136,60 +210,50 @@ func getPointQueryPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmtC
 	return plan, names, true, nil
 }
 
-func getGeneralPlan(sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
+func getGeneralPlan(sctx sessionctx.Context, isGeneralPlanCache bool, cacheKey kvcache.Key, bindSQL string,
 	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-		if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
-			return nil, nil, false, err
-		}
-		cachedVals := cacheValue.([]*PlanCacheValue)
-		for _, cachedVal := range cachedVals {
-			if !cachedVal.varTypesUnchanged(paramTypes) {
-				continue
-			}
-			planValid := true
-			for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
-				if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
-					planValid = false
-					// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
-					// rebuilding the filters in UnionScan is pretty trivial.
-					sctx.PreparedPlanCache().Delete(cacheKey)
-					break
-				}
-			}
-			if planValid {
-				err := RebuildPlan4CachedPlan(cachedVal.Plan)
-				if err != nil {
-					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
-					return nil, nil, false, nil
-				}
-				sessVars.FoundInPlanCache = true
-				if len(bindSQL) > 0 {
-					// When the `len(bindSQL) > 0`, it means we use the binding.
-					// So we need to record this.
-					sessVars.FoundInBinding = true
-				}
-				if metrics.ResettablePlanCacheCounterFortTest {
-					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-				} else {
-					planCacheCounter.Inc()
-				}
-				stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-				return cachedVal.Plan, cachedVal.OutPutNames, true, nil
-			}
-			break
+	cachedVal, exist := getValidPlanFromCache(sctx, isGeneralPlanCache, cacheKey, paramTypes)
+	if !exist {
+		return nil, nil, false, nil
+	}
+	if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
+		return nil, nil, false, err
+	}
+	for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
+		if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+			// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
+			// rebuilding the filters in UnionScan is pretty trivial.
+			sctx.GetPlanCache(isGeneralPlanCache).Delete(cacheKey)
+			return nil, nil, false, nil
 		}
 	}
-	return nil, nil, false, nil
+	err := RebuildPlan4CachedPlan(cachedVal.Plan)
+	if err != nil {
+		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+		return nil, nil, false, nil
+	}
+	sessVars.FoundInPlanCache = true
+	if len(bindSQL) > 0 {
+		// When the `len(bindSQL) > 0`, it means we use the binding.
+		// So we need to record this.
+		sessVars.FoundInBinding = true
+	}
+	if metrics.ResettablePlanCacheCounterFortTest {
+		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+	} else {
+		planCacheCounter.Inc()
+	}
+	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
-func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt,
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64, paramNum int,
 	paramTypes []*types.FieldType, bindSQL string) (Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
@@ -224,22 +288,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, is infoschema
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-			hitVal := false
-			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
-				if cacheVal.varTypesUnchanged(paramTypes) {
-					hitVal = true
-					cacheVals.([]*PlanCacheValue)[i] = cached
-					break
-				}
-			}
-			if !hitVal {
-				cacheVals = append(cacheVals.([]*PlanCacheValue), cached)
-			}
-			sctx.PreparedPlanCache().Put(cacheKey, cacheVals)
-		} else {
-			sctx.PreparedPlanCache().Put(cacheKey, []*PlanCacheValue{cached})
-		}
+		putPlanIntoCache(sctx, isGeneralPlanCache, cacheKey, cached)
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
