@@ -28,6 +28,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func getStringConstNull() *Constant {
+	c := getStringConstant("")
+	c.Value.SetNull()
+	return c
+}
+
+func getIntConstNull() *Constant {
+	c := getIntConstant(0)
+	c.Value.SetNull()
+	return c
+}
+
 func getStringConstant(value string) *Constant {
 	return &Constant{
 		Value:   types.NewStringDatum(value),
@@ -185,11 +197,17 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 		constants[i] = nil
 	}
 
-	// Prepare data: expr is constant
+	// Prepare data: expr is constant or const null
 	constants[0] = getStringConstant("abc")
 	exprConstCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
 	exprConstCase.constants = make([]*Constant, 3)
 	copy(exprConstCase.constants, constants)
+	constants[0] = nil
+
+	constants[0] = getStringConstNull()
+	exprConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
+	exprConstNullCase.constants = make([]*Constant, 3)
+	copy(exprConstNullCase.constants, constants)
 	constants[0] = nil
 
 	// Prepare data: pattern is constant
@@ -199,11 +217,23 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 	copy(patConstCase.constants, constants)
 	constants[1] = nil
 
+	constants[1] = getStringConstNull()
+	patConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
+	patConstNullCase.constants = make([]*Constant, 3)
+	copy(patConstNullCase.constants, constants)
+	constants[1] = nil
+
 	// Prepare data: matchType is constant
 	constants[2] = getStringConstant("ims")
 	matchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
 	matchTypeConstCase.constants = make([]*Constant, 3)
 	copy(matchTypeConstCase.constants, constants)
+	constants[2] = nil
+
+	constants[2] = getStringConstNull()
+	matchTypeConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
+	matchTypeConstNullCase.constants = make([]*Constant, 3)
+	copy(matchTypeConstNullCase.constants, constants)
 	constants[2] = nil
 
 	// Prepare data: test memorization
@@ -230,8 +260,11 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 			getVecExprBenchCaseForRegexp(types.ETInt, expr, make([]string, 0), matchType),    // Test pattern == null
 			getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, make([]string, 0)),      // Test matchType == null
 			exprConstCase,
+			exprConstNullCase,
 			patConstCase,
+			patConstNullCase,
 			matchTypeConstCase,
+			matchTypeConstNullCase,
 			patAndMatchTypeConstCase,
 			patConstMatchTpIgnoredCase,
 		},
@@ -455,11 +488,23 @@ func TestRegexpSubstrVec(t *testing.T) {
 	copy(exprConstCase.constants, constants)
 	constants[0] = nil
 
+	constants[0] = getStringConstNull()
+	exprConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	exprConstNullCase.constants = make([]*Constant, 5)
+	copy(exprConstNullCase.constants, constants)
+	constants[0] = nil
+
 	// Prepare data: pattern is constant
 	constants[1] = getStringConstant("aB.")
 	patConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
 	patConstCase.constants = make([]*Constant, 5)
 	copy(patConstCase.constants, constants)
+	constants[1] = nil
+
+	constants[1] = getStringConstNull()
+	patConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	patConstNullCase.constants = make([]*Constant, 5)
+	copy(patConstNullCase.constants, constants)
 	constants[1] = nil
 
 	// Prepare data: position is constant
@@ -469,6 +514,12 @@ func TestRegexpSubstrVec(t *testing.T) {
 	copy(posConstCase.constants, constants)
 	constants[2] = nil
 
+	constants[2] = getIntConstNull()
+	posConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	posConstNullCase.constants = make([]*Constant, 5)
+	copy(posConstNullCase.constants, constants)
+	constants[2] = nil
+
 	// Prepare data: occurrence is constant
 	constants[3] = getIntConstant(2)
 	occurConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
@@ -476,11 +527,23 @@ func TestRegexpSubstrVec(t *testing.T) {
 	copy(occurConstCase.constants, constants)
 	constants[3] = nil
 
+	constants[3] = getIntConstNull()
+	occurConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	occurConstNullCase.constants = make([]*Constant, 5)
+	copy(occurConstNullCase.constants, constants)
+	constants[3] = nil
+
 	// Prepare data: match type is constant
 	constants[4] = getStringConstant("msi")
 	matchTpConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
 	matchTpConstCase.constants = make([]*Constant, 5)
 	copy(matchTpConstCase.constants, constants)
+	constants[4] = nil
+
+	constants[4] = getStringConstNull()
+	matchTpConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	matchTpConstNullCase.constants = make([]*Constant, 5)
+	copy(matchTpConstNullCase.constants, constants)
 	constants[4] = nil
 
 	// Prepare data: test memorization
@@ -503,10 +566,15 @@ func TestRegexpSubstrVec(t *testing.T) {
 		ast.RegexpSubstr: {
 			getVecExprBenchCaseForRegexp(types.ETString, args...),
 			exprConstCase,
+			exprConstNullCase,
 			patConstCase,
+			patConstNullCase,
 			posConstCase,
+			posConstNullCase,
 			occurConstCase,
+			occurConstNullCase,
 			matchTpConstCase,
+			matchTpConstNullCase,
 			patAndMatchTypeConstCase,
 			patConstMatchTypeIgnoredCase,
 		},
@@ -782,11 +850,23 @@ func TestRegexpInStrVec(t *testing.T) {
 	copy(exprConstCase.constants, constants)
 	constants[0] = nil
 
+	constants[0] = getStringConstNull()
+	exprConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
+	exprConstNullCase.constants = make([]*Constant, 6)
+	copy(exprConstNullCase.constants, constants)
+	constants[0] = nil
+
 	// Prepare data: pattern is constant
 	constants[1] = getStringConstant("aB.")
 	patConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
 	patConstCase.constants = make([]*Constant, 6)
 	copy(patConstCase.constants, constants)
+	constants[1] = nil
+
+	constants[1] = getStringConstNull()
+	patConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
+	patConstNullCase.constants = make([]*Constant, 6)
+	copy(patConstNullCase.constants, constants)
 	constants[1] = nil
 
 	// Prepare data: position is constant
@@ -796,11 +876,23 @@ func TestRegexpInStrVec(t *testing.T) {
 	copy(posConstCase.constants, constants)
 	constants[2] = nil
 
+	constants[2] = getIntConstNull()
+	posConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
+	posConstNullCase.constants = make([]*Constant, 6)
+	copy(posConstNullCase.constants, constants)
+	constants[2] = nil
+
 	// Prepare data: occurrence is constant
 	constants[3] = getIntConstant(2)
 	occurConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
 	occurConstCase.constants = make([]*Constant, 6)
 	copy(occurConstCase.constants, constants)
+	constants[3] = nil
+
+	constants[3] = getIntConstNull()
+	occurConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
+	occurConstNullCase.constants = make([]*Constant, 6)
+	copy(occurConstNullCase.constants, constants)
 	constants[3] = nil
 
 	// Prepare data: return_option is constant
@@ -810,11 +902,23 @@ func TestRegexpInStrVec(t *testing.T) {
 	copy(retOptConstCase.constants, constants)
 	constants[4] = nil
 
+	constants[4] = getIntConstNull()
+	retOptConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
+	retOptConstNullCase.constants = make([]*Constant, 6)
+	copy(retOptConstNullCase.constants, constants)
+	constants[4] = nil
+
 	// Prepare data: match type is constant
 	constants[5] = getStringConstant("msi")
 	matchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
 	matchTypeConstCase.constants = make([]*Constant, 6)
 	copy(matchTypeConstCase.constants, constants)
+	constants[5] = nil
+
+	constants[5] = getStringConstNull()
+	matchTypeConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
+	matchTypeConstNullCase.constants = make([]*Constant, 6)
+	copy(matchTypeConstNullCase.constants, constants)
 	constants[5] = nil
 
 	// Prepare data: test memorization
@@ -837,11 +941,17 @@ func TestRegexpInStrVec(t *testing.T) {
 		ast.RegexpInStr: {
 			getVecExprBenchCaseForRegexp(types.ETInt, args...),
 			exprConstCase,
+			exprConstNullCase,
 			patConstCase,
+			patConstNullCase,
 			posConstCase,
+			posConstNullCase,
 			occurConstCase,
+			occurConstNullCase,
 			retOptConstCase,
+			retOptConstNullCase,
 			matchTypeConstCase,
+			matchTypeConstNullCase,
 			patAndMatchTypeConstCase,
 			patConstMatchTypeIgnoredCase,
 		},
@@ -1070,11 +1180,23 @@ func TestRegexpReplaceVec(t *testing.T) {
 	copy(exprConstCase.constants, constants)
 	constants[0] = nil
 
+	constants[0] = getStringConstNull()
+	exprConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	exprConstNullCase.constants = make([]*Constant, 6)
+	copy(exprConstNullCase.constants, constants)
+	constants[0] = nil
+
 	// Prepare data: pattern is constant
 	constants[1] = getStringConstant("aB.")
 	patConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
 	patConstCase.constants = make([]*Constant, 6)
 	copy(patConstCase.constants, constants)
+	constants[1] = nil
+
+	constants[1] = getStringConstNull()
+	patConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	patConstNullCase.constants = make([]*Constant, 6)
+	copy(patConstNullCase.constants, constants)
 	constants[1] = nil
 
 	// Prepare data: repl is constant
@@ -1084,11 +1206,23 @@ func TestRegexpReplaceVec(t *testing.T) {
 	copy(replConstCase.constants, constants)
 	constants[2] = nil
 
+	constants[2] = getStringConstNull()
+	replConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	replConstNullCase.constants = make([]*Constant, 6)
+	copy(replConstNullCase.constants, constants)
+	constants[2] = nil
+
 	// Prepare data: position is constant
 	constants[3] = getIntConstant(2)
 	posConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
 	posConstCase.constants = make([]*Constant, 6)
 	copy(posConstCase.constants, constants)
+	constants[3] = nil
+
+	constants[3] = getIntConstNull()
+	posConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	posConstNullCase.constants = make([]*Constant, 6)
+	copy(posConstNullCase.constants, constants)
 	constants[3] = nil
 
 	// Prepare data: occurrence is constant
@@ -1098,11 +1232,23 @@ func TestRegexpReplaceVec(t *testing.T) {
 	copy(occurConstCase.constants, constants)
 	constants[4] = nil
 
+	constants[4] = getIntConstNull()
+	occurConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	occurConstNullCase.constants = make([]*Constant, 6)
+	copy(occurConstNullCase.constants, constants)
+	constants[4] = nil
+
 	// Prepare data: match type is constant
 	constants[5] = getStringConstant("msi")
 	matchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
 	matchTypeConstCase.constants = make([]*Constant, 6)
 	copy(matchTypeConstCase.constants, constants)
+	constants[5] = nil
+
+	constants[5] = getStringConstNull()
+	matchTypeConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
+	matchTypeConstNullCase.constants = make([]*Constant, 6)
+	copy(matchTypeConstNullCase.constants, constants)
 	constants[5] = nil
 
 	// Prepare data: test memorization
@@ -1125,11 +1271,17 @@ func TestRegexpReplaceVec(t *testing.T) {
 		ast.RegexpReplace: {
 			getVecExprBenchCaseForRegexp(types.ETString, args...),
 			exprConstCase,
+			exprConstNullCase,
 			patConstCase,
+			patConstNullCase,
 			replConstCase,
+			replConstNullCase,
 			posConstCase,
+			posConstNullCase,
 			occurConstCase,
+			occurConstNullCase,
 			matchTypeConstCase,
+			matchTypeConstNullCase,
 			patAndMatchTypeConstCase,
 			patConstMatchTypeIgnoredCase,
 		},

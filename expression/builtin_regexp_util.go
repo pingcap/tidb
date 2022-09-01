@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"log"
 	"regexp"
 
 	"github.com/pingcap/errors"
@@ -183,7 +182,6 @@ func (reg *regexpMemorizedSig) initMemoizedRegexp(compile func(string) (*regexp.
 			continue
 		}
 		// Compile this constant pattern, so that we can avoid this repeatable work
-		log.Println("Memorize is executed...")
 		re, err := compile(patterns.GetString(i))
 		reg.memorizedRegexp = re
 		reg.memorizedErr = err
