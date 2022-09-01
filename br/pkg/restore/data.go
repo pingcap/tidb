@@ -33,8 +33,7 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 
 	var recovery = NewRecovery(allStores, mgr, progress)
 
-	err := recovery.ReadRegionMeta(ctx)
-	if err != nil {
+	if err := recovery.ReadRegionMeta(ctx); err != nil {
 		return 0, errors.Trace(err)
 	}
 
