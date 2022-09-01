@@ -1470,14 +1470,6 @@ def go_deps():
         version = "v1.3.0",
     )
     go_repository(
-        name = "com_github_googleapis_enterprise_certificate_proxy",
-        build_file_proto_mode = "disable",
-        importpath = "github.com/googleapis/enterprise-certificate-proxy",
-        sum = "h1:zO8WHNx/MYiAKJ3d5spxZXZE6KHmIQGQcAzwUzV7qQw=",
-        version = "v0.1.0",
-    )
-
-    go_repository(
         name = "com_github_googleapis_gax_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/googleapis/gax-go/v2",
@@ -1491,14 +1483,6 @@ def go_deps():
         sum = "h1:l6N3VoaVzTncYYW+9yOz2LJJammFZGBO13sqgEhpy9g=",
         version = "v0.2.0",
     )
-    go_repository(
-        name = "com_github_googleapis_go_type_adapters",
-        build_file_proto_mode = "disable",
-        importpath = "github.com/googleapis/go-type-adapters",
-        sum = "h1:9XdMn+d/G57qq1s8dNc5IesGCXHf6V2HZ2JwRxfA2tA=",
-        version = "v1.0.0",
-    )
-
     go_repository(
         name = "com_github_gophercloud_gophercloud",
         build_file_proto_mode = "disable",
@@ -2851,14 +2835,6 @@ def go_deps():
         version = "v1.2.1",
     )
     go_repository(
-        name = "com_github_pkg_xattr",
-        build_file_proto_mode = "disable",
-        importpath = "github.com/pkg/xattr",
-        sum = "h1:3QwVADT+4oUm3zg7MXO/2i/lqnKkQ9viNY8pl5egRDE=",
-        version = "v0.4.8",
-    )
-
-    go_repository(
         name = "com_github_pmezard_go_difflib",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pmezard/go-difflib",
@@ -3738,14 +3714,6 @@ def go_deps():
         sum = "h1:4CapQyNFjiksks1/x7jsvsygFPhihslYk5GptIrlX68=",
         version = "v0.1.1",
     )
-    go_repository(
-        name = "com_google_cloud_go_kms",
-        build_file_proto_mode = "disable",
-        importpath = "cloud.google.com/go/kms",
-        sum = "h1:iElbfoE61VeLhnZcGOltqL8HIly8Nhbe5t6JlH9GXjo=",
-        version = "v1.4.0",
-    )
-
     go_repository(
         name = "com_google_cloud_go_pubsub",
         build_file_proto_mode = "disable_global",
