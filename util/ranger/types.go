@@ -52,12 +52,11 @@ func (Ranges) Rebuild() error {
 
 // Range represents a range generated in physical plan building phase.
 type Range struct {
-	LowVal  []types.Datum
-	HighVal []types.Datum
-
-	LowExclude  bool // Low value is exclusive.
-	HighExclude bool // High value is exclusive.
+	LowVal      []types.Datum // Low value is exclusive.
+	HighVal     []types.Datum // High value is exclusive.
 	Collators   []collate.Collator
+	LowExclude  bool
+	HighExclude bool
 }
 
 // Width returns the width of this range.

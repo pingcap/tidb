@@ -2330,7 +2330,16 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Chunk.PrevRowIDMax = rowID
 
 		if m, ok := metric.FromContext(ctx); ok {
-			m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+			// value of currOffset comes from parser.pos which increase monotonically. the init value of parser.pos
+			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
+			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
+			// TODO: reproduce and find the root cause and fix it completely
+			if currOffset >= startOffset {
+				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+			} else {
+				deliverLogger.Warn("offset go back", zap.Int64("curr", currOffset),
+					zap.Int64("start", startOffset))
+			}
 		}
 
 		if currOffset > lastOffset || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {

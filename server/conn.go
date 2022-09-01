@@ -809,8 +809,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 			logutil.BgLogger().Warn("verify session token failed", zap.String("username", cc.user), zap.Error(err))
 			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 		}
-	} else if !cc.ctx.Auth(userIdentity, authData, cc.salt) {
-		return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+	} else if err = cc.ctx.Auth(userIdentity, authData, cc.salt); err != nil {
+		return err
 	}
 	cc.ctx.SetPort(port)
 	if cc.dbname != "" {
@@ -1373,7 +1373,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 func (cc *clientConn) writeStats(ctx context.Context) error {
 	var err error
-	var uptime int64 = 0
+	var uptime int64
 	info := serverInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {

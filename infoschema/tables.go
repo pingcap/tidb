@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1126,7 +1125,6 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{name: "LOCATION_LABELS", tp: mysql.TypeVarchar, size: 64},
 	{name: "AVAILABLE", tp: mysql.TypeTiny, size: 1},
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
-	{name: "TABLE_MODE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var tableInspectionResultCols = []columnInfo{
@@ -1965,61 +1963,9 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	is := ctx.GetInfoSchema().(InfoSchema)
-	dbs := is.AllSchemas()
-	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
-		return i.Name.L < j.Name.L
-	})
-	switch it.meta.Name.O {
-	case tableFiles:
-	case tablePlugins, tableTriggers:
-	case tableRoutines:
-	// TODO: Fill the following tables.
-	case tableSchemaPrivileges:
-	case tableTablePrivileges:
-	case tableColumnPrivileges:
-	case tableParameters:
-	case tableEvents:
-	case tableGlobalStatus:
-	case tableGlobalVariables:
-	case tableSessionStatus:
-	case tableOptimizerTrace:
-	case tableTableSpaces:
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(cols) == len(it.cols) {
-		return
-	}
-	rows := make([][]types.Datum, len(fullRows))
-	for i, fullRow := range fullRows {
-		row := make([]types.Datum, len(cols))
-		for j, col := range cols {
-			row[j] = fullRow[col.Offset]
-		}
-		rows[i] = row
-	}
-	return rows, nil
-}
-
 // IterRecords implements table.Table IterRecords interface.
-func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, cols []*table.Column,
-	fn table.RecordIterFunc) error {
-	rows, err := it.getRows(ctx, cols)
-	if err != nil {
-		return err
-	}
-	for i, row := range rows {
-		more, err := fn(kv.IntHandle(i), row, cols)
-		if err != nil {
-			return err
-		}
-		if !more {
-			break
-		}
-	}
+func (*infoschemaTable) IterRecords(_ sessionctx.Context, _ []*table.Column,
+	_ table.RecordIterFunc) error {
 	return nil
 }
 

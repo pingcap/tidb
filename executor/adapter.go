@@ -1296,7 +1296,16 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
+		StatsLoadStatus:   convertStatusIntoString(a.Ctx, stmtCtx.StatsLoadStatus),
+		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 	}
+	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			if !slowItems.IsSyncStatsFailed {
+				panic("isSyncStatsFailed should be true")
+			}
+		}
+	})
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
@@ -1658,4 +1667,42 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 		planDigest = d.Bytes()
 	}
 	return sqlDigest, planDigest
+}
+
+func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) map[string]map[string]string {
+	if len(statsLoadStatus) < 1 {
+		return nil
+	}
+	is := domain.GetDomain(sctx).InfoSchema()
+	// tableName -> name -> status
+	r := make(map[string]map[string]string)
+	for item, status := range statsLoadStatus {
+		t, ok := is.TableByID(item.TableID)
+		if !ok {
+			t, _, _ = is.FindTableByPartitionID(item.TableID)
+		}
+		if t == nil {
+			logutil.BgLogger().Warn("record table item load status failed due to not finding table",
+				zap.Int64("tableID", item.TableID))
+			continue
+		}
+		tableName := t.Meta().Name.O
+		itemName := ""
+		if item.IsIndex {
+			itemName = t.Meta().FindIndexNameByID(item.ID)
+		} else {
+			itemName = t.Meta().FindColumnNameByID(item.ID)
+		}
+		if itemName == "" {
+			logutil.BgLogger().Warn("record table item load status failed due to not finding item",
+				zap.Int64("tableID", item.TableID),
+				zap.Int64("id", item.ID), zap.Bool("isIndex", item.IsIndex))
+			continue
+		}
+		if r[tableName] == nil {
+			r[tableName] = make(map[string]string)
+		}
+		r[tableName][itemName] = status
+	}
+	return r
 }

@@ -2119,6 +2119,10 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	tk.MustExec("alter table e18 exchange partition p0 with table e17")
 	tk.MustQuery("select * /*+ read_from_storage(tiflash[e18]) */ from e18").Check(testkit.Rows("1"))
 	tk.MustQuery("select * /*+ read_from_storage(tiflash[e17]) */ from e17").Check(testkit.Rows("2"))
+
+	tk.MustExec("create table e19 (a int) partition by hash(a) partitions 1")
+	tk.MustExec("create temporary table e20 (a int)")
+	tk.MustGetErrCode("alter table e19 exchange partition p0 with table e20", errno.ErrPartitionExchangeTempTable)
 }
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {

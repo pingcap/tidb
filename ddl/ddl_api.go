@@ -2593,6 +2593,17 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	}
 }
 
+func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
+	job := &model.Job{
+		Type:       model.ActionFlashbackCluster,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{flashbackTS, map[string]interface{}{}},
+	}
+	err := d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schemaID, tbInfo := recoverInfo.SchemaID, recoverInfo.TableInfo
@@ -3237,8 +3248,6 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
-		case ast.AlterTableSetTiFlashMode:
-			err = d.AlterTableSetTiFlashMode(sctx, ident, spec.TiFlashMode)
 		case ast.AlterTableOrderByColumns:
 			err = d.OrderByColumns(sctx, ident)
 		case ast.AlterTableIndexInvisible:
@@ -5049,42 +5058,6 @@ func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
 	}
 
 	return nil
-}
-
-func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, mode model.TiFlashMode) error {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if mode != model.TiFlashModeNormal && mode != model.TiFlashModeFast {
-		return fmt.Errorf("unsupported TiFlash mode %s", mode)
-	}
-
-	err = isTableTiFlashSupported(schema, tb)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Prompt warning when there is no TiFlash replica, as TiFlash mode will
-	// only take effect when executing in TiFlash.
-	tbReplicaInfo := tb.Meta().TiFlashReplica
-	if tbReplicaInfo == nil || tbReplicaInfo.Count == 0 {
-		ctx.GetSessionVars().StmtCtx.AppendNote(dbterror.ErrAlterTiFlashModeForTableWithoutTiFlashReplica)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionSetTiFlashMode,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{mode},
-	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {

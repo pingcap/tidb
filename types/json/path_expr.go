@@ -15,13 +15,13 @@
 package json
 
 import (
+	"encoding/json"
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 )
@@ -49,10 +49,6 @@ import (
 		select json_extract('{"a": "b", "c": [1, "2"]}', '$.c[*]') -> [1, "2"]
 		select json_extract('{"a": "b", "c": [1, "2"]}', '$.*') -> ["b", [1, "2"]]
 */
-
-// ([\$]*[a-zA-Z_][a-zA-Z0-9_]*)+ matches any identifier, may start with $ and appear multiple times;
-// "[^"\\]*(\\.[^"\\]*)*" matches any string literal which can carry escaped quotes;
-var jsonPathExprLegRe = regexp.MustCompile(`(\.\s*(([\$]*[a-zA-Z_][a-zA-Z0-9_]*)+|\*|"[^"\\]*(\\.[^"\\]*)*")|(\[\s*([0-9]+|\*)\s*\])|\*\*)`)
 
 type pathLegType byte
 
@@ -128,7 +124,7 @@ func (pe PathExpression) popOneLeg() (pathLeg, PathExpression) {
 	return pe.legs[0], newPe
 }
 
-// popOneLastLeg returns the a parent PathExpression and the last pathLeg
+// popOneLastLeg returns the parent PathExpression and the last pathLeg
 func (pe PathExpression) popOneLastLeg() (PathExpression, pathLeg) {
 	lastLegIdx := len(pe.legs) - 1
 	lastLeg := pe.legs[lastLegIdx]
@@ -165,9 +161,203 @@ func (pe PathExpression) ContainsAnyAsterisk() bool {
 	return pe.flags.containsAnyAsterisk()
 }
 
+type stream struct {
+	pathExpr string
+	pos      int
+}
+
+func (s *stream) skipWhiteSpace() {
+	for ; s.pos < len(s.pathExpr); s.pos++ {
+		if !unicode.IsSpace(rune(s.pathExpr[s.pos])) {
+			break
+		}
+	}
+}
+
+func (s *stream) read() byte {
+	b := s.pathExpr[s.pos]
+	s.pos++
+	return b
+}
+
+func (s *stream) peek() byte {
+	return s.pathExpr[s.pos]
+}
+
+func (s *stream) skip(i int) {
+	s.pos += i
+}
+
+func (s *stream) exhausted() bool {
+	return s.pos >= len(s.pathExpr)
+}
+
+func (s *stream) readWhile(f func(byte) bool) (str string, metEnd bool) {
+	start := s.pos
+	for ; !s.exhausted(); s.skip(1) {
+		if !f(s.peek()) {
+			return s.pathExpr[start:s.pos], false
+		}
+	}
+	return s.pathExpr[start:s.pos], true
+}
+
+func parseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
+	s := &stream{pathExpr: pathExpr, pos: 0}
+	s.skipWhiteSpace()
+	if s.exhausted() || s.read() != '$' {
+		return PathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(1)
+	}
+	s.skipWhiteSpace()
+
+	pe.legs = make([]pathLeg, 0, 16)
+	pe.flags = pathExpressionFlag(0)
+
+	var ok bool
+
+	for !s.exhausted() {
+		switch s.peek() {
+		case '.':
+			ok = parseMember(s, &pe)
+		case '[':
+			ok = parseArray(s, &pe)
+		case '*':
+			ok = parseWildcard(s, &pe)
+		default:
+			ok = false
+		}
+
+		if !ok {
+			return PathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(s.pos)
+		}
+
+		s.skipWhiteSpace()
+	}
+
+	if len(pe.legs) > 0 && pe.legs[len(pe.legs)-1].typ == pathLegDoubleAsterisk {
+		return PathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(s.pos)
+	}
+
+	return
+}
+
+func parseWildcard(s *stream, p *PathExpression) bool {
+	s.skip(1)
+	if s.exhausted() || s.read() != '*' {
+		return false
+	}
+	if s.exhausted() || s.peek() == '*' {
+		return false
+	}
+
+	p.flags |= pathExpressionContainsDoubleAsterisk
+	p.legs = append(p.legs, pathLeg{typ: pathLegDoubleAsterisk})
+	return true
+}
+
+func parseArray(s *stream, p *PathExpression) bool {
+	s.skip(1)
+	s.skipWhiteSpace()
+	if s.exhausted() {
+		return false
+	}
+
+	if s.peek() == '*' {
+		s.skip(1)
+		p.flags |= pathExpressionContainsAsterisk
+		p.legs = append(p.legs, pathLeg{typ: pathLegIndex, arrayIndex: arrayIndexAsterisk})
+	} else {
+		// FIXME: only support an integer index for now. Need to support [last], [1 to 2]... in the future.
+		str, meetEnd := s.readWhile(func(b byte) bool {
+			return b >= '0' && b <= '9'
+		})
+		if meetEnd {
+			return false
+		}
+		index, err := strconv.Atoi(str)
+		if err != nil || index > math.MaxUint32 {
+			return false
+		}
+		p.legs = append(p.legs, pathLeg{typ: pathLegIndex, arrayIndex: index})
+	}
+
+	s.skipWhiteSpace()
+	if s.exhausted() || s.read() != ']' {
+		return false
+	}
+
+	return true
+}
+
+func parseMember(s *stream, p *PathExpression) bool {
+	var err error
+	s.skip(1)
+	s.skipWhiteSpace()
+	if s.exhausted() {
+		return false
+	}
+
+	if s.peek() == '*' {
+		s.skip(1)
+		p.flags |= pathExpressionContainsAsterisk
+		p.legs = append(p.legs, pathLeg{typ: pathLegKey, dotKey: "*"})
+	} else {
+		var dotKey string
+		var wasQuoted bool
+		if s.peek() == '"' {
+			s.skip(1)
+			str, meetEnd := s.readWhile(func(b byte) bool {
+				if b == '\\' {
+					s.skip(1)
+					return true
+				}
+				return b != '"'
+			})
+			if meetEnd {
+				return false
+			}
+			s.skip(1)
+			dotKey = str
+			wasQuoted = true
+		} else {
+			dotKey, _ = s.readWhile(func(b byte) bool {
+				return !(unicode.IsSpace(rune(b)) || b == '.' || b == '[' || b == '*')
+			})
+		}
+		dotKey = "\"" + dotKey + "\""
+
+		if !json.Valid(hack.Slice(dotKey)) {
+			return false
+		}
+		dotKey, err = unquoteString(dotKey[1 : len(dotKey)-1])
+		if err != nil || (!wasQuoted && !isEcmascriptIdentifier(dotKey)) {
+			return false
+		}
+
+		p.legs = append(p.legs, pathLeg{typ: pathLegKey, dotKey: dotKey})
+	}
+	return true
+}
+
+func isEcmascriptIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+
+	for i := 0; i < len(s); i++ {
+		if (i != 0 && s[i] >= '0' && s[i] <= '9') ||
+			(s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') ||
+			s[i] == '_' || s[i] == '$' || s[i] >= 0x80 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // ParseJSONPathExpr parses a JSON path expression. Returns a PathExpression
 // object which can be used in JSON_EXTRACT, JSON_SET and so on.
-func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
+func ParseJSONPathExpr(pathExpr string) (PathExpression, error) {
 	peCache.mu.Lock()
 	val, ok := peCache.cache.Get(pathExpressionKey(pathExpr))
 	if ok {
@@ -176,100 +366,13 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	}
 	peCache.mu.Unlock()
 
-	defer func() {
-		if err == nil {
-			peCache.mu.Lock()
-			peCache.cache.Put(pathExpressionKey(pathExpr), kvcache.Value(pe))
-			peCache.mu.Unlock()
-		}
-	}()
-
-	// Find the position of first '$'. If any no-blank characters in
-	// pathExpr[0: dollarIndex), return an ErrInvalidJSONPath error.
-	dollarIndex := strings.Index(pathExpr, "$")
-	if dollarIndex < 0 {
-		err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
-		return
+	pathExpression, err := parseJSONPathExpr(pathExpr)
+	if err == nil {
+		peCache.mu.Lock()
+		peCache.cache.Put(pathExpressionKey(pathExpr), kvcache.Value(pathExpression))
+		peCache.mu.Unlock()
 	}
-	for i := 0; i < dollarIndex; i++ {
-		if !isBlank(rune(pathExpr[i])) {
-			err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
-			return
-		}
-	}
-
-	pathExprSuffix := strings.TrimFunc(pathExpr[dollarIndex+1:], isBlank)
-	indices := jsonPathExprLegRe.FindAllStringIndex(pathExprSuffix, -1)
-	if len(indices) == 0 && len(pathExprSuffix) != 0 {
-		err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
-		return
-	}
-
-	pe.legs = make([]pathLeg, 0, len(indices))
-	pe.flags = pathExpressionFlag(0)
-
-	lastEnd := 0
-	for _, indice := range indices {
-		start, end := indice[0], indice[1]
-
-		// Check all characters between two legs are blank.
-		for i := lastEnd; i < start; i++ {
-			if !isBlank(rune(pathExprSuffix[i])) {
-				err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
-				return
-			}
-		}
-		lastEnd = end
-
-		if pathExprSuffix[start] == '[' {
-			// The leg is an index of a JSON array.
-			var leg = strings.TrimFunc(pathExprSuffix[start+1:end], isBlank)
-			var indexStr = strings.TrimFunc(leg[0:len(leg)-1], isBlank)
-			var index int
-			if len(indexStr) == 1 && indexStr[0] == '*' {
-				pe.flags |= pathExpressionContainsAsterisk
-				index = arrayIndexAsterisk
-			} else {
-				if index, err = strconv.Atoi(indexStr); err != nil {
-					err = errors.Trace(err)
-					return
-				}
-			}
-			pe.legs = append(pe.legs, pathLeg{typ: pathLegIndex, arrayIndex: index})
-		} else if pathExprSuffix[start] == '.' {
-			// The leg is a key of a JSON object.
-			var key = strings.TrimFunc(pathExprSuffix[start+1:end], isBlank)
-			if len(key) == 1 && key[0] == '*' {
-				pe.flags |= pathExpressionContainsAsterisk
-			} else if key[0] == '"' {
-				// We need unquote the origin string.
-				if key, err = unquoteString(key[1 : len(key)-1]); err != nil {
-					err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
-					return
-				}
-			}
-			pe.legs = append(pe.legs, pathLeg{typ: pathLegKey, dotKey: key})
-		} else {
-			// The leg is '**'.
-			pe.flags |= pathExpressionContainsDoubleAsterisk
-			pe.legs = append(pe.legs, pathLeg{typ: pathLegDoubleAsterisk})
-		}
-	}
-	if len(pe.legs) > 0 {
-		// The last leg of a path expression cannot be '**'.
-		if pe.legs[len(pe.legs)-1].typ == pathLegDoubleAsterisk {
-			err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
-			return
-		}
-	}
-	return
-}
-
-func isBlank(c rune) bool {
-	if c == '\n' || c == '\r' || c == '\t' || c == ' ' {
-		return true
-	}
-	return false
+	return pathExpression, err
 }
 
 func (pe PathExpression) String() string {
@@ -288,7 +391,11 @@ func (pe PathExpression) String() string {
 			}
 		case pathLegKey:
 			s.WriteString(".")
-			s.WriteString(quoteString(leg.dotKey))
+			if leg.dotKey == "*" {
+				s.WriteString(leg.dotKey)
+			} else {
+				s.WriteString(quoteString(leg.dotKey))
+			}
 		case pathLegDoubleAsterisk:
 			s.WriteString("**")
 		}
