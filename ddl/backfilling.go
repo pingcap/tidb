@@ -374,9 +374,9 @@ func waitTaskResults(workers []*backfillWorker, taskCnt int,
 	return nextKey, addedCount, errors.Trace(firstErr)
 }
 
-// handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
+// deliveryTasksAndResults sends tasks to workers, and waits for all the running workers to return results,
 // there are taskCnt running workers.
-func (dc *ddlCtx) handleReorgTasks(sessPool *sessionPool, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*backfillWorker, batchTasks []*reorgBackfillTask) error {
+func (dc *ddlCtx) deliveryTasksAndResults(sessPool *sessionPool, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*backfillWorker, batchTasks []*reorgBackfillTask) error {
 	for i, task := range batchTasks {
 		workers[i].taskCh <- task
 	}
@@ -448,8 +448,8 @@ func tryDecodeToHandleString(key kv.Key) string {
 	return handle.String()
 }
 
-// sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (dc *ddlCtx) sendRangeTaskToWorkers(sessPool *sessionPool, t table.Table, workers []*backfillWorker, reorgInfo *reorgInfo,
+// handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
+func (dc *ddlCtx) handleRangeTasks(sessPool *sessionPool, t table.Table, workers []*backfillWorker, reorgInfo *reorgInfo,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgBackfillTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
@@ -484,7 +484,7 @@ func (dc *ddlCtx) sendRangeTaskToWorkers(sessPool *sessionPool, t table.Table, w
 	}
 
 	// Wait tasks finish.
-	err := dc.handleReorgTasks(sessPool, reorgInfo, totalAddedCount, workers, batchTasks)
+	err := dc.deliveryTasksAndResults(sessPool, reorgInfo, totalAddedCount, workers, batchTasks)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -684,7 +684,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			zap.Int("regionCnt", len(kvRanges)),
 			zap.String("startHandle", tryDecodeToHandleString(startKey)),
 			zap.String("endHandle", tryDecodeToHandleString(endKey)))
-		remains, err := dc.sendRangeTaskToWorkers(sessPool, t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
+		remains, err := dc.handleRangeTasks(sessPool, t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
 		if err != nil {
 			return errors.Trace(err)
 		}
