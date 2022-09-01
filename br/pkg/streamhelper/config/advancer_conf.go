@@ -15,20 +15,18 @@ const (
 	flagFullScanDiffTick = "full-scan-tick"
 	flagAdvancingByCache = "advancing-by-cache"
 
-	DefaultConsistencyCheckTick = 5
-	DefaultTryAdvanceThreshold  = 3 * time.Minute
-	DefaultBackOffTime          = 5 * time.Second
-	DefaultTickInterval         = 12 * time.Second
-	DefaultFullScanTick         = 4
-	DefaultAdvanceByCache       = true
+	DefaultConsistencyCheckTick  = 5
+	DefaultTryAdvanceThreshold   = 3 * time.Minute
+	DefaultBackOffTime           = 5 * time.Second
+	DefaultTickInterval          = 12 * time.Second
+	DefaultFullScanTick          = 4
+	DefaultAdvanceByCache        = true
+	DefaultMaxConcurrencyAdvance = 8
 )
 
 //revive:enable:exported
 
-var (
-	DefaultMaxConcurrencyAdvance = 8
-)
-
+// Config is a configuration
 type Config struct {
 	// The gap between two retries.
 	BackoffTime time.Duration `toml:"backoff-time" json:"backoff-time"`
