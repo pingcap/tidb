@@ -270,7 +270,8 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
 	}
 	a.RetTp = a.Args[0].GetType()
-	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin {
+	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin ||
+		a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag {
 		a.RetTp = a.Args[0].GetType().Clone()
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
