@@ -66,7 +66,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 }
 
 // GeneratePlanCacheStmt generates the PlanCacheStmt structure for this parameterized SQL.
-func GeneratePlanCacheStmt(ctx context.Context, sctx sessionctx.Context, paramSQL string) (*PlanCacheStmt, Plan, error) {
+func GeneratePlanCacheStmt(ctx context.Context, sctx sessionctx.Context, paramSQL string) (*PlanCacheStmt, Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	charset, collation := vars.GetCharsetInfo()
 	var (
@@ -90,41 +90,41 @@ func GeneratePlanCacheStmt(ctx context.Context, sctx sessionctx.Context, paramSQ
 		}
 	}
 	if err != nil {
-		return nil, nil, util.SyntaxError(err)
+		return nil, nil, 0, util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
-		return nil, nil, ErrPrepareMulti
+		return nil, nil, 0, ErrPrepareMulti
 	}
 	stmt := stmts[0]
 	return GeneratePlanCacheStmtWithAST(ctx, sctx, stmt)
 }
 
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
-func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (*PlanCacheStmt, Plan, error) {
+func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
 	// DDL Statements can not accept parameters
 	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
-		return nil, nil, ErrPrepareDDL
+		return nil, nil, 0, ErrPrepareDDL
 	}
 
 	switch stmt.(type) {
 	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDeleteStmt:
-		return nil, nil, ErrUnsupportedPs
+		return nil, nil, 0, ErrUnsupportedPs
 	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
 	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
 	if len(extractor.markers) > math.MaxUint16 {
-		return nil, nil, ErrPsManyParam
+		return nil, nil, 0, ErrPsManyParam
 	}
 
 	ret := &PreprocessorReturn{}
 	err := Preprocess(sctx, stmt, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 
 	// The parameter markers are appended in visiting order, which may not
@@ -172,7 +172,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	destBuilder, _ := NewPlanBuilder().Init(sctx, ret.InfoSchema, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 
 	preparedObj := &PlanCacheStmt{
@@ -187,7 +187,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		NormalizedSQL4PC:    normalizedSQL4PC,
 		SQLDigest4PC:        digest4PC,
 	}
-	return preparedObj, p, nil
+	return preparedObj, p, ParamCount, nil
 }
 
 func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {

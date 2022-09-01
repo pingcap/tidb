@@ -81,7 +81,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	stmt, p, err := plannercore.GeneratePlanCacheStmt(ctx, e.ctx, e.sqlText)
+	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmt(ctx, e.ctx, e.sqlText)
 	if err != nil {
 		return err
 	}
@@ -112,6 +112,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
+	e.ParamCount = paramCnt
 	e.Stmt = stmt
 	if e.IsGeneralStmt {
 		vars.AddGeneralPlanCacheStmt(e.sqlText, stmt)
