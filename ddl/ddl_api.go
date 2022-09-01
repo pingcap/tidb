@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -2594,10 +2595,11 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 }
 
 func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
+	logutil.BgLogger().Info("get flashback cluster job", zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
 	job := &model.Job{
 		Type:       model.ActionFlashbackCluster,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{flashbackTS, map[string]interface{}{}},
+		Args:       []interface{}{flashbackTS, tablecodec.EncodeTablePrefix(0), map[string]interface{}{}},
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)

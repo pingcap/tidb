@@ -136,6 +136,7 @@ go_test(
         "attributes_sql_test.go",
         "callback_test.go",
         "cancel_test.go",
+        "cluster_test.go",
         "column_change_test.go",
         "column_modify_test.go",
         "column_test.go",
