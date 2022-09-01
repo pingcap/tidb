@@ -2593,6 +2593,17 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	}
 }
 
+func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
+	job := &model.Job{
+		Type:       model.ActionFlashbackCluster,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{flashbackTS, map[string]interface{}{}},
+	}
+	err := d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schemaID, tbInfo := recoverInfo.SchemaID, recoverInfo.TableInfo
