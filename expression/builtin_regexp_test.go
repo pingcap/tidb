@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"log"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/ast"
@@ -77,6 +78,14 @@ func getVecExprBenchCaseForRegexp(retType types.EvalType, inputs ...interface{})
 		childrenTypes: paramTypes,
 		geners:        gens,
 	}
+}
+
+func setBinCollation(tp *types.FieldType) {
+	tp.SetType(mysql.TypeVarString)
+	tp.SetCharset(charset.CharsetBin)
+	tp.SetCollate(charset.CollationBin)
+	tp.SetFlen(types.UnspecifiedLength)
+	tp.SetFlag(mysql.BinaryFlag)
 }
 
 // test Regexp_like function when all parameters are constant
@@ -186,7 +195,7 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 
 	// Prepare data: pattern is constant
 	constants[1] = getStringConstant("abc")
-	patConstCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern)
+	patConstCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
 	patConstCase.constants = make([]*Constant, 3)
 	copy(patConstCase.constants, constants)
 	constants[1] = nil
@@ -198,8 +207,7 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 	copy(matchTypeConstCase.constants, constants)
 	constants[2] = nil
 
-	// Prepare data: Memorization
-	constants[0] = nil
+	// Prepare data: test memorization
 	constants[1] = getStringConstant("abc")
 	constants[2] = getStringConstant("ims")
 	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
@@ -207,6 +215,18 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 	copy(patAndMatchTypeConstCase.constants, constants)
 	constants[1] = nil
 	constants[2] = nil
+
+	constants[1] = getStringConstant("abc")
+	patConstMatchTpIgnoredCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern)
+	patConstMatchTpIgnoredCase.constants = make([]*Constant, 2)
+	copy(patConstMatchTpIgnoredCase.constants, constants[:2])
+	constants[1] = nil
+
+	// constants[1] = getStringConstant("abc")
+	// patConstCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern)
+	// patConstCase.constants = make([]*Constant, 3)
+	// copy(patConstCase.constants, constants)
+	// constants[1] = nil
 
 	// Build vecBuiltinRegexpLikeCases
 	var vecBuiltinRegexpLikeCases = map[string][]vecExprBenchCase{
@@ -219,19 +239,21 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 			exprConstCase,
 			patConstCase,
 			matchTypeConstCase,
-			patAndMatchTypeConstCase,
+			// patAndMatchTypeConstCase,
 		},
 	}
 
-	testVectorizedBuiltinFunc(t, vecBuiltinRegexpLikeCases)
-}
+	var should = map[string][]vecExprBenchCase{
+		ast.RegexpLike: {
+			patAndMatchTypeConstCase,
+			patConstMatchTpIgnoredCase,
+		},
+	}
 
-func setBinCollation(tp *types.FieldType) {
-	tp.SetType(mysql.TypeVarString)
-	tp.SetCharset(charset.CharsetBin)
-	tp.SetCollate(charset.CollationBin)
-	tp.SetFlen(types.UnspecifiedLength)
-	tp.SetFlag(mysql.BinaryFlag)
+	log.Println("here1")
+	testVectorizedBuiltinFunc(t, vecBuiltinRegexpLikeCases)
+	log.Println("here2")
+	testVectorizedBuiltinFunc(t, should)
 }
 
 func TestRegexpSubstrConst(t *testing.T) {
@@ -423,7 +445,6 @@ func TestRegexpSubstrConst(t *testing.T) {
 	}
 }
 
-// ATTENTION We are unable to test bin collation
 func TestRegexpSubstrVec(t *testing.T) {
 	var expr []string = []string{"abc abd abe", "你好啊啊啊啊啊", "好的 好滴 好~", "Good\nday", "\n\n\n\n\n\n"}
 	var pattern []string = []string{"^$", "ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", "."}
@@ -487,6 +508,12 @@ func TestRegexpSubstrVec(t *testing.T) {
 	constants[1] = nil
 	constants[4] = nil
 
+	constants[1] = getStringConstant("aB.")
+	patConstMatchTypeIgnoredCase := getVecExprBenchCaseForRegexp(types.ETString, args[:4]...)
+	patConstMatchTypeIgnoredCase.constants = make([]*Constant, 4)
+	copy(patConstMatchTypeIgnoredCase.constants, constants[:4])
+	constants[1] = nil
+
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpSubstrCases = map[string][]vecExprBenchCase{
 		ast.RegexpSubstr: {
@@ -496,11 +523,21 @@ func TestRegexpSubstrVec(t *testing.T) {
 			posConstCase,
 			occurConstCase,
 			matchTpConstCase,
-			patAndMatchTypeConstCase,
+			// patAndMatchTypeConstCase,
 		},
 	}
 
+	var should = map[string][]vecExprBenchCase{
+		ast.RegexpSubstr: {
+			patAndMatchTypeConstCase,
+			patConstMatchTypeIgnoredCase,
+		},
+	}
+
+	log.Println("here1")
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpSubstrCases)
+	log.Println("here2")
+	testVectorizedBuiltinFunc(t, should)
 }
 
 func TestRegexpInStrConst(t *testing.T) {
@@ -814,6 +851,12 @@ func TestRegexpInStrVec(t *testing.T) {
 	constants[1] = nil
 	constants[5] = nil
 
+	constants[1] = getStringConstant("aB.")
+	patConstMatchTypeIgnoredCase := getVecExprBenchCaseForRegexp(types.ETInt, args[:5]...)
+	patConstMatchTypeIgnoredCase.constants = make([]*Constant, 5)
+	copy(patConstMatchTypeIgnoredCase.constants, constants[:5])
+	constants[1] = nil
+
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpInStrCases = map[string][]vecExprBenchCase{
 		ast.RegexpInStr: {
@@ -824,11 +867,21 @@ func TestRegexpInStrVec(t *testing.T) {
 			occurConstCase,
 			retOptConstCase,
 			matchTypeConstCase,
-			patAndMatchTypeConstCase,
+			// patAndMatchTypeConstCase,
 		},
 	}
 
+	var should = map[string][]vecExprBenchCase{
+		ast.RegexpInStr: {
+			patAndMatchTypeConstCase,
+			patConstMatchTypeIgnoredCase,
+		},
+	}
+
+	log.Println("here1")
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpInStrCases)
+	log.Println("here1")
+	testVectorizedBuiltinFunc(t, should)
 }
 
 func TestRegexpReplaceConst(t *testing.T) {
@@ -1095,6 +1148,12 @@ func TestRegexpReplaceVec(t *testing.T) {
 	constants[1] = nil
 	constants[5] = nil
 
+	constants[1] = getStringConstant("aB.")
+	patConstMatchTypeIgnoredCase := getVecExprBenchCaseForRegexp(types.ETString, args[:5]...)
+	patConstMatchTypeIgnoredCase.constants = make([]*Constant, 5)
+	copy(patConstMatchTypeIgnoredCase.constants, constants[:5])
+	constants[1] = nil
+
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpReplaceCases = map[string][]vecExprBenchCase{
 		ast.RegexpReplace: {
@@ -1105,9 +1164,19 @@ func TestRegexpReplaceVec(t *testing.T) {
 			posConstCase,
 			occurConstCase,
 			matchTypeConstCase,
-			patAndMatchTypeConstCase,
+			// patAndMatchTypeConstCase,
 		},
 	}
 
+	var should = map[string][]vecExprBenchCase{
+		ast.RegexpReplace: {
+			patAndMatchTypeConstCase,
+			patConstMatchTypeIgnoredCase,
+		},
+	}
+
+	log.Println("here1")
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpReplaceCases)
+	log.Println("here2")
+	testVectorizedBuiltinFunc(t, should)
 }
