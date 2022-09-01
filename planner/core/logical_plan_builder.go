@@ -4144,15 +4144,20 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		return statistics.PseudoTable(tblInfo)
 	}
 
-	// 3. statistics is outdated.
-	if ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
-		if statsTbl.IsOutdated() {
-			tbl := *statsTbl
-			tbl.Pseudo = true
-			statsTbl = &tbl
+	// 3. statistics is uninitialized or outdated.
+	pseudoStatsForUninitialized := !statsTbl.IsInitialized()
+	pseudoStatsForOutdated := ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() && statsTbl.IsOutdated()
+	if pseudoStatsForUninitialized || pseudoStatsForOutdated {
+		tbl := *statsTbl
+		tbl.Pseudo = true
+		statsTbl = &tbl
+		if pseudoStatsForUninitialized {
+			pseudoEstimationNotAvailable.Inc()
+		} else {
 			pseudoEstimationOutdate.Inc()
 		}
 	}
+
 	return statsTbl
 }
 
@@ -5469,19 +5474,22 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			dependentColumnsModified[col.UniqueID] = true
 		} else {
 			// rewrite with generation expression
-			rewritePreprocess := func(expr ast.Node) ast.Node {
-				switch x := expr.(type) {
-				case *ast.ColumnName:
-					return &ast.ColumnName{
-						Schema: assign.Column.Schema,
-						Table:  assign.Column.Table,
-						Name:   x.Name,
+			rewritePreprocess := func(assign *ast.Assignment) func(expr ast.Node) ast.Node {
+				return func(expr ast.Node) ast.Node {
+					switch x := expr.(type) {
+					case *ast.ColumnName:
+						return &ast.ColumnName{
+							Schema: assign.Column.Schema,
+							Table:  assign.Column.Table,
+							Name:   x.Name,
+						}
+					default:
+						return expr
 					}
-				default:
-					return expr
 				}
 			}
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess)
+
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess(assign))
 			if err != nil {
 				return nil, nil, false, err
 			}

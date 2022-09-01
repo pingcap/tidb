@@ -183,6 +183,9 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
+		if !idx.IsStatsInitialized() {
+			continue
+		}
 		e.histogramToRow(dbName, tblName, partitionName, idx.Info.Name.O, 1, idx.Histogram, 0,
 			idx.StatsLoadedStatus.StatusToString(), idx.MemoryUsage())
 	}
