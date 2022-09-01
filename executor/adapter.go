@@ -437,10 +437,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
-		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		oriStats, err := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.TiDBBuildStatsConcurrency)
+		terror.Log(err)
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency()
-		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		oriIso, err := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.TxnIsolation)
+		terror.Log(err)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
 		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
