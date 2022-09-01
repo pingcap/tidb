@@ -1439,7 +1439,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 // can this agg use 3 stage for distinct aggregation
 func (p *basePhysicalAgg) canUse3StageDistinctAgg() bool {
 	num := 0
-	if len(p.GroupByItems) > 0 {
+	if !p.ctx.GetSessionVars().Enable3StageDistinctAgg || len(p.GroupByItems) > 0 {
 		return false
 	}
 	for _, fun := range p.AggFuncs {
@@ -1737,7 +1737,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			attachPlan2Task(partialAgg, mpp)
 		}
 
-		if middleAgg != nil {
+		if middleAgg != nil && canUse3StageAgg {
 			items := partialAgg.(*PhysicalHashAgg).GroupByItems
 			partitionCols := make([]*property.MPPPartitionColumn, 0, len(items))
 			for _, expr := range items {
