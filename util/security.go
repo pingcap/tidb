@@ -145,6 +145,7 @@ func NewTLSConfigWithVerifyCN(caData, certData, keyData []byte, verifyCN []strin
 		tlsCfg.ClientCAs = certPool
 
 		// check the received MySQL server certificate during TLS handshake
+		// thanks to https://cloud.google.com/sql/docs/mysql/samples/cloud-sql-mysql-databasesql-sslcerts
 		verifyFuncs = append(verifyFuncs, func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			if len(rawCerts) == 0 {
 				return errors.New("no certificates available to verify")
@@ -157,7 +158,7 @@ func NewTLSConfigWithVerifyCN(caData, certData, keyData []byte, verifyCN []strin
 
 			opts := x509.VerifyOptions{Roots: certPool}
 			if _, err = cert.Verify(opts); err != nil {
-				return errors.Wrap(err, "different CA is used")
+				return errors.Wrap(err, "can't verify certificate, maybe different CA is used")
 			}
 			return nil
 		})
