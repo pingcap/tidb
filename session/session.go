@@ -2661,9 +2661,6 @@ func InitDDLJobTables(store kv.Storage) error {
 			tblInfo.State = model.StatePublic
 			tblInfo.ID = tbl.id
 			tblInfo.UpdateTS = t.StartTS
-			if err != nil {
-				return errors.Trace(err)
-			}
 			err = t.CreateTableOrView(dbID, tblInfo)
 			if err != nil {
 				return errors.Trace(err)
@@ -2806,6 +2803,8 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
+	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
+	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
