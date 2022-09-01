@@ -50,12 +50,14 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	// The original table ID for range is [60, 63)
 	// startKey is 61, so return [61, 63)
 	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(61))
+	require.NoError(t, err)
 	require.Len(t, kvRanges, 1)
 	require.Equal(t, kvRanges[0].StartKey, tablecodec.EncodeTablePrefix(61))
 
 	// The original ranges are [48, 49), [60, 63)
 	// startKey is 59, so return [60, 63)
 	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(59))
+	require.NoError(t, err)
 	require.Len(t, kvRanges, 1)
 	require.Equal(t, kvRanges[0].StartKey, tablecodec.EncodeTablePrefix(60))
 
