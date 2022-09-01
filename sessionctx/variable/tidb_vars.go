@@ -231,6 +231,9 @@ const (
 
 	// RequireSecureTransport indicates the secure mode for data transport
 	RequireSecureTransport = "require_secure_transport"
+
+	// TiFlashFastScan indicates whether use fast scan in tiflash .
+	TiFlashFastScan = "tiflash_fastscan"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1011,6 +1014,7 @@ const (
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
+	DefTiFlashFastScan                             = false
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
@@ -1082,13 +1086,3 @@ var (
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
 	DisableDDL func() error = nil
 )
-
-// switchDDL turns on/off DDL in an instance.
-func switchDDL(on bool) error {
-	if on && EnableDDL != nil {
-		return EnableDDL()
-	} else if !on && DisableDDL != nil {
-		return DisableDDL()
-	}
-	return nil
-}

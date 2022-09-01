@@ -134,6 +134,7 @@ nogo(
                "//build/linter/ineffassign:ineffassign",
                "//build/linter/makezero:makezero",
                "//build/linter/misspell:misspell",
+               "//build/linter/noloopclosure:noloopclosure",
                "//build/linter/prealloc:prealloc",
                "//build/linter/predeclared:predeclared",
                "//build/linter/sqlclosecheck:sqlclosecheck",

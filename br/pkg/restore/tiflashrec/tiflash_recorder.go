@@ -32,15 +32,15 @@ import (
 // during restoring.
 // Because the limit of the current implementation, we add serval hooks
 // to observe the information we need:
-// - Before full restore create tables:
-//   We record the tiflash replica information and remove the replica info.
-//   Because during PiTR restore, the transaction model would be broken, which breaks TiFlash too.
-//   We must make sure they won't be replicated to TiFlash during the whole PiTR procedure.
-// - After full restore created tables, generating rewrite rules:
-//   We perform the rewrite rule over our records.
-//   We trace table via table ID instead of table name so we can handle `RENAME` DDLs.
-// - When doing PiTR restore, after rewriting table info in meta key:
-//   We update the replica information
+//   - Before full restore create tables:
+//     We record the tiflash replica information and remove the replica info.
+//     Because during PiTR restore, the transaction model would be broken, which breaks TiFlash too.
+//     We must make sure they won't be replicated to TiFlash during the whole PiTR procedure.
+//   - After full restore created tables, generating rewrite rules:
+//     We perform the rewrite rule over our records.
+//     We trace table via table ID instead of table name so we can handle `RENAME` DDLs.
+//   - When doing PiTR restore, after rewriting table info in meta key:
+//     We update the replica information
 type TiFlashRecorder struct {
 	// Table ID -> TiFlash Count
 	items map[int64]model.TiFlashReplicaInfo
