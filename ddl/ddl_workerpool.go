@@ -63,7 +63,7 @@ func (wp *workerPool) get() (*worker, error) {
 
 // put returns workerPool to context resource pool.
 func (wp *workerPool) put(wk *worker) {
-	if wp.resPool == nil {
+	if wp.resPool == nil || wp.exit.Load() {
 		return
 	}
 

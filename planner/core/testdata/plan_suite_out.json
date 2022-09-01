@@ -437,7 +437,7 @@
       },
       {
         "SQL": "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
-        "Best": "UnionAll{Dual->Projection->Dual->Projection->Dual->Projection}->HashAgg->Sort->Sort"
+        "Best": "UnionAll{Dual->Projection->Projection->Dual->Projection->Projection->Dual->Projection->Projection}->HashAgg->Projection->Sort"
       },
       {
         "SQL": "select * from (select *, NULL as xxx from t) t order by xxx",
@@ -3055,6 +3055,25 @@
   {
     "Name": "TestMPPSinglePartitionType",
     "Cases": [
+      {
+        "SQL": "select * from employee where deptid>1",
+        "Plan": [
+          "TableReader 3333.33 root  data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 3333.33 mpp[tiflash]  gt(test.employee.deptid, 1)",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select deptid+5, empid*10  from employee where deptid>1",
+        "Plan": [
+          "TableReader 3333.33 root  data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3333.33 mpp[tiflash]  plus(test.employee.deptid, 5)->Column#5, mul(test.employee.empid, 10)->Column#6",
+          "    └─Selection 3333.33 mpp[tiflash]  gt(test.employee.deptid, 1)",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
       {
         "SQL": "select count(*) from employee group by deptid+1",
         "Plan": [
