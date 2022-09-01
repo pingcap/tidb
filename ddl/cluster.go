@@ -151,6 +151,7 @@ func addToSlice(schema string, tableName string, tableID int64, nonFlashbackIDs,
 	return nonFlashbackIDs, allIDs
 }
 
+// GetFlashbackKeyRanges get keyRanges for flashback cluster
 func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRange, error) {
 	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
 
