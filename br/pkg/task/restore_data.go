@@ -142,7 +142,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 		return errors.Trace(err)
 	}
 
-	resolveTs, totalTiKVs, err := ReadBackupMetaData(ctx, externStorage)
+	resolveTs, numBackupStore, err := ReadBackupMetaData(ctx, externStorage)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -186,13 +186,14 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	if err != nil {
 		return errors.Trace(err)
 	}
-	numStore := len(allStores)
+	numOnlineStore := len(allStores)
 	// progress = read meta + send recovery + resolve kv data.
-	progress := g.StartProgress(ctx, cmdName, int64(numStore*3), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(numStore*3))
+	progress := g.StartProgress(ctx, cmdName, int64(numOnlineStore*3), !cfg.LogProgress)
+	go progressFileWriterRoutine(ctx, progress, int64(numOnlineStore*3))
 
-	if numStore != totalTiKVs {
-		log.Error("the restore meta contains the number of tikvs inconsist with the resore cluster", zap.Int("current stores", len(allStores)), zap.Int("backup stores", totalTiKVs))
+	// in this version, it suppose to have the same number of tikvs between backup cluster and restore cluster
+	if numOnlineStore != numBackupStore {
+		log.Error("the restore meta contains the number of tikvs inconsist with the resore cluster", zap.Int("current stores", len(allStores)), zap.Int("backup stores", numBackupStore))
 		return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
 			"number of tikvs mismatch")
 	}
