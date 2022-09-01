@@ -67,9 +67,7 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 			return nil, err
 		}
 
-		sysVars := obtainImportantVariables()
-
-		bcCtx := newBackendContext(ctx, jobID, &bd, cfg, sysVars, m.memRoot, m.diskRoot)
+		bcCtx := newBackendContext(ctx, jobID, &bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot)
 		m.Store(jobID, bcCtx)
 
 		m.memRoot.Consume(StructSizeBackendCtx)

@@ -123,6 +123,7 @@ func genLightningDataDir() (string, error) {
 
 	err := os.MkdirAll(sortPath, 0o700)
 	if err != nil {
+		logutil.BgLogger().Error(LitErrCreateDirFail, zap.String("sort path", sortPath), zap.Error(err))
 		return "", err
 	}
 	logutil.BgLogger().Info(LitInfoSortDir, zap.String("data path:", sortPath))

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidbconf "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -136,32 +135,5 @@ var defaultImportantVariables = map[string]string{
 	"default_week_format":     "0",
 	"block_encryption_mode":   "aes-128-ecb",
 	"group_concat_max_len":    "1024",
-}
-
-// defaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system
-// variables from downstream in local/importer backend. The values record the default
-// values if missing.
-var defaultImportVariablesTiDB = map[string]string{
 	"tidb_row_format_version": "1",
-}
-
-func obtainImportantVariables() map[string]string {
-	// Convert the result into a map. Fill the missing variables with default values.
-	result := make(map[string]string, len(defaultImportantVariables)+len(defaultImportVariablesTiDB))
-	for key, value := range defaultImportantVariables {
-		result[key] = value
-		v := variable.GetSysVar(key)
-		if v.Value != value {
-			result[key] = value
-		}
-	}
-
-	for key, value := range defaultImportVariablesTiDB {
-		result[key] = value
-		v := variable.GetSysVar(key)
-		if v.Value != value {
-			result[key] = value
-		}
-	}
-	return result
 }
