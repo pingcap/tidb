@@ -644,7 +644,7 @@ type regexpInStrFuncSig struct {
 }
 
 func (re *regexpInStrFuncSig) Clone() builtinFunc {
-	newSig := &regexpLikeFuncSig{}
+	newSig := &regexpInStrFuncSig{}
 	newSig.cloneFrom(&re.baseBuiltinFunc)
 	newSig.clone(&re.regexpBaseFuncSig)
 	return newSig
