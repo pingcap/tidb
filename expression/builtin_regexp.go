@@ -613,7 +613,7 @@ func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	case 4:
 		argTp = append(argTp, types.ETInt, types.ETInt)
 	case 5:
-		argTp = append(argTp, types.ETInt, types.ETInt, types.ETString)
+		argTp = append(argTp, types.ETInt, types.ETInt, types.ETInt)
 	case 6:
 		argTp = append(argTp, types.ETInt, types.ETInt, types.ETInt, types.ETString)
 	}
@@ -775,7 +775,7 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 //
 // return true: need, false: needless
 func (re *regexpInStrFuncSig) needMemorization() bool {
-	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 && re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 || re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
@@ -1147,7 +1147,7 @@ func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) 
 //
 // return true: need, false: needless
 func (re *regexpReplaceFuncSig) needMemorization() bool {
-	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 && re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 || re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
@@ -1226,7 +1226,7 @@ func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	// Check memorization
 	if re.needMemorization() {
 		// matchType must be const or null
-		matchType := params[4].getStringVal(0)
+		matchType := params[5].getStringVal(0)
 
 		re.compile, err = re.genCompile(matchType)
 		if err != nil {
