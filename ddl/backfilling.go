@@ -143,6 +143,31 @@ type backfillTaskContext struct {
 	warningsCount map[errors.ErrorID]int64
 }
 
+type reorgBackfillTask struct {
+	physicalTableID int64
+	startKey        kv.Key
+	endKey          kv.Key
+	endInclude      bool
+}
+
+func (r *reorgBackfillTask) String() string {
+	physicalID := strconv.FormatInt(r.physicalTableID, 10)
+	startKey := tryDecodeToHandleString(r.startKey)
+	endKey := tryDecodeToHandleString(r.endKey)
+	rangeStr := "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
+	if r.endInclude {
+		return rangeStr + "]"
+	}
+	return rangeStr + ")"
+}
+
+// mergeBackfillCtxToResult merge partial result in taskCtx into result.
+func mergeBackfillCtxToResult(taskCtx *backfillTaskContext, result *backfillResult) {
+	result.nextKey = taskCtx.nextKey
+	result.addedCount += taskCtx.addedCount
+	result.scanCount += taskCtx.scanCount
+}
+
 type backfillWorker struct {
 	id        int
 	reorgInfo *reorgInfo
@@ -179,53 +204,6 @@ func closeBackfillWorkers(workers []*backfillWorker) {
 	for _, worker := range workers {
 		worker.Close()
 	}
-}
-
-type reorgBackfillTask struct {
-	physicalTableID int64
-	startKey        kv.Key
-	endKey          kv.Key
-	endInclude      bool
-}
-
-func (r *reorgBackfillTask) String() string {
-	physicalID := strconv.FormatInt(r.physicalTableID, 10)
-	startKey := tryDecodeToHandleString(r.startKey)
-	endKey := tryDecodeToHandleString(r.endKey)
-	rangeStr := "physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
-	if r.endInclude {
-		return rangeStr + "]"
-	}
-	return rangeStr + ")"
-}
-
-func logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
-	if threshold == 0 {
-		threshold = atomic.LoadUint32(&variable.DDLSlowOprThreshold)
-	}
-
-	if elapsed >= time.Duration(threshold)*time.Millisecond {
-		logutil.BgLogger().Info("[ddl] slow operations", zap.Duration("takeTimes", elapsed), zap.String("msg", slowMsg))
-	}
-}
-
-// mergeBackfillCtxToResult merge partial result in taskCtx into result.
-func mergeBackfillCtxToResult(taskCtx *backfillTaskContext, result *backfillResult) {
-	result.nextKey = taskCtx.nextKey
-	result.addedCount += taskCtx.addedCount
-	result.scanCount += taskCtx.scanCount
-}
-
-func mergeWarningsAndWarningsCount(partWarnings, totalWarnings map[errors.ErrorID]*terror.Error, partWarningsCount, totalWarningsCount map[errors.ErrorID]int64) (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {
-	for _, warn := range partWarnings {
-		if _, ok := totalWarningsCount[warn.ID()]; ok {
-			totalWarningsCount[warn.ID()] += partWarningsCount[warn.ID()]
-		} else {
-			totalWarningsCount[warn.ID()] = partWarningsCount[warn.ID()]
-			totalWarnings[warn.ID()] = warn
-		}
-	}
-	return totalWarnings, totalWarningsCount
 }
 
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
@@ -804,4 +782,26 @@ func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, t table.Tab
 	}
 
 	return it.Key(), nil
+}
+
+func mergeWarningsAndWarningsCount(partWarnings, totalWarnings map[errors.ErrorID]*terror.Error, partWarningsCount, totalWarningsCount map[errors.ErrorID]int64) (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {
+	for _, warn := range partWarnings {
+		if _, ok := totalWarningsCount[warn.ID()]; ok {
+			totalWarningsCount[warn.ID()] += partWarningsCount[warn.ID()]
+		} else {
+			totalWarningsCount[warn.ID()] = partWarningsCount[warn.ID()]
+			totalWarnings[warn.ID()] = warn
+		}
+	}
+	return totalWarnings, totalWarningsCount
+}
+
+func logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
+	if threshold == 0 {
+		threshold = atomic.LoadUint32(&variable.DDLSlowOprThreshold)
+	}
+
+	if elapsed >= time.Duration(threshold)*time.Millisecond {
+		logutil.BgLogger().Info("[ddl] slow operations", zap.Duration("takeTimes", elapsed), zap.String("msg", slowMsg))
+	}
 }
