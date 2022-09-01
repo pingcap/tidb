@@ -1998,9 +1998,10 @@ func TestHJBuildAndProbeHint(t *testing.T) {
 	var (
 		input  []string
 		output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
+			SQL     string
+			Plan    []string
+			Result  []string
+			Warning []string
 		}
 	)
 	planSuiteData := core.GetPlanSuiteData()
@@ -2019,6 +2020,7 @@ func TestHJBuildAndProbeHint(t *testing.T) {
 			output[i].SQL = ts
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))

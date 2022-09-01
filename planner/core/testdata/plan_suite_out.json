@@ -3549,7 +3549,8 @@
         "Result": [
           "1 1",
           "2 <nil>"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
@@ -3563,7 +3564,8 @@
         "Result": [
           "1 1",
           "2 <nil>"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
@@ -3577,7 +3579,8 @@
         "Result": [
           "1 1",
           "2 <nil>"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
@@ -3591,7 +3594,8 @@
         "Result": [
           "1 1",
           "2 <nil>"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
@@ -3604,7 +3608,8 @@
         ],
         "Result": [
           "1 1"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
@@ -3617,7 +3622,8 @@
         ],
         "Result": [
           "1 1"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
@@ -3630,7 +3636,8 @@
         ],
         "Result": [
           "1 1"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
@@ -3643,7 +3650,8 @@
         ],
         "Result": [
           "1 1"
-        ]
+        ],
+        "Warning": null
       }
     ]
   }
