@@ -430,6 +430,24 @@ func (r *RecordStores) sort() {
 	slices.Sort(r.stores)
 }
 
+func (r *RecordStores) len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.stores)
+}
+
+func (r *RecordStores) get(i int) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stores[i]
+}
+
+func (r *RecordStores) toString() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return fmt.Sprintf("%v", r.stores)
+}
+
 var recordStores RecordStores
 
 const (
@@ -479,13 +497,13 @@ func TestSetSpeedLimit(t *testing.T) {
 
 	recordStores.sort()
 	t.Logf("Total Cost: %v\n", cost)
-	t.Logf("Has Communicated: %v\n", recordStores.stores)
+	t.Logf("Has Communicated: %v\n", recordStores.toString())
 
 	serialCost := len(mockStores) * WORKING_TIME
 	require.Less(t, cost, time.Duration(serialCost)*time.Millisecond)
-	require.Equal(t, len(mockStores), len(recordStores.stores))
-	for i := 0; i < len(recordStores.stores); i++ {
-		require.Equal(t, mockStores[i].Id, recordStores.stores[i])
+	require.Equal(t, len(mockStores), recordStores.len())
+	for i := 0; i < recordStores.len(); i++ {
+		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
 
 	// 2. Expect the number of communicated stores to be less than the length of the mockStore
@@ -503,10 +521,10 @@ func TestSetSpeedLimit(t *testing.T) {
 
 	recordStores.sort()
 	sort.Slice(mockStores, func(i, j int) bool { return mockStores[i].Id < mockStores[j].Id })
-	t.Logf("Has Communicated: %v\n", recordStores.stores)
-	require.Less(t, len(recordStores.stores), len(mockStores))
-	for i := 0; i < len(recordStores.stores); i++ {
-		require.Equal(t, mockStores[i].Id, recordStores.stores[i])
+	t.Logf("Has Communicated: %v\n", recordStores.toString())
+	require.Less(t, recordStores.len(), len(mockStores))
+	for i := 0; i < recordStores.len(); i++ {
+		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
 }
 

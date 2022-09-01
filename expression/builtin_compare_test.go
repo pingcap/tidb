@@ -165,6 +165,14 @@ func TestCompare(t *testing.T) {
 	args = bf.getArgs()
 	require.Equal(t, mysql.TypeDatetime, args[0].GetType().GetType())
 	require.Equal(t, mysql.TypeDatetime, args[1].GetType().GetType())
+
+	// test <json column> <cmp> <const int expression>
+	jsonCol, intCon := &Column{RetType: types.NewFieldType(mysql.TypeJSON)}, &Constant{RetType: types.NewFieldType(mysql.TypeLong)}
+	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{jsonCol, intCon})
+	require.NoError(t, err)
+	args = bf.getArgs()
+	require.Equal(t, mysql.TypeJSON, args[0].GetType().GetType())
+	require.Equal(t, mysql.TypeJSON, args[1].GetType().GetType())
 }
 
 func TestCoalesce(t *testing.T) {

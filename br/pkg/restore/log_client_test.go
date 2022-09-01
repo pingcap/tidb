@@ -115,9 +115,6 @@ func (b *mockMetaBuilder) build(temp string) (*storage.LocalStorage, error) {
 		return nil, err
 	}
 	for i, meta := range b.metas {
-		if err != nil {
-			return nil, err
-		}
 		data, err := meta.Marshal()
 		if err != nil {
 			return nil, err
