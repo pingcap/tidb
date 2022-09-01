@@ -333,7 +333,6 @@ var defaultSysVars = []*SysVar{
 		}
 		return string(info), nil
 	}},
-
 	/* The system variables below have INSTANCE scope  */
 	{Scope: ScopeInstance, Name: TiDBLogFileMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(s *SessionVars, val string) error {
 		maxAge, err := strconv.ParseInt(val, 10, 32)
@@ -1089,6 +1088,10 @@ var defaultSysVars = []*SysVar{
 		s.allowMPPExecution = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashFastScan, Type: TypeBool, Value: BoolToOnOff(DefTiFlashFastScan), SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashFastScan = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMPPStoreFailTTL, Type: TypeStr, Value: DefTiDBMPPStoreFailTTL, SetSession: func(s *SessionVars, val string) error {
 		s.MPPStoreFailTTL = val
 		return nil
@@ -1780,6 +1783,14 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptInt64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(DefTiDBConstraintCheckInPlacePessimistic), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
+			if !s.ConstraintCheckInPlacePessimistic {
+				metrics.LazyPessimisticUniqueCheckSetCount.Inc()
+			}
+			return nil
+		}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -2088,6 +2099,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
-	//SQLRequirePrimaryKey is the name of `sql_require_primary_key` system variable.
+	// SQLRequirePrimaryKey is the name of `sql_require_primary_key` system variable.
 	SQLRequirePrimaryKey = "sql_require_primary_key"
 )

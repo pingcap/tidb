@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -383,7 +385,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, false))
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, nil))
 
 	for i := 0; i < len(tables); i++ {
 		if i == 0 || i > 2 {
@@ -395,7 +397,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 
-	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, true))
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, tiflashrec.New()))
 	for i := 0; i < len(tables); i++ {
 		require.Nil(t, tables[i].Info.TiFlashReplica)
 	}
@@ -423,9 +425,27 @@ func (r *RecordStores) put(id uint64) {
 }
 
 func (r *RecordStores) sort() {
-	sort.Slice(r.stores, func(i, j int) bool {
-		return r.stores[i] < r.stores[j]
-	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	slices.Sort(r.stores)
+}
+
+func (r *RecordStores) len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.stores)
+}
+
+func (r *RecordStores) get(i int) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stores[i]
+}
+
+func (r *RecordStores) toString() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return fmt.Sprintf("%v", r.stores)
 }
 
 var recordStores RecordStores
@@ -477,13 +497,13 @@ func TestSetSpeedLimit(t *testing.T) {
 
 	recordStores.sort()
 	t.Logf("Total Cost: %v\n", cost)
-	t.Logf("Has Communicated: %v\n", recordStores.stores)
+	t.Logf("Has Communicated: %v\n", recordStores.toString())
 
 	serialCost := len(mockStores) * WORKING_TIME
 	require.Less(t, cost, time.Duration(serialCost)*time.Millisecond)
-	require.Equal(t, len(mockStores), len(recordStores.stores))
-	for i := 0; i < len(recordStores.stores); i++ {
-		require.Equal(t, mockStores[i].Id, recordStores.stores[i])
+	require.Equal(t, len(mockStores), recordStores.len())
+	for i := 0; i < recordStores.len(); i++ {
+		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
 
 	// 2. Expect the number of communicated stores to be less than the length of the mockStore
@@ -501,10 +521,10 @@ func TestSetSpeedLimit(t *testing.T) {
 
 	recordStores.sort()
 	sort.Slice(mockStores, func(i, j int) bool { return mockStores[i].Id < mockStores[j].Id })
-	t.Logf("Has Communicated: %v\n", recordStores.stores)
-	require.Less(t, len(recordStores.stores), len(mockStores))
-	for i := 0; i < len(recordStores.stores); i++ {
-		require.Equal(t, mockStores[i].Id, recordStores.stores[i])
+	t.Logf("Has Communicated: %v\n", recordStores.toString())
+	require.Less(t, recordStores.len(), len(mockStores))
+	for i := 0; i < recordStores.len(); i++ {
+		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
 }
 

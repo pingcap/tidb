@@ -1213,6 +1213,9 @@ type SessionVars struct {
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
 	DefaultStrMatchSelectivity float64
 
+	// TiFlashFastScan indicates whether use fast scan in TiFlash
+	TiFlashFastScan bool
+
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
 
@@ -1227,6 +1230,10 @@ type SessionVars struct {
 
 	// GeneralPlanCacheSize controls the size of general plan cache.
 	GeneralPlanCacheSize uint64
+
+	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
+	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
+	ConstraintCheckInPlacePessimistic bool
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1512,6 +1519,7 @@ func NewSessionVars() *SessionVars {
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
+		TiFlashFastScan:             DefTiFlashFastScan,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
