@@ -336,7 +336,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 				}
 			}
 			recovery.progress.Inc()
-			log.Info("resolve kv data done")
+log.Info("resolvedkv data done", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId)
 			return nil
 		})
 	}
