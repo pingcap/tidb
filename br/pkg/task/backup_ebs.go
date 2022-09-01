@@ -152,7 +152,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 
 	// Step.1.2 stop scheduler as much as possible.
 	log.Info("starting to remove some PD schedulers")
-	restoreFunc, e := mgr.RemoveSchedulers(ctx)
+	restoreFunc, e := mgr.RemoveAllPDSchedulers(ctx)
 	if e != nil {
 		return errors.Trace(err)
 	}
@@ -169,6 +169,8 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
 		}
 	}()
+
+	// TODO: suggest to wait ongoing change peer finish, otherwise restore may face long time waitapply to last log.
 
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
 	clusterVersion, err := mgr.GetClusterVersion(ctx)

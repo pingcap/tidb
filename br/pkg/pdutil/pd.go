@@ -647,6 +647,37 @@ func (p *PdController) RemoveSchedulers(ctx context.Context) (undo UndoFunc, err
 	return undo, errors.Trace(err)
 }
 
+// removeAllPDSchedulers pause pd scheduler during the snapshot backup and restore
+func (p *PdController) RemoveAllPDSchedulers(ctx context.Context) (undo UndoFunc, err error) {
+	undo = Nop
+
+	// during the backup, we shall stop all scheduler so that restore easy to implement
+	// during phase-2, pd is fresh and in recovering-mode(recovering-mark=true), there's no leader
+	// so there's no leader or region schedule initially. when phase-2 start force setting leaders, schedule may begin.
+	// we don't want pd do any leader or region schedule during this time, so we set those params to 0
+	// before we force setting leaders
+	scheduleLimitParams := []string{
+		"hot-region-schedule-limit",
+		"leader-schedule-limit",
+		"merge-schedule-limit",
+		"region-schedule-limit",
+		"replica-schedule-limit",
+	}
+	pdConfigGenerators := DefaultExpectPDCfgGenerators()
+	for _, param := range scheduleLimitParams {
+		pdConfigGenerators[param] = func(int, interface{}) interface{} { return 0 }
+	}
+
+	oldPDConfig, _, err1 := p.RemoveSchedulersWithConfigGenerator(ctx, pdConfigGenerators)
+	if err1 != nil {
+		err = err1
+		return
+	}
+
+	undo = p.GenRestoreSchedulerFunc(oldPDConfig, pdConfigGenerators)
+	return undo, errors.Trace(err)
+}
+
 // RemoveSchedulersWithOrigin pause and remove br related schedule configs and return the origin and modified configs
 func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin ClusterConfig, modified ClusterConfig, err error) {
 	return p.RemoveSchedulersWithConfigGenerator(ctx, expectPDCfgGenerators)

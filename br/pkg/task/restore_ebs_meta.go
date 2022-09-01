@@ -173,6 +173,22 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 	}
 	h.metaInfo = metaInfo
 
+	// stop scheduler before recover data
+	log.Info("starting to remove some PD schedulers")
+	restoreFunc, e := h.pdc.RemoveAllPDSchedulers(ctx)
+	if e != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if ctx.Err() != nil {
+			log.Warn("context canceled, doing clean work with background context")
+			ctx = context.Background()
+		}
+		if restoreE := restoreFunc(ctx); restoreE != nil {
+			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+		}
+	}()
+
 	// todo: check whether target cluster is compatible with the backup
 	// but cluster hasn't bootstrapped, we cannot get cluster version from pd now.
 

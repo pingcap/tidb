@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -81,35 +80,6 @@ func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64,
 	return metaInfo.GetResolvedTS(), metaInfo.TiKVComponent.Replicas, nil
 }
 
-func removeAllPDSchedulers(ctx context.Context, p *pdutil.PdController) (undo pdutil.UndoFunc, err error) {
-	undo = pdutil.Nop
-
-	// during phase-2, pd is fresh and in recovering-mode(recovering-mark=true), there's no leader
-	// so there's no leader or region schedule initially. when phase-2 start force setting leaders, schedule may begin.
-	// we don't want pd do any leader or region schedule during this time, so we set those params to 0
-	// before we force setting leaders
-	scheduleLimitParams := []string{
-		"hot-region-schedule-limit",
-		"leader-schedule-limit",
-		"merge-schedule-limit",
-		"region-schedule-limit",
-		"replica-schedule-limit",
-	}
-	pdConfigGenerators := pdutil.DefaultExpectPDCfgGenerators()
-	for _, param := range scheduleLimitParams {
-		pdConfigGenerators[param] = func(int, interface{}) interface{} { return 0 }
-	}
-
-	oldPDConfig, _, err1 := p.RemoveSchedulersWithConfigGenerator(ctx, pdConfigGenerators)
-	if err1 != nil {
-		err = err1
-		return
-	}
-
-	undo = p.GenRestoreSchedulerFunc(oldPDConfig, pdConfigGenerators)
-	return undo, errors.Trace(err)
-}
-
 // RunRestore starts a restore task inside the current goroutine.
 func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *RestoreDataConfig) error {
 	startAll := time.Now()
@@ -164,22 +134,6 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	// stop scheduler before recover data
-	log.Info("starting to remove some PD schedulers")
-	restoreFunc, e := removeAllPDSchedulers(ctx, mgr.PdController)
-	if e != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if ctx.Err() != nil {
-			log.Warn("context canceled, doing clean work with background context")
-			ctx = context.Background()
-		}
-		if restoreE := restoreFunc(ctx); restoreE != nil {
-			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-		}
-	}()
 
 	var allStores []*metapb.Store
 	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
