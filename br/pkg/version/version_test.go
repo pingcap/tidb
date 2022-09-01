@@ -536,3 +536,44 @@ Check Table Before Drop: false`
 	require.Error(t, err)
 	require.Regexp(t, "mock failure$", err.Error())
 }
+
+func TestFetchVersionWithCommitID(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+
+	tidbVersionWithValidReleaseVersion := `Release Version: v5.2.1
+Edition: Community
+Git Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445
+Git Branch: heads/refs/tags/v5.2.1
+UTC Build Time: 2021-09-08 02:32:56
+GoVersion: go1.16.4
+Race Enabled: false
+TiKV Min Version: v3.0.0-60965b006877ca7234adaced7890d7b029ed1306
+Check Table Before Drop: false`
+
+	tidbVersionWithCommitInReleaseVersion := `Release Version: bcf61918
+Git Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445
+Git Branch: heads/refs/tags/v5.2.1
+UTC Build Time: 2021-09-08 02:32:56
+GoVersion: go1.16.4
+Race Enabled: false
+TiKV Min Version: v3.0.0-60965b006877ca7234adaced7890d7b029ed1306
+Check Table Before Drop: false`
+
+	ctx := context.Background()
+
+	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.
+		NewRows([]string{""}).AddRow(tidbVersionWithValidReleaseVersion))
+	versionStr, err := FetchVersion(ctx, db)
+	require.NoError(t, err)
+	require.Equal(t, tidbVersionWithValidReleaseVersion, versionStr)
+
+	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.
+		NewRows([]string{""}).AddRow(tidbVersionWithCommitInReleaseVersion))
+	mock.ExpectQuery("SELECT version\\(\\);").WillReturnRows(sqlmock.
+		NewRows([]string{""}).AddRow("5.7.25"))
+
+	versionStr, err = FetchVersion(ctx, db)
+	require.NoError(t, err)
+	require.Equal(t, "5.7.25", versionStr)
+}

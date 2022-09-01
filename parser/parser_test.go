@@ -3234,6 +3234,10 @@ func TestDDL(t *testing.T) {
 		{"flashback table t", true, "FLASHBACK TABLE `t`"},
 		{"flashback table t TO t1", true, "FLASHBACK TABLE `t` TO `t1`"},
 
+		// for flashback cluster
+		{"flashback cluster as of timestamp '2021-05-26 16:45:26'", true, "FLASHBACK CLUSTER AS OF TIMESTAMP _UTF8MB4'2021-05-26 16:45:26'"},
+		{"flashback cluster as of timestamp TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())", true, "FLASHBACK CLUSTER AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
+
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
 		{"alter table db.ident remove partitioning", true, "ALTER TABLE `db`.`ident` REMOVE PARTITIONING"},
@@ -3965,18 +3969,18 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
 
-	// Test HASH_BUILD and HASH_PROBE
-	stmt, _, err = p.Parse("select /*+ hash_build(t1), hash_probe(t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	// Test HASH_JOIN_BUILD and HASH_JOIN_PROBE
+	stmt, _, err = p.Parse("select /*+ hash_join_build(t1), hash_join_probe(t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
-	require.Equal(t, "hash_build", hints[0].HintName.L)
+	require.Equal(t, "hash_join_build", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
 
-	require.Equal(t, "hash_probe", hints[1].HintName.L)
+	require.Equal(t, "hash_join_probe", hints[1].HintName.L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t4", hints[1].Tables[0].TableName.L)
 
