@@ -396,7 +396,7 @@ func (recovery *Recovery) makeRecoveryPlan() {
 
 	// Sort region peer by last log term -> last index -> commit index, and collect all regions' version.
 	var versions = make([]Peer, 0, len(regions))
-	for regionId, peer := range regions {
+	for regionId, peers := range regions {
 		sort.Slice(peer, func(i, j int) bool {
 			for _, cmp := range cmps {
 				if v := cmp(&peer[i], &peer[j]); v != 0 {
