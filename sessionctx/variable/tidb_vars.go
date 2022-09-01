@@ -730,6 +730,9 @@ const (
 	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
 	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
 	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
+
+	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
+	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
 )
 
 // TiDB vars that have only global scope
@@ -934,7 +937,7 @@ const (
 	DefTiDBFoundInBinding                          = false
 	DefTiDBEnableCollectExecutionInfo              = true
 	DefTiDBAllowAutoRandExplicitInsert             = false
-	DefTiDBEnableClusteredIndex                    = ClusteredIndexDefModeIntOnly
+	DefTiDBEnableClusteredIndex                    = ClusteredIndexDefModeOn
 	DefTiDBRedactLog                               = false
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
@@ -1021,9 +1024,10 @@ const (
 	DefTiDBEnableGeneralPlanCache                  = false
 	DefTiDBGeneralPlanCacheSize                    = 100
 	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize           int32  = 10240
-	MinDDLReorgBatchSize           int32  = 32
-	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
+	MaxDDLReorgBatchSize                     int32  = 10240
+	MinDDLReorgBatchSize                     int32  = 32
+	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
+	DefTiDBConstraintCheckInPlacePessimistic        = true
 )
 
 // Process global variables.
