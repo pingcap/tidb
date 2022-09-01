@@ -421,6 +421,11 @@ error = '''
 table route error
 '''
 
+["Lightning:Loader:ErrTooManySourceFiles"]
+error = '''
+too many source files
+'''
+
 ["Lightning:MetaMgr:ErrMetaMgrUnknown"]
 error = '''
 unknown error occur on meta manager

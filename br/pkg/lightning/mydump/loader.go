@@ -30,9 +30,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// ErrTooManySourceFiles indicates the scanned source files exceeds a scan limit.
-var ErrTooManySourceFiles = errors.New("too many source files")
-
 type MDDatabaseMeta struct {
 	Name       string
 	SchemaFile FileInfo
@@ -103,72 +100,27 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 }
 
 // MDLoaderSetupConfig stores the configs when setting up a MDLoader.
+// This can control the behavior when constructing an MDLoader.
 type MDLoaderSetupConfig struct {
+	// MaxScanFiles specifies the maximum number of files to scan.
+	// If the value is <= 0, it means the number of data source files will be scanned as many as possible.
 	MaxScanFiles int
 }
 
 // DefaultMDLoaderSetupConfig generates a default MDLoaderSetupConfig.
 func DefaultMDLoaderSetupConfig() *MDLoaderSetupConfig {
 	return &MDLoaderSetupConfig{
-		MaxScanFiles: 0,
+		MaxScanFiles: 0, // By default, the loader will scan all the files.
 	}
 }
 
-// MDLoaderSetupOption is the option interface for setting up a MDLoaderSetupConfig.
-type MDLoaderSetupOption interface {
-	// Apply applies some modifications to the MDLoaderSetupConfig object.
-	Apply(cfg *MDLoaderSetupConfig)
-}
-
-type maxScanFilesMDLoaderSetupOption struct {
-	maxScanFiles int
-}
-
-// Apply applies some modifications to the MDLoaderSetupConfig object.
-// It implements the MDLoaderSetupOption interface.
-func (o *maxScanFilesMDLoaderSetupOption) Apply(cfg *MDLoaderSetupConfig) {
-	cfg.MaxScanFiles = o.maxScanFiles
-}
+// MDLoaderSetupOption is the option type for setting up a MDLoaderSetupConfig.
+type MDLoaderSetupOption func(cfg *MDLoaderSetupConfig)
 
 // WithMaxScanFiles generates an option that limits the max scan files when setting up a MDLoader.
 func WithMaxScanFiles(maxScanFiles int) MDLoaderSetupOption {
-	return &maxScanFilesMDLoaderSetupOption{
-		maxScanFiles: maxScanFiles,
-	}
-}
-
-// MDLoaderConfig stores the configs when constructing a MDLoader.
-type MDLoaderConfig struct {
-	SetupOptions []MDLoaderSetupOption
-}
-
-// DefaultMDLoaderConfig generates a default MDLoaderConfig.
-func DefaultMDLoaderConfig() *MDLoaderConfig {
-	return &MDLoaderConfig{
-		SetupOptions: []MDLoaderSetupOption{},
-	}
-}
-
-// MDLoaderOption is the option interface for setting up an MDLoaderConfig.
-type MDLoaderOption interface {
-	// Apply applies some modifications to the MDLoaderConfig object.
-	Apply(cfg *MDLoaderConfig)
-}
-
-type mdLoaderSetupOptsOption struct {
-	opts []MDLoaderSetupOption
-}
-
-// Apply applies some modifications to the MDLoaderConfig object.
-// It implements the MDLoaderOption interface.
-func (o *mdLoaderSetupOptsOption) Apply(cfg *MDLoaderConfig) {
-	cfg.SetupOptions = append([]MDLoaderSetupOption{}, o.opts...)
-}
-
-// WithMDLoaderSetupOptions generates an option that provide some options when setting up the MDLoader.
-func WithMDLoaderSetupOptions(opts ...MDLoaderSetupOption) MDLoaderOption {
-	return &mdLoaderSetupOptsOption{
-		opts: opts,
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.MaxScanFiles = maxScanFiles
 	}
 }
 
@@ -196,7 +148,7 @@ type mdLoaderSetup struct {
 	setupCfg      *MDLoaderSetupConfig
 }
 
-func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderOption) (*MDLoader, error) {
+func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	u, err := storage.ParseBackend(cfg.Mydumper.SourceDir, nil)
 	if err != nil {
 		return nil, common.NormalizeError(err)
@@ -209,13 +161,13 @@ func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderOp
 	return NewMyDumpLoaderWithStore(ctx, cfg, s, opts...)
 }
 
-func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage, opts ...MDLoaderOption) (*MDLoader, error) {
+func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
 
-	mdLoaderCfg := DefaultMDLoaderConfig()
+	mdLoaderSetupCfg := DefaultMDLoaderSetupConfig()
 	for _, o := range opts {
-		o.Apply(mdLoaderCfg)
+		o(mdLoaderSetupCfg)
 	}
 
 	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
@@ -261,19 +213,15 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 		fileRouter: fileRouter,
 	}
 
-	setupCfg := DefaultMDLoaderSetupConfig()
-	for _, o := range mdLoaderCfg.SetupOptions {
-		o.Apply(setupCfg)
-	}
 	setup := mdLoaderSetup{
 		loader:        mdl,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
-		setupCfg:      setupCfg,
+		setupCfg:      mdLoaderSetupCfg,
 	}
 
 	if err := setup.setup(ctx, mdl.store); err != nil {
-		if errors.Cause(err) == ErrTooManySourceFiles {
+		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
 			return mdl, err
 		}
 		return nil, errors.Trace(err)
@@ -331,7 +279,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 	*/
 	var gerr error
 	if err := s.listFiles(ctx, store); err != nil {
-		if errors.Cause(err) == ErrTooManySourceFiles {
+		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
 			gerr = err
 		} else {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
@@ -408,7 +356,7 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 		logger := log.FromContext(ctx).With(zap.String("path", path))
 		totalScannedFileCount++
 		if s.setupCfg.MaxScanFiles > 0 && totalScannedFileCount > s.setupCfg.MaxScanFiles {
-			return ErrTooManySourceFiles
+			return common.ErrTooManySourceFiles
 		}
 		res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 		if err != nil {
