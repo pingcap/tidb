@@ -8,21 +8,22 @@ import (
 	"github.com/spf13/pflag"
 )
 
+//revive:disable:exported
 const (
 	flagBackoffTime      = "backoff-time"
 	flagTickInterval     = "tick-interval"
 	flagFullScanDiffTick = "full-scan-tick"
 	flagAdvancingByCache = "advancing-by-cache"
 
-	//revive:disable:exported
 	DefaultConsistencyCheckTick = 5
 	DefaultTryAdvanceThreshold  = 3 * time.Minute
 	DefaultBackOffTime          = 5 * time.Second
 	DefaultTickInterval         = 12 * time.Second
 	DefaultFullScanTick         = 4
 	DefaultAdvanceByCache       = true
-	//revive:enable:exported
 )
+
+//revive:enable:exported
 
 var (
 	DefaultMaxConcurrencyAdvance = 8
