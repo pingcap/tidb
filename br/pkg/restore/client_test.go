@@ -577,6 +577,7 @@ func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
+			cf string,
 		) ([]*restore.KvEntryWithTS, error) {
 			batchCount++
 			return nil, nil
@@ -613,6 +614,7 @@ func TestRestoreMetaKVFilesWithBatchMethod2(t *testing.T) {
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
+			cf string,
 		) ([]*restore.KvEntryWithTS, error) {
 			if len(fs) > 0 {
 				result[batchCount] = fs
@@ -703,6 +705,7 @@ func TestRestoreMetaKVFilesWithBatchMethod3(t *testing.T) {
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
+			cf string,
 		) ([]*restore.KvEntryWithTS, error) {
 			result[batchCount] = fs
 			t.Log(filterTS)
@@ -788,6 +791,7 @@ func TestRestoreMetaKVFilesWithBatchMethod4(t *testing.T) {
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
+			cf string,
 		) ([]*restore.KvEntryWithTS, error) {
 			result[batchCount] = fs
 			batchCount++
@@ -867,6 +871,7 @@ func TestRestoreMetaKVFilesWithBatchMethod5(t *testing.T) {
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
+			cf string,
 		) ([]*restore.KvEntryWithTS, error) {
 			result[batchCount] = fs
 			batchCount++
@@ -963,6 +968,7 @@ func TestRestoreMetaKVFilesWithBatchMethod6(t *testing.T) {
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
+			cf string,
 		) ([]*restore.KvEntryWithTS, error) {
 			result[batchCount] = fs
 			t.Log(filterTS)

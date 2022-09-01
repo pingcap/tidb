@@ -2119,6 +2119,7 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 		filterTS uint64,
 		updateStats func(kvCount uint64, size uint64),
 		progressInc func(),
+		cf string,
 	) ([]*KvEntryWithTS, error),
 ) error {
 	var (
@@ -2149,7 +2150,7 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 			} else {
 				// Either f.MinTS > rangeMax or f.MinTs is the filterTs we need.
 				// So it is ok to pass f.MinTs as filterTs.
-				defaultKvEntries, err = restoreBatch(ctx, defaultFiles[defaultIdx:i], schemasReplace, defaultKvEntries, f.MinTs, updateStats, progressInc)
+				defaultKvEntries, err = restoreBatch(ctx, defaultFiles[defaultIdx:i], schemasReplace, defaultKvEntries, f.MinTs, updateStats, progressInc, stream.DefaultCF)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -2166,7 +2167,7 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 						break
 					}
 				}
-				writeKvEntries, err = restoreBatch(ctx, writeFiles[writeIdx:toWriteIdx], schemasReplace, writeKvEntries, f.MinTs, updateStats, progressInc)
+				writeKvEntries, err = restoreBatch(ctx, writeFiles[writeIdx:toWriteIdx], schemasReplace, writeKvEntries, f.MinTs, updateStats, progressInc, stream.WriteCF)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -2174,11 +2175,11 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 			}
 		}
 		if i == len(defaultFiles)-1 {
-			_, err = restoreBatch(ctx, defaultFiles[defaultIdx:], schemasReplace, defaultKvEntries, math.MaxUint64, updateStats, progressInc)
+			_, err = restoreBatch(ctx, defaultFiles[defaultIdx:], schemasReplace, defaultKvEntries, math.MaxUint64, updateStats, progressInc, stream.DefaultCF)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			_, err = restoreBatch(ctx, writeFiles[writeIdx:], schemasReplace, writeKvEntries, math.MaxUint64, updateStats, progressInc)
+			_, err = restoreBatch(ctx, writeFiles[writeIdx:], schemasReplace, writeKvEntries, math.MaxUint64, updateStats, progressInc, stream.WriteCF)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2202,6 +2203,7 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 	filterTS uint64,
 	updateStats func(kvCount uint64, size uint64),
 	progressInc func(),
+	cf string,
 ) ([]*KvEntryWithTS, error) {
 	nextKvEntries := make([]*KvEntryWithTS, 0)
 	if len(files) == 0 && len(kvEntries) == 0 {
@@ -2225,7 +2227,7 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 	})
 
 	// restore these entries with rawPut() method.
-	kvCount, size, err := rc.restoreMetaKvEntries(ctx, schemasReplace, kvEntries, files[0].GetCf())
+	kvCount, size, err := rc.restoreMetaKvEntries(ctx, schemasReplace, kvEntries, cf)
 	if err != nil {
 		return nextKvEntries, errors.Trace(err)
 	}
@@ -2263,6 +2265,12 @@ func (rc *Client) readAllEntries(
 		}
 
 		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
+
+		if !stream.MaybeDBOrDDLJobHistoryKey(txnEntry.Key) {
+			// only restore mDB and mDDLHistory
+			continue
+		}
+
 		ts, err := GetKeyTS(txnEntry.Key)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -2277,17 +2285,13 @@ func (rc *Client) readAllEntries(
 		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
 			continue
 		}
+
 		if len(txnEntry.Value) == 0 {
 			// we might record duplicated prewrite keys in some conor cases.
 			// the first prewrite key has the value but the second don't.
 			// so we can ignore the empty value key.
 			// see details at https://github.com/pingcap/tiflow/issues/5468.
 			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.ByteString("tnxKey", txnEntry.Key))
-			continue
-		}
-
-		if !stream.MaybeDBOrDDLJobHistoryKey(txnEntry.Key) {
-			// only restore mDB and mDDLHistory
 			continue
 		}
 
