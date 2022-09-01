@@ -242,6 +242,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 		err           error
 		mayMatchedRow chunk.Row
 	)
+	matched = matched[:0]
 	for _, nullEntry := range c.hashNANullBucket {
 		mayMatchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(nullEntry.ptr, c.chkBuf)
 		if err != nil {
