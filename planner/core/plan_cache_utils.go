@@ -151,6 +151,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		NormalizedSQL4PC:    normalizedSQL4PC,
 		SQLDigest4PC:        digest4PC,
 	}
+	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
+		return nil, nil, 0, err
+	}
 	return preparedObj, p, ParamCount, nil
 }
 
