@@ -1507,6 +1507,12 @@ func TestRandomPanicConsume(t *testing.T) {
 	for i := 0; i <= 1000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t(a) values(%v),(%v),(%v)", i, i, i))
 	}
+	tk.MustExec("drop table if exists s;")
+	tk.MustExec("create table s(pk bigint primary key auto_random,a int, b int, index idx(a));")
+	tk.MustExec("SPLIT TABLE s BETWEEN (-9223372036854775808) AND (9223372036854775807) REGIONS 50;") // Split 50 regions to simulate many requests
+	for i := 0; i <= 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into s(a,b) values(%v,%v),(%v,%v),(%v,%v)", i, i, i, i, i, i))
+	}
 
 	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
 	require.NoError(t, failpoint.Enable(fpName, "5%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"))
@@ -1539,6 +1545,12 @@ func TestRandomPanicConsume(t *testing.T) {
 		"select /*+ INL_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;",                                                    // Index Join
 		"select /*+ INL_HASH_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;",                                               // Index Hash Join
 		"select /*+ USE_INDEX(t, idx) */ * from t",                                                                          // IndexScan
+
+		// With IndexLookUp
+		"select /*+ MERGE_JOIN(t1) */ /*+ USE_INDEX(t1,idx) */ /*+ USE_INDEX(t2,idx) */ * from s t1 join s t2 on t1.a=t2.a", // Shuffle+MergeJoin
+		"select /*+ INL_JOIN(t2) */ * from s t1 join s t2 on t1.a=t2.a;",                                                    // Index Join
+		"select /*+ INL_HASH_JOIN(t2) */ * from s t1 join s t2 on t1.a=t2.a;",                                               // Index Hash Join
+		"select /*+ USE_INDEX(s, idx) */ * from s",                                                                          // IndexLookUp
 	}
 
 	// Test 10 times panic for each Executor.
