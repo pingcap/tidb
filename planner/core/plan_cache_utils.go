@@ -150,7 +150,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		normalizedSQL4PC, digest4PC string
 		selectStmtNode              ast.StmtNode
 	)
-	if vars.EnablePreparedPlanCache {
+	if !vars.EnablePreparedPlanCache {
 		prepared.UseCache = false
 	} else {
 		prepared.UseCache = CacheableWithCtx(sctx, stmt, ret.InfoSchema)
