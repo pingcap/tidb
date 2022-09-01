@@ -37,6 +37,7 @@ type ConcurrentBitmap struct {
 	bitLen   int
 }
 
+// Clone clones a new bitmap with the old bit set.
 func (cb *ConcurrentBitmap) Clone() *ConcurrentBitmap {
 	cp := NewConcurrentBitmap(cb.bitLen)
 	needLen := len(cp.segments)
