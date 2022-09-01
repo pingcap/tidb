@@ -1055,4 +1055,85 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk.MustExec("select * from t5 for update")
 	err = tk.ExecToErr("commit")
 	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
+
+	// case: delete your own insert that should've returned error
+	tk.MustExec("truncate table t5")
+	tk.MustExec("insert into t5 values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t5 values (2, 1)")
+	err = tk.ExecToErr("delete from t5")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 'i1'")
+	require.False(t, tk.Session().GetSessionVars().InTxn())
+
+	// case: update unique key, but conflict exists before the txn
+	tk.MustExec("truncate table t5")
+	tk.MustExec("insert into t5 values (1, 1), (2, 3)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t5 set uk = 3 where id = 1")
+	err = tk.ExecToErr("commit")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Duplicate entry '3' for key 'i1'")
+	tk.MustExec("admin check table t5")
+
+	// case: update unique key, but conflict with concurrent write
+	tk.MustExec("truncate table t5")
+	tk.MustExec("insert into t5 values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t5 set uk = 3 where id = 1")
+	tk2.MustExec("insert into t5 values (2, 3)")
+	err = tk.ExecToErr("commit")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
+	tk.MustExec("admin check table t5")
+}
+
+func TestLazyUniquenessCheckForInsertIgnore(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+
+	// case: primary key
+	tk.MustExec("create table t (id int primary key, uk int, unique key i1(uk))")
+	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert ignore into t values (1, 2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+
+	// case: unique key
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert ignore into t values (2, 1)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+}
+
+func TestInsertsNotAffectedByLazyCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+	// TiKV will perform a constraint check before reporting assertion failure.
+	// And constraint violation precedes assertion failure.
+	if *testkit.WithTiKV == "" {
+		tk.MustExec("set @@tidb_txn_assertion_level=off")
+	}
+	tk.MustExec("create table t (id int primary key, uk int, unique key i1(uk))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1, 10) on duplicate key update id = id+1")
+	err := tk.ExecToErr("commit")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Duplicate entry '2' for key 'PRIMARY'")
+	require.NotContains(t, err.Error(), "lazy uniqueness check")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1, 10) on duplicate key update uk = uk+1")
+	err = tk.ExecToErr("commit")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Duplicate entry '2' for key 'i1'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
 }
