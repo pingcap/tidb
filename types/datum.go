@@ -1673,6 +1673,14 @@ func (d *Datum) convertToMysqlJSON(_ *stmtctx.StatementContext, _ *FieldType) (r
 		if j, err = json.ParseBinaryFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
+	case KindMysqlSet, KindMysqlEnum:
+		var j json.BinaryJSON
+		var s string
+		if s, err = d.ToString(); err == nil {
+			if j, err = json.ParseBinaryFromString(s); err == nil {
+				ret.SetMysqlJSON(j)
+			}
+		}
 	case KindInt64:
 		i64 := d.GetInt64()
 		ret.SetMysqlJSON(json.CreateBinary(i64))

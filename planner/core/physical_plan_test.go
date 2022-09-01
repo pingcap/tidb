@@ -2009,7 +2009,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee(empid int, deptid int, salary decimal(10,2))")
-	tk.MustExec("set tidb_enforce_mpp=1")
+	tk.MustExec("set tidb_enforce_mpp=0")
 
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
