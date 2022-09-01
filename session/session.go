@@ -2659,9 +2659,6 @@ func InitDDLJobTables(store kv.Storage) error {
 			tblInfo.State = model.StatePublic
 			tblInfo.ID = tbl.id
 			tblInfo.UpdateTS = t.StartTS
-			if err != nil {
-				return errors.Trace(err)
-			}
 			err = t.CreateTableOrView(dbID, tblInfo)
 			if err != nil {
 				return errors.Trace(err)
