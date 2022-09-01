@@ -622,7 +622,7 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 			return true
 		}
 		for _, hintName := range hint.indexHint.IndexNames {
-			if name == hintName.String() {
+			if strings.ToLower(name) == strings.ToLower(hintName.String()) {
 				return true
 			}
 		}
