@@ -403,10 +403,17 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 }
 
 func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
+	clusterVersion, err := s.mgr.GetClusterVersion(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
 		m.StartVersion = s.cfg.StartTS
+		m.ClusterId = s.bc.GetClusterID()
+		m.ClusterVersion = clusterVersion
 	})
 
 	schemas, err := backup.BuildFullSchema(s.mgr.GetStorage(), s.cfg.StartTS)
@@ -570,7 +577,7 @@ func RunStreamMetadata(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	logMinTS, logMaxTS, err := getLogRange(ctx, &cfg.Config)
+	logMinTS, logMaxTS, _, err := getLogRange(ctx, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -976,7 +983,7 @@ func RunStreamRestore(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	logMinTS, logMaxTS, err := getLogRange(ctx, &cfg.Config)
+	logMinTS, logMaxTS, logClusterID, err := getLogRange(ctx, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -985,9 +992,17 @@ func RunStreamRestore(
 	}
 
 	if len(cfg.FullBackupStorage) > 0 {
-		if cfg.StartTS, err = getFullBackupTS(ctx, cfg); err != nil {
+		startTS, fullClusterID, err := getFullBackupTS(ctx, cfg)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		if logClusterID != fullClusterID {
+			return errors.Annotatef(berrors.ErrInvalidArgument,
+				"the full snapshot(from cluster ID:%v) and log(from cluster ID:%v) come from different cluster.",
+				fullClusterID, logClusterID)
+		}
+
+		cfg.StartTS = startTS
 		if cfg.StartTS < logMinTS {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
 				"it has gap between full backup ts:%d(%s) and log backup ts:%d(%s). ",
@@ -1285,20 +1300,20 @@ func countIndices(ts map[int64]*metautil.Table) int64 {
 func getLogRange(
 	ctx context.Context,
 	cfg *Config,
-) (uint64, uint64, error) {
+) (uint64, uint64, uint64, error) {
 	_, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, 0, errors.Trace(err)
 	}
 
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, 0, errors.Trace(err)
 	}
 	backupMeta := &backuppb.BackupMeta{}
 	if err = backupMeta.Unmarshal(metaData); err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, 0, errors.Trace(err)
 	}
 	logStartTS := backupMeta.GetStartVersion()
 
@@ -1306,18 +1321,18 @@ func getLogRange(
 	// If truncateTS equals 0, which represents the stream log has never been truncated.
 	truncateTS, err := restore.GetTSFromFile(ctx, s, restore.TruncateSafePointFileName)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, 0, errors.Trace(err)
 	}
 	logMinTS := mathutil.Max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
 	logMaxTS, err := getGlobalCheckpointFromStorage(ctx, s)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, 0, errors.Trace(err)
 	}
 	logMaxTS = mathutil.Max(logMinTS, logMaxTS)
 
-	return logMinTS, logMaxTS, nil
+	return logMinTS, logMaxTS, backupMeta.GetClusterId(), nil
 }
 
 func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStorage) (uint64, error) {
@@ -1343,23 +1358,23 @@ func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStora
 func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
-) (uint64, error) {
+) (uint64, uint64, error) {
 	_, s, err := GetStorage(ctx, cfg.FullBackupStorage, &cfg.Config)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 
 	backupmeta := &backuppb.BackupMeta{}
 	if err = backupmeta.Unmarshal(metaData); err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 
-	return backupmeta.GetEndVersion(), nil
+	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
 }
 
 func getGlobalResolvedTS(
