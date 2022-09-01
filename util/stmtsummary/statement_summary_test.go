@@ -543,8 +543,8 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.sumMem != ssElement2.sumMem ||
 			ssElement1.maxMem != ssElement2.maxMem ||
 			ssElement1.sumAffectedRows != ssElement2.sumAffectedRows ||
-			ssElement1.firstSeen != ssElement2.firstSeen ||
-			ssElement1.lastSeen != ssElement2.lastSeen {
+			!ssElement1.firstSeen.Equal(ssElement2.firstSeen) ||
+			!ssElement1.lastSeen.Equal(ssElement2.lastSeen) {
 			return false
 		}
 		if len(ssElement1.backoffTypes) != len(ssElement2.backoffTypes) {
