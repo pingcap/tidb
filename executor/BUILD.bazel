@@ -149,7 +149,6 @@ go_library(
         "//tidb-binlog/node",
         "//types",
         "//types/json",
-        "//types/parser_driver",
         "//util",
         "//util/admin",
         "//util/bitmap",
