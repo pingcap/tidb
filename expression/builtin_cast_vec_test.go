@@ -174,11 +174,15 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 		result := chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), input.NumRows())
 		require.NoError(t, cast.vecEvalTime(input, result))
 		for i := 0; i < input.NumRows(); i++ {
+			res, isNull, err := cast.evalTime(input.GetRow(i))
+			require.NoError(t, err)
 			if expect[i] == nil {
 				require.True(t, result.IsNull(i))
+				require.True(t, isNull)
 				continue
 			}
 			require.Equal(t, result.GetTime(i), *expect[i])
+			require.Equal(t, res, *expect[i])
 		}
 	}
 }
