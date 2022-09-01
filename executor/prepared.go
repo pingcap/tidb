@@ -16,6 +16,9 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/sqlexec"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -81,15 +84,44 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmt(ctx, e.ctx, e.sqlText)
-	if err != nil {
-		return err
+	sctx := e.ctx
+	charset, collation := vars.GetCharsetInfo()
+	var (
+		stmts []ast.StmtNode
+		err   error
+	)
+	if sqlParser, ok := sctx.(sqlexec.SQLParser); ok {
+		// FIXME: ok... yet another parse API, may need some api interface clean.
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
+	} else {
+		p := parser.New()
+		p.SetParserConfig(vars.BuildParserConfig())
+		var warns []error
+		stmts, warns, err = p.ParseSQL(e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
+		for _, warn := range warns {
+			vars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+		}
 	}
+	if err != nil {
+		return util.SyntaxError(err)
+	}
+	if len(stmts) != 1 {
+		return ErrPrepareMulti
+	}
+	stmt0 := stmts[0]
 	if e.needReset {
-		err = ResetContextOfStmt(e.ctx, stmt.PreparedAst.Stmt)
+		err = ResetContextOfStmt(e.ctx, stmt0)
 		if err != nil {
 			return err
 		}
+	}
+	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.ctx, stmt0)
+	if err != nil {
+		return err
 	}
 	if topsqlstate.TopSQLEnabled() {
 		e.ctx.GetSessionVars().StmtCtx.IsSQLRegistered.Store(true)

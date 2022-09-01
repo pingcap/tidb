@@ -31,12 +31,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
@@ -63,40 +61,6 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 		e.markers = append(e.markers, x)
 	}
 	return in, true
-}
-
-// GeneratePlanCacheStmt generates the PlanCacheStmt structure for this parameterized SQL.
-func GeneratePlanCacheStmt(ctx context.Context, sctx sessionctx.Context, paramSQL string) (*PlanCacheStmt, Plan, int, error) {
-	vars := sctx.GetSessionVars()
-	charset, collation := vars.GetCharsetInfo()
-	var (
-		stmts []ast.StmtNode
-		err   error
-	)
-	if sqlParser, ok := sctx.(sqlexec.SQLParser); ok {
-		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, _, err = sqlParser.ParseSQL(ctx, paramSQL,
-			parser.CharsetConnection(charset),
-			parser.CollationConnection(collation))
-	} else {
-		p := parser.New()
-		p.SetParserConfig(vars.BuildParserConfig())
-		var warns []error
-		stmts, warns, err = p.ParseSQL(paramSQL,
-			parser.CharsetConnection(charset),
-			parser.CollationConnection(collation))
-		for _, warn := range warns {
-			vars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-		}
-	}
-	if err != nil {
-		return nil, nil, 0, util.SyntaxError(err)
-	}
-	if len(stmts) != 1 {
-		return nil, nil, 0, ErrPrepareMulti
-	}
-	stmt := stmts[0]
-	return GeneratePlanCacheStmtWithAST(ctx, sctx, stmt)
 }
 
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
