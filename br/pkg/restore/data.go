@@ -205,7 +205,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 			break
 		case storeMeta := <-metaChan:
 			recovery.storeMetas[i] = storeMeta
-			log.Info("receieved region meta from", zap.Int("store", int(storeMeta.storeId)))
+			log.Info("received region meta from", zap.Int("store", int(storeMeta.storeId)))
 		}
 
 		recovery.progress.Inc()
