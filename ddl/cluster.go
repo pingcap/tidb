@@ -92,7 +92,7 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
-func checkFlashbackCluster(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
+func checkAndSetFlashbackClusterInfo(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
 	sess, err := w.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
@@ -143,12 +143,21 @@ func checkFlashbackCluster(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, f
 	return nil
 }
 
-func addToSlice(schema string, tableName string, tableID int64, nonFlashbackIDs, allIDs []int64) ([]int64, []int64) {
+type flashbackID struct {
+	id       int64
+	excluded bool
+}
+
+func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []flashbackID) []flashbackID {
+	var excluded bool
 	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") {
-		nonFlashbackIDs = append(nonFlashbackIDs, tableID)
+		excluded = true
 	}
-	allIDs = append(allIDs, tableID)
-	return nonFlashbackIDs, allIDs
+	flashbackIDs = append(flashbackIDs, flashbackID{
+		id:       tableID,
+		excluded: excluded,
+	})
+	return flashbackIDs
 }
 
 // GetFlashbackKeyRanges make keyRanges efficiently for flashback cluster when many tables in cluster,
@@ -159,46 +168,44 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRa
 	// The semantic of keyRanges(output).
 	var keyRanges []kv.KeyRange
 
-	// The allPhysicalIDs stores all physical tables IDs in TiDB cluster.
-	// The nonFlashbackPhysicalIDs holds all tables that don't need to do flashback.
-	var allPhysicalIDs, nonFlashbackPhysicalIDs []int64
-
+	var flashbackIDs []flashbackID
 	for _, db := range schemas {
 		for _, table := range db.Tables {
 			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
 				continue
 			}
-			nonFlashbackPhysicalIDs, allPhysicalIDs = addToSlice(db.Name.L, table.Name.L, table.ID, nonFlashbackPhysicalIDs, allPhysicalIDs)
+			flashbackIDs = addToSlice(db.Name.L, table.Name.L, table.ID, flashbackIDs)
 			if table.Partition != nil {
 				for _, partition := range table.Partition.Definitions {
-					nonFlashbackPhysicalIDs, allPhysicalIDs = addToSlice(db.Name.L, table.Name.L, partition.ID, nonFlashbackPhysicalIDs, allPhysicalIDs)
+					flashbackIDs = addToSlice(db.Name.L, table.Name.L, partition.ID, flashbackIDs)
 				}
 			}
 		}
 	}
 
-	slices.Sort(allPhysicalIDs)
-	slices.Sort(nonFlashbackPhysicalIDs)
+	slices.SortFunc(flashbackIDs, func(a, b flashbackID) bool {
+		return a.id < b.id
+	})
 
-	prevPos := -1
-	if len(nonFlashbackPhysicalIDs) > 0 {
-		prevPos, _ = slices.BinarySearch(allPhysicalIDs, nonFlashbackPhysicalIDs[0])
-		for _, ids := range nonFlashbackPhysicalIDs[1:] {
-			pos, _ := slices.BinarySearch(allPhysicalIDs, ids)
-			if pos != prevPos+1 {
+	lastExcludeIdx := -1
+	for i, id := range flashbackIDs {
+		if id.excluded {
+			// Found a range [lastExcludeIdx, i) needs to be added.
+			if i > lastExcludeIdx+1 {
 				keyRanges = append(keyRanges, kv.KeyRange{
-					StartKey: tablecodec.EncodeTablePrefix(allPhysicalIDs[prevPos+1]),
-					EndKey:   tablecodec.EncodeTablePrefix(allPhysicalIDs[pos-1] + 1),
+					StartKey: tablecodec.EncodeTablePrefix(flashbackIDs[lastExcludeIdx+1].id),
+					EndKey:   tablecodec.EncodeTablePrefix(flashbackIDs[i-1].id + 1),
 				})
 			}
-			prevPos = pos
+			lastExcludeIdx = i
 		}
 	}
 
-	if prevPos < len(allPhysicalIDs)-1 {
+	// The last part needs to be added.
+	if lastExcludeIdx < len(flashbackIDs)-1 {
 		keyRanges = append(keyRanges, kv.KeyRange{
-			StartKey: tablecodec.EncodeTablePrefix(allPhysicalIDs[prevPos+1]),
-			EndKey:   tablecodec.EncodeTablePrefix(allPhysicalIDs[len(allPhysicalIDs)-1] + 1),
+			StartKey: tablecodec.EncodeTablePrefix(flashbackIDs[lastExcludeIdx+1].id),
+			EndKey:   tablecodec.EncodeTablePrefix(flashbackIDs[len(flashbackIDs)-1].id + 1),
 		})
 	}
 
@@ -258,7 +265,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 	// Stage 2, check flashbackTS, close GC and PD schedule.
 	if job.SnapshotVer == 0 {
-		if err = checkFlashbackCluster(w, d, t, job, flashbackTS); err != nil {
+		if err = checkAndSetFlashbackClusterInfo(w, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
