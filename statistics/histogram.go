@@ -1570,6 +1570,16 @@ func NewStatsFullLoadStatus() StatsLoadedStatus {
 	}
 }
 
+// NewStatsAllEvictedStatus returns the status that only loads count/nullCount/NDV and doesn't load CMSketch/TopN/Histogram.
+// When we load table stats, column stats is in allEvicted status by default. CMSketch/TopN/Histogram of column is only
+// loaded when we really need column stats.
+func NewStatsAllEvictedStatus() StatsLoadedStatus {
+	return StatsLoadedStatus{
+		statsInitialized: true,
+		evictedStatus:    allEvicted,
+	}
+}
+
 // IsStatsInitialized indicates whether the column/index's statistics was loaded from storage before.
 // Note that `IsStatsInitialized` only can be set in initializing
 func (s StatsLoadedStatus) IsStatsInitialized() bool {
