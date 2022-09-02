@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -519,10 +520,12 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 	c.Assert(err, IsNil)
 	defer server.Close()
 
+	conn, _ := net.Pipe()
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
+		bufReadConn:  newBufferedReadConn(conn),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
