@@ -246,6 +246,11 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			} else if emptyBuild {
 				return
 			}
+			// after building is finished. the hash null bucket slice is allocated and determined.
+			// copy it for multi probe worker.
+			for i := range e.rowContainerForProbe {
+				e.rowContainerForProbe[i].hashNANullBucket = e.rowContainer.hashNANullBucket
+			}
 			hasWaitedForBuild = true
 		}
 
@@ -1006,7 +1011,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 				// here means the probe join connecting column has null value in it and this is special for matching all the hash buckets
 				// for it. (probeKey is not necessary here)
 				probeRow := probeSideChk.GetRow(i)
-				ok, joinResult = e.joinNAAJMatchProbeSideRow2Chunk(workerID, 0, hCtx.naColNullBitMap[i], probeRow, hCtx, rowContainer, joinResult)
+				ok, joinResult = e.joinNAAJMatchProbeSideRow2Chunk(workerID, 0, hCtx.naColNullBitMap[i].Clone(), probeRow, hCtx, rowContainer, joinResult)
 				if !ok {
 					return false, joinResult
 				}

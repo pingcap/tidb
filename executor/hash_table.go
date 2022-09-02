@@ -103,6 +103,7 @@ type hashRowContainer struct {
 	// hashTable stores the map of hashKey and RowPtr
 	hashTable baseHashTable
 	// hashNANullBucket stores the rows with any null value in NAAJ join key columns.
+	// After build process, NANUllBucket is read only here for multi probe worker.
 	hashNANullBucket []*naEntry
 
 	rowContainer *chunk.RowContainer
@@ -130,6 +131,8 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
 	newHRC := *c
 	newHRC.rowContainer = c.rowContainer.ShallowCopyWithNewMutex()
+	// multi hashRowContainer ref to one single NA-NULL bucket slice.
+	// newHRC.hashNANullBucket = c.hashNANullBucket
 	return &newHRC
 }
 
