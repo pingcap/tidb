@@ -25,10 +25,10 @@ func TestContainsAnyAsterisk(t *testing.T) {
 		expression        string
 		containsAsterisks bool
 	}{
-		{"$.a[b]", false},
+		{"$.a[1]", false},
 		{"$.a[*]", true},
-		{"$.*[b]", true},
-		{"$**.a[b]", true},
+		{"$.*[1]", true},
+		{"$**.a[1]", true},
 	}
 
 	for _, test := range tests {
@@ -58,6 +58,17 @@ func TestValidatePathExpr(t *testing.T) {
 		{`$.hello \"escaped quotes\" world[3][*].*.key3`, false, 0},
 		{`$NoValidLegsHere`, false, 0},
 		{`$        No Valid Legs Here .a.b.c`, false, 0},
+		{`$.a[b]`, false, 0},
+		{`$.*[b]`, false, 0},
+		{`$**.a[b]`, false, 0},
+		{`$.b[ 1 ].`, false, 0},
+		{`$.performance.txn-entry-size-limit`, false, 0},
+		{`$."performance".txn-entry-size-limit`, false, 0},
+		{`$."performance."txn-entry-size-limit`, false, 0},
+		{`$."performance."txn-entry-size-limit"`, false, 0},
+		{`$[`, false, 0},
+		{`$a.***[3]`, false, 0},
+		{`$1a`, false, 0},
 	}
 
 	for _, test := range tests {
@@ -84,6 +95,8 @@ func TestPathExprToString(t *testing.T) {
 		{"$.*[2]"},
 		{"$**.a[3]"},
 		{`$."\"hello\""`},
+		{`$."a b"`},
+		{`$."one potato"`},
 	}
 	for _, test := range tests {
 		// copy iterator variable into a new variable, see issue #27779

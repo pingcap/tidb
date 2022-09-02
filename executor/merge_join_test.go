@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
@@ -247,7 +248,7 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	sm := &testkit.MockSessionManager{
+	sm := &testutil.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -288,7 +289,7 @@ func TestMergeJoinInDisk(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	tk.MustExec("use test")
 
-	sm := &testkit.MockSessionManager{
+	sm := &testutil.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
