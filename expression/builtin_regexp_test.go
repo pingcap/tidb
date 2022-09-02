@@ -29,7 +29,7 @@ import (
 )
 
 func getStringConstNull() *Constant {
-	c := getStringConstant("")
+	c := getStringConstant("", false)
 	c.Value.SetNull()
 	return c
 }
@@ -40,11 +40,18 @@ func getIntConstNull() *Constant {
 	return c
 }
 
-func getStringConstant(value string) *Constant {
-	return &Constant{
-		Value:   types.NewStringDatum(value),
-		RetType: types.NewFieldType(mysql.TypeVarchar),
+func getStringConstant(value string, isBin bool) *Constant {
+	c := &Constant{
+		Value: types.NewStringDatum(value),
 	}
+
+	if isBin {
+		c.RetType = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
+	} else {
+		c.RetType = types.NewFieldType(mysql.TypeVarchar)
+	}
+
+	return c
 }
 
 func getIntConstant(num int64) *Constant {
@@ -54,7 +61,44 @@ func getIntConstant(num int64) *Constant {
 	}
 }
 
-func getVecExprBenchCaseForRegexp(retType types.EvalType, inputs ...interface{}) vecExprBenchCase {
+func setConstants(isNull bool, isBin bool, constVals map[int]interface{}, constants []*Constant) {
+	for i, val := range constVals {
+		switch v := val.(type) {
+		case string:
+			if isNull {
+				constants[i] = getStringConstNull()
+			} else {
+				constants[i] = getStringConstant(v, isBin)
+			}
+		case int64:
+			if isNull {
+				constants[i] = getIntConstNull()
+			} else {
+				constants[i] = getIntConstant(v)
+			}
+		default:
+			panic("Unsupport type")
+		}
+	}
+}
+
+func getVecExprBenchCaseForRegexpIncludeConst(retType types.EvalType, isBin bool, isNull bool, constVals map[int]interface{}, paramNum int, constants []*Constant, inputs ...interface{}) vecExprBenchCase {
+	setConstants(isNull, isBin, constVals, constants)
+
+	defer func() {
+		// reset constants, so that following cases could reuse this constant slice
+		for i := range constVals {
+			constants[i] = nil
+		}
+	}()
+
+	retCase := getVecExprBenchCaseForRegexp(retType, isBin, inputs[:paramNum]...)
+	retCase.constants = make([]*Constant, paramNum)
+	copy(retCase.constants, constants[:paramNum])
+	return retCase
+}
+
+func getVecExprBenchCaseForRegexp(retType types.EvalType, isBin bool, inputs ...interface{}) vecExprBenchCase {
 	gens := make([]dataGenerator, 0, 6)
 	paramTypes := make([]types.EvalType, 0, 6)
 
@@ -84,11 +128,19 @@ func getVecExprBenchCaseForRegexp(retType types.EvalType, inputs ...interface{})
 		}
 	}
 
-	return vecExprBenchCase{
+	ret := vecExprBenchCase{
 		retEvalType:   retType,
 		childrenTypes: paramTypes,
 		geners:        gens,
 	}
+
+	if isBin {
+		length := len(inputs)
+		ft := make([]*types.FieldType, length)
+		ft[0] = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
+		ret.childrenFieldTypes = ft
+	}
+	return ret
 }
 
 func setBinCollation(tp *types.FieldType) {
@@ -197,77 +249,49 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 		constants[i] = nil
 	}
 
-	// Prepare data: expr is constant or const null
-	constants[0] = getStringConstant("abc")
-	exprConstCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
-	exprConstCase.constants = make([]*Constant, 3)
-	copy(exprConstCase.constants, constants)
-	constants[0] = nil
+	args := make([]interface{}, 0)
+	args = append(args, interface{}(expr))
+	args = append(args, interface{}(pattern))
+	args = append(args, interface{}(matchType))
 
-	constants[0] = getStringConstNull()
-	exprConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
-	exprConstNullCase.constants = make([]*Constant, 3)
-	copy(exprConstNullCase.constants, constants)
-	constants[0] = nil
+	cases := make([]vecExprBenchCase, 0, 30)
+
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, false, expr, pattern))                         // without match type
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, true, expr, pattern))                          // without match type, with BinCollation
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, false, expr, pattern, matchType))              // with match type
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, true, expr, pattern, matchType))               // with match type, with BinCollation
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, false, make([]string, 0), pattern, matchType)) // Test expr == null
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, true, make([]string, 0), pattern, matchType))  // Test expr == null, with BinCollation
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, false, expr, make([]string, 0), matchType))    // Test pattern == null
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, true, expr, make([]string, 0), matchType))     // Test pattern == null, with BinCollation
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, false, expr, pattern, make([]string, 0)))      // Test matchType == null
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, true, expr, pattern, make([]string, 0)))       // Test matchType == null, with BinCollation
+
+	// Prepare data: expr is constant
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{0: interface{}("abc")}, len(args), constants, args...)) // index 10
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{0: interface{}("abc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, false, map[int]interface{}{0: interface{}("abc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, true, map[int]interface{}{0: interface{}("abc")}, len(args), constants, args...))
 
 	// Prepare data: pattern is constant
-	constants[1] = getStringConstant("abc")
-	patConstCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
-	patConstCase.constants = make([]*Constant, 3)
-	copy(patConstCase.constants, constants)
-	constants[1] = nil
-
-	constants[1] = getStringConstNull()
-	patConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
-	patConstNullCase.constants = make([]*Constant, 3)
-	copy(patConstNullCase.constants, constants)
-	constants[1] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("ab.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{1: interface{}("ab.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, false, map[int]interface{}{1: interface{}("ab.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, true, map[int]interface{}{1: interface{}("ab.")}, len(args), constants, args...))
 
 	// Prepare data: matchType is constant
-	constants[2] = getStringConstant("ims")
-	matchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
-	matchTypeConstCase.constants = make([]*Constant, 3)
-	copy(matchTypeConstCase.constants, constants)
-	constants[2] = nil
-
-	constants[2] = getStringConstNull()
-	matchTypeConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
-	matchTypeConstNullCase.constants = make([]*Constant, 3)
-	copy(matchTypeConstNullCase.constants, constants)
-	constants[2] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{2: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{2: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, false, map[int]interface{}{2: interface{}("msi")}, len(args), constants, args...)) // index 20
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, true, map[int]interface{}{2: interface{}("msi")}, len(args), constants, args...))
 
 	// Prepare data: test memorization
-	constants[1] = getStringConstant("abc")
-	constants[2] = getStringConstant("ims")
-	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType)
-	patAndMatchTypeConstCase.constants = make([]*Constant, 3)
-	copy(patAndMatchTypeConstCase.constants, constants)
-	constants[1] = nil
-	constants[2] = nil
-
-	constants[1] = getStringConstant("abc")
-	patConstMatchTpIgnoredCase := getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern)
-	patConstMatchTpIgnoredCase.constants = make([]*Constant, 2)
-	copy(patConstMatchTpIgnoredCase.constants, constants[:2])
-	constants[1] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("abc"), 2: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("abc")}, len(args)-1, constants, args...))
 
 	// Build vecBuiltinRegexpLikeCases
 	var vecBuiltinRegexpLikeCases = map[string][]vecExprBenchCase{
-		ast.RegexpLike: {
-			getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern),                         // without match type
-			getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, matchType),              // with match type
-			getVecExprBenchCaseForRegexp(types.ETInt, make([]string, 0), pattern, matchType), // Test expr == null
-			getVecExprBenchCaseForRegexp(types.ETInt, expr, make([]string, 0), matchType),    // Test pattern == null
-			getVecExprBenchCaseForRegexp(types.ETInt, expr, pattern, make([]string, 0)),      // Test matchType == null
-			exprConstCase,
-			exprConstNullCase,
-			patConstCase,
-			patConstNullCase,
-			matchTypeConstCase,
-			matchTypeConstNullCase,
-			patAndMatchTypeConstCase,
-			patConstMatchTpIgnoredCase,
-		},
+		ast.RegexpLike: cases,
 	}
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpLikeCases)
@@ -481,103 +505,48 @@ func TestRegexpSubstrVec(t *testing.T) {
 		constants[i] = nil
 	}
 
-	// Prepare data: expr is constant
-	constants[0] = getStringConstant("好的 好滴 好~")
-	exprConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	exprConstCase.constants = make([]*Constant, 5)
-	copy(exprConstCase.constants, constants)
-	constants[0] = nil
+	cases := make([]vecExprBenchCase, 0, 50)
 
-	constants[0] = getStringConstNull()
-	exprConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	exprConstNullCase.constants = make([]*Constant, 5)
-	copy(exprConstNullCase.constants, constants)
-	constants[0] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETString, false, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETString, true, args...))
+
+	// Prepare data: expr is constant
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...)) // index 5
 
 	// Prepare data: pattern is constant
-	constants[1] = getStringConstant("aB.")
-	patConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	patConstCase.constants = make([]*Constant, 5)
-	copy(patConstCase.constants, constants)
-	constants[1] = nil
-
-	constants[1] = getStringConstNull()
-	patConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	patConstNullCase.constants = make([]*Constant, 5)
-	copy(patConstNullCase.constants, constants)
-	constants[1] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
 
 	// Prepare data: position is constant
-	constants[2] = getIntConstant(2)
-	posConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	posConstCase.constants = make([]*Constant, 5)
-	copy(posConstCase.constants, constants)
-	constants[2] = nil
-
-	constants[2] = getIntConstNull()
-	posConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	posConstNullCase.constants = make([]*Constant, 5)
-	copy(posConstNullCase.constants, constants)
-	constants[2] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...)) // index 10
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: occurrence is constant
-	constants[3] = getIntConstant(2)
-	occurConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	occurConstCase.constants = make([]*Constant, 5)
-	copy(occurConstCase.constants, constants)
-	constants[3] = nil
-
-	constants[3] = getIntConstNull()
-	occurConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	occurConstNullCase.constants = make([]*Constant, 5)
-	copy(occurConstNullCase.constants, constants)
-	constants[3] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...)) // index 15
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: match type is constant
-	constants[4] = getStringConstant("msi")
-	matchTpConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	matchTpConstCase.constants = make([]*Constant, 5)
-	copy(matchTpConstCase.constants, constants)
-	constants[4] = nil
-
-	constants[4] = getStringConstNull()
-	matchTpConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	matchTpConstNullCase.constants = make([]*Constant, 5)
-	copy(matchTpConstNullCase.constants, constants)
-	constants[4] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{4: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{4: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{4: interface{}("msi")}, len(args), constants, args...)) // index 20
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{4: interface{}("msi")}, len(args), constants, args...))
 
 	// Prepare data: test memorization
-	constants[1] = getStringConstant("aB.")
-	constants[4] = getStringConstant("msi")
-	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	patAndMatchTypeConstCase.constants = make([]*Constant, 5)
-	copy(patAndMatchTypeConstCase.constants, constants)
-	constants[1] = nil
-	constants[4] = nil
-
-	constants[1] = getStringConstant("aB.")
-	patConstMatchTypeIgnoredCase := getVecExprBenchCaseForRegexp(types.ETString, args[:4]...)
-	patConstMatchTypeIgnoredCase.constants = make([]*Constant, 4)
-	copy(patConstMatchTypeIgnoredCase.constants, constants[:4])
-	constants[1] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB."), 4: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args)-1, constants, args...))
 
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpSubstrCases = map[string][]vecExprBenchCase{
-		ast.RegexpSubstr: {
-			getVecExprBenchCaseForRegexp(types.ETString, args...),
-			exprConstCase,
-			exprConstNullCase,
-			patConstCase,
-			patConstNullCase,
-			posConstCase,
-			posConstNullCase,
-			occurConstCase,
-			occurConstNullCase,
-			matchTpConstCase,
-			matchTpConstNullCase,
-			patAndMatchTypeConstCase,
-			patConstMatchTypeIgnoredCase,
-		},
+		ast.RegexpSubstr: cases,
 	}
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpSubstrCases)
@@ -843,118 +812,54 @@ func TestRegexpInStrVec(t *testing.T) {
 		constants[i] = nil
 	}
 
-	// Prepare data: expr is constant
-	constants[0] = getStringConstant("好的 好滴 好~")
-	exprConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	exprConstCase.constants = make([]*Constant, 6)
-	copy(exprConstCase.constants, constants)
-	constants[0] = nil
+	cases := make([]vecExprBenchCase, 0, 50)
 
-	constants[0] = getStringConstNull()
-	exprConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	exprConstNullCase.constants = make([]*Constant, 6)
-	copy(exprConstNullCase.constants, constants)
-	constants[0] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, false, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, true, args...))
+
+	// Prepare data: expr is constant
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
 
 	// Prepare data: pattern is constant
-	constants[1] = getStringConstant("aB.")
-	patConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	patConstCase.constants = make([]*Constant, 6)
-	copy(patConstCase.constants, constants)
-	constants[1] = nil
-
-	constants[1] = getStringConstNull()
-	patConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	patConstNullCase.constants = make([]*Constant, 6)
-	copy(patConstNullCase.constants, constants)
-	constants[1] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
 
 	// Prepare data: position is constant
-	constants[2] = getIntConstant(2)
-	posConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	posConstCase.constants = make([]*Constant, 6)
-	copy(posConstCase.constants, constants)
-	constants[2] = nil
-
-	constants[2] = getIntConstNull()
-	posConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	posConstNullCase.constants = make([]*Constant, 6)
-	copy(posConstNullCase.constants, constants)
-	constants[2] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, false, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, true, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: occurrence is constant
-	constants[3] = getIntConstant(2)
-	occurConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	occurConstCase.constants = make([]*Constant, 6)
-	copy(occurConstCase.constants, constants)
-	constants[3] = nil
-
-	constants[3] = getIntConstNull()
-	occurConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	occurConstNullCase.constants = make([]*Constant, 6)
-	copy(occurConstNullCase.constants, constants)
-	constants[3] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: return_option is constant
-	constants[4] = getIntConstant(1)
-	retOptConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	retOptConstCase.constants = make([]*Constant, 6)
-	copy(retOptConstCase.constants, constants)
-	constants[4] = nil
-
-	constants[4] = getIntConstNull()
-	retOptConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	retOptConstNullCase.constants = make([]*Constant, 6)
-	copy(retOptConstNullCase.constants, constants)
-	constants[4] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{4: interface{}(int64(1))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, false, map[int]interface{}{4: interface{}(int64(1))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{4: interface{}(int64(1))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, true, map[int]interface{}{4: interface{}(int64(1))}, len(args), constants, args...))
 
 	// Prepare data: match type is constant
-	constants[5] = getStringConstant("msi")
-	matchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	matchTypeConstCase.constants = make([]*Constant, 6)
-	copy(matchTypeConstCase.constants, constants)
-	constants[5] = nil
-
-	constants[5] = getStringConstNull()
-	matchTypeConstNullCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	matchTypeConstNullCase.constants = make([]*Constant, 6)
-	copy(matchTypeConstNullCase.constants, constants)
-	constants[5] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, false, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, true, true, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
 
 	// Prepare data: test memorization
-	constants[1] = getStringConstant("aB.")
-	constants[5] = getStringConstant("msi")
-	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETInt, args...)
-	patAndMatchTypeConstCase.constants = make([]*Constant, 6)
-	copy(patAndMatchTypeConstCase.constants, constants)
-	constants[1] = nil
-	constants[5] = nil
-
-	constants[1] = getStringConstant("aB.")
-	patConstMatchTypeIgnoredCase := getVecExprBenchCaseForRegexp(types.ETInt, args[:5]...)
-	patConstMatchTypeIgnoredCase.constants = make([]*Constant, 5)
-	copy(patConstMatchTypeIgnoredCase.constants, constants[:5])
-	constants[1] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("aB."), 5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args)-1, constants, args...))
 
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpInStrCases = map[string][]vecExprBenchCase{
-		ast.RegexpInStr: {
-			getVecExprBenchCaseForRegexp(types.ETInt, args...),
-			exprConstCase,
-			exprConstNullCase,
-			patConstCase,
-			patConstNullCase,
-			posConstCase,
-			posConstNullCase,
-			occurConstCase,
-			occurConstNullCase,
-			retOptConstCase,
-			retOptConstNullCase,
-			matchTypeConstCase,
-			matchTypeConstNullCase,
-			patAndMatchTypeConstCase,
-			patConstMatchTypeIgnoredCase,
-		},
+		ast.RegexpInStr: cases,
 	}
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpInStrCases)
@@ -1173,118 +1078,54 @@ func TestRegexpReplaceVec(t *testing.T) {
 		constants[i] = nil
 	}
 
-	// Prepare data: expr is constant
-	constants[0] = getStringConstant("好的 好滴 好~")
-	exprConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	exprConstCase.constants = make([]*Constant, 6)
-	copy(exprConstCase.constants, constants)
-	constants[0] = nil
+	cases := make([]vecExprBenchCase, 0, 50)
 
-	constants[0] = getStringConstNull()
-	exprConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	exprConstNullCase.constants = make([]*Constant, 6)
-	copy(exprConstNullCase.constants, constants)
-	constants[0] = nil
+	// cases = append(cases, getVecExprBenchCaseForRegexp(types.ETString, false, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETString, true, args...))
+
+	// Prepare data: expr is constant
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
 
 	// Prepare data: pattern is constant
-	constants[1] = getStringConstant("aB.")
-	patConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	patConstCase.constants = make([]*Constant, 6)
-	copy(patConstCase.constants, constants)
-	constants[1] = nil
-
-	constants[1] = getStringConstNull()
-	patConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	patConstNullCase.constants = make([]*Constant, 6)
-	copy(patConstNullCase.constants, constants)
-	constants[1] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
 
 	// Prepare data: repl is constant
-	constants[2] = getStringConstant("cc")
-	replConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	replConstCase.constants = make([]*Constant, 6)
-	copy(replConstCase.constants, constants)
-	constants[2] = nil
-
-	constants[2] = getStringConstNull()
-	replConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	replConstNullCase.constants = make([]*Constant, 6)
-	copy(replConstNullCase.constants, constants)
-	constants[2] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{2: interface{}("cc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{2: interface{}("cc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{2: interface{}("cc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{2: interface{}("cc")}, len(args), constants, args...))
 
 	// Prepare data: position is constant
-	constants[3] = getIntConstant(2)
-	posConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	posConstCase.constants = make([]*Constant, 6)
-	copy(posConstCase.constants, constants)
-	constants[3] = nil
-
-	constants[3] = getIntConstNull()
-	posConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	posConstNullCase.constants = make([]*Constant, 6)
-	copy(posConstNullCase.constants, constants)
-	constants[3] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: occurrence is constant
-	constants[4] = getIntConstant(2)
-	occurConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	occurConstCase.constants = make([]*Constant, 6)
-	copy(occurConstCase.constants, constants)
-	constants[4] = nil
-
-	constants[4] = getIntConstNull()
-	occurConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	occurConstNullCase.constants = make([]*Constant, 6)
-	copy(occurConstNullCase.constants, constants)
-	constants[4] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{4: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{4: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{4: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{4: interface{}(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: match type is constant
-	constants[5] = getStringConstant("msi")
-	matchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	matchTypeConstCase.constants = make([]*Constant, 6)
-	copy(matchTypeConstCase.constants, constants)
-	constants[5] = nil
-
-	constants[5] = getStringConstNull()
-	matchTypeConstNullCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	matchTypeConstNullCase.constants = make([]*Constant, 6)
-	copy(matchTypeConstNullCase.constants, constants)
-	constants[5] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, false, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, true, true, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
 
 	// Prepare data: test memorization
-	constants[1] = getStringConstant("aB.")
-	constants[5] = getStringConstant("msi")
-	patAndMatchTypeConstCase := getVecExprBenchCaseForRegexp(types.ETString, args...)
-	patAndMatchTypeConstCase.constants = make([]*Constant, 6)
-	copy(patAndMatchTypeConstCase.constants, constants)
-	constants[1] = nil
-	constants[5] = nil
-
-	constants[1] = getStringConstant("aB.")
-	patConstMatchTypeIgnoredCase := getVecExprBenchCaseForRegexp(types.ETString, args[:5]...)
-	patConstMatchTypeIgnoredCase.constants = make([]*Constant, 5)
-	copy(patConstMatchTypeIgnoredCase.constants, constants[:5])
-	constants[1] = nil
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB."), 5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args)-1, constants, args...))
 
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpReplaceCases = map[string][]vecExprBenchCase{
-		ast.RegexpReplace: {
-			getVecExprBenchCaseForRegexp(types.ETString, args...),
-			exprConstCase,
-			exprConstNullCase,
-			patConstCase,
-			patConstNullCase,
-			replConstCase,
-			replConstNullCase,
-			posConstCase,
-			posConstNullCase,
-			occurConstCase,
-			occurConstNullCase,
-			matchTypeConstCase,
-			matchTypeConstNullCase,
-			patAndMatchTypeConstCase,
-			patConstMatchTypeIgnoredCase,
-		},
+		ast.RegexpReplace: cases,
 	}
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpReplaceCases)

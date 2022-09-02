@@ -1253,6 +1253,7 @@ func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.
 
 		if re.isBinCollation {
 			bexpr = []byte(expr)
+			trimmedBexpr = bexpr
 		}
 
 		repl := params[2].getStringVal(i)
