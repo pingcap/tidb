@@ -15,13 +15,13 @@ package core
 
 import (
 	"container/list"
-	"github.com/pingcap/tidb/util/logutil"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 )
 
