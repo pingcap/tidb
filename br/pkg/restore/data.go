@@ -194,8 +194,6 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 
 	for i := 0; i < totalStores; i++ {
 		select {
-		case <-ctx.Done(): // cancel the main thread
-			break
 		case <-ectx.Done(): // err or cancel, eg.wait will catch the error
 			break
 		case storeMeta := <-metaChan:
@@ -246,17 +244,17 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 		cmd := plan
 		storeId := storeId
 		workers.ApplyOnErrorGroup(eg, func() error {
-			log.Info("send recover cmd to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
+			log.Info("send recover region to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			stream, err := tikvClient.RecoverRegion(ectx)
 			if err != nil {
-				log.Error("create recover cmd failed", zap.Uint64("storeID", storeId))
+				log.Error("create recover region failed", zap.Uint64("storeID", storeId))
 				return errors.Trace(err)
 			}
 
 			// for a TiKV, send the stream
 			for _, s := range cmd {
 				if err = stream.Send(s); err != nil {
-					log.Error("send region recovery command failed", zap.Error(err))
+					log.Error("send region recovery region failed", zap.Error(err))
 					return errors.Trace(err)
 				}
 			}
@@ -267,7 +265,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 				return errors.Trace(err)
 			}
 			recovery.progress.Inc()
-			log.Info("recovery command execution success", zap.Uint64("storeID", reply.GetStoreId()))
+			log.Info("recovery region execution success", zap.Uint64("storeID", reply.GetStoreId()))
 			return nil
 		})
 	}
