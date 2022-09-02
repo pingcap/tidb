@@ -61,10 +61,12 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 			IndexID: ei.indexID,
 		})
 		if err != nil {
-			logutil.BgLogger().Error(LitInfoRemoteDupCheck)
+			logutil.BgLogger().Error(LitInfoRemoteDupCheck, zap.Error(err),
+				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 			return errors.New(LitInfoRemoteDupCheck)
 		} else if hasDupe {
-			logutil.BgLogger().Error(LitErrRemoteDupExistErr)
+			logutil.BgLogger().Error(LitErrRemoteDupExistErr,
+				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 			return tikv.ErrKeyExists
 		}
 	}
