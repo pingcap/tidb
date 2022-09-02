@@ -882,7 +882,11 @@ func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, er
 		return types.ZeroTime, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
+<<<<<<< HEAD
 	res, err := types.ParseTime(sc, fv, b.tp.Tp, int8(b.tp.Decimal))
+=======
+	res, err := types.ParseTimeFromFloatString(sc, fv, b.tp.GetType(), b.tp.GetDecimal())
+>>>>>>> 0482b2e83... expression: fix that the result of expression castRealAsTime is inconsistent with mysql (#37461)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}

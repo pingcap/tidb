@@ -538,7 +538,11 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			times[i] = types.ZeroTime
 			continue
 		}
+<<<<<<< HEAD
 		tm, err := types.ParseTime(stmt, fv, b.tp.Tp, fsp)
+=======
+		tm, err := types.ParseTimeFromFloatString(stmt, fv, b.tp.GetType(), fsp)
+>>>>>>> 0482b2e83... expression: fix that the result of expression castRealAsTime is inconsistent with mysql (#37461)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err

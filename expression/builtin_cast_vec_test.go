@@ -164,8 +164,9 @@ func (s *testEvaluatorSuite) TestVectorizedCastRealAsTime(c *C) {
 	}
 	cast := &builtinCastRealAsTimeSig{baseFunc}
 
+	inputChunk, expect := genCastRealAsTime()
 	inputs := []*chunk.Chunk{
-		genCastRealAsTime(),
+		inputChunk,
 	}
 
 	for _, input := range inputs {
@@ -173,6 +174,7 @@ func (s *testEvaluatorSuite) TestVectorizedCastRealAsTime(c *C) {
 		c.Assert(cast.vecEvalTime(input, result), IsNil)
 		for i := 0; i < input.NumRows(); i++ {
 			res, isNull, err := cast.evalTime(input.GetRow(i))
+<<<<<<< HEAD
 			c.Assert(err, IsNil)
 			if isNull {
 				c.Assert(result.IsNull(i), IsTrue)
@@ -180,21 +182,74 @@ func (s *testEvaluatorSuite) TestVectorizedCastRealAsTime(c *C) {
 			}
 			c.Assert(result.IsNull(i), IsFalse)
 			c.Assert(result.GetTime(i).Compare(res), Equals, 0)
+=======
+			require.NoError(t, err)
+			if expect[i] == nil {
+				require.True(t, result.IsNull(i))
+				require.True(t, isNull)
+				continue
+			}
+			require.Equal(t, result.GetTime(i), *expect[i])
+			require.Equal(t, res, *expect[i])
+>>>>>>> 0482b2e83... expression: fix that the result of expression castRealAsTime is inconsistent with mysql (#37461)
 		}
 	}
 }
 
-func genCastRealAsTime() *chunk.Chunk {
-	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 10)
-	gen := newDefaultRandGen()
-	for i := 0; i < 10; i++ {
-		if i < 5 {
-			input.AppendFloat64(0, 0)
-		} else {
-			input.AppendFloat64(0, gen.Float64()*100000)
-		}
-	}
-	return input
+func getTime(year int, month int, day int, hour int, minute int, second int) *types.Time {
+	retTime := types.NewTime(types.FromDate(year, month, day, hour, minute, second, 0), mysql.TypeDatetime, types.DefaultFsp)
+	return &retTime
+}
+
+func genCastRealAsTime() (*chunk.Chunk, []*types.Time) {
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 20)
+	expect := make([]*types.Time, 0, 20)
+
+	// valid
+	input.AppendFloat64(0, 0)
+	input.AppendFloat64(0, 101.1)
+	input.AppendFloat64(0, 111.1)
+	input.AppendFloat64(0, 1122.1)
+	input.AppendFloat64(0, 31212.111)
+	input.AppendFloat64(0, 121212.1111)
+	input.AppendFloat64(0, 1121212.111111)
+	input.AppendFloat64(0, 11121212.111111)
+	input.AppendFloat64(0, 99991111.1111111)
+	input.AppendFloat64(0, 201212121212.1111111)
+	input.AppendFloat64(0, 20121212121212.1111111)
+	// invalid
+	input.AppendFloat64(0, 1.1)
+	input.AppendFloat64(0, 48.1)
+	input.AppendFloat64(0, 100.1)
+	input.AppendFloat64(0, 1301.11)
+	input.AppendFloat64(0, 1131.111)
+	input.AppendFloat64(0, 100001111.111)
+	input.AppendFloat64(0, 20121212121260.1111111)
+	input.AppendFloat64(0, 20121212126012.1111111)
+	input.AppendFloat64(0, 20121212241212.1111111)
+
+	expect = append(expect, getTime(0, 0, 0, 0, 0, 0))
+	expect = append(expect, getTime(2000, 1, 1, 0, 0, 0))
+	expect = append(expect, getTime(2000, 1, 11, 0, 0, 0))
+	expect = append(expect, getTime(2000, 11, 22, 0, 0, 0))
+	expect = append(expect, getTime(2003, 12, 12, 0, 0, 0))
+	expect = append(expect, getTime(2012, 12, 12, 0, 0, 0))
+	expect = append(expect, getTime(112, 12, 12, 0, 0, 0))
+	expect = append(expect, getTime(1112, 12, 12, 0, 0, 0))
+	expect = append(expect, getTime(9999, 11, 11, 0, 0, 0))
+	expect = append(expect, getTime(2020, 12, 12, 12, 12, 12))
+	expect = append(expect, getTime(2012, 12, 12, 12, 12, 12))
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+
+	return input, expect
 }
 
 // for issue https://github.com/pingcap/tidb/issues/16825
