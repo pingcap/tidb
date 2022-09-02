@@ -188,6 +188,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 					storeMeta.regionMetas = append(storeMeta.regionMetas, meta)
 				} else if err == io.EOF {
 					//read to end of stream or any unexpected EOF (e.g remote stopped), err will be catched in eg.wait.
+					// TODO: have a retry here?
 					break
 				} else {
 					return errors.Trace(err)
