@@ -485,26 +485,19 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		// Remove dropped table DDL job from gc_delete_range table.
-		var tids []int64
-		if tblInfo.GetPartitionInfo() != nil {
-			tids = getPartitionIDs(tblInfo)
-		} else {
-			tids = []int64{tblInfo.ID}
-		}
 		ver, err = w.recoverTable(t, job, recoverInfo)
 		if err != nil {
-			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-
-		tblInfo.State = model.StatePublic
-		tblInfo.UpdateTS = t.StartTS
-		job.CtxVars = []interface{}{tids}
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		tableInfo := tblInfo.Clone()
+		tableInfo.State = model.StatePublic
+		tableInfo.UpdateTS = t.StartTS
+		ver, err = updateVersionAndTableInfo(d, t, job, tableInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		tblInfo.State = model.StatePublic
+		tblInfo.UpdateTS = t.StartTS
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
@@ -550,6 +543,7 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to update the label rule to PD")
 	}
+	job.CtxVars = []interface{}{tids}
 	return ver, nil
 }
 
