@@ -57,7 +57,6 @@ var validMatchType = map[string]empty{
 type regexpBaseFuncSig struct {
 	baseBuiltinFunc
 	regexpMemorizedSig
-	compile func(string) (*regexp.Regexp, error)
 }
 
 func (re *regexpBaseFuncSig) clone(from *regexpBaseFuncSig) {
@@ -65,7 +64,6 @@ func (re *regexpBaseFuncSig) clone(from *regexpBaseFuncSig) {
 		re.memorizedRegexp = from.memorizedRegexp.Copy()
 	}
 	re.memorizedErr = from.memorizedErr
-	re.compile = from.compile
 	re.cloneFrom(&from.baseBuiltinFunc)
 }
 
@@ -126,12 +124,12 @@ func (re *regexpBaseFuncSig) genRegexp(pat string, matchType string) (*regexp.Re
 	var err error
 
 	// Generate compiler first
-	re.compile, err = re.genCompile(matchType)
+	compile, err := re.genCompile(matchType)
 	if err != nil {
 		return nil, err
 	}
 
-	return re.compile(pat)
+	return compile(pat)
 }
 
 // ---------------------------------- regexp_like ----------------------------------
@@ -199,12 +197,12 @@ func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 	}
 
-	re.compile, err = re.genCompile(matchType)
+	compile, err := re.genCompile(matchType)
 	if err != nil {
 		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 
-	reg, err := re.compile(pat)
+	reg, err := compile(pat)
 	if err != nil {
 		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
@@ -259,12 +257,12 @@ func (re *regexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		// matchType must be const or null
 		matchType := params[2].getStringVal(0)
 
-		re.compile, err = re.genCompile(matchType)
+		compile, err := re.genCompile(matchType)
 		if err != nil {
 			return err
 		}
 
-		re.initMemoizedRegexp(re.compile, params[1].getCol(), n)
+		re.initMemoizedRegexp(compile, params[1].getCol(), n)
 	}
 
 	result.ResizeInt64(n, false)
@@ -410,12 +408,12 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 	}
 
-	re.compile, err = re.genCompile(matchType)
+	compile, err := re.genCompile(matchType)
 	if err != nil {
 		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 
-	reg, err := re.compile(pat)
+	reg, err := compile(pat)
 	if err != nil {
 		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
@@ -513,12 +511,12 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		// matchType must be const or null
 		matchType := params[4].getStringVal(0)
 
-		re.compile, err = re.genCompile(matchType)
+		compile, err := re.genCompile(matchType)
 		if err != nil {
 			return err
 		}
 
-		re.initMemoizedRegexp(re.compile, params[1].getCol(), n)
+		re.initMemoizedRegexp(compile, params[1].getCol(), n)
 	}
 
 	result.ReserveString(n)
@@ -732,12 +730,12 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 	}
 
-	re.compile, err = re.genCompile(matchType)
+	compile, err := re.genCompile(matchType)
 	if err != nil {
 		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 
-	reg, err := re.compile(pat)
+	reg, err := compile(pat)
 	if err != nil {
 		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
@@ -856,12 +854,12 @@ func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		// matchType must be const or null
 		matchType := params[5].getStringVal(0)
 
-		re.compile, err = re.genCompile(matchType)
+		compile, err := re.genCompile(matchType)
 		if err != nil {
 			return err
 		}
 
-		re.initMemoizedRegexp(re.compile, params[1].getCol(), n)
+		re.initMemoizedRegexp(compile, params[1].getCol(), n)
 	}
 
 	// Start to calculate
@@ -1094,12 +1092,12 @@ func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) 
 		}
 	}
 
-	re.compile, err = re.genCompile(matchType)
+	compile, err := re.genCompile(matchType)
 	if err != nil {
 		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 
-	reg, err := re.compile(pat)
+	reg, err := compile(pat)
 	if err != nil {
 		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
@@ -1228,12 +1226,12 @@ func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		// matchType must be const or null
 		matchType := params[5].getStringVal(0)
 
-		re.compile, err = re.genCompile(matchType)
+		compile, err := re.genCompile(matchType)
 		if err != nil {
 			return err
 		}
 
-		re.initMemoizedRegexp(re.compile, params[1].getCol(), n)
+		re.initMemoizedRegexp(compile, params[1].getCol(), n)
 	}
 
 	result.ReserveString(n)
