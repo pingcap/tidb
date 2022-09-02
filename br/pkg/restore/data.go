@@ -77,7 +77,7 @@ func NewStoreMeta(storeId uint64) StoreMeta {
 type Recovery struct {
 	allStores    []*metapb.Store
 	storeMetas   []StoreMeta
-	recoveryPlan map[uint64][]*recovpb.RecoverCmdRequest
+	recoveryPlan map[uint64][]*recovpb.RecoverRegionRequest
 	maxAllocID   uint64
 	mgr          *conn.Mgr
 	progress     glue.Progress
@@ -86,7 +86,7 @@ type Recovery struct {
 func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress) Recovery {
 	totalStores := len(allStores)
 	var storeMetas = make([]StoreMeta, totalStores)
-	var regionRecovers = make(map[uint64][]*recovpb.RecoverCmdRequest, totalStores)
+	var regionRecovers = make(map[uint64][]*recovpb.RecoverRegionRequest, totalStores)
 	return Recovery{
 		allStores:    allStores,
 		storeMetas:   storeMetas,
@@ -247,7 +247,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 		storeId := storeId
 		workers.ApplyOnErrorGroup(eg, func() error {
 			log.Info("send recover cmd to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
-			stream, err := tikvClient.RecoverCmd(ectx)
+			stream, err := tikvClient.RecoverRegion(ectx)
 			if err != nil {
 				log.Error("create recover cmd failed", zap.Uint64("storeID", storeId))
 				return errors.Trace(err)
@@ -296,14 +296,14 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 		workers.ApplyOnErrorGroup(eg, func() error {
 			log.Info("send wait apply to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			req := &recovpb.WaitApplyRequest{StoreId: storeId}
-			resp, err := tikvClient.WaitApply(ectx, req)
+			_, err := tikvClient.WaitApply(ectx, req)
 			if err != nil {
 				log.Error("wait apply failed", zap.Uint64("storeID", storeId))
 				return errors.Trace(err)
 			}
 
 			recovery.progress.Inc()
-			log.Info("recovery wait apply execution success", zap.Uint64("storeID", resp.GetStoreId()))
+			log.Info("recovery wait apply execution success", zap.Uint64("storeID", storeId))
 			return nil
 		})
 	}
@@ -479,7 +479,7 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 			// 1, peer is tomebstone
 			// 2, split region in progressing, old one can be a tomebstone
 			for _, peer := range peers {
-				plan := &recovpb.RecoverCmdRequest{Tombstone: true, AsLeader: false}
+				plan := &recovpb.RecoverRegionRequest{Tombstone: true, AsLeader: false}
 				recovery.recoveryPlan[peer.storeId] = append(recovery.recoveryPlan[peer.storeId], plan)
 			}
 		} else {
@@ -487,7 +487,7 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 			log.Debug("valid peer", zap.Uint64("peer", regionId))
 			for i, peer := range peers {
 				log.Debug("make plan", zap.Uint64("storeid", peer.storeId), zap.Uint64("regionid", peer.RegionId))
-				plan := &recovpb.RecoverCmdRequest{RegionId: peer.RegionId, AsLeader: (i == 0)}
+				plan := &recovpb.RecoverRegionRequest{RegionId: peer.RegionId, AsLeader: (i == 0)}
 				// sorted by log term -> last index -> commit index in a region
 				if plan.AsLeader {
 					log.Debug("as leader peer", zap.Uint64("storeid", peer.storeId), zap.Uint64("regionid", peer.RegionId))
