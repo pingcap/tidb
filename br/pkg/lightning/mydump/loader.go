@@ -88,6 +88,18 @@ func NewMDTableMeta(charSet string) *MDTableMeta {
 }
 
 func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {
+	schemaFilePath := m.SchemaFile.FileMeta.Path
+	if len(schemaFilePath) <= 0 {
+		return "", errors.Errorf("schema file is missing for the table '%s.%s'", m.DB, m.Name)
+	}
+	fileExists, err := store.FileExists(ctx, schemaFilePath)
+	if err != nil {
+		return "", errors.Annotate(err, "check table schema file exists error")
+	}
+	if !fileExists {
+		return "", errors.Errorf("the provided schema file (%s) for the table '%s.%s' doesn't exist", schemaFilePath, m.DB, m.Name)
+	}
+	// m.Name is empty or schemaFilePath is empty
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
 		log.FromContext(ctx).Error("failed to extract table schema",
