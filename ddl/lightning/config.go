@@ -91,9 +91,7 @@ func adjustImportMemory(memRoot MemRoot, cfg *config.Config) {
 		zap.Int("range concurrency", cfg.TikvImporter.RangeConcurrency))
 
 	maxLimit := memRoot.MaxMemoryQuota()
-	if defaultMemSize > maxLimit {
-		scale = defaultMemSize / maxLimit
-	}
+	scale = defaultMemSize / maxLimit
 
 	if scale == 1 || scale == 0 {
 		return
