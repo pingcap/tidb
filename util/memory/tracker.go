@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
@@ -457,7 +456,6 @@ func (t *Tracker) recordRelease(bytes int64) {
 }
 
 func (t *Tracker) release(bytes int64) {
-	time.Sleep(time.Millisecond * 100)
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, -bytes)
 		if label, ok := MetricsTypes[tracker.label]; ok {
