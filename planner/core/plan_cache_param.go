@@ -66,7 +66,7 @@ func checkStmtNode4GeneralPlanCache(sctx sessionctx.Context, stmt ast.StmtNode) 
 	if !ok {
 		return false
 	}
-	if len(n.TableHints) > 0 || n.Distinct == true || n.GroupBy != nil || n.Having != nil ||
+	if len(n.TableHints) > 0 || n.Distinct || n.GroupBy != nil || n.Having != nil ||
 		n.WindowSpecs != nil || n.OrderBy != nil || n.Limit != nil || n.LockInfo != nil || n.SelectIntoOpt != nil {
 		return false
 	}
