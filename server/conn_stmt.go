@@ -650,11 +650,20 @@ func parseBinaryDurationWithMS(pos int, paramValues []byte,
 }
 
 func (cc *clientConn) handleStmtClose(data []byte) (err error) {
+	stmtID := 0
+	defer func() {
+		logutil.Logger(context.Background()).Warn("[DEBUG] [STMT_CLOSE]",
+			zap.String("connInfo", cc.String()),
+			zap.String("status", cc.SessionStatusToString()),
+			zap.Int("stmtID", stmtID),
+			zap.Error(err),
+		)
+	}()
 	if len(data) < 4 {
 		return
 	}
 
-	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
+	stmtID = int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt != nil {
 		return stmt.Close()
