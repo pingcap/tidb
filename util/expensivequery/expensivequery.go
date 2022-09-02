@@ -57,6 +57,7 @@ func (eqh *Handle) Run() {
 	defer ticker.Stop()
 	sm := eqh.sm.Load().(util.SessionManager)
 	record := &memoryUsageAlarm{}
+	serverMemoryQuota := &serverMemoryQuota{}
 	for {
 		select {
 		case <-ticker.C:
@@ -91,6 +92,7 @@ func (eqh *Handle) Run() {
 			if record.err == nil {
 				record.alarm4ExcessiveMemUsage(sm)
 			}
+			serverMemoryQuota.Check(variable.ServerMemoryQuota.Load())
 		case <-eqh.exitCh:
 			return
 		}

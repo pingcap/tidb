@@ -76,6 +76,8 @@ type Tracker struct {
 	bytesReleased int64            // Released bytes.
 	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
 	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
+	isSession     bool             // isSession indicates whether this tracker is bound for session
+	IsKilled      atomic.Bool      // IsKilled indicates whether this session is killed because OOM
 }
 
 type actionMu struct {
@@ -100,6 +102,9 @@ type bytesLimits struct {
 	bytesHardLimit int64 // bytesHardLimit <= 0 means no limit, used for actionMuForHardLimit.
 	bytesSoftLimit int64 // bytesSoftLimit <= 0 means no limit, used for actionMuForSoftLimit.
 }
+
+// MemUsageTop1Tracker record the tracker that use memory Usage
+var MemUsageTop1Tracker atomic.Pointer[Tracker]
 
 // InitTracker initializes a memory tracker.
 //  1. "label" is the label used in the usage string.
@@ -354,8 +359,11 @@ func (t *Tracker) Consume(bs int64) {
 	if bs == 0 {
 		return
 	}
-	var rootExceed, rootExceedForSoftLimit *Tracker
+	var rootExceed, rootExceedForSoftLimit, sessionTracker *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.isSession {
+			sessionTracker = tracker
+		}
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
 		bytesReleased := atomic.LoadInt64(&tracker.bytesReleased)
 		limits := tracker.bytesLimit.Load().(*bytesLimits)
@@ -395,6 +403,24 @@ func (t *Tracker) Consume(bs int64) {
 	}
 	if bs > 0 && rootExceed != nil {
 		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
+	}
+
+	if sessionTracker != nil {
+		// Kill
+		if sessionTracker.IsKilled.Load() {
+			tryAction(&sessionTracker.actionMuForHardLimit, sessionTracker)
+		}
+		memUsage := sessionTracker.BytesConsumed()
+		if memUsage < TrackMemWhenExceeds {
+			return
+		}
+		// Update Top1
+		oldTracker := MemUsageTop1Tracker.Load()
+		for oldTracker.Compare(sessionTracker) {
+			if MemUsageTop1Tracker.CompareAndSwap(oldTracker, sessionTracker) {
+				break
+			}
+		}
 	}
 }
 
@@ -541,6 +567,17 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 // FormatBytes uses to format bytes, this function will prune precision before format bytes.
 func (*Tracker) FormatBytes(numBytes int64) string {
 	return FormatBytes(numBytes)
+}
+
+// Compare indicates whether t2 byteConsumed is bigger than t byteConsumed.
+func (t *Tracker) Compare(t2 *Tracker) bool {
+	if t == nil {
+		return true
+	}
+	if t2 == nil {
+		return false
+	}
+	return t.BytesConsumed() < t2.BytesConsumed()
 }
 
 // BytesToString converts the memory consumption to a readable string.
