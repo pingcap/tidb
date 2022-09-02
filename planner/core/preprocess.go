@@ -309,10 +309,15 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 		}
 		return in, true
-	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
+	case *ast.RecoverTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
+		return in, true
+	case *ast.FlashBackTableStmt:
+		if len(node.NewName) > 0 {
+			p.checkFlashbackTableGrammar(node)
+		}
 		return in, true
 	case *ast.FlashBackDatabaseStmt:
 		if len(node.NewName) > 0 {
@@ -790,6 +795,12 @@ func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	if isIncorrectName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+	}
+}
+
+func (p *preprocessor) checkFlashbackTableGrammar(stmt *ast.FlashBackTableStmt) {
+	if isIncorrectName(stmt.NewName) {
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(stmt.NewName)
 	}
 }
 

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -172,6 +173,7 @@ func TestFlashbackTable(t *testing.T) {
 	// Test for flashback to new table.
 	tk.MustExec("drop table t_flashback")
 	tk.MustExec("create table t_flashback (a int);")
+	tk.MustGetErrMsg("flashback table t_flashback to ` `", dbterror.ErrWrongTableName.GenWithStack("Incorrect table name ' '").Error())
 	tk.MustExec("flashback table t_flashback to t_flashback2")
 	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
