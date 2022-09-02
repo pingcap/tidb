@@ -177,7 +177,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 			log.Info("read meta from tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			stream, err := tikvClient.ReadRegionMeta(ectx, &recovpb.ReadRegionMetaRequest{StoreId: storeId})
 			if err != nil {
-				log.Error("read region meta failied", zap.Uint64("storeID", storeId))
+				log.Error("read region meta failed", zap.Uint64("storeID", storeId))
 				return errors.Trace(err)
 			}
 
@@ -190,7 +190,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 				} else if err == io.EOF {
 					//read to end of stream or any unexpected EOF (e.g remote stopped), err will be catched in eg.wait.
 					break
-				} else if err != nil {
+				} else {
 					return errors.Trace(err)
 				}
 			}
