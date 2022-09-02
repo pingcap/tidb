@@ -232,9 +232,8 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRa
 // 3. before flashback done, get key ranges, send flashback RPC.
 func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var flashbackTS uint64
-	var startKey kv.Key
 	var pdScheduleValue map[string]interface{}
-	if err := job.DecodeArgs(&flashbackTS, &startKey, &pdScheduleValue); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -279,7 +278,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	}
 
 	// Stage 3, get key ranges.
-	_, err = GetFlashbackKeyRanges(w.sess, startKey)
+	_, err = GetFlashbackKeyRanges(w.sess, tablecodec.EncodeTablePrefix(0))
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -290,9 +289,8 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 func finishFlashbackCluster(w *worker, job *model.Job) error {
 	var flashbackTS uint64
-	var startKey kv.Key
 	var pdScheduleValue map[string]interface{}
-	if err := job.DecodeArgs(&flashbackTS, &startKey, &pdScheduleValue); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue); err != nil {
 		return errors.Trace(err)
 	}
 

@@ -2599,7 +2599,7 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 	job := &model.Job{
 		Type:       model.ActionFlashbackCluster,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{flashbackTS, tablecodec.EncodeTablePrefix(0), map[string]interface{}{}},
+		Args:       []interface{}{flashbackTS, map[string]interface{}{}},
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
