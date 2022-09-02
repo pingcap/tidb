@@ -151,12 +151,18 @@ func addToSlice(schema string, tableName string, tableID int64, nonFlashbackIDs,
 	return nonFlashbackIDs, allIDs
 }
 
-// GetFlashbackKeyRanges get keyRanges for flashback cluster
+// GetFlashbackKeyRanges make keyRanges efficiently for flashback cluster when many tables in cluster,
+// The time complexity is O(nlogn).
 func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRange, error) {
 	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
 
+	// The semantic of keyRanges(output).
 	var keyRanges []kv.KeyRange
+
+	// The allPhysicalIDs stores all physical tables IDs in TiDB cluster.
+	// The nonFlashbackPhysicalIDs holds all tables that don't need to do flashback.
 	var allPhysicalIDs, nonFlashbackPhysicalIDs []int64
+
 	for _, db := range schemas {
 		for _, table := range db.Tables {
 			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
