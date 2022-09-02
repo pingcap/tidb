@@ -32,7 +32,7 @@ type Config struct {
 	BackoffTime time.Duration `toml:"backoff-time" json:"backoff-time"`
 	// The gap between calculating checkpoints.
 	TickDuration time.Duration `toml:"tick-interval" json:"tick-interval"`
-	// The backoff time of full scan.
+	// The backoff time of 	full scan.
 	FullScanTick int `toml:"full-scan-tick" json:"full-scan-tick"`
 
 	// Whether enable the optimization -- use a cached heap to advancing the global checkpoint.
@@ -40,6 +40,7 @@ type Config struct {
 	AdvancingByCache bool `toml:"advancing-by-cache" json:"advancing-by-cache"`
 }
 
+// DefineFlagsForCheckpointAdvancerConfig set flags for checkpoint advancer config.
 func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
 	f.Duration(flagBackoffTime, DefaultBackOffTime, "The gap between two retries.")
 	f.Duration(flagTickInterval, DefaultTickInterval, "From how long we trigger the tick (advancing the checkpoint).")
@@ -47,6 +48,7 @@ func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
 	f.Int(flagFullScanDiffTick, DefaultFullScanTick, "The backoff of full scan.")
 }
 
+// Default get default config
 func Default() Config {
 	return Config{
 		BackoffTime:      DefaultBackOffTime,
@@ -56,6 +58,7 @@ func Default() Config {
 	}
 }
 
+// GetFromFlags get flag to set config.
 func (conf *Config) GetFromFlags(f *pflag.FlagSet) error {
 	var err error
 	conf.BackoffTime, err = f.GetDuration(flagBackoffTime)
