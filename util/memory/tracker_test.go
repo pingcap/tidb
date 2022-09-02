@@ -16,6 +16,10 @@ package memory
 
 import (
 	"errors"
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/stretchr/testify/require"
 	"math/rand"
 	"runtime"
 	"runtime/debug"
@@ -23,11 +27,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/stretchr/testify/require"
+	"time"
 )
 
 func TestSetLabel(t *testing.T) {
@@ -110,12 +110,14 @@ func TestRelease(t *testing.T) {
 	require.Equal(t, int64(0), parentTracker.BytesConsumed())
 	require.Equal(t, int64(0), tracker.BytesReleased())
 	require.Equal(t, int64(100), parentTracker.BytesReleased())
-	// call GC() twice to workaround as the same way GO does due to GC() returns without finishing sweep
-	// https://github.com/golang/go/issues/45315
-	runtime.GC()
-	runtime.GC()
-	require.Equal(t, int64(0), parentTracker.BytesReleased())
-
+	// finalizer func is called async, need to wait for it to be called
+	for {
+		runtime.GC()
+		if parentTracker.BytesReleased() == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
 	waitGroup := sync.WaitGroup{}
 	waitGroup.Add(10)
 	for i := 0; i < 10; i++ {
@@ -132,14 +134,17 @@ func TestRelease(t *testing.T) {
 		}()
 	}
 	waitGroup.Wait()
-	// call GC() twice to workaround as the same way GO does due to GC() returns without finishing sweep
-	// https://github.com/golang/go/issues/45315
-	runtime.GC()
-	runtime.GC()
+	// finalizer func is called async, need to wait for it to be called
+	for {
+		runtime.GC()
+		if parentTracker.BytesReleased() == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
 	require.Equal(t, int64(0), tracker.BytesConsumed())
 	require.Equal(t, int64(0), parentTracker.BytesConsumed())
 	require.Equal(t, int64(0), tracker.BytesReleased())
-	require.Equal(t, int64(0), parentTracker.BytesReleased())
 }
 
 func TestBufferedConsumeAndRelease(t *testing.T) {
@@ -162,11 +167,14 @@ func TestBufferedConsumeAndRelease(t *testing.T) {
 	tracker.BufferedRelease(&bufferedReleaseSize, int64(TrackMemWhenExceeds)/2)
 	require.Equal(t, int64(0), parentTracker.BytesConsumed())
 	require.Equal(t, int64(TrackMemWhenExceeds), parentTracker.BytesReleased())
-	// call GC() twice to workaround as the same way GO does due to GC() returns without finishing sweep
-	// https://github.com/golang/go/issues/45315
-	runtime.GC()
-	runtime.GC()
-	require.Equal(t, int64(0), parentTracker.BytesReleased())
+	// finalizer func is called async, need to wait for it to be called
+	for {
+		runtime.GC()
+		if parentTracker.BytesReleased() == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
 }
 
 func TestOOMAction(t *testing.T) {
