@@ -222,7 +222,7 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRa
 // A Flashback has 3 different stages.
 // 1. before lock flashbackClusterJobID, check clusterJobID and lock it.
 // 2. before flashback start, check timestamp, disable GC and close PD schedule.
-// 3. before flashback done.
+// 3. before flashback done, get key ranges, send flashback RPC.
 func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var flashbackTS uint64
 	var startKey kv.Key
@@ -237,16 +237,18 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, err
 	}
 
-	// stage 1, check and set FlashbackClusterJobID, save pd schedule.
+	// Stage 1, check and set FlashbackClusterJobID, and save the PD schedule.
 	if flashbackJobID == 0 {
 		err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			return meta.NewMeta(txn).SetFlashbackClusterJobID(job.ID)
 		})
 		if err != nil {
 			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
 		}
 		if err = savePDSchedule(job); err != nil {
 			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
 		}
 		return ver, errors.Trace(err)
 	} else if flashbackJobID != job.ID {
@@ -254,7 +256,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
 	}
 
-	// stage 2, check flashbackTS, close GC and pd schedule.
+	// Stage 2, check flashbackTS, close GC and PD schedule.
 	if job.SnapshotVer == 0 {
 		if err = checkFlashbackCluster(w, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
@@ -269,7 +271,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, err
 	}
 
-	// stage 3, get key ranges.
+	// Stage 3, get key ranges.
 	_, err = GetFlashbackKeyRanges(w.sess, startKey)
 	if err != nil {
 		return ver, errors.Trace(err)
