@@ -672,4 +672,5 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
+	core.ExtractSelectAndNormalizeDigest = ExtractSelectAndNormalizeDigest
 }
