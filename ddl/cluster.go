@@ -256,7 +256,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		return ver, errors.Trace(err)
+		return ver, nil
 	} else if flashbackJobID != job.ID {
 		job.State = model.JobStateCancelled
 		return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
@@ -274,7 +274,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		job.SnapshotVer = snapVer.Ver
-		return ver, err
+		return ver, nil
 	}
 
 	// Stage 3, get key ranges.
