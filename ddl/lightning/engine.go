@@ -134,7 +134,7 @@ func (ei *engineInfo) NewWriterCtx(id int) (*WriterContext, error) {
 	ei.memRoot.RefreshConsumption()
 	ok := ei.memRoot.CheckConsume(StructSizeWriterCtx)
 	if !ok {
-		return nil, logAllocMemFailedEngine(ei.memRoot, ei.jobID, ei.indexID)
+		return nil, genEngineAllocMemFailedErr(ei.memRoot, ei.jobID, ei.indexID)
 	}
 
 	wCtx, err := ei.newWriterContext(id)

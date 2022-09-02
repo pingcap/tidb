@@ -58,14 +58,14 @@ const (
 	LitInfoUnsafeImport     string = "[ddl-lightning] do a partial import data into the storage"
 )
 
-func logAllocMemFailedBackend(memRoot MemRoot, jobID int64) error {
+func genBackendAllocMemFailedErr(memRoot MemRoot, jobID int64) error {
 	logutil.BgLogger().Warn(LitErrAllocMemFail, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", memRoot.MaxMemoryQuota()))
 	return errors.New(LitErrOutMaxMem)
 }
 
-func logAllocMemFailedEngine(memRoot MemRoot, jobID, idxID int64) error {
+func genEngineAllocMemFailedErr(memRoot MemRoot, jobID, idxID int64) error {
 	logutil.BgLogger().Warn(LitErrAllocMemFail, zap.Int64("job ID", jobID),
 		zap.Int64("index ID", idxID),
 		zap.Int64("current memory usage", memRoot.CurrentUsage()),

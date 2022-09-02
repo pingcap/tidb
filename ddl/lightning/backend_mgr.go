@@ -54,7 +54,7 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 		m.memRoot.RefreshConsumption()
 		ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
 		if !ok {
-			return nil, logAllocMemFailedBackend(m.memRoot, jobID)
+			return nil, genBackendAllocMemFailedErr(m.memRoot, jobID)
 		}
 		cfg, err := generateLightningConfig(m.memRoot, jobID, unique)
 		if err != nil {
