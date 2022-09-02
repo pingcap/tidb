@@ -1807,10 +1807,29 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
-	if execStmt, ok := cc.ctx.Parameterize(ctx, sql); ok {
-		stmts = append(stmts, execStmt)
-	} else if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
+	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		return err
+	}
+
+	if cc.ctx.GetSessionVars().EnableGeneralPlanCache && len(stmts) == 1 {
+		stmt := stmts[0]
+		paramSQL, params, ok := plannercore.ParameterizeAST(&cc.ctx, stmt)
+		if ok {
+			// convert to exec-stmt
+			pcStmt := cc.ctx.GetSessionVars().GetGeneralPlanCacheStmt(paramSQL)
+			if pcStmt == nil {
+				pcStmt, _, _, err = plannercore.GeneratePlanCacheStmtWithAST(ctx, &cc.ctx, stmt)
+				if err != nil {
+					panic("???")
+				}
+				cc.ctx.GetSessionVars().AddGeneralPlanCacheStmt(paramSQL, pcStmt)
+			}
+			stmts[0] = &ast.ExecuteStmt{
+				PrepStmt:        pcStmt,
+				BinaryArgs:      params,
+				FromGeneralStmt: true,
+			}
+		}
 	}
 
 	if len(stmts) == 0 {
