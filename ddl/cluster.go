@@ -16,16 +16,21 @@ package ddl
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"golang.org/x/exp/slices"
 )
 
 var pdScheduleKey = []string{
@@ -36,15 +41,12 @@ var pdScheduleKey = []string{
 	"replica-schedule-limit",
 }
 
-func closePDSchedule(job *model.Job) error {
-	if err := savePDSchedule(job); err != nil {
-		return err
-	}
-	saveValue := make(map[string]interface{})
+func closePDSchedule() error {
+	closeMap := make(map[string]interface{})
 	for _, key := range pdScheduleKey {
-		saveValue[key] = 0
+		closeMap[key] = 0
 	}
-	return infosync.SetPDScheduleConfig(context.Background(), saveValue)
+	return infosync.SetPDScheduleConfig(context.Background(), closeMap)
 }
 
 func savePDSchedule(job *model.Job) error {
@@ -90,20 +92,21 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
-func checkFlashbackCluster(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
+func checkAndSetFlashbackClusterInfo(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
 	sess, err := w.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer w.sessPool.put(sess)
 
+	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
+		return err
+	}
+
 	if err = gcutil.DisableGC(sess); err != nil {
 		return err
 	}
-	if err = closePDSchedule(job); err != nil {
-		return err
-	}
-	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
+	if err = closePDSchedule(); err != nil {
 		return err
 	}
 
@@ -140,13 +143,97 @@ func checkFlashbackCluster(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, f
 	return nil
 }
 
+type flashbackID struct {
+	id       int64
+	excluded bool
+}
+
+func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []flashbackID) []flashbackID {
+	var excluded bool
+	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") {
+		excluded = true
+	}
+	flashbackIDs = append(flashbackIDs, flashbackID{
+		id:       tableID,
+		excluded: excluded,
+	})
+	return flashbackIDs
+}
+
+// GetFlashbackKeyRanges make keyRanges efficiently for flashback cluster when many tables in cluster,
+// The time complexity is O(nlogn).
+func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRange, error) {
+	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
+
+	// The semantic of keyRanges(output).
+	var keyRanges []kv.KeyRange
+
+	var flashbackIDs []flashbackID
+	for _, db := range schemas {
+		for _, table := range db.Tables {
+			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
+				continue
+			}
+			flashbackIDs = addToSlice(db.Name.L, table.Name.L, table.ID, flashbackIDs)
+			if table.Partition != nil {
+				for _, partition := range table.Partition.Definitions {
+					flashbackIDs = addToSlice(db.Name.L, table.Name.L, partition.ID, flashbackIDs)
+				}
+			}
+		}
+	}
+
+	slices.SortFunc(flashbackIDs, func(a, b flashbackID) bool {
+		return a.id < b.id
+	})
+
+	lastExcludeIdx := -1
+	for i, id := range flashbackIDs {
+		if id.excluded {
+			// Found a range [lastExcludeIdx, i) needs to be added.
+			if i > lastExcludeIdx+1 {
+				keyRanges = append(keyRanges, kv.KeyRange{
+					StartKey: tablecodec.EncodeTablePrefix(flashbackIDs[lastExcludeIdx+1].id),
+					EndKey:   tablecodec.EncodeTablePrefix(flashbackIDs[i-1].id + 1),
+				})
+			}
+			lastExcludeIdx = i
+		}
+	}
+
+	// The last part needs to be added.
+	if lastExcludeIdx < len(flashbackIDs)-1 {
+		keyRanges = append(keyRanges, kv.KeyRange{
+			StartKey: tablecodec.EncodeTablePrefix(flashbackIDs[lastExcludeIdx+1].id),
+			EndKey:   tablecodec.EncodeTablePrefix(flashbackIDs[len(flashbackIDs)-1].id + 1),
+		})
+	}
+
+	for i, ranges := range keyRanges {
+		// startKey smaller than ranges.StartKey, ranges begin with [ranges.StartKey, ranges.EndKey)
+		if ranges.StartKey.Cmp(startKey) > 0 {
+			keyRanges = keyRanges[i:]
+			break
+		}
+		// startKey in [ranges.StartKey, ranges.EndKey), ranges begin with [startKey, ranges.EndKey)
+		if ranges.StartKey.Cmp(startKey) <= 0 && ranges.EndKey.Cmp(startKey) > 0 {
+			keyRanges = keyRanges[i:]
+			keyRanges[0].StartKey = startKey
+			break
+		}
+	}
+
+	return keyRanges, nil
+}
+
 // A Flashback has 3 different stages.
 // 1. before lock flashbackClusterJobID, check clusterJobID and lock it.
-// 2. before reorg start, check timestamp, disable GC and close PD schedule.
-// 3. before reorg done.
+// 2. before flashback start, check timestamp, disable GC and close PD schedule.
+// 3. before flashback done, get key ranges, send flashback RPC.
 func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var flashbackTS uint64
-	if err := job.DecodeArgs(&flashbackTS); err != nil {
+	var pdScheduleValue map[string]interface{}
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -156,27 +243,31 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, err
 	}
 
-	// stage 1, check and set FlashbackClusterJobID.
+	// Stage 1, check and set FlashbackClusterJobID, and save the PD schedule.
 	if flashbackJobID == 0 {
 		err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			return meta.NewMeta(txn).SetFlashbackClusterJobID(job.ID)
 		})
 		if err != nil {
 			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
 		}
-		return ver, errors.Trace(err)
+		if err = savePDSchedule(job); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
 	} else if flashbackJobID != job.ID {
 		job.State = model.JobStateCancelled
 		return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
 	}
 
-	// stage 2, before reorg start, SnapshotVer == 0 means, job has not started reorg
+	// Stage 2, check flashbackTS, close GC and PD schedule.
 	if job.SnapshotVer == 0 {
-		if err = checkFlashbackCluster(w, d, t, job, flashbackTS); err != nil {
+		if err = checkAndSetFlashbackClusterInfo(w, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		// get the current version for reorganization.
 		snapVer, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -186,8 +277,14 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, nil
 	}
 
+	// Stage 3, get key ranges.
+	_, err = GetFlashbackKeyRanges(w.sess, tablecodec.EncodeTablePrefix(0))
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	job.State = model.JobStateDone
-	return ver, errors.Trace(err)
+	return ver, nil
 }
 
 func finishFlashbackCluster(w *worker, job *model.Job) error {
