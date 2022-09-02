@@ -16,10 +16,6 @@ package memory
 
 import (
 	"errors"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/stretchr/testify/require"
 	"math/rand"
 	"runtime"
 	"runtime/debug"
@@ -28,6 +24,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSetLabel(t *testing.T) {
