@@ -2013,7 +2013,7 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	user, data := parseNullTermString(data)
-	logutil.Logger(ctx).Info("[DEBUG] [CHANGE_USER]",
+	logutil.Logger(ctx).Warn("[DEBUG] [CHANGE_USER]",
 		zap.String("connInfo", cc.String()),
 		zap.String("status", cc.SessionStatusToString()),
 		zap.ByteString("user", user),
@@ -2044,7 +2044,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 }
 
 func (cc *clientConn) handleResetConnection(ctx context.Context) error {
-	logutil.Logger(ctx).Info("[DEBUG] [RESET_CONNECTION]",
+	logutil.Logger(ctx).Warn("[DEBUG] [RESET_CONNECTION]",
 		zap.String("connInfo", cc.String()),
 		zap.String("status", cc.SessionStatusToString()),
 	)

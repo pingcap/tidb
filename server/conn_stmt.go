@@ -61,16 +61,17 @@ import (
 	"go.uber.org/zap"
 )
 
-func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
+func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) (err error) {
 	stmtID := 0
 	hasError := false
 	defer func() {
-		logutil.Logger(ctx).Info("[DEBUG] [STMT_PREPARE]",
+		logutil.Logger(ctx).Warn("[DEBUG] [STMT_PREPARE]",
 			zap.String("connInfo", cc.String()),
 			zap.String("status", cc.SessionStatusToString()),
 			zap.String("sql", sql),
 			zap.Int("stmtID", stmtID),
 			zap.Bool("hasError", hasError),
+			zap.Error(err),
 		)
 	}()
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
@@ -146,11 +147,12 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	stmtID := uint32(0)
 	hasError := false
 	defer func() {
-		logutil.Logger(ctx).Info("[DEBUG] [STMT_EXECUTE]",
+		logutil.Logger(ctx).Warn("[DEBUG] [STMT_EXECUTE]",
 			zap.String("connInfo", cc.String()),
 			zap.String("status", cc.SessionStatusToString()),
 			zap.Uint32("stmtID", stmtID),
 			zap.Bool("hasError", hasError),
+			zap.Error(err),
 		)
 	}()
 	if len(data) < 9 {
