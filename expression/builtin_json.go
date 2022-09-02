@@ -427,6 +427,18 @@ type jsonMergeFunctionClass struct {
 	baseFunctionClass
 }
 
+func (c *jsonMergeFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	for i, arg := range args {
+		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge")
+		}
+	}
+	return nil
+}
+
 type builtinJSONMergeSig struct {
 	baseBuiltinFunc
 }
@@ -1050,6 +1062,18 @@ type jsonMergePatchFunctionClass struct {
 	baseFunctionClass
 }
 
+func (c *jsonMergePatchFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	for i, arg := range args {
+		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_patch")
+		}
+	}
+	return nil
+}
+
 func (c *jsonMergePatchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -1105,6 +1129,18 @@ func (b *builtinJSONMergePatchSig) evalJSON(row chunk.Row) (res json.BinaryJSON,
 
 type jsonMergePreserveFunctionClass struct {
 	baseFunctionClass
+}
+
+func (c *jsonMergePreserveFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	for i, arg := range args {
+		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_preserve")
+		}
+	}
+	return nil
 }
 
 func (c *jsonMergePreserveFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
