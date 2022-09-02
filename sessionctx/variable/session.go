@@ -1230,6 +1230,10 @@ type SessionVars struct {
 
 	// GeneralPlanCacheSize controls the size of general plan cache.
 	GeneralPlanCacheSize uint64
+
+	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
+	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
+	ConstraintCheckInPlacePessimistic bool
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.

@@ -715,6 +715,11 @@ func (h *Handle) loadNeededColumnHistograms(reader *statsReader, col model.Table
 	}
 	// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 	colHist.Count = int64(colHist.TotalRowCount())
+	// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+	// So we need add colHist.Count > 0 here.
+	if statsVer != statistics.Version0 || colHist.Count > 0 {
+		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache = h.statsCache.Load().(statsCache)
@@ -937,7 +942,9 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
-			if statsVer != statistics.Version0 {
+			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+			// So we need add col.Count > 0 here.
+			if statsVer != statistics.Version0 || col.Count > 0 {
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
@@ -974,11 +981,13 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
-			if statsVer != statistics.Version0 {
-				col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
+			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+			// So we need add colHist.Count > 0 here.
+			if statsVer != statistics.Version0 || col.Count > 0 {
+				col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			break
 		}
