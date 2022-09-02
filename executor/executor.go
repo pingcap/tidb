@@ -1931,6 +1931,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// in PlanBuilder.buildDataSource
 	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
 		sc.UseDynamicPruneMode = true
+	} else {
+		sc.UseDynamicPruneMode = false
 	}
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
