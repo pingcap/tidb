@@ -216,11 +216,11 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 
 func (recovery *Recovery) getTotalRegions() int {
 	// Group region peer info by region id.
-	var regions = make(map[uint64][]struct{}, 0)
+	var regions = make(map[uint64]struct{}, 0)
 	for _, v := range recovery.storeMetas {
 		for _, m := range v.regionMetas {
-			if regions[m.RegionId] == nil {
-				regions[m.RegionId] = make([]struct{}, 0, len(recovery.allStores))
+			if _, ok := regions[m.RegionId]; !ok {
+				regions[m.RegionId] = struct{}{}
 			}
 		}
 	}
