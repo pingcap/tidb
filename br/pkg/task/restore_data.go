@@ -12,10 +12,9 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
-	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -26,23 +25,25 @@ import (
 )
 
 const (
-	RestoreDataCmd = "Restore Data"
-)
-
-const (
-	flagDumpRegionInfo = "dump-region-info"
+	ResolvedKvDataCmd = "Restore Data"
 )
 
 // DefineRestoreDataFlags defines common flags for the restore command.
 func DefineRestoreDataFlags(command *cobra.Command) {
 	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
-	command.Flags().Bool(flagDumpRegionInfo, false, "dump all regions info")
+	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
+	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
+	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 }
 
 type RestoreDataConfig struct {
 	Config
 	DumpRegionInfo bool `json:"region-info"`
 	DryRun         bool `json:"dry-run"`
+	// TODO: reserved those parameter for performance optimization
+	VolumeType       config.EBSVolumeType `json:"volume-type"`
+	VolumeIOPS       int64                `json:"volume-iops"`
+	VolumeThroughput int64                `json:"volume-throughput"`
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
@@ -52,8 +53,19 @@ func (cfg *RestoreDataConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.DumpRegionInfo, err = flags.GetBool(flagDumpRegionInfo)
+
+	volumeType, err := flags.GetString(flagVolumeType)
 	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.VolumeType = config.EBSVolumeType(volumeType)
+	if !cfg.VolumeType.Valid() {
+		return errors.New("invalid volume type: " + volumeType)
+	}
+	if cfg.VolumeIOPS, err = flags.GetInt64(flagVolumeIOPS); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -68,37 +80,8 @@ func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64,
 	return metaInfo.GetResolvedTS(), metaInfo.TiKVComponent.Replicas, nil
 }
 
-func removeAllPDSchedulers(ctx context.Context, p *pdutil.PdController) (undo pdutil.UndoFunc, err error) {
-	undo = pdutil.Nop
-
-	// during phase-2, pd is fresh and in recovering-mode(recovering-mark=true), there's no leader
-	// so there's no leader or region schedule initially. when phase-2 start force setting leaders, schedule may begin.
-	// we don't want pd do any leader or region schedule during this time, so we set those params to 0
-	// before we force setting leaders
-	scheduleLimitParams := []string{
-		"hot-region-schedule-limit",
-		"leader-schedule-limit",
-		"merge-schedule-limit",
-		"region-schedule-limit",
-		"replica-schedule-limit",
-	}
-	pdConfigGenerators := pdutil.DefaultExpectPDCfgGenerators()
-	for _, param := range scheduleLimitParams {
-		pdConfigGenerators[param] = func(int, interface{}) interface{} { return 0 }
-	}
-
-	oldPDConfig, _, err1 := p.RemoveSchedulersWithConfigGenerator(ctx, pdConfigGenerators)
-	if err1 != nil {
-		err = err1
-		return
-	}
-
-	undo = p.GenRestoreSchedulerFunc(oldPDConfig, pdConfigGenerators)
-	return undo, errors.Trace(err)
-}
-
 // RunRestore starts a restore task inside the current goroutine.
-func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *RestoreDataConfig) error {
+func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *RestoreDataConfig) error {
 	startAll := time.Now()
 	defer summary.Summary(cmdName)
 
@@ -107,7 +90,7 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 
 	// genenic work included opentrace, and restore client etc.
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("task.RunRestoreData", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("task.runResolveKvData", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -129,7 +112,7 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 		return errors.Trace(err)
 	}
 
-	resolveTs, totalTiKVs, err := ReadBackupMetaData(ctx, externStorage)
+	resolveTs, numBackupStore, err := ReadBackupMetaData(ctx, externStorage)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -154,7 +137,7 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 
 	// stop scheduler before recover data
 	log.Info("starting to remove some PD schedulers")
-	restoreFunc, e := removeAllPDSchedulers(ctx, mgr.PdController)
+	restoreFunc, e := mgr.RemoveAllPDSchedulers(ctx)
 	if e != nil {
 		return errors.Trace(err)
 	}
@@ -169,13 +152,18 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 	}()
 
 	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), connutil.SkipTiFlash)
+	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	numOnlineStore := len(allStores)
+	// progress = read meta + send recovery + resolve kv data.
+	progress := g.StartProgress(ctx, cmdName, int64(numOnlineStore*3), !cfg.LogProgress)
+	go progressFileWriterRoutine(ctx, progress, int64(numOnlineStore*3))
 
-	if len(allStores) != totalTiKVs {
-		log.Error("the restore meta contains the number of tikvs inconsist with the resore cluster", zap.Int("current stores", len(allStores)), zap.Int("backup stores", totalTiKVs))
+	// in this version, it suppose to have the same number of tikvs between backup cluster and restore cluster
+	if numOnlineStore != numBackupStore {
+		log.Error("the restore meta contains the number of tikvs inconsist with the resore cluster", zap.Int("current stores", len(allStores)), zap.Int("backup stores", numBackupStore))
 		return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
 			"number of tikvs mismatch")
 	}
@@ -185,7 +173,7 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 	if cfg.DryRun {
 		totalRegions = 1024
 	} else {
-		totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr.GetTLSConfig(), cfg.DumpRegionInfo)
+		totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr, progress)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -195,6 +183,11 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 	if err := mgr.UnmarkRecovering(ctx); err != nil {
 		return errors.Trace(err)
 	}
+
+	//TODO: restore volume type into origin type
+	//ModifyVolume(*ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) by backupmeta
+
+	progress.Close()
 	summary.CollectDuration("restore duration", time.Since(startAll))
 	summary.SetSuccessStatus(true)
 	return nil

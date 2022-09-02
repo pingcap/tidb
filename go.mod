@@ -241,6 +241,5 @@ require (
 replace (
 	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
-
 	github.com/pingcap/tidb/parser => ./parser
 )

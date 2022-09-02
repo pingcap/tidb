@@ -152,7 +152,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 
 	// Step.1.2 stop scheduler as much as possible.
 	log.Info("starting to remove some PD schedulers")
-	restoreFunc, e := mgr.RemoveSchedulers(ctx)
+	restoreFunc, e := mgr.RemoveAllPDSchedulers(ctx)
 	if e != nil {
 		return errors.Trace(err)
 	}
@@ -170,6 +170,8 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		}
 	}()
 
+	// TODO: suggest to wait ongoing change peer finish, otherwise restore may face long time waitapply to last log.
+
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
 	clusterVersion, err := mgr.GetClusterVersion(ctx)
 	if err != nil {
@@ -179,12 +181,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	if normalizedVer == nil {
 		return errors.New("invalid cluster version")
 	}
-	allocID, err := mgr.GetBaseAllocID(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Info("get pd cluster info", zap.Stringer("cluster version", normalizedVer),
-		zap.Uint64("alloc-id", allocID))
 
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
@@ -239,7 +235,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// NOTE: maybe define the meta file in kvproto in the future.
 	// but for now json is enough.
 	backupInfo.SetClusterVersion(normalizedVer.String())
-	backupInfo.SetAllocID(allocID)
 	backupInfo.SetResolvedTS(resolvedTs)
 	backupInfo.SetSnapshotIDs(snapIDMap)
 	backupInfo.SetVolumeAZs(volAZs)

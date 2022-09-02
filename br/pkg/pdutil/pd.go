@@ -39,7 +39,7 @@ const (
 	storePrefix          = "pd/api/v1/store"
 	schedulerPrefix      = "pd/api/v1/schedulers"
 	resetTSPrefix        = "pd/api/v1/admin/reset-ts"
-	recoveringMarkPrefix = "pd/api/v1/admin/recovering-mark"
+	recoveringMarkPrefix = "pd/api/v1/admin/cluster/markers/snapshot-recovering"
 	baseAllocIDPrefix    = "pd/api/v1/admin/base-alloc-id"
 	minResolvedTSPrefix  = "pd/api/v1/min-resolved-ts"
 	regionLabelPrefix    = "pd/api/v1/config/region-label/rule"
@@ -644,6 +644,37 @@ func (p *PdController) RemoveSchedulers(ctx context.Context) (undo UndoFunc, err
 	}
 
 	undo = p.MakeUndoFunctionByConfig(ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg})
+	return undo, errors.Trace(err)
+}
+
+// removeAllPDSchedulers pause pd scheduler during the snapshot backup and restore
+func (p *PdController) RemoveAllPDSchedulers(ctx context.Context) (undo UndoFunc, err error) {
+	undo = Nop
+
+	// during the backup, we shall stop all scheduler so that restore easy to implement
+	// during phase-2, pd is fresh and in recovering-mode(recovering-mark=true), there's no leader
+	// so there's no leader or region schedule initially. when phase-2 start force setting leaders, schedule may begin.
+	// we don't want pd do any leader or region schedule during this time, so we set those params to 0
+	// before we force setting leaders
+	scheduleLimitParams := []string{
+		"hot-region-schedule-limit",
+		"leader-schedule-limit",
+		"merge-schedule-limit",
+		"region-schedule-limit",
+		"replica-schedule-limit",
+	}
+	pdConfigGenerators := DefaultExpectPDCfgGenerators()
+	for _, param := range scheduleLimitParams {
+		pdConfigGenerators[param] = func(int, interface{}) interface{} { return 0 }
+	}
+
+	oldPDConfig, _, err1 := p.RemoveSchedulersWithConfigGenerator(ctx, pdConfigGenerators)
+	if err1 != nil {
+		err = err1
+		return
+	}
+
+	undo = p.GenRestoreSchedulerFunc(oldPDConfig, pdConfigGenerators)
 	return undo, errors.Trace(err)
 }
 

@@ -47,7 +47,7 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
-func runRestoreDataCommand(command *cobra.Command, cmdName string) error {
+func runResolveKvDataCommand(command *cobra.Command, cmdName string) error {
 	cfg := task.RestoreDataConfig{Config: task.Config{LogProgress: HasLogFile()}}
 	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
 		command.SilenceUsage = false
@@ -60,7 +60,7 @@ func runRestoreDataCommand(command *cobra.Command, cmdName string) error {
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
-	if err := task.RunRestoreData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
+	if err := task.RunResolveKvData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore data", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -153,7 +153,7 @@ func NewRestoreCommand() *cobra.Command {
 		newRawRestoreCommand(),
 		newStreamRestoreCommand(),
 		newEBSMetaRestoreCommand(),
-		newRestoreDataCommand(),
+		newResolveKvDataCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
 
@@ -242,13 +242,13 @@ func newEBSMetaRestoreCommand() *cobra.Command {
 	return command
 }
 
-func newRestoreDataCommand() *cobra.Command {
+func newResolveKvDataCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "data",
-		Short: "phase 2 - restore data from snapshot volume where tikv runing on, it requires phase 1 command 'restore ebs' run before.",
+		Short: "restore data from snapshot volume where tikv runing on, it requires command 'restore ebs' run before.",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			err := runRestoreDataCommand(command, task.RestoreDataCmd)
+			err := runResolveKvDataCommand(command, task.ResolvedKvDataCmd)
 			if err != nil {
 				summary.SetSuccessStatus(false)
 				return errors.Trace(err)
