@@ -752,8 +752,10 @@ func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Ta
 }
 
 func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
+	conn, _ := net.Pipe()
 	cc := &clientConn{
-		alloc: arena.NewAllocator(1024),
+		alloc:       arena.NewAllocator(1024),
+		bufReadConn: newBufferedReadConn(conn),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
