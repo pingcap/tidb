@@ -41,7 +41,7 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 	// Calculate lightning concurrency degree and set memory usage
 	// and pre-allocate memory usage for worker.
 	m.MemRoot.RefreshConsumption()
-	ok := m.MemRoot.TestConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
+	ok := m.MemRoot.CheckConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
 	if !ok {
 		return logAllocMemFailedEngine(m.MemRoot, bc.jobID, indexID)
 	}
@@ -49,7 +49,7 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 	en, exist1 := m.Load(indexID)
 	if !exist1 {
 		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-		ok := m.MemRoot.TestConsume(StructSizeEngineInfo + engineCacheSize)
+		ok := m.MemRoot.CheckConsume(StructSizeEngineInfo + engineCacheSize)
 		if !ok {
 			return logAllocMemFailedEngine(m.MemRoot, bc.jobID, indexID)
 		}

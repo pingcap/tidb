@@ -133,7 +133,7 @@ type WriterContext struct {
 func (ei *engineInfo) NewWriterCtx(id int) (*WriterContext, error) {
 	memRequire := StructSizeWriterCtx
 	ei.memRoot.RefreshConsumption()
-	ok := ei.memRoot.TestConsume(memRequire)
+	ok := ei.memRoot.CheckConsume(memRequire)
 	if !ok {
 		return nil, logAllocMemFailedEngine(ei.memRoot, ei.jobID, ei.indexID)
 	}

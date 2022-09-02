@@ -52,7 +52,7 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 	bc, exist := m.Load(jobID)
 	if !exist {
 		m.memRoot.RefreshConsumption()
-		ok := m.memRoot.TestConsume(StructSizeBackendCtx)
+		ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
 		if !ok {
 			return nil, logAllocMemFailedBackend(m.memRoot, jobID)
 		}
