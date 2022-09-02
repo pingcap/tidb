@@ -1021,7 +1021,7 @@ const (
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableGeneralPlanCache                  = true
+	DefTiDBEnableGeneralPlanCache                  = false
 	DefTiDBGeneralPlanCacheSize                    = 100
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                     int32  = 10240
