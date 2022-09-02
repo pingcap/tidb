@@ -497,14 +497,14 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		job.CtxVars = []interface{}{tids}
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo.Clone(), true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 
 		tblInfo.State = model.StatePublic
 		tblInfo.UpdateTS = t.StartTS
+		job.CtxVars = []interface{}{tids}
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
