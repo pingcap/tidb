@@ -7155,29 +7155,29 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	check_mpp := func(r [][]interface{}) {
-		contain_mpp := false
+	checkMpp := func(r [][]interface{}) {
+		check := false
 		for i := range r {
 			if r[i][2] == "mpp[tiflash]" {
-				contain_mpp = true
+				check = true
 				break
 			}
 		}
-		require.Equal(t, contain_mpp, true)
+		require.Equal(t, check, true)
 	}
 
 	// Insert into ... select
 	rs := tk.MustQuery("explain insert into t2 select a+b from t").Rows()
-	check_mpp(rs)
+	checkMpp(rs)
 
 	rs = tk.MustQuery("explain insert into t2 select t.a from t2 join t on t2.a = t.a").Rows()
-	check_mpp(rs)
+	checkMpp(rs)
 
 	// Replace into ... select
 	rs = tk.MustQuery("explain replace into t2 select a+b from t").Rows()
-	check_mpp(rs)
+	checkMpp(rs)
 
 	// CTE
 	rs = tk.MustQuery("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)").Rows()
-	check_mpp(rs)
+	checkMpp(rs)
 }
