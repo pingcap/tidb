@@ -78,7 +78,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
 
-	if sessVars.EnableGeneralPlanCache {
+	if sessVars.EnableGeneralPlanCache && !sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
 		stmt, ok := node.(ast.StmtNode)
 		if ok {
 			paramSQL, params, ok := core.ParameterizeAST(sctx, stmt)
