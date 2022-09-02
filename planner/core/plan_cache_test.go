@@ -16,7 +16,6 @@ package core_test
 
 import (
 	"errors"
-	"github.com/stretchr/testify/require"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,6 +25,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 type mockParameterizer struct {
@@ -100,7 +100,7 @@ func TestGeneralPlanCacheParameterizer(t *testing.T) {
 func TestInitLRUWithSystemVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@session.tidb_prepared_plan_cache_size = 0")
+	tk.MustExec("set @@session.tidb_prepared_plan_cache_size = 0") // MinValue: 1
 	sessionVar := tk.Session().GetSessionVars()
 
 	lru := plannercore.NewLRUPlanCache(uint(sessionVar.PreparedPlanCacheSize), 0, 0, plannercore.PickPlanFromBucket)
