@@ -182,7 +182,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 					storeMeta.regionMetas = append(storeMeta.regionMetas, meta)
 				} else if err == io.EOF {
 					break
-				} else if err != nil {
+				} else {
 					return errors.Trace(err)
 				}
 			}
