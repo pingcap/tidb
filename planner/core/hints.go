@@ -238,6 +238,7 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 	case *PhysicalMergeJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintSMJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalHashJoin:
+		// TODO: support the hash_join_build and hash_join_probe hint for auto capture
 		res = append(res, getJoinHints(p.SCtx(), HintHJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalIndexJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)

@@ -218,6 +218,7 @@ var tokenMap = map[string]int{
 	"CLEANUP":                  cleanup,
 	"CLIENT":                   client,
 	"CLIENT_ERRORS_SUMMARY":    clientErrorsSummary,
+	"CLUSTER":                  cluster,
 	"CLUSTERED":                clustered,
 	"CMSKETCH":                 cmSketch,
 	"COALESCE":                 coalesce,
