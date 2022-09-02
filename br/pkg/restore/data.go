@@ -28,10 +28,10 @@ import (
 // in future, num of tikv may extend to a large number, this is limitation of connection pool to tikv
 // per our knowledge, in present, 128 may a good enough.
 const (
-	max_store_concurency = 128
+	maxStoreConcurrency = 128
 )
 
-// recover the tikv cluster
+// RecoverData recover the tikv cluster
 // 1. read all meta data from tikvs
 // 2. make recovery plan and then recovery max allocate ID firstly
 // 3. send the recover plan and the wait tikv to apply, in waitapply, all assigned region leader will check apply log to the last log
@@ -152,7 +152,7 @@ func getStoreAddress(allStores []*metapb.Store, storeId uint64) string {
 func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, max_store_concurency)), "Collect Region Meta") // TODO: int overflow?
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, maxStoreConcurrency)), "Collect Region Meta") // TODO: int overflow?
 
 	// TODO: optimize the ErroGroup when TiKV is panic
 	metaChan := make(chan StoreMeta, 1024)
@@ -232,7 +232,7 @@ func (recovery *Recovery) getTotalRegions() int {
 func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalRecoveredStores := len(recovery.recoveryPlan)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, max_store_concurency)), "Recover Regions")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, maxStoreConcurrency)), "Recover Regions")
 
 	for storeId, plan := range recovery.recoveryPlan {
 		if err := ectx.Err(); err != nil {
@@ -282,7 +282,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, max_store_concurency)), "wait apply")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, maxStoreConcurrency)), "wait apply")
 
 	for _, store := range recovery.allStores {
 		if err := ectx.Err(); err != nil {
@@ -316,10 +316,9 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 
 // ResolveData a worker pool to all tikv for execute delete all data whose has ts > resolvedTs
 func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (err error) {
-
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, max_store_concurency)), "resolve data from tikv")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, maxStoreConcurrency)), "resolve data from tikv")
 
 	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at least some retry may neccessary
 	for _, store := range recovery.allStores {
@@ -435,12 +434,12 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 		var ek = prefixEndKey(regions[p.regionId][0].EndKey)
 		var fk, fv interface{}
 		fk, _ = topo.Ceiling(sk)
-		// keysapce overlap sk within ceiling - fk
+		// keyspace overlap sk within ceiling - fk
 		if fk != nil && (keyEq(fk.([]byte), sk) || keyCmp(fk.([]byte), ek) < 0) {
 			continue
 		}
 
-		// keysapce overlap sk within floor - fk.end_key
+		// keyspace overlap sk within floor - fk.end_key
 		fk, fv = topo.Floor(sk)
 		if fk != nil && keyCmp(fv.(RegionEndKey).endKey, sk) > 0 {
 			continue
