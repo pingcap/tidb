@@ -411,7 +411,7 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 		endKey []byte
 	}
 	// Sort region peer by last log term -> last index -> commit index, and collect all regions' version.
-	var versions = make([]RegionInfo, 0, len(regions))
+	var regionInfos = make([]RegionInfo, 0, len(regions))
 	for regionId, peers := range regions {
 		sort.Slice(peers, func(i, j int) bool {
 			for _, cmp := range cmps {
@@ -424,7 +424,7 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 		v := peers[0].Version
 		sk := prefixStartKey(peers[0].StartKey)
 		ek := prefixEndKey(peers[0].EndKey)
-		versions = append(versions, RegionInfo{
+		regionInfos = append(regionInfos, RegionInfo{
 			regionId: regionId,
 			regionVersion: v,
 			startKey: sk,
@@ -432,12 +432,12 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 		})
 	}
 
-	sort.Slice(versions, func(i, j int) bool { return versions[i].regionVersion > versions[j].regionVersion })
+	sort.Slice(regionInfos, func(i, j int) bool { return regionInfos[i].regionVersion > regionInfos[j].regionVersion })
 
 	// split and merge in progressing during the backup, there may some overlap region, we have to handle it
 	// Resolve version conflicts.
 	var topo = treemap.NewWith(keyCmpInterface)
-	for _, p := range versions {
+	for _, p := range regionInfos {
 		var fk, fv interface{}
 		fk, _ = topo.Ceiling(p.startKey)
 		// keyspace overlap sk within ceiling - fk
