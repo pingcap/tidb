@@ -214,6 +214,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 	return eg.Wait()
 }
 
+// TODO: map may be more suitable for this function
 func (recovery *Recovery) getTotalRegions() int {
 	// Group region peer info by region id.
 	var regions = make(map[uint64]struct{}, 0)
@@ -321,6 +322,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, maxStoreConcurrency)), "resolve data from tikv")
 
 	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at least some retry may neccessary
+	// TODO: what if the network disturbing, a retry machanism may need here
 	for _, store := range recovery.allStores {
 		if err := ectx.Err(); err != nil {
 			return errors.Trace(err)
@@ -401,6 +403,7 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 		},
 	}
 
+	// TODO: the following code may need a refactoring, at least struct Region and RegionEndKey may merge into one struct
 	type Region struct {
 		regionId      uint64
 		regionVersion uint64
