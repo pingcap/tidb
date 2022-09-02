@@ -650,10 +650,11 @@ func (w *worker) writeDDLSeqNum(job *model.Job) {
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
-	tbInfo := &model.TableInfo{}
-	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
-	var snapshotTS uint64
-	err := job.DecodeArgs(tbInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID)
+	var (
+		recoverInfo           *RecoverInfo
+		recoverTableCheckFlag int64
+	)
+	err := job.DecodeArgs(&recoverInfo, &recoverTableCheckFlag)
 	if err != nil {
 		return errors.Trace(err)
 	}

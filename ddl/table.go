@@ -398,18 +398,19 @@ const (
 )
 
 func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	schemaID := job.SchemaID
-	tblInfo := &model.TableInfo{}
-	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
-	var snapshotTS uint64
-	var oldTableName, oldSchemaName string
-	const checkFlagIndexInJobArgs = 4 // The index of `recoverTableCheckFlag` in job arg list.
-	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID, &oldSchemaName, &oldTableName); err != nil {
+	var (
+		recoverInfo           *RecoverInfo
+		recoverTableCheckFlag int64
+	)
+	const checkFlagIndexInJobArgs = 1 // The index of `recoverTableCheckFlag` in job arg list.
+	if err = job.DecodeArgs(&recoverInfo, &recoverTableCheckFlag); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
+	schemaID := recoverInfo.SchemaID
+	tblInfo := recoverInfo.TableInfo
 	// check GC and safe point
 	gcEnable, err := checkGCEnable(w)
 	if err != nil {
@@ -479,7 +480,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			}
 		}
 		// check GC safe point
-		err = checkSafePoint(w, snapshotTS)
+		err = checkSafePoint(w, recoverInfo.SnapshotTS)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -491,40 +492,13 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		} else {
 			tids = []int64{tblInfo.ID}
 		}
-
-		tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(tblInfo, oldSchemaName, oldTableName)
+		ver, err = w.recoverTable(t, job, recoverInfo)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to get old label rules from PD")
-		}
-
-		err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, dropJobID)
-		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
-		tableInfo := tblInfo.Clone()
-		tableInfo.State = model.StatePublic
-		tableInfo.UpdateTS = t.StartTS
-		err = t.CreateTableAndSetAutoID(schemaID, tableInfo, autoIncID, autoRandID)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
-			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
-				_ = failpoint.Enable(`tikvclient/mockCommitErrorOpt`, "return(true)")
-			}
-		})
-
-		err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to update the label rule to PD")
-		}
-
 		job.CtxVars = []interface{}{tids}
-		ver, err = updateVersionAndTableInfo(d, t, job, tableInfo, true)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo.Clone(), true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
