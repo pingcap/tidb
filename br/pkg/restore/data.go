@@ -103,7 +103,7 @@ func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progres
 		progress:     progress}
 }
 
-func (recovery *Recovery) newTiKVRecoveryClient(ctx context.Context, tikvAddr string) (recovpb.RecoverDataClient, *grpc.ClientConn, error) {
+func (recovery *Recovery) newRecoveryClient(ctx context.Context, storeAddr string) (recovpb.RecoverDataClient, *grpc.ClientConn, error) {
 	// Connect to the Recovery service on the given TiKV node.
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = gRPCBackOffMaxDelay
@@ -115,7 +115,7 @@ func (recovery *Recovery) newTiKVRecoveryClient(ctx context.Context, tikvAddr st
 	//keepaliveConf keepalive.ClientParameters
 	conn, err := grpc.DialContext(
 		ctx,
-		tikvAddr,
+		storeAddr,
 		opt,
 		grpc.WithBlock(),
 		grpc.FailOnNonTempDialError(true),
@@ -148,7 +148,7 @@ func getStoreAddress(allStores []*metapb.Store, storeId uint64) string {
 	return addr
 }
 
-// read all region meta from tikvs
+// ReadRegionMeta read all region meta from tikvs
 func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
@@ -167,17 +167,16 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 
-		tikvClient, conn, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer conn.Close()
-
 		workers.ApplyOnErrorGroup(eg, func() error {
-			log.Info("read meta from tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
-			stream, err := tikvClient.ReadRegionMeta(ectx, &recovpb.ReadRegionMetaRequest{StoreId: storeId})
+			recoveryClient, conn, err := recovery.newRecoveryClient(ectx, storeAddr)
 			if err != nil {
-				log.Error("read region meta failed", zap.Uint64("storeID", storeId))
+				return errors.Trace(err)
+			}
+			defer conn.Close()
+			log.Info("read meta from tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
+			stream, err := recoveryClient.ReadRegionMeta(ectx, &recovpb.ReadRegionMetaRequest{StoreId: storeId})
+			if err != nil {
+				log.Error("read region meta failed", zap.Uint64("store id", storeId))
 				return errors.Trace(err)
 			}
 
@@ -228,7 +227,7 @@ func (recovery *Recovery) getTotalRegions() int {
 	return len(regions)
 }
 
-// send the recovery plan to recovery region (force leader etc)
+// RecoverRegions send the recovery plan to recovery region (force leader etc)
 // only tikvs have regions whose have to recover be sent
 func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
@@ -241,24 +240,24 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 		}
 
 		storeAddr := getStoreAddress(recovery.allStores, storeId)
-		tikvClient, conn, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
-		if err != nil {
-			log.Error("create tikv client failed", zap.Uint64("storeID", storeId))
-			return errors.Trace(err)
-		}
-		defer conn.Close()
-		cmd := plan
-		storeId := storeId
+		recoveryPlan := plan
+		recoveryStoreId := storeId
 		workers.ApplyOnErrorGroup(eg, func() error {
-			log.Info("send recover region to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
-			stream, err := tikvClient.RecoverRegion(ectx)
+			recoveryClient, conn, err := recovery.newRecoveryClient(ectx, storeAddr)
 			if err != nil {
-				log.Error("create recover region failed", zap.Uint64("storeID", storeId))
+				log.Error("create tikv client failed", zap.Uint64("store id", recoveryStoreId))
+				return errors.Trace(err)
+			}
+			defer conn.Close()
+			log.Info("send recover region to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", recoveryStoreId))
+			stream, err := recoveryClient.RecoverRegion(ectx)
+			if err != nil {
+				log.Error("create recover region failed", zap.Uint64("store id", recoveryStoreId))
 				return errors.Trace(err)
 			}
 
 			// for a TiKV, send the stream
-			for _, s := range cmd {
+			for _, s := range recoveryPlan {
 				if err = stream.Send(s); err != nil {
 					log.Error("send region recovery region failed", zap.Error(err))
 					return errors.Trace(err)
@@ -271,7 +270,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 				return errors.Trace(err)
 			}
 			recovery.progress.Inc()
-			log.Info("recovery region execution success", zap.Uint64("storeID", reply.GetStoreId()))
+			log.Info("recovery region execution success", zap.Uint64("store id", reply.GetStoreId()))
 			return nil
 		})
 	}
@@ -279,7 +278,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	return eg.Wait()
 }
 
-// send wait apply to all tikv ensure all region peer apply log into the last
+// WaitApply send wait apply to all tikv ensure all region peer apply log into the last
 func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
@@ -290,24 +289,24 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 			return errors.Trace(err)
 		}
 		storeAddr := getStoreAddress(recovery.allStores, store.Id)
-		tikvClient, conn, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer conn.Close()
 		storeId := store.Id
 
 		workers.ApplyOnErrorGroup(eg, func() error {
+			recoveryClient, conn, err := recovery.newRecoveryClient(ectx, storeAddr)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer conn.Close()
 			log.Info("send wait apply to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			req := &recovpb.WaitApplyRequest{StoreId: storeId}
-			_, err := tikvClient.WaitApply(ectx, req)
+			_, err = recoveryClient.WaitApply(ectx, req)
 			if err != nil {
-				log.Error("wait apply failed", zap.Uint64("storeID", storeId))
+				log.Error("wait apply failed", zap.Uint64("store id", storeId))
 				return errors.Trace(err)
 			}
 
 			recovery.progress.Inc()
-			log.Info("recovery wait apply execution success", zap.Uint64("storeID", storeId))
+			log.Info("recovery wait apply execution success", zap.Uint64("store id", storeId))
 			return nil
 		})
 	}
@@ -315,7 +314,7 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	return eg.Wait()
 }
 
-// a worker pool to all tikv for execute delete all data whose has ts > resolvedTs
+// ResolveData a worker pool to all tikv for execute delete all data whose has ts > resolvedTs
 func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (err error) {
 
 	eg, ectx := errgroup.WithContext(ctx)
@@ -328,18 +327,18 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 			return errors.Trace(err)
 		}
 		storeAddr := getStoreAddress(recovery.allStores, store.Id)
-		tikvClient, conn, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer conn.Close()
 		storeId := store.Id
 		workers.ApplyOnErrorGroup(eg, func() error {
+			recoveryClient, conn, err := recovery.newRecoveryClient(ectx, storeAddr)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer conn.Close()
 			log.Info("resolved data to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			req := &recovpb.ResolveKvDataRequest{ResolvedTs: resolvedTs}
-			stream, err := tikvClient.ResolveKvData(ectx, req)
+			stream, err := recoveryClient.ResolveKvData(ectx, req)
 			if err != nil {
-				log.Error("send the resolve kv data failed", zap.Uint64("storeID", storeId))
+				log.Error("send the resolve kv data failed", zap.Uint64("store id", storeId))
 				return errors.Trace(err)
 			}
 			// for a TiKV, received the stream
