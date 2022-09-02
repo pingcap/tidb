@@ -53,7 +53,7 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 		return err
 	}
 
-	// Check Remote duplicate value for index
+	// Check remote duplicate value for the index.
 	if unique {
 		hasDupe, err := bc.backend.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &kv.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
