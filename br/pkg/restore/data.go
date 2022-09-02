@@ -16,12 +16,19 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+)
+
+// in future, num of tikv may extend to a large number, this is limitation of connection pool to tikv
+// per our knowledge, in present, 128 may a good enough.
+const (
+	max_store_concurency = 128
 )
 
 // recover the tikv cluster
@@ -145,7 +152,7 @@ func getStoreAddress(allStores []*metapb.Store, storeId uint64) string {
 func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(totalStores), "Collect Region Meta")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, max_store_concurency)), "Collect Region Meta") // TODO: int overflow?
 
 	// TODO: optimize the ErroGroup when TiKV is panic
 	metaChan := make(chan StoreMeta, 1024)
@@ -181,6 +188,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 				if meta, err = stream.Recv(); err == nil {
 					storeMeta.regionMetas = append(storeMeta.regionMetas, meta)
 				} else if err == io.EOF {
+					//read to end of stream or any unexpected EOF (e.g remote stopped), err will be catched in eg.wait.
 					break
 				} else if err != nil {
 					return errors.Trace(err)
@@ -209,14 +217,12 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 
 func (recovery *Recovery) getTotalRegions() int {
 	// Group region peer info by region id.
-	var regions = make(map[uint64][]Regions, 0)
+	var regions = make(map[uint64][]struct{}, 0)
 	for _, v := range recovery.storeMetas {
-		storeId := v.storeId
 		for _, m := range v.regionMetas {
 			if regions[m.RegionId] == nil {
-				regions[m.RegionId] = make([]Regions, 0, len(recovery.allStores))
+				regions[m.RegionId] = make([]struct{}, 0, len(recovery.allStores))
 			}
-			regions[m.RegionId] = append(regions[m.RegionId], Regions{m, storeId})
 		}
 	}
 	return len(regions)
@@ -227,7 +233,7 @@ func (recovery *Recovery) getTotalRegions() int {
 func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalRecoveredStores := len(recovery.recoveryPlan)
-	workers := utils.NewWorkerPool(uint(totalRecoveredStores), "Recover Regions")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, max_store_concurency)), "Recover Regions")
 
 	for storeId, plan := range recovery.recoveryPlan {
 		if err := ectx.Err(); err != nil {
@@ -277,7 +283,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(totalStores), "wait apply")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, max_store_concurency)), "wait apply")
 
 	for _, store := range recovery.allStores {
 		if err := ectx.Err(); err != nil {
@@ -314,7 +320,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(totalStores), "resolve data from tikv")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, max_store_concurency)), "resolve data from tikv")
 
 	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at least some retry may neccessary
 	for _, store := range recovery.allStores {
@@ -348,7 +354,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 				}
 			}
 			recovery.progress.Inc()
-			log.Info("resolvedkv data done", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
+			log.Info("resolved kv data done", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			return nil
 		})
 	}
@@ -379,9 +385,9 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 				regions[m.RegionId] = make([]Regions, 0, len(recovery.allStores))
 			}
 			regions[m.RegionId] = append(regions[m.RegionId], Regions{m, storeId})
-			maxId = utils.Max(maxId, utils.Max(m.RegionId, m.PeerId))
+			maxId = mathutil.Max(maxId, mathutil.Max(m.RegionId, m.PeerId))
 		}
-		recovery.maxAllocID = utils.Max(recovery.maxAllocID, maxId)
+		recovery.maxAllocID = mathutil.Max(recovery.maxAllocID, maxId)
 	}
 
 	// last log term -> last index -> commit index
