@@ -101,6 +101,7 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_prepared_plan_cache_size = 0") // MinValue: 1
+	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
 	sessionVar := tk.Session().GetSessionVars()
 
 	lru := plannercore.NewLRUPlanCache(uint(sessionVar.PreparedPlanCacheSize), 0, 0, plannercore.PickPlanFromBucket)
