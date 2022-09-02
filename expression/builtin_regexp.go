@@ -177,7 +177,6 @@ func (re *regexpLikeFuncSig) vectorized() bool {
 	return true
 }
 
-// Call this function when all args are constant
 func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	if isNull || err != nil {
@@ -342,7 +341,6 @@ func (re *regexpSubstrFuncSig) Clone() builtinFunc {
 	return newSig
 }
 
-// Call this function when all args are constant
 func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	if isNull || err != nil {
@@ -652,7 +650,6 @@ func (re *regexpInStrFuncSig) vectorized() bool {
 	return true
 }
 
-// Call this function when all args are constant
 func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	if isNull || err != nil {
@@ -1009,7 +1006,6 @@ func (re *regexpReplaceFuncSig) Clone() builtinFunc {
 	return newSig
 }
 
-// Call this function when all args are constant
 func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	trimmedExpr := expr
