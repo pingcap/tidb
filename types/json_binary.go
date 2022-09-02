@@ -88,7 +88,7 @@ import (
        0x01 |   // JSON true literal
        0x02 |   // JSON false literal
 
-   number ::=  ....    // little-endian format for [u]int(16|32|64), whereas
+   number ::=  ....    // little-jsonEndian format for [u]int(16|32|64), whereas
                        // double is stored in a platform-independent, eight-byte
                        // format using float8store()
 
