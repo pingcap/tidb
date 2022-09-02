@@ -404,13 +404,14 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 		},
 	}
 
-	// TODO: the following code may need a refactoring, at least struct Region and RegionEndKey may merge into one struct
-	type Region struct {
+	type RegionInfo struct {
 		regionId      uint64
 		regionVersion uint64
+		startKey []byte
+		endKey []byte
 	}
 	// Sort region peer by last log term -> last index -> commit index, and collect all regions' version.
-	var versions = make([]Region, 0, len(regions))
+	var versions = make([]RegionInfo, 0, len(regions))
 	for regionId, peers := range regions {
 		sort.Slice(peers, func(i, j int) bool {
 			for _, cmp := range cmps {
@@ -420,35 +421,36 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 			}
 			return false
 		})
-		var v = peers[0].Version
-		versions = append(versions, Region{regionId, v})
+		v := peers[0].Version
+		sk := prefixStartKey(peers[0].StartKey)
+		ek := prefixEndKey(peers[0].EndKey)
+		versions = append(versions, RegionInfo{
+			regionId: regionId,
+			regionVersion: v,
+			startKey: sk,
+			endKey: ek,
+		})
 	}
 
 	sort.Slice(versions, func(i, j int) bool { return versions[i].regionVersion > versions[j].regionVersion })
 
-	type RegionEndKey struct {
-		endKey []byte
-		rid    uint64
-	}
 	// split and merge in progressing during the backup, there may some overlap region, we have to handle it
 	// Resolve version conflicts.
 	var topo = treemap.NewWith(keyCmpInterface)
 	for _, p := range versions {
-		var sk = prefixStartKey(regions[p.regionId][0].StartKey)
-		var ek = prefixEndKey(regions[p.regionId][0].EndKey)
 		var fk, fv interface{}
-		fk, _ = topo.Ceiling(sk)
+		fk, _ = topo.Ceiling(p.startKey)
 		// keyspace overlap sk within ceiling - fk
-		if fk != nil && (keyEq(fk.([]byte), sk) || keyCmp(fk.([]byte), ek) < 0) {
+		if fk != nil && (keyEq(fk.([]byte), p.startKey) || keyCmp(fk.([]byte), p.endKey) < 0) {
 			continue
 		}
 
 		// keyspace overlap sk within floor - fk.end_key
-		fk, fv = topo.Floor(sk)
-		if fk != nil && keyCmp(fv.(RegionEndKey).endKey, sk) > 0 {
+		fk, fv = topo.Floor(p.startKey)
+		if fk != nil && keyCmp(fv.(RegionInfo).endKey, p.startKey) > 0 {
 			continue
 		}
-		topo.Put(sk, RegionEndKey{ek, p.regionId})
+		topo.Put(p.startKey, p)
 	}
 
 	// After resolved, all validPeer regions shouldn't be tombstone.
@@ -458,22 +460,22 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 	var prevEndKey = prefixStartKey([]byte{})
 	var prevR uint64 = 0
 	for iter.Next() {
-		v := iter.Value().(RegionEndKey)
-		if regions[v.rid][0].Tombstone {
-			log.Error("validPeer shouldn't be tombstone", zap.Uint64("regionID", v.rid))
+		v := iter.Value().(RegionInfo)
+		if regions[v.regionId][0].Tombstone {
+			log.Error("validPeer shouldn't be tombstone", zap.Uint64("region id", v.regionId))
 			// TODO, some enhancement may need, a PoC or test may need for decision
 			return errors.Annotatef(berrors.ErrRestoreInvalidPeer,
 				"Peer shouldn't be tombstone")
 		}
 		if !keyEq(prevEndKey, iter.Key().([]byte)) {
-			log.Error("region doesn't conject to region", zap.Uint64("preRegion", prevR), zap.Uint64("curRegion", v.rid))
+			log.Error("regions are not adjacent", zap.Uint64("pre region", prevR), zap.Uint64("cur region", v.regionId))
 			// TODO, some enhancement may need, a PoC or test may need for decision
 			return errors.Annotatef(berrors.ErrRestoreInvalidRange,
 				"invalid region range")
 		}
 		prevEndKey = v.endKey
-		prevR = v.rid
-		validPeer[v.rid] = struct{}{}
+		prevR = v.regionId
+		validPeer[v.regionId] = struct{}{}
 	}
 
 	// all plans per region key=storeId, value=reqs stream
@@ -492,11 +494,11 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 			// Generate normal commands.
 			log.Debug("valid peer", zap.Uint64("peer", regionId))
 			for i, peer := range peers {
-				log.Debug("make plan", zap.Uint64("storeid", peer.storeId), zap.Uint64("regionid", peer.RegionId))
-				plan := &recovpb.RecoverRegionRequest{RegionId: peer.RegionId, AsLeader: (i == 0)}
+				log.Debug("make plan", zap.Uint64("store id", peer.storeId), zap.Uint64("region id", peer.RegionId))
+				plan := &recovpb.RecoverRegionRequest{RegionId: peer.RegionId, AsLeader: i == 0 }
 				// sorted by log term -> last index -> commit index in a region
 				if plan.AsLeader {
-					log.Debug("as leader peer", zap.Uint64("storeid", peer.storeId), zap.Uint64("regionid", peer.RegionId))
+					log.Debug("as leader peer", zap.Uint64("store id", peer.storeId), zap.Uint64("region id", peer.RegionId))
 					recovery.recoveryPlan[peer.storeId] = append(recovery.recoveryPlan[peer.storeId], plan)
 				}
 			}
