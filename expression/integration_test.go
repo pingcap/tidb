@@ -7030,3 +7030,166 @@ func TestIssue31569(t *testing.T) {
 	tk.MustQuery("show warnings").Check([][]interface{}{})
 	tk.MustExec("drop table t")
 }
+<<<<<<< HEAD
+=======
+
+func TestDateAddForNonExistingTimestamp(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = 'CET'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(ts timestamp)")
+	tk.MustExec("set time_zone = 'UTC'")
+	tk.MustExec("insert into t values('2022-03-27 00:30:00')")
+	tk.MustExec("insert into t values('2022-10-30 00:30:00')")
+	tk.MustExec("insert into t values('2022-10-30 01:30:00')")
+	tk.MustExec("set time_zone = 'Europe/Amsterdam'")
+	// Non-existing CET timestamp.
+	tk.MustGetErrCode("insert into t values('2022-03-27 02:30:00')", errno.ErrTruncatedWrongValue)
+	tk.MustQuery("select date_add(ts, interval 1 hour) from t order by ts").Check([][]interface{}{
+		{"2022-03-27 02:30:00"},
+		{"2022-10-30 03:30:00"},
+		{"2022-10-30 03:30:00"},
+	})
+	tk.MustExec("drop table t")
+}
+
+func TestImcompleteDateFunc(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select to_seconds('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_seconds('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT CONVERT_TZ('2004-10-00 12:00:00','GMT','MET');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT CONVERT_TZ('2004-00-01 12:00:00','GMT','MET');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_ADD('1998-10-00',INTERVAL 1 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_ADD('2004-00-01',INTERVAL 1 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_SUB('1998-10-00', INTERVAL 31 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_SUB('2004-00-01', INTERVAL 31 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DAYOFYEAR('2007-00-03');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DAYOFYEAR('2007-02-00');;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT TIMESTAMPDIFF(MONTH,'2003-00-01','2003-05-01');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-00');;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_days('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_days('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select week('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select week('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKDAY('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKDAY('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKOFYEAR('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKOFYEAR('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select YEARWEEK('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select YEARWEEK('1998-00-11')").Check(testkit.Rows("<nil>"))
+}
+
+func TestIssue31640(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a json);")
+	tk.MustExec(`insert into t values ('"a"'), ('"B"'), ('"c"'), ('"D"'), ('{"a": 1}'), ('1'), ('{"b": 2}'), ('[1, 2]'), ('[3, 4]');`)
+	tk.MustQuery("select min(a) from t;").Check(testkit.Rows("1"))
+	tk.MustQuery("select max(a) from t;").Check(testkit.Rows("[3, 4]"))
+	tk.MustQuery("select min(a collate utf8mb4_bin) from t;").Check(testkit.Rows("\"B\""))
+	tk.MustQuery("select max(a collate utf8mb4_bin) from t;").Check(testkit.Rows("{\"b\": 2}"))
+	tk.MustQuery("select min(a collate utf8mb4_unicode_ci) from t;").Check(testkit.Rows("\"a\""))
+	tk.MustQuery("select max(a collate utf8mb4_unicode_ci) from t;").Check(testkit.Rows("1"))
+}
+
+func TestIssue36279(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET timestamp=UNIX_TIMESTAMP('2011-11-01 17:48:00')")
+
+	// test const
+	tk.MustQuery("SELECT cast(cast('12:12:12' as time) as datetime(6))").Check(testkit.Rows("2011-11-01 12:12:12.000000"))
+
+	// test vec
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (tm time(6))")
+	tk.MustExec("insert into t values('23:59:59')")
+	tk.MustQuery("SELECT cast(tm as datetime(6)) from t").Check(testkit.Rows("2011-11-01 23:59:59.000000"))
+}
+
+func TestIssue34998(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `PK_S_MULTI_43`(`COL1` time(2) NOT NULL, `COL2` time(2) NOT NULL, `COL3` time(2) DEFAULT NULL, PRIMARY KEY(`COL1`,`COL2`))")
+	tk.MustExec("insert into PK_S_MULTI_43(col1, col2) values('-512:37:22.00', '-512:37:22.00')")
+	tk.MustQuery("select extract(day_microsecond from '-512:37:22.00')").Check(testkit.Rows("-5123722000000"))
+	tk.MustQuery("select extract(day_microsecond from col1) from PK_S_MULTI_43").Check(testkit.Rows("-5123722000000"))
+}
+
+func TestIssue36358(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c datetime(6))")
+	tk.MustExec("insert into t values('2001-01-01 02:03:04.050607')")
+	tk.MustQuery("select extract(day_microsecond from cast('2001-01-01 02:03:04.050607' as datetime(6))) from t").Check(testkit.Rows("1020304050607"))
+	tk.MustQuery("select extract(day_microsecond from c) from t").Check(testkit.Rows("1020304050607"))
+}
+
+func TestCastJSONOpaqueValueToNumeric(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select cast(cast(b'010101' as json) as signed);").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect INTEGER value: '\"base64:type253:FQ==\"'"))
+	tk.MustQuery("select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as signed);").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect INTEGER value: '\"base64:type253:FQ==\"'"))
+	tk.MustQuery("select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as double);").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '\"base64:type253:FQ==\"'"))
+}
+
+func TestCompareJSONWithOtherType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a JSON)")
+	tk.MustExec("insert into t values ('{}'), ('true'), ('5')")
+	tk.MustQuery("select * from t where a = TRUE;").Check(testkit.Rows("true"))
+	tk.MustQuery("select * from t where a < 6;").Check(testkit.Rows("5"))
+	tk.MustQuery("select * from t where a > 5;").Check(testkit.Rows("{}", "true"))
+}
+
+func TestCastRealAsTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(d1 double, f float, d2 decimal(24,8))")
+
+	// zero input
+	tk.MustExec("insert into t values(0, 0, 0)")
+
+	// const
+	tk.MustQuery("select cast(111.1 as datetime) from t").Check(testkit.Rows("2000-01-11 00:00:00"))
+	tk.MustQuery("select cast(1311.1 as datetime) from t").Check(testkit.Rows("<nil>"))
+
+	// vec
+	// valid input
+	tk.MustExec("insert into t values(111.1, 1122.1, 31212.111)")
+	tk.MustExec("insert into t values(121212.1111, 1121212.111111, 11121212.111111)")
+	tk.MustExec("insert into t values(99991111.1111111, 101.1111111, 20121212121212.1111111)")
+	// null input
+	tk.MustExec("insert into t values(NULL, NULL, NULL)")
+	// invalid input
+	tk.MustExec("insert into t values(1.1, 48.1, 100.1)")
+	tk.MustExec("insert into t values(1301.11, 1131.111, 100001111.111)")
+	tk.MustExec("insert into t values(20121212121260.1111111, 20121212126012.1111111, 20121212241212.1111111)")
+	tk.MustQuery("select cast(d1 as datetime), cast(f as datetime), cast(d2 as datetime) from t").Check(testkit.Rows(
+		"0000-00-00 00:00:00 0000-00-00 00:00:00 0000-00-00 00:00:00",
+		"2000-01-11 00:00:00 2000-11-22 00:00:00 2003-12-12 00:00:00",
+		"2012-12-12 00:00:00 0112-12-12 00:00:00 1112-12-12 00:00:00",
+		"9999-11-11 00:00:00 2000-01-01 00:00:00 2012-12-12 12:12:12",
+		"<nil> <nil> <nil>",
+		"<nil> <nil> <nil>",
+		"<nil> <nil> <nil>",
+		"<nil> <nil> <nil>"))
+}
+>>>>>>> 0482b2e83... expression: fix that the result of expression castRealAsTime is inconsistent with mysql (#37461)
