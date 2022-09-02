@@ -7131,7 +7131,7 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
 
-func TestInsertSelectPushDownToTiFlash(t *testing.T) {
+func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -7143,7 +7143,7 @@ func TestInsertSelectPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("create table t2(a int)")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("set @@tiflash_read_for_write_stmt = ON")
+	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = ON")
 
 	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
@@ -7155,27 +7155,29 @@ func TestInsertSelectPushDownToTiFlash(t *testing.T) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	rows := [][]interface{}{
-		{"Insert_1", "root", "N/A"},
-		{"└─TableReader_11", "root", "data:ExchangeSender_10"},
-		{"  └─ExchangeSender_10", "mpp[tiflash]", "ExchangeType: PassThrough"},
-		{"    └─Projection_6", "mpp[tiflash]", "plus(test.t.a, test.t.b)->Column#5"},
-		{"      └─TableFullScan_9", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	check_mpp := func(r [][]interface{}) {
+		contain_mpp := false
+		for i := range r {
+			if r[i][2] == "mpp[tiflash]" {
+				contain_mpp = true
+				break
+			}
+		}
+		require.Equal(t, contain_mpp, true)
 	}
-	tk.MustQuery("explain insert into t2 select a+b from t;").CheckAt([]int{0, 2, 4}, rows)
 
-	rows = [][]interface{}{
-		{"Insert_1", "root", "N/A"},
-		{"└─TableReader_30", "root", "data:ExchangeSender_29"},
-		{"  └─ExchangeSender_29", "mpp[tiflash]", "ExchangeType: PassThrough"},
-		{"    └─Projection_10", "mpp[tiflash]", "test.t.a"},
-		{"      └─HashJoin_28", "mpp[tiflash]", "inner join, equal:[eq(test.t2.a, test.t.a)]"},
-		{"        ├─ExchangeReceiver_17(Build)", "mpp[tiflash]", ""},
-		{"        │ └─ExchangeSender_16", "mpp[tiflash]", "ExchangeType: Broadcast"},
-		{"        │   └─Selection_15", "mpp[tiflash]", "not(isnull(test.t2.a))"},
-		{"        │     └─TableFullScan_14", "mpp[tiflash]", "keep order:false, stats:pseudo"},
-		{"        └─Selection_19(Probe)", "mpp[tiflash]", "not(isnull(test.t.a))"},
-		{"          └─TableFullScan_18", "mpp[tiflash]", "keep order:false, stats:pseudo"},
-	}
-	tk.MustQuery("explain insert into t2 select t.a from t2 join t on t2.a = t.a;").CheckAt([]int{0, 2, 4}, rows)
+	// Insert into ... select
+	rs := tk.MustQuery("explain insert into t2 select a+b from t").Rows()
+	check_mpp(rs)
+
+	rs = tk.MustQuery("explain insert into t2 select t.a from t2 join t on t2.a = t.a").Rows()
+	check_mpp(rs)
+
+	// Replace into ... select
+	rs = tk.MustQuery("explain replace into t2 select a+b from t").Rows()
+	check_mpp(rs)
+
+	// CTE
+	rs = tk.MustQuery("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)").Rows()
+	check_mpp(rs)
 }

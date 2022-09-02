@@ -88,7 +88,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !sessVars.TiFlashReadForWriteStmt && !IsReadOnly(node, sessVars) {
+	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !sessVars.EnableTiFlashReadForWriteStmt && !IsReadOnly(node, sessVars) {
 		delete(sessVars.IsolationReadEngines, kv.TiFlash)
 		defer func() {
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
