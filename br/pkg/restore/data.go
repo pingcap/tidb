@@ -164,7 +164,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 		storeAddr := recovery.allStores[i].GetAddress()
 
 		if err := ectx.Err(); err != nil {
-			return errors.Trace(err)
+			break
 		}
 
 		workers.ApplyOnErrorGroup(eg, func() error {
@@ -187,8 +187,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 				if meta, err = stream.Recv(); err == nil {
 					storeMeta.regionMetas = append(storeMeta.regionMetas, meta)
 				} else if err == io.EOF {
-					//read to end of stream or any unexpected EOF (e.g remote stopped), err will be catched in eg.wait.
-					// TODO: have a retry here?
+					//read to end of stream or server close the connection.
 					break
 				} else {
 					return errors.Trace(err)
@@ -238,7 +237,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 
 	for storeId, plan := range recovery.recoveryPlan {
 		if err := ectx.Err(); err != nil {
-			return errors.Trace(err)
+			break
 		}
 
 		storeAddr := getStoreAddress(recovery.allStores, storeId)
@@ -288,7 +287,7 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 
 	for _, store := range recovery.allStores {
 		if err := ectx.Err(); err != nil {
-			return errors.Trace(err)
+			break
 		}
 		storeAddr := getStoreAddress(recovery.allStores, store.Id)
 		storeId := store.Id
@@ -326,7 +325,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 	// TODO: what if the network disturbing, a retry machanism may need here
 	for _, store := range recovery.allStores {
 		if err := ectx.Err(); err != nil {
-			return errors.Trace(err)
+			break
 		}
 		storeAddr := getStoreAddress(recovery.allStores, store.Id)
 		storeId := store.Id
