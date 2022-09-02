@@ -710,9 +710,6 @@ func (h *Handle) loadNeededColumnHistograms(reader *statsReader, col model.Table
 		IsHandle:   c.IsHandle,
 		StatsVer:   statsVer,
 	}
-	if statsVer != statistics.Version0 {
-		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-	}
 	// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 	colHist.Count = int64(colHist.TotalRowCount())
 	// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
