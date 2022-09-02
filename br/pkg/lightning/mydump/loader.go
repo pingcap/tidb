@@ -99,6 +99,31 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	return string(schema), nil
 }
 
+// MDLoaderSetupConfig stores the configs when setting up a MDLoader.
+// This can control the behavior when constructing an MDLoader.
+type MDLoaderSetupConfig struct {
+	// MaxScanFiles specifies the maximum number of files to scan.
+	// If the value is <= 0, it means the number of data source files will be scanned as many as possible.
+	MaxScanFiles int
+}
+
+// DefaultMDLoaderSetupConfig generates a default MDLoaderSetupConfig.
+func DefaultMDLoaderSetupConfig() *MDLoaderSetupConfig {
+	return &MDLoaderSetupConfig{
+		MaxScanFiles: 0, // By default, the loader will scan all the files.
+	}
+}
+
+// MDLoaderSetupOption is the option type for setting up a MDLoaderSetupConfig.
+type MDLoaderSetupOption func(cfg *MDLoaderSetupConfig)
+
+// WithMaxScanFiles generates an option that limits the max scan files when setting up a MDLoader.
+func WithMaxScanFiles(maxScanFiles int) MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.MaxScanFiles = maxScanFiles
+	}
+}
+
 /*
 Mydumper File Loader
 */
@@ -120,9 +145,10 @@ type mdLoaderSetup struct {
 	tableDatas    []FileInfo
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
+	setupCfg      *MDLoaderSetupConfig
 }
 
-func NewMyDumpLoader(ctx context.Context, cfg *config.Config) (*MDLoader, error) {
+func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	u, err := storage.ParseBackend(cfg.Mydumper.SourceDir, nil)
 	if err != nil {
 		return nil, common.NormalizeError(err)
@@ -132,12 +158,17 @@ func NewMyDumpLoader(ctx context.Context, cfg *config.Config) (*MDLoader, error)
 		return nil, common.NormalizeError(err)
 	}
 
-	return NewMyDumpLoaderWithStore(ctx, cfg, s)
+	return NewMyDumpLoaderWithStore(ctx, cfg, s, opts...)
 }
 
-func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage) (*MDLoader, error) {
+func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
+
+	mdLoaderSetupCfg := DefaultMDLoaderSetupConfig()
+	for _, o := range opts {
+		o(mdLoaderSetupCfg)
+	}
 
 	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
 		return nil, common.ErrInvalidConfig.GenWithStack("table route is deprecated, can't config both [routes] and [mydumper.files]")
@@ -186,9 +217,13 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 		loader:        mdl,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
+		setupCfg:      mdLoaderSetupCfg,
 	}
 
 	if err := setup.setup(ctx, mdl.store); err != nil {
+		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
+			return mdl, err
+		}
 		return nil, errors.Trace(err)
 	}
 
@@ -242,8 +277,13 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 			table —— {db}.{table}-schema.sql
 			sql   —— {db}.{table}.{part}.sql / {db}.{table}.sql
 	*/
+	var gerr error
 	if err := s.listFiles(ctx, store); err != nil {
-		return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
+		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
+			gerr = err
+		} else {
+			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
+		}
 	}
 	if err := s.route(); err != nil {
 		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
@@ -304,16 +344,20 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 		}
 	}
 
-	return nil
+	return gerr
 }
 
 func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalStorage) error {
 	// `filepath.Walk` yields the paths in a deterministic (lexicographical) order,
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
+	totalScannedFileCount := 0
 	err := store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 		logger := log.FromContext(ctx).With(zap.String("path", path))
-
+		totalScannedFileCount++
+		if s.setupCfg.MaxScanFiles > 0 && totalScannedFileCount > s.setupCfg.MaxScanFiles {
+			return common.ErrTooManySourceFiles
+		}
 		res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 		if err != nil {
 			return errors.Annotatef(err, "apply file routing on file '%s' failed", path)

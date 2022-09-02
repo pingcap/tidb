@@ -5,6 +5,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 )
@@ -50,6 +51,7 @@ func WithPrecheckKey(ctx context.Context, key precheckContextKey, val any) conte
 
 type PrecheckItemBuilderConfig struct {
 	PreInfoGetterOptions []GetPreInfoOption
+	MDLoaderSetupOptions []mydump.MDLoaderSetupOption
 }
 
 type PrecheckItemBuilderOption interface {
@@ -70,6 +72,20 @@ func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOptio
 	}
 }
 
+type mdLoaderSetupOptsForBuilder struct {
+	opts []mydump.MDLoaderSetupOption
+}
+
+func (o *mdLoaderSetupOptsForBuilder) Apply(c *PrecheckItemBuilderConfig) {
+	c.MDLoaderSetupOptions = append([]mydump.MDLoaderSetupOption{}, o.opts...)
+}
+
+func WithMDLoaderSetupOptions(opts ...mydump.MDLoaderSetupOption) PrecheckItemBuilderOption {
+	return &mdLoaderSetupOptsForBuilder{
+		opts: opts,
+	}
+}
+
 type PrecheckItemBuilder struct {
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
@@ -78,6 +94,7 @@ type PrecheckItemBuilder struct {
 }
 
 func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+	var gerr error
 	builderCfg := new(PrecheckItemBuilderConfig)
 	for _, o := range opts {
 		o.Apply(builderCfg)
@@ -90,9 +107,13 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	mdl, err := mydump.NewMyDumpLoader(ctx, cfg)
+	mdl, err := mydump.NewMyDumpLoader(ctx, cfg, builderCfg.MDLoaderSetupOptions...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
+			gerr = err
+		} else {
+			return nil, errors.Trace(err)
+		}
 	}
 	dbMetas := mdl.GetDatabases()
 	srcStorage := mdl.GetStore()
@@ -112,7 +133,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb), nil
+	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb), gerr
 }
 
 func NewPrecheckItemBuilder(

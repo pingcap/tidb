@@ -62,6 +62,7 @@ go_test(
     embed = [":mydump"],
     flaky = True,
     deps = [
+        "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/worker",
