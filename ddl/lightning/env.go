@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -83,19 +82,6 @@ func genRLimit() uint64 {
 		rLimit = rl.Cur
 	}
 	return rLimit
-}
-
-func genMaxMemoryLimit() uint64 {
-	maxMemLimit := 2 * size.GB
-	sbz := variable.GetSysVar("sort_buffer_size")
-	bufferSize, err := strconv.ParseUint(sbz.Value, 10, 64)
-	if err == nil {
-		maxMemLimit = bufferSize * 8 * size.KB
-		logutil.BgLogger().Info(LitInfoSetMemLimit, zap.Uint64("memory limitation", maxMemLimit))
-	} else {
-		logutil.BgLogger().Info(LitWarnGenMemLimit, zap.Error(err), zap.Uint64("memory limitation", maxMemLimit))
-	}
-	return maxMemLimit
 }
 
 // Generate lightning local store dir in TiDB data dir.
