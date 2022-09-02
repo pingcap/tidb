@@ -871,10 +871,10 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 //
 //		2: lhs row without null:
 //	       same-key bucket and null-bucket which should be the first to match? For semantic like x NOT IN(y set), once y
-//	       set has a same key x, the scalar value is 0; else if y set has a null key, then the scalar value is null. Since
-//	       NA-AntiSemiJoin don't care about the scalar value, we just return the lhs row as quickly as possible, which means
-//	       we can match the null bucket first, a null of yi in the CNF (x NA-EQ yi) can always determine a negative value
-//	       (null) in advance here.
+//	       set has a same key x, the scalar value is 0; else if y set has a null key, then the scalar value is null. Both
+//	       of them lead the refuse of the lhs row without any difference. Since NA-AntiSemiJoin don't care about the scalar
+//	       value, we can just match the null bucket first and refuse the lhs row as quickly as possible, because a null of
+//	       yi in the CNF (x NA-EQ yi) can always determine a negative value (refuse lhs row) in advance here.
 //
 //	       For NA-AntiLeftOuterSemiJoin, we couldn't match null-bucket first, because once y set has a same key x and null
 //	       key, we should return the result as left side row appended with a scalar value 0 which is from same key matching failure.
