@@ -56,14 +56,30 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql"
+	"go.uber.org/zap"
 )
 
-func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
+func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) (err error) {
+	stmtID := 0
+	hasError := false
+	defer func() {
+		logutil.Logger(ctx).Warn("[DEBUG] [STMT_PREPARE]",
+			zap.String("connInfo", cc.String()),
+			zap.String("status", cc.SessionStatusToString()),
+			zap.String("sql", sql),
+			zap.Int("stmtID", stmtID),
+			zap.Bool("hasError", hasError),
+			zap.Error(err),
+		)
+	}()
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
+		hasError = true
 		return err
 	}
+	stmtID = stmt.ID()
 	data := make([]byte, 4, 128)
 
 	// status ok
@@ -80,6 +96,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	data = append(data, 0, 0) // TODO support warning count
 
 	if err := cc.writePacket(data); err != nil {
+		hasError = true
 		return err
 	}
 
@@ -89,11 +106,13 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 			data = params[i].Dump(data)
 
 			if err := cc.writePacket(data); err != nil {
+				hasError = true
 				return err
 			}
 		}
 
 		if err := cc.writeEOF(0); err != nil {
+			hasError = true
 			return err
 		}
 	}
@@ -104,11 +123,13 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 			data = columns[i].Dump(data)
 
 			if err := cc.writePacket(data); err != nil {
+				hasError = true
 				return err
 			}
 		}
 
 		if err := cc.writeEOF(0); err != nil {
+			hasError = true
 			return err
 		}
 
@@ -123,11 +144,23 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		}
 	}()
+	stmtID := uint32(0)
+	hasError := false
+	defer func() {
+		logutil.Logger(ctx).Warn("[DEBUG] [STMT_EXECUTE]",
+			zap.String("connInfo", cc.String()),
+			zap.String("status", cc.SessionStatusToString()),
+			zap.Uint32("stmtID", stmtID),
+			zap.Bool("hasError", hasError),
+			zap.Error(err),
+		)
+	}()
 	if len(data) < 9 {
+		hasError = true
 		return mysql.ErrMalformPacket
 	}
 	pos := 0
-	stmtID := binary.LittleEndian.Uint32(data[0:4])
+	stmtID = binary.LittleEndian.Uint32(data[0:4])
 	pos += 4
 
 	if variable.TopSQLEnabled() {
@@ -139,6 +172,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
+		hasError = true
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_execute")
 	}
@@ -159,6 +193,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	case 1:
 		useCursor = true
 	default:
+		hasError = true
 		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", nil, flag)
 	}
 
@@ -175,6 +210,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	if numParams > 0 {
 		nullBitmapLen := (numParams + 7) >> 3
 		if len(data) < (pos + nullBitmapLen + 1) {
+			hasError = true
 			return mysql.ErrMalformPacket
 		}
 		nullBitmaps = data[pos : pos+nullBitmapLen]
@@ -184,6 +220,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		if data[pos] == 1 {
 			pos++
 			if len(data) < (pos + (numParams << 1)) {
+				hasError = true
 				return mysql.ErrMalformPacket
 			}
 
@@ -200,6 +237,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		err = parseExecArgs(cc.ctx.GetSessionVars().StmtCtx, args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues)
 		stmt.Reset()
 		if err != nil {
+			hasError = true
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
@@ -219,6 +257,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
 		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
 	}
+	hasError = err != nil
 	return err
 }
 
@@ -611,11 +650,20 @@ func parseBinaryDurationWithMS(pos int, paramValues []byte,
 }
 
 func (cc *clientConn) handleStmtClose(data []byte) (err error) {
+	stmtID := 0
+	defer func() {
+		logutil.Logger(context.Background()).Warn("[DEBUG] [STMT_CLOSE]",
+			zap.String("connInfo", cc.String()),
+			zap.String("status", cc.SessionStatusToString()),
+			zap.Int("stmtID", stmtID),
+			zap.Error(err),
+		)
+	}()
 	if len(data) < 4 {
 		return
 	}
 
-	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
+	stmtID = int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt != nil {
 		return stmt.Close()

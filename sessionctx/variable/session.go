@@ -15,6 +15,7 @@ package variable
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -47,12 +48,14 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // PreparedStmtCount is exported for test.
@@ -1403,6 +1406,10 @@ func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 
 // RemovePreparedStmt removes preparedStmt from current session and decrease count in global.
 func (s *SessionVars) RemovePreparedStmt(stmtID uint32) {
+	logutil.Logger(context.Background()).Warn("[DEBUG] [RemovePreparedStmt]",
+		zap.Uint64("connID", s.ConnectionID),
+		zap.Uint32("stmtID", stmtID),
+	)
 	_, exists := s.PreparedStmts[stmtID]
 	if !exists {
 		return

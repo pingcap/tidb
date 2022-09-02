@@ -2013,6 +2013,11 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	user, data := parseNullTermString(data)
+	logutil.Logger(ctx).Warn("[DEBUG] [CHANGE_USER]",
+		zap.String("connInfo", cc.String()),
+		zap.String("status", cc.SessionStatusToString()),
+		zap.ByteString("user", user),
+	)
 	cc.user = string(hack.String(user))
 	if len(data) < 1 {
 		return mysql.ErrMalformPacket
@@ -2039,6 +2044,10 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 }
 
 func (cc *clientConn) handleResetConnection(ctx context.Context) error {
+	logutil.Logger(ctx).Warn("[DEBUG] [RESET_CONNECTION]",
+		zap.String("connInfo", cc.String()),
+		zap.String("status", cc.SessionStatusToString()),
+	)
 	user := cc.ctx.GetSessionVars().User
 	err := cc.ctx.Close()
 	if err != nil {
