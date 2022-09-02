@@ -1811,31 +1811,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 
-	if cc.ctx.GetSessionVars().EnableGeneralPlanCache && len(stmts) == 1 {
-		stmt := stmts[0]
-		paramSQL, params, ok := plannercore.ParameterizeAST(&cc.ctx, stmt)
-		if ok {
-			// convert to exec-stmt
-			pcStmt := cc.ctx.GetSessionVars().GetGeneralPlanCacheStmt(paramSQL)
-			if pcStmt == nil {
-				// Some executions are done in compile stage, so we reset them before compile.
-				if err := executor.ResetContextOfStmt(&cc.ctx, stmt); err != nil {
-					panic("???")
-				}
-				pcStmt, _, _, err = plannercore.GeneratePlanCacheStmtWithAST(ctx, &cc.ctx, stmt)
-				if err != nil {
-					panic("???")
-				}
-				cc.ctx.GetSessionVars().AddGeneralPlanCacheStmt(paramSQL, pcStmt)
-			}
-			stmts[0] = &ast.ExecuteStmt{
-				PrepStmt:        pcStmt,
-				BinaryArgs:      params,
-				FromGeneralStmt: true,
-			}
-		}
-	}
-
 	if len(stmts) == 0 {
 		return cc.writeOK(ctx)
 	}

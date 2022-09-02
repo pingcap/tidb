@@ -78,6 +78,26 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
 
+	if sessVars.EnableGeneralPlanCache {
+		stmt, ok := node.(ast.StmtNode)
+		if ok {
+			paramSQL, params, ok := core.ParameterizeAST(sctx, stmt)
+			if ok {
+				// convert to exec-stmt
+				pcStmt := sessVars.GetGeneralPlanCacheStmt(paramSQL)
+				var err error
+				if pcStmt == nil {
+					pcStmt, _, _, err = core.GeneratePlanCacheStmtWithAST(ctx, sctx, stmt)
+					if err != nil {
+						panic("???")
+					}
+					sessVars.AddGeneralPlanCacheStmt(paramSQL, pcStmt)
+				}
+				return core.GetPlanFromSessionPlanCache(ctx, sctx, true, is, pcStmt.(*core.PlanCacheStmt), params)
+			}
+		}
+	}
+
 	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
 		allowed, err := allowInReadOnlyMode(sctx, node)
 		if err != nil {
