@@ -27,7 +27,7 @@ import (
 // The concrete SM3 Cryptographic Hash Algorithm can be accessed in http://www.sca.gov.cn/sca/xwdt/2010-12/17/content_1002389.shtml
 // This implementation of 'type sm3 struct' is modified from https://github.com/tjfoc/gmsm/tree/601ddb090dcf53d7951cc4dcc66276e2b817837c/sm3
 // Some other references:
-// 	https://tools.ietf.org/id/draft-oscca-cfrg-sm3-01.html
+// 	https://datatracker.ietf.org/doc/draft-sca-cfrg-sm3/
 
 /*
 Copyright Suzhou Tongji Fintech Research Institute 2017 All Rights Reserved.
