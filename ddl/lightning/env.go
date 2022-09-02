@@ -43,6 +43,8 @@ var (
 	LitInitialized bool
 )
 
+const maxMemoryQuota = 2 * size.GB
+
 // InitGlobalLightningEnv initialize Lightning backfill environment.
 func InitGlobalLightningEnv() {
 	log.SetAppLogger(logutil.BgLogger())
@@ -53,8 +55,7 @@ func InitGlobalLightningEnv() {
 		return
 	}
 	LitSortPath = sPath
-	maxMemLimit := genMaxMemoryLimit()
-	LitMemRoot = NewMemRootImpl(int64(maxMemLimit), &LitBackCtxMgr)
+	LitMemRoot = NewMemRootImpl(int64(maxMemoryQuota), &LitBackCtxMgr)
 	LitDiskRoot = NewDiskRootImpl(LitSortPath, &LitBackCtxMgr)
 	err = LitDiskRoot.UpdateUsageAndQuota()
 	if err != nil {
@@ -66,7 +67,7 @@ func InitGlobalLightningEnv() {
 	LitRLimit = genRLimit()
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
-		zap.Uint64("memory limitation", maxMemLimit),
+		zap.Uint64("memory limitation", maxMemoryQuota),
 		zap.Uint64("sort path disk quota", LitDiskRoot.MaxQuota()),
 		zap.Uint64("max open file number", LitRLimit),
 		zap.Bool("lightning is initialized", LitInitialized))
@@ -85,12 +86,9 @@ func genRLimit() uint64 {
 }
 
 func genMaxMemoryLimit() uint64 {
-	maxMemLimit := 1 * size.GB
-	// Set Memory usage limitation to 1 GB
+	maxMemLimit := 2 * size.GB
 	sbz := variable.GetSysVar("sort_buffer_size")
 	bufferSize, err := strconv.ParseUint(sbz.Value, 10, 64)
-	// If get bufferSize err, then maxMemLimitation is 128 MB
-	// Otherwise, the ddl maxMemLimitation is 2 GB
 	if err == nil {
 		maxMemLimit = bufferSize * 8 * size.KB
 		logutil.BgLogger().Info(LitInfoSetMemLimit, zap.Uint64("memory limitation", maxMemLimit))
