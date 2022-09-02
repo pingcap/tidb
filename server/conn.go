@@ -1818,6 +1818,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			// convert to exec-stmt
 			pcStmt := cc.ctx.GetSessionVars().GetGeneralPlanCacheStmt(paramSQL)
 			if pcStmt == nil {
+				// Some executions are done in compile stage, so we reset them before compile.
+				if err := executor.ResetContextOfStmt(&cc.ctx, stmt); err != nil {
+					panic("???")
+				}
 				pcStmt, _, _, err = plannercore.GeneratePlanCacheStmtWithAST(ctx, &cc.ctx, stmt)
 				if err != nil {
 					panic("???")
