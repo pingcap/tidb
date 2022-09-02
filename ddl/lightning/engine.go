@@ -131,9 +131,8 @@ type WriterContext struct {
 }
 
 func (ei *engineInfo) NewWriterCtx(id int) (*WriterContext, error) {
-	memRequire := StructSizeWriterCtx
 	ei.memRoot.RefreshConsumption()
-	ok := ei.memRoot.CheckConsume(memRequire)
+	ok := ei.memRoot.CheckConsume(StructSizeWriterCtx)
 	if !ok {
 		return nil, logAllocMemFailedEngine(ei.memRoot, ei.jobID, ei.indexID)
 	}
@@ -145,10 +144,10 @@ func (ei *engineInfo) NewWriterCtx(id int) (*WriterContext, error) {
 		return nil, err
 	}
 
-	ei.memRoot.Consume(memRequire)
+	ei.memRoot.Consume(StructSizeWriterCtx)
 	logutil.BgLogger().Info(LitInfoCreateWrite, zap.Int64("index ID", ei.indexID),
 		zap.Int("worker ID", id),
-		zap.Int64("allocate memory", memRequire),
+		zap.Int64("allocate memory", StructSizeWriterCtx),
 		zap.Int64("current memory usage", ei.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", ei.memRoot.MaxMemoryQuota()))
 	return wCtx, err

@@ -46,8 +46,8 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 		return logAllocMemFailedEngine(m.MemRoot, bc.jobID, indexID)
 	}
 
-	en, exist1 := m.Load(indexID)
-	if !exist1 {
+	en, exist := m.Load(indexID)
+	if !exist {
 		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
 		ok := m.MemRoot.CheckConsume(StructSizeEngineInfo + engineCacheSize)
 		if !ok {
@@ -87,8 +87,8 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 
 // Unregister delete the engineInfo from the engineManager.
 func (m *engineManager) Unregister(jobID, indexID int64) {
-	ei, exists := m.Load(indexID)
-	if !exists {
+	ei, exist := m.Load(indexID)
+	if !exist {
 		return
 	}
 
