@@ -135,6 +135,22 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 		return errors.Trace(err)
 	}
 
+	// stop scheduler before recover data
+	log.Info("starting to remove some PD schedulers")
+	restoreFunc, e := mgr.RemoveAllPDSchedulers(ctx)
+	if e != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if ctx.Err() != nil {
+			log.Warn("context canceled, doing clean work with background context")
+			ctx = context.Background()
+		}
+		if restoreE := restoreFunc(ctx); restoreE != nil {
+			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+		}
+	}()
+
 	var allStores []*metapb.Store
 	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
 	if err != nil {
