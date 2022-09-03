@@ -56,6 +56,7 @@ var (
 	ErrViewInvalid                   = dbterror.ClassExecutor.NewStd(mysql.ErrViewInvalid)
 	ErrInstanceScope                 = dbterror.ClassExecutor.NewStd(mysql.ErrInstanceScope)
 	ErrSettingNoopVariable           = dbterror.ClassExecutor.NewStd(mysql.ErrSettingNoopVariable)
+	ErrLazyUniquenessCheckFailure    = dbterror.ClassExecutor.NewStd(mysql.ErrLazyUniquenessCheckFailure)
 
 	ErrBRIEBackupFailed      = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
 	ErrBRIERestoreFailed     = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)

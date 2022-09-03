@@ -422,7 +422,7 @@ func (t *Tracker) Release(bytes int64) {
 			newRef := &finalizerRef{}
 			finalizer := func(tracker *Tracker) func(ref *finalizerRef) {
 				return func(ref *finalizerRef) {
-					tracker.release(bytes)
+					tracker.release(bytes) // finalizer func is called async
 				}
 			}
 			runtime.SetFinalizer(newRef, finalizer(tracker))
