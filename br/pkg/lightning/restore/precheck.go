@@ -180,3 +180,8 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckIt
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}
 }
+
+// GetPreInfoGetter gets the pre restore info getter from the builder.
+func (b *PrecheckItemBuilder) GetPreInfoGetter() PreRestoreInfoGetter {
+	return b.preInfoGetter
+}
