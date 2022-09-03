@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 )
 
 type CheckItemID string
@@ -49,43 +50,6 @@ func WithPrecheckKey(ctx context.Context, key precheckContextKey, val any) conte
 	return context.WithValue(ctx, key, val)
 }
 
-type PrecheckItemBuilderConfig struct {
-	PreInfoGetterOptions []GetPreInfoOption
-	MDLoaderSetupOptions []mydump.MDLoaderSetupOption
-}
-
-type PrecheckItemBuilderOption interface {
-	Apply(c *PrecheckItemBuilderConfig)
-}
-
-type preInfoGetterOptsForBuilder struct {
-	opts []GetPreInfoOption
-}
-
-func (o *preInfoGetterOptsForBuilder) Apply(c *PrecheckItemBuilderConfig) {
-	c.PreInfoGetterOptions = append([]GetPreInfoOption{}, o.opts...)
-}
-
-func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOption {
-	return &preInfoGetterOptsForBuilder{
-		opts: opts,
-	}
-}
-
-type mdLoaderSetupOptsForBuilder struct {
-	opts []mydump.MDLoaderSetupOption
-}
-
-func (o *mdLoaderSetupOptsForBuilder) Apply(c *PrecheckItemBuilderConfig) {
-	c.MDLoaderSetupOptions = append([]mydump.MDLoaderSetupOption{}, o.opts...)
-}
-
-func WithMDLoaderSetupOptions(opts ...mydump.MDLoaderSetupOption) PrecheckItemBuilderOption {
-	return &mdLoaderSetupOptsForBuilder{
-		opts: opts,
-	}
-}
-
 type PrecheckItemBuilder struct {
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
@@ -93,11 +57,11 @@ type PrecheckItemBuilder struct {
 	checkpointsDB checkpoints.DB
 }
 
-func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
 	var gerr error
-	builderCfg := new(PrecheckItemBuilderConfig)
+	builderCfg := new(ropts.PrecheckItemBuilderConfig)
 	for _, o := range opts {
-		o.Apply(builderCfg)
+		o(builderCfg)
 	}
 	targetDB, err := DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
