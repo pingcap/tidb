@@ -62,24 +62,6 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 		return nil
 	}
 
-	// appendBinary does not support some type such as uint8、types.time，so convert is needed here
-	for key, val := range p.entries {
-		switch x := val.(type) {
-		case *types.MyDecimal:
-			float64Val, err := x.ToFloat64()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			p.entries[key] = float64Val
-		case []uint8, types.Time, types.Duration:
-			strVal, err := types.ToString(x)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			p.entries[key] = strVal
-		}
-	}
-
 	chk.AppendJSON(e.ordinal, json.CreateBinary(p.entries))
 	return nil
 }
@@ -97,14 +79,22 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			return 0, json.ErrJSONDocumentNULLKey
 		}
 
+		if e.args[0].GetType().GetCharset() == charset.CharsetBin {
+			return 0, json.ErrInvalidJSONCharset.GenWithStackByArgs(e.args[0].GetType().GetCharset())
+		}
+
 		value, err := e.args[1].Eval(row)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 
-		realVal := getRealJSONValue(value, e.args[1].GetType())
+		realVal, err := getRealJSONValue(value, e.args[1].GetType())
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
 		switch x := realVal.(type) {
-		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, json.Opaque, *types.MyDecimal, types.Time, types.Duration:
+		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, json.Opaque:
 			if _, ok := p.entries[key]; !ok {
 				memDelta += int64(len(key)) + getValMemDelta(realVal)
 				if len(p.entries)+1 > (1<<p.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
@@ -121,7 +111,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	return memDelta, nil
 }
 
-func getRealJSONValue(value types.Datum, ft *types.FieldType) interface{} {
+func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, error) {
 	realVal := value.Clone().GetValue()
 	switch value.Kind() {
 	case types.KindBinaryLiteral, types.KindMysqlBit, types.KindBytes:
@@ -146,7 +136,25 @@ func getRealJSONValue(value types.Datum, ft *types.FieldType) interface{} {
 		}
 	}
 
-	return realVal
+	// appendBinary does not support some type such as uint8、types.time，so convert is needed here
+	switch x := realVal.(type) {
+	case float32:
+		realVal = float64(x)
+	case *types.MyDecimal:
+		float64Val, err := x.ToFloat64()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		realVal = float64Val
+	case []uint8, types.Time, types.Duration:
+		strVal, err := types.ToString(x)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		realVal = strVal
+	}
+
+	return realVal, nil
 }
 
 func getValMemDelta(val interface{}) (memDelta int64) {

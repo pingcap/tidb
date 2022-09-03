@@ -217,3 +217,8 @@ func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
 func GetSavepointStmtCounter() int64 {
 	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint"}))
 }
+
+// GetLazyPessimisticUniqueCheckSetCounter returns the counter of setting tidb_constraint_check_in_place_pessimistic to false.
+func GetLazyPessimisticUniqueCheckSetCounter() int64 {
+	return readCounter(LazyPessimisticUniqueCheckSetCount)
+}
