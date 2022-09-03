@@ -1032,7 +1032,6 @@ const (
 	MaxDDLReorgBatchSize                     int32  = 10240
 	MinDDLReorgBatchSize                     int32  = 32
 	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
-	DefTiDBRcWriteCheckTs                 = false
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 )
 

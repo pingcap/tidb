@@ -88,12 +88,8 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 
 	// Try to mark the `RCCheckTS` flag for the first time execution of in-transaction read requests
 	// using read-consistency isolation level.
-	if node != nil {
-		if NeedSetRCCheckTSFlag(p.sctx, node) {
-			p.sctx.GetSessionVars().StmtCtx.RCCheckTS = true
-		} else if NeedDisableWarmupInOptimizer(p.sctx, node) {
-			p.sctx.GetSessionVars().StmtCtx.DisableWarmupInOptimizer = true
-		}
+	if node != nil && NeedSetRCCheckTSFlag(p.sctx, node) {
+		p.sctx.GetSessionVars().StmtCtx.RCCheckTS = true
 	}
 
 	return p.prepareStmt(!p.isTxnPrepared)
@@ -107,51 +103,6 @@ func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 		return true
 	}
 	return false
-}
-
-// NeedDisableWarmupInOptimizer checks whether optimizer needs to call `txnManger.AdviseWarmup()` to warmup in RC isolation.
-// txnManger.AdviseWarmup makes a tso request except that it's a readonly statement with RcReadCheckTS mode, please
-// refer to tidb_rc_read_check_ts and know more about RcReadCheckTS mode. But for some special scenes, it maybe not
-// necessary to get tso from PD such as below.
-// 1. RC isolation && not internal sqls && In transaction
-// 2. Insert without select || point update/delete/lock-read
-// It can't judge if node is a point-update/point-delete/point-lock-read here. To simplify the process, disable calling
-// `txnManager.AdviseWarmup()` in Optimize for all update/delete/select-for-update sqls which makes tso wait time a little more
-// for text protocol sql.
-func NeedDisableWarmupInOptimizer(sctx sessionctx.Context, node ast.Node) bool {
-	disableWarmup := false
-	sessionVars := sctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && sessionVars.RcWriteCheckTS && sessionVars.InTxn() {
-		realNode := node
-		if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-			// In fact, Optimize hasn't called `txnManager.AdviseWarmup()` for `ExecuteStmt` any more if
-			// use cached plan.
-			prepareStmt, err := plannercore.GetPreparedStmt(execStmt, sessionVars)
-			if err != nil {
-				logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
-				return false
-			}
-			realNode = prepareStmt.PreparedAst.Stmt
-		}
-		// It can't judge if node is a point-update/point-delete/point-lock-read in `OnStmtStart function.
-		// To simplify the process, disable calling `txnManager.AdviseWarmup()` in Optimize for update/delete/select
-		// statements which makes tso wait time a little more for text protocol sql
-		switch v := realNode.(type) {
-		case *ast.InsertStmt:
-			disableWarmup = v.Select == nil
-		case *ast.UpdateStmt:
-			disableWarmup = true
-		case *ast.DeleteStmt:
-			disableWarmup = true
-		case *ast.SelectStmt:
-			if v.LockInfo != nil && (v.LockInfo.LockType == ast.SelectLockForUpdate ||
-				v.LockInfo.LockType == ast.SelectLockForUpdateNoWait ||
-				v.LockInfo.LockType == ast.SelectLockForUpdateWaitN) {
-				disableWarmup = true
-			}
-		}
-	}
-	return disableWarmup
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -285,7 +236,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
-		return sctx.GetSessionVars().RcWriteCheckTS && (v.Lock || inLockOrWriteStmt)
+		return (v.Lock || inLockOrWriteStmt)
 	case plannercore.PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false

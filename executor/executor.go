@@ -1917,7 +1917,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc = vars.InitStatementContext()
 	}
-	sc.DisableWarmupInOptimizer = false
 	sc.TimeZone = vars.Location()
 	sc.TaskID = stmtctx.AllocateTaskID()
 	sc.CTEStorageMap = map[int]*CTEStorages{}
