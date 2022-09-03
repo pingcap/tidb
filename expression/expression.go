@@ -1161,7 +1161,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
 		return true
-	case ast.Hex:
+	case ast.Hex, ast.Bin:
 		return true
 	case ast.GetFormat:
 		return true
