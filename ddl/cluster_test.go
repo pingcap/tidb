@@ -15,13 +15,21 @@
 package ddl_test
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestGetFlashbackKeyRanges(t *testing.T) {
@@ -98,4 +106,73 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(0))
 	require.NoError(t, err)
 	require.Len(t, kvRanges, 1)
+}
+
+func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	originHook := dom.DDL().GetHook()
+	tk := testkit.NewTestKit(t, store)
+
+	oldValue := map[string]interface{}{
+		"hot-region-schedule-limit": 1,
+	}
+	infosync.SetPDScheduleConfig(context.Background(), oldValue)
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
+		if job.SchemaState == model.StateWriteReorganization {
+			closeValue, err := infosync.GetPDScheduleConfig(context.Background())
+			assert.NoError(t, err)
+			assert.Equal(t, closeValue["hot-region-schedule-limit"], 0)
+			// cancel flashback job
+			job.State = model.JobStateCancelled
+			job.Error = dbterror.ErrCancelledDDLJob
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+
+	tk.MustGetErrCode(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)), errno.ErrCancelledDDLJob)
+	dom.DDL().SetHook(originHook)
+
+	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, finishValue["hot-region-schedule-limit"], 1)
+}
+
+func TestCancelFlashbackCluster(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	originHook := dom.DDL().GetHook()
+	tk := testkit.NewTestKit(t, store)
+	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	// Try canceled on StateNone, cancel success
+	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+		return job.SchemaState == model.StateNone
+	})
+	dom.DDL().SetHook(hook)
+	tk.MustGetErrCode(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)), errno.ErrCancelledDDLJob)
+	hook.MustCancelDone(t)
+
+	// Try canceled on StateWriteReorganization, cancel failed
+	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+		return job.SchemaState == model.StateWriteReorganization
+	})
+	dom.DDL().SetHook(hook)
+	tk.MustExec(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)))
+	hook.MustCancelFailed(t)
+
+	dom.DDL().SetHook(originHook)
 }

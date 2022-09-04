@@ -58,7 +58,7 @@ func savePDSchedule(job *model.Job) error {
 	for _, key := range pdScheduleKey {
 		saveValue[key] = retValue[key]
 	}
-	job.Args = append(job.Args, saveValue)
+	job.Args[1] = &saveValue
 	return nil
 }
 
@@ -119,7 +119,6 @@ func checkAndSetFlashbackClusterInfo(w *worker, d *ddlCtx, t *meta.Meta, job *mo
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	// If flashbackSchemaVersion not same as nowSchemaVersion, we've done ddl during [flashbackTs, now).
 	if flashbackSchemaVersion != nowSchemaVersion {
 		return errors.Errorf("schema version not same, have done ddl during [flashbackTS, now)")
@@ -263,17 +262,12 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	}
 
 	// Stage 2, check flashbackTS, close GC and PD schedule.
-	if job.SnapshotVer == 0 {
+	if job.SchemaState == model.StateNone {
 		if err = checkAndSetFlashbackClusterInfo(w, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		snapVer, err := getValidCurrentVersion(d.store)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		job.SnapshotVer = snapVer.Ver
+		job.SchemaState = model.StateWriteReorganization
 		return ver, nil
 	}
 
@@ -284,6 +278,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	}
 
 	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
 	return ver, nil
 }
 
