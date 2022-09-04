@@ -253,6 +253,8 @@ type StatementContext struct {
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
 }
 
 // StmtHints are SessionVars related sql hints.
