@@ -253,6 +253,16 @@ type StatementContext struct {
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
+<<<<<<< HEAD
+=======
+
+	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
+	StatsLoadStatus map[model.TableItemID]string
+	// IsSyncStatsFailed indicates whether any failure happened during sync stats
+	IsSyncStatsFailed bool
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
+>>>>>>> aa5645adf... planner: fix update plan's projection elimination will cause column resolution error. (#37582)
 }
 
 // StmtHints are SessionVars related sql hints.
