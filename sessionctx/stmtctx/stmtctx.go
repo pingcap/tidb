@@ -185,6 +185,61 @@ type StatementContext struct {
 	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
+<<<<<<< HEAD
+=======
+
+	// EnableOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
+	EnableOptimizeTrace bool
+	// OptimizeTracer indicates the tracer for optimize
+	OptimizeTracer *tracing.OptimizeTracer
+	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
+	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
+	EnableOptimizerCETrace bool
+	OptimizerCETrace       []*tracing.CETraceRecord
+
+	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
+	WaitLockLeaseTime time.Duration
+
+	// KvExecCounter is created from SessionVars.StmtStats to count the number of SQL
+	// executions of the kv layer during the current execution of the statement.
+	// Its life cycle is limited to this execution, and a new KvExecCounter is
+	// always created during each statement execution.
+	KvExecCounter *stmtstats.KvExecCounter
+
+	// WeakConsistency is true when read consistency is weak and in a read statement and not in a transaction.
+	WeakConsistency bool
+
+	StatsLoad struct {
+		// Timeout to wait for sync-load
+		Timeout time.Duration
+		// NeededItems stores the columns/indices whose stats are needed for planner.
+		NeededItems []model.TableItemID
+		// ResultCh to receive stats loading results
+		ResultCh chan StatsLoadResult
+		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
+		Fallback bool
+		// LoadStartTime is to record the load start time to calculate latency
+		LoadStartTime time.Time
+	}
+
+	// SysdateIsNow indicates whether sysdate() is an alias of now() in this statement
+	SysdateIsNow bool
+
+	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
+	RCCheckTS bool
+
+	// IsSQLRegistered uses to indicate whether the SQL has been registered for TopSQL.
+	IsSQLRegistered atomic2.Bool
+	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
+	IsSQLAndPlanRegistered atomic2.Bool
+
+	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
+	StatsLoadStatus map[model.TableItemID]string
+	// IsSyncStatsFailed indicates whether any failure happened during sync stats
+	IsSyncStatsFailed bool
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
+>>>>>>> aa5645adf... planner: fix update plan's projection elimination will cause column resolution error. (#37582)
 }
 
 // StmtHints are SessionVars related sql hints.
