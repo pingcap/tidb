@@ -4931,8 +4931,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	if tableInfo.View.Security == model.SecurityDefiner {
 		if pm := privilege.GetPrivilegeManager(b.ctx); pm != nil {
 			for _, v := range b.visitInfo {
-				log.Info("current wwz", zap.Any("definer", tableInfo.View.Definer), zap.Bool("CurrentUser", tableInfo.View.Definer.CurrentUser))
-				if tableInfo.View.Definer.CurrentUser {
+				log.Info("current wwz", zap.String("table", v.Table), zap.Any("definer", tableInfo.View.Definer), zap.Bool("CurrentUser", tableInfo.View.Definer.CurrentUser), zap.Uint64("privilege", uint64(v.privilege)), zap.Bool("b.alwaysInCurrentUser", b.alwaysInCurrentUser))
+				if tableInfo.View.Definer.CurrentUser || b.alwaysInCurrentUser {
+					b.alwaysInCurrentUser = true
 					if !pm.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, v.db, v.Table, v.column, v.privilege) {
 						log.Info("warning wwz fix ok ????")
 						return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
@@ -4940,6 +4941,11 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 				} else {
 					if !pm.RequestVerificationWithUser(v.db, v.Table, v.column, v.privilege, tableInfo.View.Definer) {
 						return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+					}
+					if v.privilege == mysql.SelectPriv {
+						if !pm.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, v.db, v.Table, v.column, mysql.SelectPriv) {
+							return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+						}
 					}
 				}
 			}

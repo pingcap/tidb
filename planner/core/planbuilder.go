@@ -536,6 +536,8 @@ type PlanBuilder struct {
 	hasValidSemiJoinHint bool
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
+
+	alwaysInCurrentUser bool
 }
 
 type handleColHelper struct {
