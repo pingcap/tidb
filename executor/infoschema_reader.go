@@ -408,6 +408,9 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, sv := range sysVars {
+		if infoschema.SysVarHiddenForSem(ctx, sv.Name) {
+			continue
+		}
 		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(sv.Name)
 		if err != nil {
 			currentVal = ""
