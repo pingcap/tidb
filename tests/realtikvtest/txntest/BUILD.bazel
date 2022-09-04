@@ -10,7 +10,7 @@ go_test(
         "txn_test.go",
     ],
     flaky = True,
-    race = on,
+    race = "on",
     deps = [
         "//expression",
         "//kv",
