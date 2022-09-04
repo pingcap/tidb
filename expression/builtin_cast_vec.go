@@ -539,7 +539,7 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			times[i] = types.ZeroTime
 			continue
 		}
-		tm, err := types.ParseTime(stmt, fv, b.tp.GetType(), fsp)
+		tm, err := types.ParseTimeFromFloatString(stmt, fv, b.tp.GetType(), fsp)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -788,8 +788,30 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chu
 	}
 
 	result.ReserveJSON(n)
-	hasParse := mysql.HasParseToJSONFlag(b.tp.GetFlag())
-	if hasParse {
+	typ := b.args[0].GetType()
+	if types.IsBinaryStr(typ) {
+		var res json.BinaryJSON
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.AppendNull()
+				continue
+			}
+
+			val := buf.GetBytes(i)
+			resultBuf := val
+			if typ.GetType() == mysql.TypeString {
+				// only for BINARY: the tailing zero should also be in the opaque json
+				resultBuf = make([]byte, typ.GetFlen())
+				copy(resultBuf, val)
+			}
+
+			res = json.CreateBinary(json.Opaque{
+				TypeCode: b.args[0].GetType().GetType(),
+				Buf:      resultBuf,
+			})
+			result.AppendJSON(res)
+		}
+	} else if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
 		var res json.BinaryJSON
 		for i := 0; i < n; i++ {
 			if buf.IsNull(i) {

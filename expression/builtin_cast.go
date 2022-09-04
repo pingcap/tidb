@@ -705,7 +705,23 @@ func (b *builtinCastStringAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSO
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
+
+	typ := b.args[0].GetType()
+	if types.IsBinaryStr(typ) {
+		buf := []byte(val)
+		if typ.GetType() == mysql.TypeString {
+			// the tailing zero should also be in the opaque json
+			buf = make([]byte, typ.GetFlen())
+			copy(buf, val)
+		}
+
+		res := json.CreateBinary(json.Opaque{
+			TypeCode: b.args[0].GetType().GetType(),
+			Buf:      buf,
+		})
+
+		return res, false, err
+	} else if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
 		res, err = json.ParseBinaryFromString(val)
 	} else {
 		res = json.CreateBinary(val)
@@ -886,7 +902,7 @@ func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, er
 		return types.ZeroTime, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err := types.ParseTime(sc, fv, b.tp.GetType(), b.tp.GetDecimal())
+	res, err := types.ParseTimeFromFloatString(sc, fv, b.tp.GetType(), b.tp.GetDecimal())
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}

@@ -117,9 +117,9 @@ func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 	case ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp:
 		a.typeInfer4PopOrSamp(ctx)
 	case ast.AggFuncJsonArrayagg:
-		a.typeInfer4JsonFuncs(ctx)
+		a.typeInfer4JsonArrayAgg(ctx)
 	case ast.AggFuncJsonObjectAgg:
-		a.typeInfer4JsonFuncs(ctx)
+		return a.typeInfer4JsonObjectAgg(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -289,9 +289,16 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
-func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer4JsonArrayAgg(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeJSON)
 	types.SetBinChsClnFlag(a.RetTp)
+}
+
+func (a *baseFuncDesc) typeInfer4JsonObjectAgg(ctx sessionctx.Context) error {
+	a.RetTp = types.NewFieldType(mysql.TypeJSON)
+	types.SetBinChsClnFlag(a.RetTp)
+	a.Args[0] = expression.WrapWithCastAsString(ctx, a.Args[0])
+	return nil
 }
 
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {

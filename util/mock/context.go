@@ -48,16 +48,16 @@ var (
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
-	values      map[fmt.Stringer]interface{}
 	txn         wrapTxn    // mock global variable
 	Store       kv.Storage // mock global variable
-	sessionVars *variable.SessionVars
 	ctx         context.Context
-	cancel      context.CancelFunc
 	sm          util.SessionManager
+	is          sessionctx.InfoschemaMetaVersion
+	values      map[fmt.Stringer]interface{}
+	sessionVars *variable.SessionVars
+	cancel      context.CancelFunc
 	pcache      *kvcache.SimpleLRUCache
 	level       kvrpcpb.DiskFullOpt
-	is          sessionctx.InfoschemaMetaVersion
 }
 
 type wrapTxn struct {

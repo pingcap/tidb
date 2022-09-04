@@ -61,7 +61,7 @@ func TestDMLCapturePlanBaseline(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("delete from t where b = 1 and c > 1")
 	tk.MustExec("delete from t where b = 1 and c > 1")
 	tk.MustExec("update t set a = 1 where b = 1 and c > 1")
@@ -108,7 +108,7 @@ func TestCapturePlanBaseline(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -140,7 +140,7 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -188,7 +188,7 @@ func TestCaptureDBCaseSensitivity(t *testing.T) {
 	tk.MustExec("use SPM")
 	tk.MustExec("create table t(a int, b int, key(b))")
 	tk.MustExec("create global binding for select * from t using select /*+ use_index(t) */ * from t")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select /*+ use_index(t,b) */ * from t")
 	tk.MustExec("select /*+ use_index(t,b) */ * from t")
 	tk.MustExec("admin capture bindings")
@@ -214,7 +214,7 @@ func TestCaptureBaselinesDefaultDB(t *testing.T) {
 	tk.MustExec("drop database if exists spm")
 	tk.MustExec("create database spm")
 	tk.MustExec("create table spm.t(a int, index idx_a(a))")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from spm.t ignore index(idx_a) where a > 10")
 	tk.MustExec("select * from spm.t ignore index(idx_a) where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -241,7 +241,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
@@ -276,7 +276,7 @@ func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key(a), key(b))")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
 	// Create virtual tiflash replica info.
@@ -294,7 +294,7 @@ func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
 	}
 	// Here the plan is the TiFlash plan.
 	rows := tk.MustQuery("explain select * from t").Rows()
-	require.Equal(t, "cop[tiflash]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
+	require.Equal(t, "mpp[tiflash]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
 
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustExec("admin capture bindings")
@@ -351,7 +351,7 @@ func TestBindingSource(t *testing.T) {
 		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("admin capture bindings")
@@ -371,7 +371,7 @@ func TestCapturedBindingCharset(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("create table t(name varchar(25), index idx(name))")
 
@@ -404,7 +404,7 @@ func TestConcurrentCapture(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
 	tk.MustExec("admin capture bindings")
@@ -424,7 +424,7 @@ func TestUpdateSubqueryCapture(t *testing.T) {
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b))")
 	tk.MustExec("create table t2(a int, b int)")
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("update t1 set b = 1 where b = 2 and (a in (select a from t2 where b = 1) or c in (select a from t2 where b = 1))")
 	tk.MustExec("update t1 set b = 1 where b = 2 and (a in (select a from t2 where b = 1) or c in (select a from t2 where b = 1))")
 	tk.MustExec("admin capture bindings")
@@ -477,7 +477,7 @@ func TestIssue20417(t *testing.T) {
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	dom.BindHandle().CaptureBaselines()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where b=2 and c=213124")
 	tk.MustExec("select * from t where b=2 and c=213124")
 	tk.MustExec("admin capture bindings")
@@ -522,7 +522,7 @@ func TestCaptureWithZeroSlowLogThreshold(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("set tidb_slow_log_threshold = 0")
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
@@ -548,7 +548,7 @@ func TestIssue25505(t *testing.T) {
 	tk.MustExec("create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b))")
 	tk.MustExec("create table t1 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
 	tk.MustExec("create table t2 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	spmMap := map[string]string{}
 	spmMap["with recursive `cte` ( `a` ) as ( select ? union select `a` + ? from `test` . `t1` where `a` < ? ) select * from `cte`"] =
@@ -615,7 +615,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -638,7 +638,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	tk.MustExec(`grant all on *.* to usr1 with grant option`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
-	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "usr1", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "usr1", Hostname: "%"}, nil, nil))
 	tk2.MustExec("select * from t where a > 10")
 	tk2.MustExec("select * from t where a > 10")
 	tk2.MustExec("admin capture bindings")
@@ -702,7 +702,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	dbs := []string{"db11", "db12", "db2"}
 	tbls := []string{"t11", "t12", "t2"}
 	for _, db := range dbs {
@@ -808,7 +808,7 @@ func TestCaptureFilter(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -960,7 +960,7 @@ func TestCaptureHints(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int primary key, a int, b int, key(a), key(b))")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	captureCases := []struct {
 		query string
