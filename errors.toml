@@ -501,6 +501,11 @@ error = '''
 open duplicate db error
 '''
 
+["Lightning:Restore:ErrResolveDuplicateRows"]
+error = '''
+resolve duplicate rows error on table '%s'
+'''
+
 ["Lightning:Restore:ErrRestoreTable"]
 error = '''
 restore table %s failed
