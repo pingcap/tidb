@@ -27,14 +27,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
+func TestRcTSOCmdCountForPrepareExecuteNormal(t *testing.T) {
 	// This is a mock workload mocks one which discovers that the tso request count is abnormal.
 	// After the bug fix, the tso request count recovers, so we use this workload to record the current tso request count
 	// to reject future works that accidentally causes tso request increasing.
 	// Note, we do not record all tso requests but some typical requests.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/tsoUseConstantFuture", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/waitTsoOfOracleFuture", "return"))
+
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/tsoUseConstantFuture"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/waitTsoOfOracleFuture"))
 	}()
 	store := testkit.CreateMockStore(t)
 
@@ -43,7 +48,6 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set global tidb_rc_write_check_ts = true")
 	tk.RefreshSession()
 	sctx := tk.Session()
 
@@ -55,6 +59,7 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, 1, 1)")
 	tk.MustExec("insert into t2 values (1, 1, 1)")
 
+	// PointPlanQueries always don't send tso request, the others send tso request at first exeuction
 	sqlSelectID, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id1 = ? for update")
 	sqlUpdateID, _, _, _ := tk.Session().PrepareStmt("update t1 set id3 = id3 + 10 where id1 = ?")
 	sqlUpdateID2, _, _, _ := tk.Session().PrepareStmt("update t2 set id3 = id3 + 10 where id1 = ?")
@@ -64,7 +69,7 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 
 	res := tk.MustQuery("show variables like 'transaction_isolation'")
 	require.Equal(t, "READ-COMMITTED", res.Rows()[0][1])
-	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
+	resetAllTsoCounter(sctx)
 
 	for i := 1; i < 100; i++ {
 		tk.MustExec("begin pessimistic")
@@ -92,43 +97,13 @@ func TestRcTSOCmdCountForPrepareExecute(t *testing.T) {
 
 		tk.MustExec("commit")
 	}
-	count := sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(198), count)
-
-	tk.MustExec("set session tidb_rc_write_check_ts = false")
-	tk.MustExec("delete from t1")
-	tk.MustExec("delete from t2")
-	tk.MustExec("insert into t1 values (1, 1, 1)")
-	tk.MustExec("insert into t2 values (1, 1, 1)")
-	tk.MustExec("insert into t2 values (5, 5, 5)")
-	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
-
-	for i := 1; i < 100; i++ {
-		tk.MustExec("begin pessimistic")
-		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, expression.Args2Expressions4Test(1))
-		require.NoError(t, err)
-		require.NoError(t, stmt.Close())
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, expression.Args2Expressions4Test(1))
-		require.NoError(t, err)
-		require.Nil(t, stmt)
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, expression.Args2Expressions4Test(1))
-		require.NoError(t, err)
-		require.Nil(t, stmt)
-
-		val := i * 10
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, expression.Args2Expressions4Test(val, val, val))
-		require.NoError(t, err)
-		require.Nil(t, stmt)
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID, expression.Args2Expressions4Test(val))
-		require.NoError(t, err)
-		require.Nil(t, stmt)
-		tk.MustExec("commit")
-	}
-	count = sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(594), count)
+	countTsoRequest, countTsoUseConstant, countWaitTsoOracle := getAllTsoCounter(sctx)
+	require.Equal(t, uint64(200), countTsoRequest.(uint64))
+	require.Equal(t, uint64(594), countTsoUseConstant.(uint64))
+	require.Equal(t, 0, countWaitTsoOracle.(int))
 }
 
-func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
+func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/tsoUseConstantFuture", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/waitTsoOfOracleFuture", "return"))
@@ -144,7 +119,6 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set global tidb_rc_write_check_ts = true")
 	tk.RefreshSession()
 	sctx := tk.Session()
 
@@ -185,8 +159,9 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle := getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(32), countTsoRequest.(uint64),
-		uint64(20), countTsoUseConstant.(uint64), uint64(10), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(32), countTsoRequest.(uint64))
+	require.Equal(t, uint64(20), countTsoUseConstant.(uint64))
+	require.Equal(t, uint64(10), countWaitTsoOracle.(uint64))
 
 	// Join->SelectLock->PoinGet
 	sqlSelectID4, _, _, _ := tk.Session().PrepareStmt("SELECT * FROM t1 JOIN t2 ON t1.id1 = t2.id1 WHERE t1.id1 = ? FOR UPDATE")
@@ -199,8 +174,9 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(20), countTsoRequest.(uint64),
-		uint64(10), countTsoUseConstant.(uint64), uint64(0), uint64(countWaitTsoOracle.(int))})
+	require.Equal(t, uint64(21), countTsoRequest.(uint64))
+	require.Equal(t, uint64(10), countTsoUseConstant.(uint64))
+	require.Equal(t, 0, countWaitTsoOracle.(int))
 
 	// SelectLock_7->UnionScan_8->TableReader_10->TableRangeScan_9
 	sqlInsertID1, _, _, _ := tk.Session().PrepareStmt("insert into t2 values(?, ?, ?)")
@@ -220,8 +196,9 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(15), countTsoRequest.(uint64),
-		uint64(5), countTsoUseConstant.(uint64), uint64(5), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(16), countTsoRequest.(uint64))
+	require.Equal(t, uint64(5), countTsoUseConstant.(uint64))
+	require.Equal(t, uint64(5), countWaitTsoOracle.(uint64))
 
 	// BatchPointGet
 	sqlSelectID6, _, _, _ := tk.Session().PrepareStmt("SELECT * FROM t1 WHERE id1 = ? OR id1 = ? FOR UPDATE")
@@ -234,8 +211,9 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(15), countTsoRequest.(uint64),
-		uint64(0), uint64(countTsoUseConstant.(int)), uint64(5), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(15), countTsoRequest.(uint64))
+	require.Equal(t, 0, countTsoUseConstant.(int))
+	require.Equal(t, uint64(5), countWaitTsoOracle.(uint64))
 
 	// Subquery has SelectLock + PointGet
 	sqlSelectID7, _, _, _ := tk.Session().PrepareStmt("SELECT * FROM t1 WHERE id1 IN (SELECT id1 FROM t2 WHERE id1 = ? FOR UPDATE)")
@@ -259,8 +237,9 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(25), countTsoRequest.(uint64),
-		uint64(0), uint64(countTsoUseConstant.(int)), uint64(15), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(25), countTsoRequest.(uint64))
+	require.Equal(t, 0, countTsoUseConstant.(int))
+	require.Equal(t, uint64(15), countWaitTsoOracle.(uint64))
 
 	// PointUpdate Index and Non-index
 	sqlUpdateID1, _, _, _ := tk.Session().PrepareStmt("UPDATE t1 set id2 = id2 + 100 WHERE id1 = ?")
@@ -277,8 +256,9 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(10), countTsoRequest.(uint64),
-		uint64(10), countTsoUseConstant.(uint64), uint64(0), uint64(countWaitTsoOracle.(int))})
+	require.Equal(t, uint64(10), countTsoRequest.(uint64))
+	require.Equal(t, uint64(10), countTsoUseConstant.(uint64))
+	require.Equal(t, 0, countWaitTsoOracle.(int))
 
 	// SelectLock has PointGet and other plans
 	sqlUpdateID3, _, _, _ := tk.Session().PrepareStmt("UPDATE t1 set id2 = id2 + 100 WHERE id1 IN (SELECT id1 FROM t2 WHERE id1 = ?)")
@@ -291,8 +271,9 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(15), countTsoRequest.(uint64),
-		uint64(0), uint64(countTsoUseConstant.(int)), uint64(5), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(15), countTsoRequest.(uint64))
+	require.Equal(t, 0, countTsoUseConstant.(int))
+	require.Equal(t, uint64(5), countWaitTsoOracle.(uint64))
 
 	// PointUpdate with singlerow subquery. singlerow subquery makes tso wait
 	// PointUpdate doesn't make tso request
@@ -306,8 +287,9 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(60), countTsoRequest.(uint64),
-		uint64(20), countTsoUseConstant.(uint64), uint64(20), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(60), countTsoRequest.(uint64))
+	require.Equal(t, uint64(20), countTsoUseConstant.(uint64))
+	require.Equal(t, uint64(20), countWaitTsoOracle.(uint64))
 
 	// delete
 	sqlDeleteID1, _, _, _ := tk.Session().PrepareStmt("DELETE FROM t1 WHERE id1 = ?")
@@ -328,8 +310,9 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(4), countTsoRequest.(uint64),
-		uint64(1), countTsoUseConstant.(uint64), uint64(2), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(4), countTsoRequest.(uint64))
+	require.Equal(t, uint64(1), countTsoUseConstant.(uint64))
+	require.Equal(t, uint64(2), countWaitTsoOracle.(uint64))
 
 	// insert on duplicate
 	sqlInsertID2, _, _, _ := tk.Session().PrepareStmt("INSERT INTO t1 VALUES(?,5,5) ON DUPLICATE KEY UPDATE id3 = id3 + 100")
@@ -350,11 +333,12 @@ func TestRcTSOCmdCountForPrepareExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(10), countTsoRequest.(uint64),
-		uint64(15), countTsoUseConstant.(uint64), uint64(0), uint64(countWaitTsoOracle.(int))})
+	require.Equal(t, uint64(13), countTsoRequest.(uint64))
+	require.Equal(t, uint64(15), countTsoUseConstant.(uint64))
+	require.Equal(t, 0, countWaitTsoOracle.(int))
 }
 
-func TestRcTSOCmdCountForTextSQLExecute(t *testing.T) {
+func TestRcTSOCmdCountForTextSQLExecuteNormal(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
@@ -366,7 +350,6 @@ func TestRcTSOCmdCountForTextSQLExecute(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set global tidb_rc_write_check_ts = true")
 	tk.RefreshSession()
 	sctx := tk.Session()
 
@@ -397,28 +380,7 @@ func TestRcTSOCmdCountForTextSQLExecute(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(297), count)
-
-	tk.MustExec("set session tidb_rc_write_check_ts = false")
-	tk.MustExec("delete from t1")
-	tk.MustExec("delete from t2")
-	tk.MustExec("insert into t1 values (1, 1, 1)")
-	tk.MustExec("insert into t2 values (1, 1, 1)")
-	tk.MustExec("insert into t2 values (5, 5, 5)")
-	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
-	for i := 1; i < 100; i++ {
-		tk.MustExec("begin pessimistic")
-		tk.MustExec("select * from t1 where id1 = 1 for update")
-		tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
-		tk.MustExec("update t2 set id3 = id3 + 10 where id1 = 1")
-		tk.MustExec("update t2 set id3 = id3 + 10 where id1 > 3")
-		val := i * 10
-		tk.MustExec(fmt.Sprintf("insert into t2 values(%v, %v, %v)", val, val, val))
-		tk.MustExec(fmt.Sprintf("delete from t2 where id1 = %v", val))
-		tk.MustExec("commit")
-	}
-	count = sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(792), count)
+	require.Equal(t, uint64(495), count)
 }
 
 func resetAllTsoCounter(sctx sessionctx.Context) {
@@ -441,7 +403,7 @@ func assertAllTsoCounter(t *testing.T,
 	}
 }
 
-func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
+func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/tsoUseConstantFuture", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/waitTsoOfOracleFuture", "return"))
@@ -455,7 +417,6 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set global tidb_rc_write_check_ts = true")
 	tk.RefreshSession()
 	sctx := tk.Session()
 
@@ -496,8 +457,9 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(20), countTsoRequest.(uint64),
-		uint64(10), countTsoUseConstant.(uint64), uint64(0), uint64(countWaitTsoOracle.(int))})
+	require.Equal(t, uint64(30), countTsoRequest.(uint64))
+	require.Equal(t, uint64(10), countTsoUseConstant.(uint64))
+	require.Equal(t, 0, countWaitTsoOracle.(int))
 
 	// SelectLock_7->UnionScan_8->TableReader_10->TableRangeScan_9
 	resetAllTsoCounter(sctx)
@@ -509,8 +471,9 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(15), countTsoRequest.(uint64),
-		uint64(5), countTsoUseConstant.(uint64), uint64(5), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(20), countTsoRequest.(uint64))
+	require.Equal(t, uint64(5), countTsoUseConstant.(uint64))
+	require.Equal(t, uint64(5), countWaitTsoOracle.(uint64))
 
 	// BatchPointGet
 	resetAllTsoCounter(sctx)
@@ -520,8 +483,9 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(15), countTsoRequest.(uint64),
-		uint64(0), uint64(countTsoUseConstant.(int)), uint64(5), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(15), countTsoRequest.(uint64))
+	require.Equal(t, 0, countTsoUseConstant.(int))
+	require.Equal(t, uint64(5), countWaitTsoOracle.(uint64))
 
 	// Subquery has SelectLock + PointGet
 	resetAllTsoCounter(sctx)
@@ -533,8 +497,9 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(25), countTsoRequest.(uint64),
-		uint64(0), uint64(countTsoUseConstant.(int)), uint64(15), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(25), countTsoRequest.(uint64))
+	require.Equal(t, 0, countTsoUseConstant.(int))
+	require.Equal(t, uint64(15), countWaitTsoOracle.(uint64))
 
 	// PointUpdate Index and Non-index
 	resetAllTsoCounter(sctx)
@@ -545,8 +510,9 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(10), countTsoRequest.(uint64),
-		uint64(10), countTsoUseConstant.(uint64), uint64(0), uint64(countWaitTsoOracle.(int))})
+	require.Equal(t, uint64(10), countTsoRequest.(uint64))
+	require.Equal(t, uint64(10), countTsoUseConstant.(uint64))
+	require.Equal(t, 0, countWaitTsoOracle.(int))
 
 	// SelectLock has PointGet and other plans
 	resetAllTsoCounter(sctx)
@@ -556,8 +522,9 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(15), countTsoRequest.(uint64),
-		uint64(0), uint64(countTsoUseConstant.(int)), uint64(5), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(15), countTsoRequest.(uint64))
+	require.Equal(t, 0, countTsoUseConstant.(int))
+	require.Equal(t, uint64(5), countWaitTsoOracle.(uint64))
 
 	// PointUpdate with singlerow subquery. singlerow subquery makes tso wait
 	// PointUpdate doesn't make tso request
@@ -568,8 +535,9 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(60), countTsoRequest.(uint64),
-		uint64(20), countTsoUseConstant.(uint64), uint64(20), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(60), countTsoRequest.(uint64))
+	require.Equal(t, uint64(20), countTsoUseConstant.(uint64))
+	require.Equal(t, uint64(20), countWaitTsoOracle.(uint64))
 
 	// insert with select
 	resetAllTsoCounter(sctx)
@@ -580,8 +548,9 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(3), countTsoRequest.(uint64),
-		uint64(1), countTsoUseConstant.(uint64), uint64(1), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(4), countTsoRequest.(uint64))
+	require.Equal(t, uint64(1), countTsoUseConstant.(uint64))
+	require.Equal(t, uint64(1), countWaitTsoOracle.(uint64))
 
 	// delete
 	resetAllTsoCounter(sctx)
@@ -593,8 +562,9 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(4), countTsoRequest.(uint64),
-		uint64(1), countTsoUseConstant.(uint64), uint64(2), countWaitTsoOracle.(uint64)})
+	require.Equal(t, uint64(4), countTsoRequest.(uint64))
+	require.Equal(t, uint64(1), countTsoUseConstant.(uint64))
+	require.Equal(t, uint64(2), countWaitTsoOracle.(uint64))
 
 	// insert on duplicate key
 	resetAllTsoCounter(sctx)
@@ -606,8 +576,9 @@ func TestRcTSOCmdCountForTextSQLExecute2(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	assertAllTsoCounter(t, []uint64{uint64(10), countTsoRequest.(uint64),
-		uint64(15), countTsoUseConstant.(uint64), uint64(0), uint64(countWaitTsoOracle.(int))})
+	require.Equal(t, uint64(25), countTsoRequest.(uint64))
+	require.Equal(t, uint64(15), countTsoUseConstant.(uint64))
+	require.Equal(t, 0, countWaitTsoOracle.(int))
 }
 
 func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
@@ -626,7 +597,6 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 	tk2.MustExec("use test")
 	tk.MustExec("set transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set tidb_rc_write_check_ts = true")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
@@ -641,15 +611,6 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.True(t, ok)
 	require.Equal(t, records["errWriteConflict"], 1)
-
-	tk.MustExec("set tidb_rc_write_check_ts = false")
-	se.SetValue(sessiontxn.AssertLockErr, nil)
-	tk.MustExec("begin pessimistic")
-	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
-	tk.MustExec("select * from t1 where id1 = 1 for update")
-	tk.MustExec("commit")
-	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
-	require.False(t, ok)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }

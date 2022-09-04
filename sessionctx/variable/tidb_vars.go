@@ -733,7 +733,6 @@ const (
 	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
 	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
 	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
-	TiDBRcWriteCheckTs       = "tidb_rc_write_check_ts"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"

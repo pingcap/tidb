@@ -260,7 +260,7 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 	return false
 }
 
-// AdviseOptimizeWithPlan in RC covers much fewer cases compared with pessimistic repeatable read.
+// AdviseOptimizeWithPlan in read-committed covers as many cases as repeatable-read.
 // We do not fetch latest ts immediately for such scenes.
 // 1. A query like the form of "SELECT ... FOR UPDATE" whose execution plan is "PointGet".
 // 2. An INSERT statement without "SELECT" subquery.
@@ -268,15 +268,6 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 // 4. A DELETE statement whose execution plan is "PointGet".
 // The function `planner.Optimize` always calls the `txnManger.AdviseWarmup` to warmup in the past, it makes a tso request
 // for all sqls except `SELECT` with RcCheckTs, but whether to use the tso request and wait it depends on `AdviseOptimizeWithPlan`.
-// (a) non-prepare statments
-// For insert statements without select subquery, they always don't use the tso above, don't wait for it either.
-// If tidb_rc_write_check_ts is ON, we don't make tso requests too, we use the p.latestOracleTS.
-// If tidb_rc_write_check_ts is OFF, we make tso requests but don't wait.
-// For update/delete/select statements, if tidb_rc_write_check_ts is ON, we don't make tso requests,
-// we use the p.latestOracleTS.
-// (b) prepare statements
-// The behavior is like non-prepare statments at most time, except that it can get a plan from plan cache,
-// when optimizer never calls `txnManager.AdviseWarmup`.
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
