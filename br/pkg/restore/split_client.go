@@ -126,7 +126,7 @@ func (c *pdClient) ScatterRegions(ctx context.Context, regionInfo []*RegionInfo)
 	regionsID := make([]uint64, 0, len(regionInfo))
 	for _, v := range regionInfo {
 		regionsID = append(regionsID, v.Region.Id)
-		log.Info("scattering regions", logutil.Key("start", v.Region.StartKey),
+		log.Debug("scattering regions", logutil.Key("start", v.Region.StartKey),
 			logutil.Key("end", v.Region.EndKey),
 			zap.Uint64("id", v.Region.Id))
 	}
