@@ -227,10 +227,12 @@ type DDLReorgMeta struct {
 type ReorgType int8
 
 const (
+	// ReorgTypeNone means the backfill task is not started yet.
+	ReorgTypeNone ReorgType = iota
 	// ReorgTypeTxn means the index records are backfill with transactions.
 	// All the index KVs are written through the transaction interface.
 	// This is the original backfill implementation.
-	ReorgTypeTxn ReorgType = iota
+	ReorgTypeTxn
 	// ReorgTypeLitMerge means the index records are backfill with lightning.
 	// The index KVs are encoded to SST files and imported to the storage directly.
 	// The incremental index KVs written by DML are redirected to a temporary index.

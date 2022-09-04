@@ -315,7 +315,7 @@ func TestGenGlobalIDFail(t *testing.T) {
 // TestRunDDLJobPanicEnableClusteredIndex tests recover panic with cluster index when run ddl job panic.
 func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
 	s := createFailDBSuite(t)
-	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
+	testAddIndexWorkerNum(t, s, false, func(tk *testkit.TestKit) {
 		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
 	})
@@ -324,17 +324,36 @@ func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
 // TestRunDDLJobPanicDisableClusteredIndex tests recover panic without cluster index when run ddl job panic.
 func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 	s := createFailDBSuite(t)
-	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
+	testAddIndexWorkerNum(t, s, false, func(tk *testkit.TestKit) {
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 	})
 }
 
-func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
+// TestRunDDLJobPanicEnableClusteredIndexMerge tests recover panic with cluster index when run ddl job panic.
+func TestRunDDLJobPanicEnableClusteredIndexMerge(t *testing.T) {
+	s := createFailDBSuite(t)
+	testAddIndexWorkerNum(t, s, true, func(tk *testkit.TestKit) {
+		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
+	})
+}
+
+// TestRunDDLJobPanicDisableClusteredIndexMerge tests recover panic without cluster index when run ddl job panic.
+func TestRunDDLJobPanicDisableClusteredIndexMerge(t *testing.T) {
+	s := createFailDBSuite(t)
+	testAddIndexWorkerNum(t, s, true, func(tk *testkit.TestKit) {
+		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	})
+}
+
+func testAddIndexWorkerNum(t *testing.T, s *failedSuite, isMergeStage bool, test func(*testkit.TestKit)) {
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists test_db")
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists test_add_index")
-
+	if isMergeStage {
+		tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=on")
+	}
 	test(tk)
 
 	done := make(chan error, 1)
@@ -372,8 +391,11 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
-
+	if isMergeStage {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkMergeWorkerNum", `return(true)`))
+	} else {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
+	}
 	testutil.SessionExecInGoroutine(s.store, "test_db", "create index c3_index on test_add_index (c3)", done)
 	checkNum := 0
 
@@ -392,8 +414,13 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 		}
 	}
 
-	require.Greater(t, checkNum, 5)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
+	if isMergeStage {
+		require.GreaterOrEqual(t, checkNum, 1)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkMergeWorkerNum"))
+	} else {
+		require.Greater(t, checkNum, 5)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
+	}
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
 }

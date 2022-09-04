@@ -676,7 +676,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 // pickBackfillProcess determines which backfill process will be used.
 func pickBackfillProcess(w *worker, job *model.Job) model.ReorgType {
-	if job.SnapshotVer != 0 {
+	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't switch the backfill process.
 		return job.ReorgMeta.ReorgTp
@@ -732,9 +732,9 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateRunning:
-		logutil.BgLogger().Info("Lightning backfill state running")
 		switch bfProcess {
 		case model.ReorgTypeLitMerge:
+			logutil.BgLogger().Info("Lightning backfill state running")
 			bc, ok := lightning.BackCtxMgr.Load(job.ID)
 			if ok && bc.Done() {
 				break
@@ -777,6 +777,9 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			bc.SetDone()
 		case model.ReorgTypeTxnMerge:
 			done, ver, err = runReorgJobAndHandleAddIndexErr(w, d, t, job, tbl, indexInfo)
+			if err != nil {
+				return false, ver, errors.Trace(err)
+			}
 			if !done {
 				ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 				return false, ver, errors.Trace(err)

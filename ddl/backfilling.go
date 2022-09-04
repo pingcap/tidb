@@ -740,6 +740,10 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 func spawnAddIndexWorker(sessCtx sessionctx.Context, seq int, job *model.Job, t table.PhysicalTable,
 	decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*backfillWorker, error) {
+	// If it is not normal started add index reorg task, ie modify column started add index use default backfill process
+	if job.Type != model.ActionAddIndex {
+		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+	}
 	switch job.ReorgMeta.ReorgTp {
 	case model.ReorgTypeTxn, model.ReorgTypeTxnMerge:
 		idxWorker := newAddIndexWorker(sessCtx, seq, t, decodeColMap, reorgInfo, jc)

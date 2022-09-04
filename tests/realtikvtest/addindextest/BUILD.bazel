@@ -21,6 +21,7 @@ go_test(
     name = "addindextest_test",
     srcs = [
         "add_index_test.go",
+        "failpoint_test.go"
         "main_test.go",
     ],
     embed = [":addindextest"],
