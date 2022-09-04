@@ -79,6 +79,10 @@ type visitInfo struct {
 	dynamicWithGrant bool
 }
 
+func (v *visitInfo) Contain(db, table string, privilege mysql.PrivilegeType) bool {
+	return v.db == db && v.Table == table && v.privilege == privilege
+}
+
 type indexNestedLoopJoinTables struct {
 	inljTables  []hintTableInfo
 	inlhjTables []hintTableInfo

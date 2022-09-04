@@ -4957,6 +4957,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 
 	if b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
 		log.Info("wwz appendVisitInfo", zap.Any("visitInfo", tableInfo.Name.L))
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", ErrViewNoExplain)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.L, tableInfo.Name.L, "", ErrViewNoExplain)
 	}
 
