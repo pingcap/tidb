@@ -1855,6 +1855,7 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 	return cnt, nil
 }
 
+// SysVarHiddenForSem checks if a given sysvar is hidden according to SEM and privileges.
 func SysVarHiddenForSem(ctx sessionctx.Context, sysVarNameInLower string) bool {
 	if !sem.IsEnabled() || !sem.IsInvisibleSysVar(sysVarNameInLower) {
 		return false
