@@ -75,7 +75,7 @@ func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineC
 	}
 }
 
-// Adjust lightning memory parameters according memory root's max limitation
+// adjustImportMemory adjusts the lightning memory parameters according to the memory root's max limitation.
 func adjustImportMemory(memRoot MemRoot, cfg *config.Config) {
 	var scale int64
 	// Try aggressive resource usage successful.
@@ -126,7 +126,7 @@ func tryAggressiveMemory(memRoot MemRoot, cfg *config.Config) bool {
 // variables from downstream which may affect KV encode result. The values record the default
 // values if missing.
 var defaultImportantVariables = map[string]string{
-	"max_allowed_packet":      "67108864",
+	"max_allowed_packet":      "67108864", // 64MB
 	"div_precision_increment": "4",
 	"time_zone":               "SYSTEM",
 	"lc_time_names":           "en_US",

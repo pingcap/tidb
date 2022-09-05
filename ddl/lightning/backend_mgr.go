@@ -146,6 +146,7 @@ func (m *backendCtxManager) UpdateMemoryUsage() {
 	}
 }
 
+// glueLit is used as a placeholder for the local backend initialization.
 type glueLit struct{}
 
 // OwnsSQLExecutor Implement interface OwnsSQLExecutor.
