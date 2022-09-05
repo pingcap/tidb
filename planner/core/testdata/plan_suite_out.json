@@ -1598,7 +1598,7 @@
     "Name": "TestCTEMergeHint",
     "Cases": [
       {
-        "SQL": "with cte as (select /*+ MERGE()*/ * from tc where tc.a < 60) select * from cte where cte.a <18",
+        "SQL": "with cte as (select /*+ MERGE() */ * from tc where tc.a < 60) select * from cte where cte.a <18",
         "Plan": [
           "TableReader 4.00 root  data:Selection",
           "└─Selection 4.00 cop[tikv]  lt(test.tc.a, 18), lt(test.tc.a, 60)",
@@ -1627,7 +1627,7 @@
         "Warning": null
       },
       {
-        "SQL": "WITH cte1 AS (SELECT /*+ MERGE()*/ a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
+        "SQL": "WITH cte1 AS (SELECT /*+ MERGE() */ a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
         "Plan": [
           "HashJoin 7.00 root  inner join, equal:[eq(test.tc.a, test.te.c)]",
           "├─TableReader(Build) 7.00 root  data:Selection",
@@ -1640,7 +1640,7 @@
         "Warning": null
       },
       {
-        "SQL": "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
+        "SQL": "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ MERGE() */ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
         "Plan": [
           "Projection 4.48 root  test.tc.a, test.te.c",
           "└─HashJoin 4.48 root  inner join, equal:[eq(test.te.c, test.tc.a)]",
@@ -1668,7 +1668,7 @@
           "    └─CTETable 1.00 root  Scan on CTE_0"
         ],
         "Warning": [
-          "[planner:1815]Hint merge() is inapplicable. Please check whether the CTE use recursive."
+          "[planner:1815]Recursive cte cannot be inlined."
         ]
       },
       {
@@ -1863,7 +1863,7 @@
         "Warning": null
       },
       {
-        "SQL": "with cte2 as (with cte4 as (select /*+ merge() */  * from tc) select * from te, cte4) select * from cte2;",
+        "SQL": "with cte2 as (with cte4 as (select /*+ merge() */ * from tc) select * from te, cte4) select * from cte2;",
         "Plan": [
           "CTEFullScan 49.00 root CTE:cte2 data:CTE_0",
           "CTE_0 49.00 root  Non-Recursive CTE",
@@ -1925,6 +1925,85 @@
           "    └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
         ],
         "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestInlineCTE",
+    "Cases": [
+      {
+        "SQL": "set tidb_opt_inline_cte=1;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select * from t) select * from cte;",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select /*+ MERGE() */ * from t) select * from cte;",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;",
+        "Plan": [
+          "CTEFullScan 2.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 2.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#2",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
+          "  └─Selection 0.80 root  lt(Column#3, 100)",
+          "    └─CTETable 1.00 root  Scan on CTE_0"
+        ],
+        "Warning": [
+          "[planner:1815]Recursive cte cannot be inlined."
+        ]
+      },
+      {
+        "SQL": "set tidb_opt_inline_cte=0;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select * from t) select * from cte;",
+        "Plan": [
+          "CTEFullScan 10000.00 root CTE:cte data:CTE_0",
+          "CTE_0 10000.00 root  Non-Recursive CTE",
+          "└─TableReader(Seed Part) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select /*+ MERGE() */ * from t) select * from cte;",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select 1 union select /*+ MERGE() */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;",
+        "Plan": [
+          "CTEFullScan 2.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 2.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#2",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
+          "  └─Selection 0.80 root  lt(Column#3, 100)",
+          "    └─CTETable 1.00 root  Scan on CTE_0"
+        ],
+        "Warning": [
+          "[planner:1815]Recursive cte cannot be inlined."
+        ]
       }
     ]
   },

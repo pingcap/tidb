@@ -3841,11 +3841,17 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
-	// Verify Merge hints in the current query, we will update parameters for those that meet the rules, and warn those that do not.
-	//If the current query uses Merge Hint and the query is a CTE, we update the HINT information for the current query.
-	//If the current query is not a CTE query (it may be a subquery within a CTE query or an external non-CTE query), we will give a warning.
-	//In particular, recursive CTE have separate warnings, so they are no longer called.
-	if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
+	// If the session variable "tidb_opt_inline_cte" is true, all of CTEs will be inlined.
+	// Otherwise, whether CTEs are inlined depends on whether the merge() hint is declared.
+	if b.ctx.GetSessionVars().EnableInlineCTE() {
+		if b.buildingCTE && b.isCTE {
+			b.outerCTEs[len(b.outerCTEs)-1].isInline = true
+		}
+	} else if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
+		// Verify Merge hints in the current query, we will update parameters for those that meet the rules, and warn those that do not.
+		// If the current query uses Merge Hint and the query is a CTE, we update the HINT information for the current query.
+		// If the current query is not a CTE query (it may be a subquery within a CTE query or an external non-CTE query), we will give a warning.
+		// In particular, recursive CTE have separate warnings, so they are no longer called.
 		if b.buildingCTE {
 			if b.isCTE {
 				b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
@@ -4243,10 +4249,9 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
 			if cte.recurLP != nil && cte.isInline {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the CTE use recursive."))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Recursive cte cannot be inlined."))
 			}
 			if cte.recurLP == nil && cte.isInline {
-				lp.MergeHints.preferMerge = cte.isInline
 				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
 				copy(saveCte, b.outerCTEs[i:])
 				b.outerCTEs = b.outerCTEs[:i]

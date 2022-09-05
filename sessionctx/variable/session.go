@@ -834,6 +834,8 @@ type SessionVars struct {
 	diskFactorV2 float64
 	// concurrencyFactorV2 is the concurrency factor for the Cost Model Ver2.
 	concurrencyFactorV2 float64
+	// enableInlineCTE is used to enable/disable inline CTE.
+	enableInlineCTE bool
 
 	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
 	CopTiFlashConcurrencyFactor float64
@@ -1498,6 +1500,7 @@ func NewSessionVars() *SessionVars {
 		memoryFactor:                  DefOptMemoryFactor,
 		diskFactor:                    DefOptDiskFactor,
 		concurrencyFactor:             DefOptConcurrencyFactor,
+		enableInlineCTE:               DefOptInlineCTE,
 		EnableVectorizedExpression:    DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
@@ -3020,4 +3023,8 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
+}
+
+func (s *SessionVars) EnableInlineCTE() bool {
+	return s.enableInlineCTE
 }
