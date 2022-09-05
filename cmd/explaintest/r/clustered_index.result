@@ -1,3 +1,4 @@
+set @@tidb_enable_outer_join_reorder=true;
 drop database if exists with_cluster_index;
 create database with_cluster_index;
 drop database if exists wout_cluster_index;
@@ -127,3 +128,4 @@ StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7
 └─IndexReader_18	1.00	root		index:StreamAgg_9
   └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#9
     └─IndexRangeScan_16	109.70	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
+set @@tidb_enable_outer_join_reorder=false;

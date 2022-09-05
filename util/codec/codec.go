@@ -157,7 +157,12 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 	case types.KindString, types.KindBytes:
 		l = valueSizeOfBytes(val.GetBytes())
 	case types.KindMysqlDecimal:
-		l = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac()) + 1
+		var err error
+		l, err = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac())
+		if err != nil {
+			return 0, err
+		}
+		l = l + 1
 	case types.KindMysqlEnum:
 		l = valueSizeOfUnsignedInt(val.GetMysqlEnum().Value)
 	case types.KindMysqlSet:
@@ -762,6 +767,8 @@ func DecodeRange(b []byte, size int, idxColumnTypes []byte, loc *time.Location) 
 			if types.IsTypeTime(idxColumnTypes[i]) {
 				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
 				b, d, err = DecodeAsDateTime(b, idxColumnTypes[i], loc)
+			} else if types.IsTypeFloat(idxColumnTypes[i]) {
+				b, d, err = DecodeAsFloat32(b, idxColumnTypes[i])
 			} else {
 				b, d, err = DecodeOne(b)
 			}
@@ -896,6 +903,22 @@ func DecodeAsDateTime(b []byte, tp byte, loc *time.Location) (remain []byte, d t
 		}
 	}
 	d.SetMysqlTime(t)
+	return b, d, nil
+}
+
+// DecodeAsFloat32 decodes value for mysql.TypeFloat
+func DecodeAsFloat32(b []byte, tp byte) (remain []byte, d types.Datum, err error) {
+	if len(b) < 1 || tp != mysql.TypeFloat {
+		return nil, d, errors.New("invalid encoded key")
+	}
+	flag := b[0]
+	b = b[1:]
+	if flag != floatFlag {
+		return b, d, errors.Errorf("invalid encoded key flag %v for DecodeAsFloat32", flag)
+	}
+	var v float64
+	b, v, err = DecodeFloat(b)
+	d.SetFloat32FromF64(v)
 	return b, d, nil
 }
 
