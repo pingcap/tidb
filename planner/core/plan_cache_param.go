@@ -66,13 +66,11 @@ func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
 func (pr *paramReplacer) Reset() { pr.params = nil }
 
 // ParameterizeAST parameterizes this StmtNode.
-// e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23]
-// The returned vals are used to restore this AST if encounter some errors, see RestoreASTWithParams.
+// e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23].
 func ParameterizeAST(sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, ok bool, err error) {
 	if !Available4GeneralPlanCache(sctx, stmt) { // not support
 		return "", nil, false, nil
 	}
-
 	pr := paramReplacerPool.Get().(*paramReplacer)
 	pCtx := paramCtxPool.Get().(*format.RestoreCtx)
 	defer func() {
@@ -86,10 +84,7 @@ func ParameterizeAST(sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL strin
 		err = RestoreASTWithParams(sctx, stmt, pr.params)
 		return "", nil, false, err
 	}
-
-	paramSQL = pCtx.In.(*strings.Builder).String()
-	params = pr.params
-	ok = true
+	paramSQL, params, ok = pCtx.In.(*strings.Builder).String(), pr.params, true
 	return
 }
 
@@ -102,7 +97,7 @@ func (pr *paramRestorer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
 	case *driver.ParamMarkerExpr:
 		if n.Offset >= len(pr.params) {
-			pr.err = errors.New("TODO")
+			pr.err = errors.New("failed to restore ast.Node")
 			return nil, true
 		}
 		// offset is used as order in general plan cache.
@@ -119,8 +114,7 @@ func (pr *paramRestorer) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (pr *paramRestorer) Reset() {
-	pr.params = nil
-	pr.err = nil
+	pr.params, pr.err = nil, nil
 }
 
 // RestoreASTWithParams restore this parameterized AST with specific parameters.
@@ -138,9 +132,7 @@ func RestoreASTWithParams(_ sessionctx.Context, stmt ast.StmtNode, params []*dri
 
 // Available4GeneralPlanCache returns whether this AST is available for general plan cache.
 func Available4GeneralPlanCache(sctx sessionctx.Context, stmt ast.StmtNode) bool {
-	// Enter only support: select {col} from {single-table} where {cond} and {cond} ...
-	// 	and {cond} = {col} {op} {val}
-	// 	and {op} = >, <, =
+	// Now only support: select {col} from {single-table} where {cond} and {cond} ...
 	n, ok := stmt.(*ast.SelectStmt)
 	if !ok { // TODO: support DML statements
 		return false
