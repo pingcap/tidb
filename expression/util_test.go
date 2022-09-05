@@ -595,3 +595,7 @@ func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""
 }
 func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}
+
+func (m *MockExpr) MemoryUsage() (sum int64) {
+	return
+}
