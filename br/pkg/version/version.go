@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -357,7 +356,6 @@ var (
 
 // ParseServerInfo parses exported server type and version info from version string
 func ParseServerInfo(src string) ServerInfo {
-	fmt.Fprintf(os.Stdout, "server version string %s\n\n", src)
 	lowerCase := strings.ToLower(src)
 	serverInfo := ServerInfo{}
 	isReleaseVersion := false
@@ -381,7 +379,8 @@ func ParseServerInfo(src string) ServerInfo {
 		if isReleaseVersion {
 			versionStr = tidbReleaseVersionRegex.FindString(src)
 		} else {
-			versionStr = tidbVersionRegex.FindString(src)[1:]
+			versionStr = tidbVersionRegex.FindString(src)
+			versionStr = strings.TrimPrefix(versionStr, "-")
 		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {
