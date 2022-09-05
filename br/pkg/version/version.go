@@ -293,7 +293,7 @@ func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 	const queryTiDB = "SELECT tidb_version();"
 	tidbRow := db.QueryRowContext(ctx, queryTiDB)
 	err := tidbRow.Scan(&versionInfo)
-	if err == nil && tidbReleaseVersionFullRegex.FindString(versionInfo) != "" {
+	if err == nil {
 		return versionInfo, nil
 	}
 	log.L().Warn("select tidb_version() failed, will fallback to 'select version();'", logutil.ShortError(err))
@@ -350,8 +350,6 @@ var (
 	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result
 	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
-	// `select tidb_version()` result with full release version
-	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 )
 
 // ParseServerInfo parses exported server type and version info from version string
