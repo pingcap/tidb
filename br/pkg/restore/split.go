@@ -376,8 +376,16 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 			return errors.Annotatef(berrors.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
 				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
 		}
+<<<<<<< HEAD
 		cur = r
 	}
+=======
+		if err != nil {
+			log.Warn("scatter region meet error", logutil.ShortError(err))
+		}
+		return err
+	}, &split.ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
+>>>>>>> 4ce539b42... br: Add scatter timeout (#37605)
 
 	return nil
 }
