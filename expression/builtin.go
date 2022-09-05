@@ -27,6 +27,7 @@ package expression
 import (
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -502,6 +503,8 @@ type builtinFunc interface {
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
 
+	MemoryUsage() int64
+
 	CollationInfo
 }
 
@@ -961,4 +964,19 @@ func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
 		// Add the length for `.`.
 		b.tp.SetFlenUnderLimit(b.tp.GetFlen() + 1)
 	}
+}
+
+const emptyBaseBuiltinFunc = int64(unsafe.Sizeof(baseBuiltinFunc{}))
+
+// MemoryUsage return the memory usage of baseBuiltinFunc
+func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
+	if b == nil {
+		return
+	}
+
+	sum = emptyBaseBuiltinFunc
+	for _, e := range b.args {
+		sum += e.MemoryUsage()
+	}
+	return
 }

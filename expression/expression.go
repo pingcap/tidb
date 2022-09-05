@@ -177,6 +177,9 @@ type Expression interface {
 	// Column: ColumnFlag+encoded value
 	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
 	HashCode(sc *stmtctx.StatementContext) []byte
+
+	// MemoryUsage return the memory usage of Expression
+	MemoryUsage() int64
 }
 
 // CNFExprs stands for a CNF expression.
