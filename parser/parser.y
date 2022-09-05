@@ -360,6 +360,7 @@ import (
 	csvSeparator          "CSV_SEPARATOR"
 	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
 	current               "CURRENT"
+	cluster               "CLUSTER"
 	clustered             "CLUSTERED"
 	cycle                 "CYCLE"
 	data                  "DATA"
@@ -898,6 +899,7 @@ import (
 	ExplainableStmt            "explainable statement"
 	FlushStmt                  "Flush statement"
 	FlashbackTableStmt         "Flashback table statement"
+	FlashbackClusterStmt       "Flashback cluster statement"
 	GrantStmt                  "Grant statement"
 	GrantProxyStmt             "Grant proxy statement"
 	GrantRoleStmt              "Grant role statement"
@@ -2560,6 +2562,23 @@ RecoverTableStmt:
 		$$ = &ast.RecoverTableStmt{
 			Table:  $3.(*ast.TableName),
 			JobNum: $4.(int64),
+		}
+	}
+
+/*******************************************************************
+ *
+ *  Flush Back Cluster Statement
+ *
+ *  Example:
+ *
+ *******************************************************************/
+FlashbackClusterStmt:
+	"FLASHBACK" "CLUSTER" asof "TIMESTAMP" stringLit
+	{
+		$$ = &ast.FlashBackClusterStmt{
+			AsOf: ast.AsOfClause{
+				TsExpr: ast.NewValueExpr($5, "", ""),
+			},
 		}
 	}
 
@@ -6308,6 +6327,7 @@ UnReservedKeyword:
 |	"PURGE"
 |	"SKIP"
 |	"LOCKED"
+|	"CLUSTER"
 |	"CLUSTERED"
 |	"NONCLUSTERED"
 |	"PRESERVE"
@@ -11296,6 +11316,7 @@ Statement:
 |	DropStatsStmt
 |	DropBindingStmt
 |	FlushStmt
+|	FlashbackClusterStmt
 |	FlashbackTableStmt
 |	GrantStmt
 |	GrantProxyStmt

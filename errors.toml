@@ -421,6 +421,11 @@ error = '''
 table route error
 '''
 
+["Lightning:Loader:ErrTooManySourceFiles"]
+error = '''
+too many source files
+'''
+
 ["Lightning:MetaMgr:ErrMetaMgrUnknown"]
 error = '''
 unknown error occur on meta manager
@@ -1509,6 +1514,11 @@ modifying %s will require SET GLOBAL in a future version of TiDB
 ["executor:8144"]
 error = '''
 setting %s has no effect in TiDB
+'''
+
+["executor:8147"]
+error = '''
+transaction aborted because lazy uniqueness check is enabled and an error occurred: %s
 '''
 
 ["executor:8212"]

@@ -4002,6 +4002,38 @@ func (n *RecoverTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// FlashBackClusterStmt is a statement to restore the cluster to the specified timestamp
+type FlashBackClusterStmt struct {
+	ddlNode
+
+	AsOf AsOfClause
+}
+
+// Restore implements Node interface
+func (n *FlashBackClusterStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("FLASHBACK CLUSTER ")
+	if err := n.AsOf.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while splicing FlashBackClusterStmt.Asof")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *FlashBackClusterStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*FlashBackClusterStmt)
+	node, ok := n.AsOf.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.AsOf = *node.(*AsOfClause)
+	return v.Leave(n)
+}
+
 // FlashBackTableStmt is a statement to restore a dropped/truncate table.
 type FlashBackTableStmt struct {
 	ddlNode

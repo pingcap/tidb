@@ -1031,6 +1031,7 @@ const (
 	ErrSettingNoopVariable                 = 8144
 	ErrGettingNoopVariable                 = 8145
 	ErrCannotMigrateSession                = 8146
+	ErrLazyUniquenessCheckFailure          = 8147
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
