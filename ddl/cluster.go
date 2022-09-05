@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -83,6 +84,9 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	}
 	if oracle.GetTimeFromTS(flashBackTS).After(oracle.GetTimeFromTS(currentTS)) {
 		return errors.Errorf("cannot set flashback timestamp to future time")
+	}
+	if oracle.GetTimeFromTS(flashBackTS).After(expression.GetMinSafeTime(sctx)) {
+		return errors.Errorf("cannot set flashback timestamp to greater than resolved ts from store")
 	}
 	gcSafePoint, err := gcutil.GetGCSafePoint(sctx)
 	if err != nil {
