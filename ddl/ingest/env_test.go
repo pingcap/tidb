@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,7 +29,7 @@ func TestGenLightningDataDir(t *testing.T) {
 		conf.TempDir = tmpDir
 		conf.Port = iPort
 	})
-	sPath, err := injest.GenLightningDataDirForTest()
+	sPath, err := ingest.GenLightningDataDirForTest()
 	require.NoError(t, err)
 	require.Equal(t, tmpDir+"/tmp_ddl-"+port, sPath)
 }

@@ -17,11 +17,12 @@ package ingest_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMemoryRoot(t *testing.T) {
-	memRoot := injest.MemRoot(injest.NewMemRootImpl(1024, nil))
+	memRoot := ingest.MemRoot(ingest.NewMemRootImpl(1024, nil))
 	require.Equal(t, int64(1024), memRoot.MaxMemoryQuota())
 	require.Equal(t, int64(0), memRoot.CurrentUsage())
 
