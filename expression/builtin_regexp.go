@@ -59,6 +59,10 @@ type regexpBaseFuncSig struct {
 	regexpMemorizedSig
 }
 
+func (re *regexpBaseFuncSig) isBinCollation() bool {
+	return re.collation == charset.CollationBin
+}
+
 func (re *regexpBaseFuncSig) clone(from *regexpBaseFuncSig) {
 	if from.memorizedRegexp != nil {
 		re.memorizedRegexp = from.memorizedRegexp.Copy()
@@ -153,7 +157,7 @@ func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, err
 	}
 
-	bf.tp.SetFlen(mysql.MaxIntWidth)
+	bf.tp.SetFlen(1)
 	sig := regexpLikeFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
@@ -315,18 +319,11 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrSig)
 
-	if bf.collation == charset.CollationBin {
-		sig.isBinCollation = true
-	} else {
-		sig.isBinCollation = false
-	}
-
 	return &sig, nil
 }
 
 type regexpSubstrFuncSig struct {
 	regexpBaseFuncSig
-	isBinCollation bool
 }
 
 func (re *regexpSubstrFuncSig) vectorized() bool {
@@ -337,7 +334,6 @@ func (re *regexpSubstrFuncSig) Clone() builtinFunc {
 	newSig := &regexpSubstrFuncSig{}
 	newSig.cloneFrom(&re.baseBuiltinFunc)
 	newSig.clone(&re.regexpBaseFuncSig)
-	newSig.isBinCollation = re.isBinCollation
 	return newSig
 }
 
@@ -358,7 +354,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	arg_num := len(re.args)
 	var bexpr []byte
 
-	if re.isBinCollation {
+	if re.isBinCollation() {
 		bexpr = []byte(expr)
 	}
 
@@ -369,7 +365,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 
 		// Check position and trim expr
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
 					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -416,7 +412,7 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 
-	if re.isBinCollation {
+	if re.isBinCollation() {
 		matches := reg.FindAll(bexpr, -1)
 		length := int64(len(matches))
 		if length == 0 || occurrence > length {
@@ -530,13 +526,13 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		expr := params[0].getStringVal(i)
 		var bexpr []byte
 
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			bexpr = []byte(expr)
 		}
 
 		// Check position and trim expr
 		pos := params[2].getIntVal(i)
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -568,7 +564,7 @@ func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		}
 
 		// Find string
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			matches := reg.FindAll(bexpr, -1)
 			length := int64(len(matches))
 			if length == 0 || occurrence > length {
@@ -625,18 +621,11 @@ func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrSig)
 
-	if bf.collation == charset.CollationBin {
-		sig.isBinCollation = true
-	} else {
-		sig.isBinCollation = false
-	}
-
 	return &sig, nil
 }
 
 type regexpInStrFuncSig struct {
 	regexpBaseFuncSig
-	isBinCollation bool
 }
 
 func (re *regexpInStrFuncSig) Clone() builtinFunc {
@@ -668,7 +657,7 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg_num := len(re.args)
 	var bexpr []byte
 
-	if re.isBinCollation {
+	if re.isBinCollation() {
 		bexpr = []byte(expr)
 	}
 
@@ -679,7 +668,7 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 
 		// Check position and trim expr
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -737,7 +726,7 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 
-	if re.isBinCollation {
+	if re.isBinCollation() {
 		matches := reg.FindAllIndex(bexpr, -1)
 		length := int64(len(matches))
 		if length == 0 || occurrence > length {
@@ -871,13 +860,13 @@ func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		expr := params[0].getStringVal(i)
 		var bexpr []byte
 
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			bexpr = []byte(expr)
 		}
 
 		// Check position and trim expr
 		pos := params[2].getIntVal(i)
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -914,7 +903,7 @@ func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		}
 
 		// Find index
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			matches := reg.FindAllIndex(bexpr, -1)
 			length := int64(len(matches))
 			if length == 0 || occurrence > length {
@@ -980,18 +969,11 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceSig)
 
-	if bf.collation == charset.CollationBin {
-		sig.isBinCollation = true
-	} else {
-		sig.isBinCollation = false
-	}
-
 	return &sig, nil
 }
 
 type regexpReplaceFuncSig struct {
 	regexpBaseFuncSig
-	isBinCollation bool
 }
 
 func (re *regexpReplaceFuncSig) vectorized() bool {
@@ -1002,7 +984,6 @@ func (re *regexpReplaceFuncSig) Clone() builtinFunc {
 	newSig := &regexpReplaceFuncSig{}
 	newSig.cloneFrom(&re.baseBuiltinFunc)
 	newSig.clone(&re.regexpBaseFuncSig)
-	newSig.isBinCollation = re.isBinCollation
 	return newSig
 }
 
@@ -1030,7 +1011,7 @@ func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) 
 	var bexpr []byte
 	var trimmedBexpr []byte
 
-	if re.isBinCollation {
+	if re.isBinCollation() {
 		bexpr = []byte(expr)
 		trimmedBexpr = bexpr
 	}
@@ -1043,7 +1024,7 @@ func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) 
 		}
 
 		// Check position and trim expr
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			if pos < 1 || pos > int64(len(trimmedBexpr)) {
 				if len(trimmedBexpr) != 0 || (len(trimmedBexpr) == 0 && pos != 1) {
 					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -1081,7 +1062,7 @@ func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) 
 	}
 
 	if len(expr) == 0 {
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			return "0x", false, nil
 		} else {
 			return "", false, nil
@@ -1099,7 +1080,7 @@ func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) 
 	}
 
 	count := occurrence
-	if re.isBinCollation {
+	if re.isBinCollation() {
 		repFunc := func(matchedStr []byte) []byte {
 			if occurrence == 0 {
 				return []byte(repl)
@@ -1245,7 +1226,7 @@ func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		var bexpr []byte
 		var trimmedBexpr []byte
 
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			bexpr = []byte(expr)
 			trimmedBexpr = bexpr
 		}
@@ -1255,7 +1236,7 @@ func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		// Check position and trim expr
 		pos := params[3].getIntVal(i)
 		trimmedLen := int64(0)
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			if pos < 1 || pos > int64(len(trimmedBexpr)) {
 				if len(trimmedBexpr) != 0 || (len(trimmedBexpr) == 0 && pos != 1) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -1287,7 +1268,7 @@ func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		}
 
 		if len(expr) == 0 {
-			if re.isBinCollation {
+			if re.isBinCollation() {
 				result.AppendString("0x")
 			} else {
 				result.AppendString("")
@@ -1297,7 +1278,7 @@ func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.
 
 		// Start to replace
 		count := occurrence
-		if re.isBinCollation {
+		if re.isBinCollation() {
 			repFunc := func(matchedStr []byte) []byte {
 				if occurrence == 0 {
 					return []byte(repl)
