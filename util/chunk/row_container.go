@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
+	"golang.org/x/sys/cpu"
 )
 
 type rowContainerRecord struct {
@@ -36,6 +37,7 @@ type rowContainerRecord struct {
 }
 
 type mutexForRowContainer struct {
+	_ cpu.CacheLinePad
 	// RWMutex guarantees spill and get operator for rowContainer is mutually exclusive.
 	// `rLock` and `wLocks` is introduced to reduce the contention when multiple
 	// goroutine touch the same rowContainer concurrently. If there are multiple
@@ -44,7 +46,8 @@ type mutexForRowContainer struct {
 	// each goroutine. Thus each goroutine holds its own rLock but share the same
 	// underlying data, which can reduce the contention on m.rLock remarkably and
 	// get better performance.
-	rLock   *sync.RWMutex
+	rLock   sync.RWMutex
+	_       cpu.CacheLinePad
 	wLocks  []*sync.RWMutex
 	records *rowContainerRecord
 }
@@ -86,16 +89,16 @@ type RowContainer struct {
 // NewRowContainer creates a new RowContainer in memory.
 func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer {
 	li := NewList(fieldType, chunkSize, chunkSize)
-	rLock := new(sync.RWMutex)
 	rc := &RowContainer{
 		m: &mutexForRowContainer{
 			records: &rowContainerRecord{inMemory: li},
-			rLock:   rLock,
-			wLocks:  []*sync.RWMutex{rLock},
+			rLock:   sync.RWMutex{},
+			wLocks:  []*sync.RWMutex{},
 		},
 		memTracker:  memory.NewTracker(memory.LabelForRowContainer, -1),
 		diskTracker: disk.NewTracker(memory.LabelForRowContainer, -1),
 	}
+	rc.m.wLocks = append(rc.m.wLocks, &rc.m.rLock)
 	li.GetMemTracker().AttachTo(rc.GetMemTracker())
 	return rc
 }
@@ -105,9 +108,8 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 // holds an individual rLock.
 func (c *RowContainer) ShallowCopyWithNewMutex() *RowContainer {
 	newRC := *c
-	rLock := new(sync.RWMutex)
-	c.m.wLocks = append(c.m.wLocks, rLock)
-	newRC.m.rLock = rLock
+	newRC.m.rLock = sync.RWMutex{}
+	c.m.wLocks = append(c.m.wLocks, &newRC.m.rLock)
 	return &newRC
 }
 
