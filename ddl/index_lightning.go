@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	trans "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -236,7 +235,9 @@ func (w *backFillIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, i
 					return kv.ErrKeyExists
 				}
 			}
-			idxRecords[i].skip = true
+			if !idxRecords[i].delete {
+				idxRecords[i].skip = true
+			}
 		} else if w.distinctCheckFlags[i] {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
@@ -245,46 +246,6 @@ func (w *backFillIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, i
 	}
 	// Constrains is already checked.
 	stmtCtx.BatchCheck = true
-	return nil
-}
-
-func (w *backFillIndexWorker) batchSkipKey(txn kv.Transaction, store kv.Storage, idxRecords []*temporaryIndexRecord) error {
-	if len(w.batchCheckTmpKeys) == 0 {
-		return nil
-	}
-	w.skipAll = false
-	// Lock keys to check whether they could be skipped or not.
-	err := txn.LockKeys(context.Background(), new(kv.LockCtx), w.batchCheckTmpKeys...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Gen a current snapshot to get latest updated.
-	snapshot := store.GetSnapshot(kv.MaxVersion)
-	// Get duplicated key from temp index.
-	batchVals, err := trans.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot).BatchGet(context.Background(), w.batchCheckTmpKeys)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	count := len(w.batchCheckTmpKeys)
-	for i, key := range w.batchCheckTmpKeys {
-		if val, found := batchVals[string(key)]; found {
-			var keyVer []byte
-			length := len(val)
-			keyVer = append(keyVer, val[length-1:]...)
-			if bytes.Equal(keyVer, []byte("m")) {
-				idxRecords[i].skip = true
-				count--
-				if i == 0 {
-					// catch val for later use.
-					w.firstVal = w.firstVal[:0]
-					w.firstVal = append(w.firstVal, val...)
-				}
-			}
-		}
-	}
-	if count == 0 {
-		w.skipAll = true
-	}
 	return nil
 }
 
@@ -348,11 +309,6 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 			return errors.Trace(err)
 		}
 
-		// Skip merge change after mergeSync
-		err = w.batchSkipKey(txn, w.sessCtx.GetStore(), temporaryIndexRecords)
-		if err != nil {
-			return errors.Trace(err)
-		}
 		endPos := len(temporaryIndexRecords)
 		for i, idxRecord := range temporaryIndexRecords {
 			// The index is already exists, we skip it, no needs to backfill it.
