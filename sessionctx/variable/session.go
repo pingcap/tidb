@@ -3025,6 +3025,7 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 	return 1 - s.GetStrMatchDefaultSelectivity()
 }
 
+// EnableInlineCTE returns the session variable enableInlineCTE
 func (s *SessionVars) EnableInlineCTE() bool {
 	return s.enableInlineCTE
 }
