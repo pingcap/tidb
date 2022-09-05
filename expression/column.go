@@ -744,9 +744,11 @@ func (col *Column) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyColumnSize +
-		col.VirtualExpr.MemoryUsage() +
 		int64(cap(col.hashcode)) +
 		int64(len(col.OrigName)+len(col.charset)+len(col.collation))
 
+	if col.VirtualExpr != nil {
+		sum += col.VirtualExpr.MemoryUsage()
+	}
 	return
 }
