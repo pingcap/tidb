@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -332,16 +331,16 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val type
 }
 
 // EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+func (c *Constant) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
 	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
-		return json.BinaryJSON{}, false, err
+		return types.BinaryJSON{}, false, err
 	}
 	if !lazy {
 		dt = c.Value
 	}
 	if c.GetType().GetType() == mysql.TypeNull || dt.IsNull() {
-		return json.BinaryJSON{}, true, nil
+		return types.BinaryJSON{}, true, nil
 	}
 	return dt.GetMysqlJSON(), false, nil
 }
