@@ -285,7 +285,15 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	useLastOracleTS := planSkipGetTsoFromPD(p.sctx, plan, false)
+	useLastOracleTS := false
+	if v, ok := plan.(*plannercore.Insert); ok && v.SelectPlan == nil {
+		useLastOracleTS = true
+	} else {
+		if !p.sctx.GetSessionVars().RetryInfo.Retrying {
+			useLastOracleTS = planSkipGetTsoFromPD(p.sctx, plan, false)
+			p.sctx.GetSessionVars().StmtCtx.RCCheckTS = true
+		}
+	}
 
 	if useLastOracleTS {
 		failpoint.Inject("tsoUseConstantFuture", func() {
