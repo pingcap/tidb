@@ -258,7 +258,7 @@ func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 }
 
 // OperatorInfo return other operator information to be explained.
-func (p *PhysicalTableReader) OperatorInfo(normalized bool) string {
+func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
 	return "data:" + p.tablePlan.ExplainID().String()
 }
 

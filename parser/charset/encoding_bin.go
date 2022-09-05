@@ -32,17 +32,17 @@ type encodingBin struct {
 }
 
 // Name implements Encoding interface.
-func (e *encodingBin) Name() string {
+func (*encodingBin) Name() string {
 	return CharsetBin
 }
 
 // Tp implements Encoding interface.
-func (e *encodingBin) Tp() EncodingTp {
+func (*encodingBin) Tp() EncodingTp {
 	return EncodingTpBin
 }
 
 // Peek implements Encoding interface.
-func (e *encodingBin) Peek(src []byte) []byte {
+func (*encodingBin) Peek(src []byte) []byte {
 	if len(src) == 0 {
 		return src
 	}
@@ -50,12 +50,12 @@ func (e *encodingBin) Peek(src []byte) []byte {
 }
 
 // IsValid implements Encoding interface.
-func (e *encodingBin) IsValid(src []byte) bool {
+func (*encodingBin) IsValid(_ []byte) bool {
 	return true
 }
 
 // Foreach implements Encoding interface.
-func (e *encodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+func (*encodingBin) Foreach(src []byte, _ Op, fn func(from, to []byte, ok bool) bool) {
 	for i := 0; i < len(src); i++ {
 		if !fn(src[i:i+1], src[i:i+1], true) {
 			return
@@ -63,6 +63,6 @@ func (e *encodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok boo
 	}
 }
 
-func (e *encodingBin) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
+func (*encodingBin) Transform(_ *bytes.Buffer, src []byte, _ Op) ([]byte, error) {
 	return src, nil
 }

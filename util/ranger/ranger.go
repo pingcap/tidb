@@ -105,6 +105,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 			// do not ignore these errors if in prepared plan building for safety
 			return nil, errors.Trace(err)
 		}
+		//revive:disable:empty-block
 		if tp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
 		} else if tp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
@@ -134,6 +135,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 		} else {
 			return point, errors.Trace(err)
 		}
+		//revive:enable:empty-block
 	}
 	valCmpCasted, err := point.value.Compare(sc, &casted, collate.GetCollator(tp.GetCollate()))
 	if err != nil {
@@ -364,17 +366,13 @@ func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp
 	return buildColumnRange(conds, sctx, tp, false, colLen)
 }
 
-// buildCNFIndexRange builds the range for index where the top layer is CNF.
-func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
+func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType,
 	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
 	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	var (
 		ranges []*Range
 		err    error
 	)
-	for _, col := range d.cols {
-		newTp = append(newTp, newFieldType(col.RetType))
-	}
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
 		point := rb.build(accessCondition[i], collate.GetCollator(newTp[i].GetCollate()))
@@ -406,6 +404,16 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	return ranges, nil
+}
+
+// buildCNFIndexRange builds the range for index where the top layer is CNF.
+func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
+	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
+	ranges, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessCondition)
+	if err != nil {
+		return nil, err
 	}
 
 	// Take prefix index into consideration.
@@ -490,14 +498,17 @@ func hasPrefix(lengths []int) bool {
 // change the exclude status of that point and return `true` to tell
 // that we need do a range merging since that interval may have intersection.
 // e.g. if the interval is (-inf -inf, a xxxxx), (a xxxxx, +inf +inf) and the length of the last column is 3,
-//      then we'll change it to (-inf -inf, a xxx], [a xxx, +inf +inf). You can see that this two interval intersect,
-//      so we need a merge operation.
+//
+//	then we'll change it to (-inf -inf, a xxx], [a xxx, +inf +inf). You can see that this two interval intersect,
+//	so we need a merge operation.
+//
 // Q: only checking the last column to decide whether the endpoint's exclude status needs to be reset is enough?
 // A: Yes, suppose that the interval is (-inf -inf, a xxxxx b) and only the second column needs to be cut.
-//    The result would be (-inf -inf, a xxx b) if the length of it is 3. Obviously we only need to care about the data
-//    whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
-//    value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
-//    So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
+//
+//	The result would be (-inf -inf, a xxx b) if the length of it is 3. Obviously we only need to care about the data
+//	whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
+//	value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
+//	So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
 func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
 	var hasCut bool
 	for _, ran := range ranges {

@@ -165,6 +165,14 @@ func TestCompare(t *testing.T) {
 	args = bf.getArgs()
 	require.Equal(t, mysql.TypeDatetime, args[0].GetType().GetType())
 	require.Equal(t, mysql.TypeDatetime, args[1].GetType().GetType())
+
+	// test <json column> <cmp> <const int expression>
+	jsonCol, intCon := &Column{RetType: types.NewFieldType(mysql.TypeJSON)}, &Constant{RetType: types.NewFieldType(mysql.TypeLong)}
+	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{jsonCol, intCon})
+	require.NoError(t, err)
+	args = bf.getArgs()
+	require.Equal(t, mysql.TypeJSON, args[0].GetType().GetType())
+	require.Equal(t, mysql.TypeJSON, args[1].GetType().GetType())
 }
 
 func TestCoalesce(t *testing.T) {
@@ -185,7 +193,13 @@ func TestCoalesce(t *testing.T) {
 		{[]interface{}{nil, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromFloatForTest(123.456), false, false},
 		{[]interface{}{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
 		{[]interface{}{nil, duration}, duration, false, false},
+		{[]interface{}{nil, durationWithFsp}, durationWithFsp, false, false},
+		{[]interface{}{durationWithFsp, duration}, durationWithFsp, false, false},
+		{[]interface{}{duration, durationWithFsp}, durationWithFspAndZeroMicrosecond, false, false},
 		{[]interface{}{nil, tm, nil}, tm, false, false},
+		{[]interface{}{nil, tmWithFsp, nil}, tmWithFsp, false, false},
+		{[]interface{}{tmWithFsp, tm, nil}, tmWithFsp, false, false},
+		{[]interface{}{tm, tmWithFsp, nil}, tmWithFspAndZeroMicrosecond, false, false},
 		{[]interface{}{nil, dt, nil}, dt, false, false},
 		{[]interface{}{tm, dt}, tm, false, false},
 	}
@@ -203,7 +217,11 @@ func TestCoalesce(t *testing.T) {
 			if test.isNil {
 				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				require.Equal(t, test.expected, d.GetValue())
+				if f.GetType().EvalType() == types.ETDuration {
+					require.Equal(t, test.expected.(types.Duration).String(), d.GetValue().(types.Duration).String())
+				} else {
+					require.Equal(t, test.expected, d.GetValue())
+				}
 			}
 		}
 	}

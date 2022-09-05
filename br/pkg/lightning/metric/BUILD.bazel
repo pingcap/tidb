@@ -14,7 +14,9 @@ go_library(
 
 go_test(
     name = "metric_test",
+    timeout = "short",
     srcs = ["metric_test.go"],
+    flaky = True,
     deps = [
         ":metric",
         "//util/promutil",

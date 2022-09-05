@@ -14,6 +14,7 @@ go_library(
 
 go_test(
     name = "encrypt_test",
+    timeout = "short",
     srcs = [
         "aes_layer_test.go",
         "aes_test.go",
@@ -21,6 +22,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":encrypt"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "//util/checksum",

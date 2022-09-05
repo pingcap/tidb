@@ -87,11 +87,11 @@ const (
 
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
-	BaseOOMAction
-	mutex   sync.Mutex // For synchronization.
-	acted   bool
-	ConnID  uint64
 	logHook func(uint64)
+	BaseOOMAction
+	ConnID uint64
+	mutex  sync.Mutex // For synchronization.
+	acted  bool
 }
 
 // SetLogHook sets a hook for LogOnExceed.
@@ -115,17 +115,17 @@ func (a *LogOnExceed) Action(t *Tracker) {
 }
 
 // GetPriority get the priority of the Action
-func (a *LogOnExceed) GetPriority() int64 {
+func (*LogOnExceed) GetPriority() int64 {
 	return DefLogPriority
 }
 
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
-	BaseOOMAction
-	mutex   sync.Mutex // For synchronization.
-	acted   bool
-	ConnID  uint64
 	logHook func(uint64)
+	BaseOOMAction
+	ConnID uint64
+	mutex  sync.Mutex // For synchronization.
+	acted  bool
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -134,7 +134,7 @@ func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
 }
 
 // Action panics when memory usage exceeds memory quota.
-func (a *PanicOnExceed) Action(t *Tracker) {
+func (a *PanicOnExceed) Action(_ *Tracker) {
 	a.mutex.Lock()
 	if a.acted {
 		a.mutex.Unlock()
@@ -149,7 +149,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 }
 
 // GetPriority get the priority of the Action
-func (a *PanicOnExceed) GetPriority() int64 {
+func (*PanicOnExceed) GetPriority() int64 {
 	return DefPanicPriority
 }
 

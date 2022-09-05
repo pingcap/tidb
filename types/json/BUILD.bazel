@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//errno",
+        "//parser/mysql",
         "//parser/terror",
         "//util/dbterror",
         "//util/hack",
@@ -24,6 +25,7 @@ go_library(
 
 go_test(
     name = "json_test",
+    timeout = "short",
     srcs = [
         "binary_functions_test.go",
         "binary_test.go",
@@ -31,6 +33,7 @@ go_test(
         "path_expr_test.go",
     ],
     embed = [":json"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

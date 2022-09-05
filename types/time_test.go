@@ -1679,7 +1679,6 @@ func TestParseDurationValue(t *testing.T) {
 			require.True(t, col.err.Equal(err))
 		}
 	}
-
 }
 
 func TestIsClockUnit(t *testing.T) {
@@ -2084,7 +2083,6 @@ func TestFromGoTime(t *testing.T) {
 		t1 := types.FromGoTime(v)
 		require.Equalf(t, types.FromDate(ca.yy, ca.mm, ca.dd, ca.hh, ca.min, ca.sec, ca.micro), t1, "idx %d", ith)
 	}
-
 }
 
 func TestGetTimezone(t *testing.T) {

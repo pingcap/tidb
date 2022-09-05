@@ -43,6 +43,9 @@ var BreakPointBeforeExecutorFirstRun = "beforeExecutorFirstRun"
 // Only for test
 var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
 
+// TsoRequestCount is the key for recording tso request counts in some places
+var TsoRequestCount stringutil.StringerStr = "tsoRequestCount"
+
 // AssertLockErr is used to record the lock errors we encountered
 // Only for test
 var AssertLockErr stringutil.StringerStr = "assertLockError"
@@ -72,9 +75,9 @@ func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is interface{}) {
 	}
 
 	if localTables := sctx.GetSessionVars().LocalTemporaryTables; localTables != nil {
-		got, ok := GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.TemporaryTableAttachedInfoSchema)
+		got, ok := GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.SessionExtendedInfoSchema)
 		if !ok {
-			panic("Expected to be a TemporaryTableAttachedInfoSchema")
+			panic("Expected to be a SessionExtendedInfoSchema")
 		}
 
 		if got.LocalTemporaryTables != localTables {
@@ -110,6 +113,17 @@ func AddAssertEntranceForLockError(sctx sessionctx.Context, name string) {
 	} else {
 		records[name] = 1
 	}
+}
+
+// TsoRequestCountInc is used only for test
+// When it is called, there is a tso cmd request.
+func TsoRequestCountInc(sctx sessionctx.Context) {
+	count, ok := sctx.Value(TsoRequestCount).(uint64)
+	if !ok {
+		count = 0
+	}
+	count++
+	sctx.SetValue(TsoRequestCount, count)
 }
 
 // ExecTestHook is used only for test. It consumes hookKey in session wait do what it gets from it.

@@ -52,6 +52,7 @@ go_library(
 
 go_test(
     name = "types_test",
+    timeout = "short",
     srcs = [
         "benchmark_test.go",
         "binary_literal_test.go",
@@ -76,6 +77,7 @@ go_test(
         "time_test.go",
     ],
     embed = [":types"],
+    flaky = True,
     deps = [
         "//parser/charset",
         "//parser/mysql",

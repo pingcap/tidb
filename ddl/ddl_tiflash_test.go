@@ -383,33 +383,6 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	require.False(t, ok)
 }
 
-// set TiFlash mode shall be eventually available.
-func TestSetTiFlashModeAvailable(t *testing.T) {
-	s, teardown := createTiFlashContext(t)
-	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustExec("alter table ddltiflash set tiflash mode fast")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
-	require.NoError(t, err)
-	tiflashmode := tb.Meta().TiFlashMode
-	require.NotNil(t, tiflashmode)
-	require.Equal(t, tiflashmode, model.TiFlashModeFast)
-
-	tk.MustExec("alter table ddltiflash set tiflash mode normal")
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
-	require.NoError(t, err)
-	tiflashmode = tb.Meta().TiFlashMode
-	require.NotNil(t, tiflashmode)
-	require.Equal(t, tiflashmode, model.TiFlashModeNormal)
-}
-
 // Truncate partition shall not block.
 func TestTiFlashTruncatePartition(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
@@ -756,14 +729,13 @@ func TestTiFlashBackoff(t *testing.T) {
 }
 
 func TestAlterDatabaseErrorGrammar(t *testing.T) {
-	store, tear := testkit.CreateMockStore(t)
-	defer tear()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change")
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
 }
 
 func TestAlterDatabaseBasic(t *testing.T) {
@@ -812,8 +784,7 @@ func checkBatchPandingNum(t *testing.T, tkx *testkit.TestKit, level string, valu
 }
 
 func TestTiFlashBatchAddVariables(t *testing.T) {
-	store, tear := testkit.CreateMockStore(t)
-	defer tear()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set SESSION tidb_batch_pending_tiflash_count=5")
@@ -885,7 +856,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 			tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_ddl_limit"), model.NewCIStr(fmt.Sprintf("t%v", i)))
 			require.NoError(t, err)
 			if tb.Meta().TiFlashReplica != nil {
-				cnt += 1
+				cnt++
 			}
 		}
 		require.Equal(t, expected, cnt)
@@ -973,4 +944,23 @@ func TestTiFlashBatchUnsupported(t *testing.T) {
 	tk.MustExec("alter database tiflash_ddl_view set tiflash replica 1")
 	require.Equal(t, "In total 2 tables: 1 succeed, 0 failed, 1 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	tk.MustGetErrCode("alter database information_schema set tiflash replica 1", 8200)
+}
+
+func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	tiflash := s.tiflash
+	defer teardown()
+	_ = testkit.NewTestKit(t, s.store)
+	timeout := time.Now().Add(10 * time.Second)
+	errMsg := "time out"
+	for time.Now().Before(timeout) {
+		time.Sleep(100 * time.Millisecond)
+		if tiflash.GetRuleGroupIndex() != 0 {
+			errMsg = "invalid group index"
+			break
+		}
+	}
+	require.Equal(t, placement.RuleIndexTiFlash, tiflash.GetRuleGroupIndex(), errMsg)
+	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexTable)
+	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexPartition)
 }

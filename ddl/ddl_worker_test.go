@@ -15,7 +15,6 @@
 package ddl_test
 
 import (
-	"context"
 	"strconv"
 	"sync"
 	"testing"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -33,11 +31,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testLease = 5 * time.Millisecond
+const testLease = 5 * time.Second
 
 func TestCheckOwner(t *testing.T) {
-	_, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	time.Sleep(testLease)
 	require.Equal(t, dom.DDL().OwnerManager().IsOwner(), true)
@@ -45,8 +42,7 @@ func TestCheckOwner(t *testing.T) {
 }
 
 func TestInvalidDDLJob(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	job := &model.Job{
 		SchemaID:   0,
@@ -62,8 +58,7 @@ func TestInvalidDDLJob(t *testing.T) {
 }
 
 func TestAddBatchJobError(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	ctx := testNewContext(store)
 
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr", `return(true)`))
@@ -77,8 +72,7 @@ func TestAddBatchJobError(t *testing.T) {
 }
 
 func TestParallelDDL(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -102,30 +96,29 @@ func TestParallelDDL(t *testing.T) {
 	tk.MustExec("create table test_parallel_ddl_2.t3(c1 int, c2 int, c3 int, c4 int)")
 
 	// set hook to execute jobs after all jobs are in queue.
-	jobCnt := int64(11)
+	jobCnt := 11
 	tc := &ddl.TestDDLCallback{Do: dom}
 	once := sync.Once{}
 	var checkErr error
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		// TODO: extract a unified function for other tests.
 		once.Do(func() {
-			qLen1 := int64(0)
-			qLen2 := int64(0)
-			var err error
 			for {
-				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-				checkErr = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-					m := meta.NewMeta(txn)
-					qLen1, err = m.DDLJobQueueLen()
-					if err != nil {
-						return err
+				tk1 := testkit.NewTestKit(t, store)
+				tk1.MustExec("begin")
+				txn, err := tk1.Session().Txn(true)
+				require.NoError(t, err)
+				jobs, err := ddl.GetAllDDLJobs(tk1.Session(), meta.NewMeta(txn))
+				require.NoError(t, err)
+				tk1.MustExec("rollback")
+				var qLen1, qLen2 int
+				for _, job := range jobs {
+					if !job.MayNeedReorg() {
+						qLen1++
+					} else {
+						qLen2++
 					}
-					qLen2, err = m.DDLJobQueueLen(meta.AddIndexJobListKey)
-					if err != nil {
-						return err
-					}
-					return nil
-				})
+				}
 				if checkErr != nil {
 					break
 				}
@@ -136,6 +129,25 @@ func TestParallelDDL(t *testing.T) {
 					break
 				}
 				time.Sleep(5 * time.Millisecond)
+			}
+		})
+	}
+
+	once1 := sync.Once{}
+	tc.OnGetJobBeforeExported = func(string) {
+		once1.Do(func() {
+			for {
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("begin")
+				txn, err := tk.Session().Txn(true)
+				require.NoError(t, err)
+				jobs, err := ddl.GetAllDDLJobs(tk.Session(), meta.NewMeta(txn))
+				require.NoError(t, err)
+				tk.MustExec("rollback")
+				if len(jobs) == jobCnt {
+					break
+				}
+				time.Sleep(time.Millisecond * 20)
 			}
 		})
 	}
@@ -232,8 +244,7 @@ func TestParallelDDL(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	wg.Run(func() {
 		tk := testkit.NewTestKit(t, store)
-		err := tk.ExecToErr("alter table test_parallel_ddl_2.t3 add index db3_idx1(c2)")
-		require.Error(t, err)
+		_ = tk.ExecToErr("alter table test_parallel_ddl_2.t3 add index db3_idx1(c2)")
 		rs := tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.seq_num')")
 		seqIDs[10], _ = strconv.Atoi(rs.Rows()[0][0].(string))
 	})
@@ -252,19 +263,6 @@ func TestParallelDDL(t *testing.T) {
 	// Table 3 order.
 	require.Less(t, seqIDs[6], seqIDs[7])
 	require.Less(t, seqIDs[7], seqIDs[9])
-	require.Less(t, seqIDs[9], seqIDs[10])
-
-	// General job order.
-	require.Less(t, seqIDs[1], seqIDs[3])
-	require.Less(t, seqIDs[3], seqIDs[4])
-	require.Less(t, seqIDs[4], seqIDs[6])
-	require.Less(t, seqIDs[6], seqIDs[7])
-	require.Less(t, seqIDs[7], seqIDs[9])
-
-	// Reorg job order.
-	require.Less(t, seqIDs[2], seqIDs[5])
-	require.Less(t, seqIDs[5], seqIDs[8])
-	require.Less(t, seqIDs[8], seqIDs[10])
 }
 
 func TestJobNeedGC(t *testing.T) {

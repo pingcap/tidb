@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"sync"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -152,18 +152,18 @@ func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 // 1: add index
 // 2: alter column type
 // 3: clean global index
-//
-// ddl goroutine >---------+
-//   ^                     |
-//   |                     |
-//   |                     |
-//   |                     | <---(doneCh)--- f()
-// HandleDDLQueue(...)     | <---(regular timeout)
-//   |                     | <---(ctx done)
-//   |                     |
-//   |                     |
-// A more ddl round  <-----+
-//
+/*
+ ddl goroutine >---------+
+   ^                     |
+   |                     |
+   |                     |
+   |                     | <---(doneCh)--- f()
+ HandleDDLQueue(...)     | <---(regular timeout)
+   |                     | <---(ctx done)
+   |                     |
+   |                     |
+ A more ddl round  <-----+
+*/
 // How can we cancel reorg job?
 //
 // The background reorg is continuously running except for several factors, for instances, ddl owner change,
@@ -253,9 +253,9 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 		switch reorgInfo.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
+			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String()).Set(0)
 		case model.ActionModifyColumn:
-			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
+			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
 		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
@@ -321,9 +321,9 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	}
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	case model.ActionModifyColumn:
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	}
 }
 
@@ -591,7 +591,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		// Third step, we need to remove the element information to make sure we can save the reorganized information to storage.
 		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
 			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 3, 4) {
-				if err := rh.RemoveReorgElement(job); err != nil {
+				if err := rh.RemoveReorgElementFailPoint(job); err != nil {
 					failpoint.Return(nil, errors.Trace(err))
 				}
 				info.first = true
@@ -626,7 +626,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = rh.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -639,7 +639,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			// Second step, we need to remove the element information to make sure we can get the error of "ErrDDLReorgElementNotExist".
 			// However, since "txn.Reset()" will be called later, the reorganized information cannot be saved to storage.
 			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 2, 3) {
-				if err := rh.RemoveReorgElement(job); err != nil {
+				if err := rh.RemoveReorgElementFailPoint(job); err != nil {
 					failpoint.Return(nil, errors.Trace(err))
 				}
 			}
@@ -653,7 +653,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()), zap.Bool("enableConcurrentDDL", rh.enableConcurrentDDL))
 			}
 			return &info, errors.Trace(err)
 		}
@@ -695,7 +695,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			zap.String("startHandle", tryDecodeToHandleString(start)),
 			zap.String("endHandle", tryDecodeToHandleString(end)))
 
-		err = rh.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -727,52 +727,96 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	return &info, nil
 }
 
-func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
+func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err error) {
 	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		rh := newReorgHandler(meta.NewMeta(txn))
-		return errors.Trace(rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
-	})
+	se, err := pool.get()
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
-	return nil
+	defer pool.put(se)
+
+	sess := newSession(se)
+	err = sess.begin()
+	if err != nil {
+		return
+	}
+	txn, err := sess.txn()
+	if err != nil {
+		sess.rollback()
+		return err
+	}
+	rh := newReorgHandler(meta.NewMeta(txn), sess, variable.EnableConcurrentDDL.Load())
+	err = rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
+	err1 := sess.commit()
+	if err == nil {
+		err = err1
+	}
+	return errors.Trace(err)
 }
 
 // reorgHandler is used to handle the reorg information duration reorganization DDL job.
 type reorgHandler struct {
 	m *meta.Meta
+	s *session
+
+	enableConcurrentDDL bool
 }
 
-func newReorgHandler(t *meta.Meta) *reorgHandler {
-	return &reorgHandler{m: t}
+// NewReorgHandlerForTest creates a new reorgHandler, only used in test.
+func NewReorgHandlerForTest(t *meta.Meta, sess sessionctx.Context) *reorgHandler {
+	return newReorgHandler(t, newSession(sess), variable.EnableConcurrentDDL.Load())
+}
+
+func newReorgHandler(t *meta.Meta, sess *session, enableConcurrentDDL bool) *reorgHandler {
+	return &reorgHandler{m: t, s: sess, enableConcurrentDDL: enableConcurrentDDL}
 }
 
 // UpdateDDLReorgStartHandle saves the job reorganization latest processed element and start handle for later resuming.
 func (r *reorgHandler) UpdateDDLReorgStartHandle(job *model.Job, element *meta.Element, startKey kv.Key) error {
+	if r.enableConcurrentDDL {
+		return updateDDLReorgStartHandle(r.s, job, element, startKey)
+	}
 	return r.m.UpdateDDLReorgStartHandle(job, element, startKey)
 }
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
 func (r *reorgHandler) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
-	return r.m.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
+	if r.enableConcurrentDDL {
+		return updateDDLReorgHandle(r.s, job.ID, startKey, endKey, physicalTableID, element)
+	}
+	return r.m.UpdateDDLReorgHandle(job.ID, startKey, endKey, physicalTableID, element)
 }
 
-// RemoveReorgElement removes the element of the reorganization information.
-func (r *reorgHandler) RemoveReorgElement(job *model.Job) error {
+// InitDDLReorgHandle initializes the job reorganization information.
+func (r *reorgHandler) InitDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	if r.enableConcurrentDDL {
+		return initDDLReorgHandle(r.s, job.ID, startKey, endKey, physicalTableID, element)
+	}
+	return r.m.UpdateDDLReorgHandle(job.ID, startKey, endKey, physicalTableID, element)
+}
+
+// RemoveReorgElementFailPoint removes the element of the reorganization information.
+func (r *reorgHandler) RemoveReorgElementFailPoint(job *model.Job) error {
+	if r.enableConcurrentDDL {
+		return removeReorgElement(r.s, job)
+	}
 	return r.m.RemoveReorgElement(job)
 }
 
 // RemoveDDLReorgHandle removes the job reorganization related handles.
 func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Element) error {
+	if r.enableConcurrentDDL {
+		return removeDDLReorgHandle(r.s, job, elements)
+	}
 	return r.m.RemoveDDLReorgHandle(job, elements)
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+	if r.enableConcurrentDDL {
+		return getDDLReorgHandle(r.s, job)
+	}
 	return r.m.GetDDLReorgHandle(job)
 }

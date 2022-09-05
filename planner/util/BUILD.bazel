@@ -28,6 +28,7 @@ go_test(
         "path_test.go",
     ],
     embed = [":util"],
+    flaky = True,
     deps = [
         "//parser/model",
         "//planner/core",

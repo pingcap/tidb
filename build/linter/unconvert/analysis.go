@@ -35,6 +35,10 @@ var Analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
+func init() {
+	util.SkipAnalyzer(Analyzer)
+}
+
 func run(pass *analysis.Pass) (interface{}, error) {
 	var createdPkgs []*loader.PackageInfo
 	createdPkgs = append(createdPkgs, util.MakeFakeLoaderPackageInfo(pass))

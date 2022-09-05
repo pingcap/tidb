@@ -30,7 +30,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func updateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+// UpdateColsNull2NotNull changes the null option of columns of an index.
+func UpdateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	nullCols, err := getNullColInfos(tblInfo, indexInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -111,8 +112,7 @@ func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Jo
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
 func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	// If the value of SnapshotVer isn't zero, it means the reorg workers have been started.
-	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
+	if needNotifyAndStopReorgWorker(job) {
 		// column type change workers are started. we have to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
 		d.notifyReorgCancel(job)
@@ -242,7 +242,7 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 
 func needNotifyAndStopReorgWorker(job *model.Job) bool {
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-		// If the value of SnapshotVer isn't zero, it means the worker is backfilling the indexes.
+		// If the value of SnapshotVer isn't zero, it means the reorg workers have been started.
 		if job.MultiSchemaInfo != nil {
 			// However, if the sub-job is non-revertible, it means the reorg process is finished.
 			// We don't need to start another round to notify reorg workers to exit.

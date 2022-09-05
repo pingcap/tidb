@@ -62,7 +62,7 @@ This folder contains all tests which relies on external processes such as TiDB.
     `/tmp/backup_restore_test`. All test artifacts will be written into this folder.
 
 If you have docker installed, you can skip step 1 and step 2 by running
-`tests/up.sh --pull-images` to build and run a testing Docker container.
+`br/tests/up.sh --pull-images` (in `tidb` directory) to build and run a testing Docker container.
 
 ## Running
 

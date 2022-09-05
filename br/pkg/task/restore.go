@@ -20,11 +20,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -82,6 +84,9 @@ type RestoreCommonConfig struct {
 	// See https://github.com/tikv/tikv/blob/v4.0.8/components/raftstore/src/coprocessor/config.rs#L35-L38
 	MergeSmallRegionSizeBytes uint64 `json:"merge-region-size-bytes" toml:"merge-region-size-bytes"`
 	MergeSmallRegionKeyCount  uint64 `json:"merge-region-key-count" toml:"merge-region-key-count"`
+
+	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
+	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -110,6 +115,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"after how long a restore batch would be auto sended.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"batch size for ddl to create a batch of tabes once.")
+	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
@@ -132,6 +138,12 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if flags.Lookup(flagWithSysTable) != nil {
+		cfg.WithSysTable, err = flags.GetBool(flagWithSysTable)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return errors.Trace(err)
 }
 
@@ -153,9 +165,9 @@ type RestoreConfig struct {
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
-	StartTS     uint64 `json:"start-ts" toml:"start-ts"`
-	RestoreTS   uint64 `json:"restore-ts" toml:"restore-ts"`
-	skipTiflash bool   `json:"-" toml:"-"`
+	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
+	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
+	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -171,9 +183,9 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 // DefineStreamRestoreFlags defines for the restore log command.
 func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().String(FlagStreamStartTS, "", "the start timestamp which log restore from.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for log restore.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
 }
@@ -285,6 +297,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
+	client.SetWithSysTable(cfg.WithSysTable)
 
 	err := client.LoadRestoreStores(ctx)
 	if err != nil {
@@ -348,10 +361,9 @@ func CheckNewCollationEnable(
 					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
 					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
 					"use --check-requirements=false to skip this check")
-		} else {
-			log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
-			return nil
 		}
+		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		return nil
 	}
 
 	se, err := g.CreateSession(storage)
@@ -401,7 +413,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Restore needs domain to do DDL.
 	needDomain := true
 	keepaliveCfg := GetKeepalive(&cfg.Config)
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, needDomain)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -471,6 +483,22 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
+	// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
+	// to avoid import cycle problem which we won't do it in this pr, then refactor this
+	//
+	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+	if cmdName == FullRestoreCmd && cfg.WithSysTable {
+		client.InitFullClusterRestore(cfg.ExplicitFilter)
+	}
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+		if err = client.CheckTargetClusterFresh(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
 		TTL:      utils.DefaultBRGCSafePointTTL,
@@ -493,7 +521,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
-	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.skipTiflash)
+	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.tiflashRecorder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -552,6 +580,15 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
 		// don't return immediately, wait all pipeline done.
+	}
+
+	if cfg.tiflashRecorder != nil {
+		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+			if cfg.tiflashRecorder != nil {
+				cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
+			}
+			return t
+		})
 	}
 
 	tableFileMap := restore.MapTableToFiles(files)

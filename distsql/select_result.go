@@ -618,6 +618,6 @@ func (s *selectResultRuntimeStats) String() string {
 }
 
 // Tp implements the RuntimeStats interface.
-func (s *selectResultRuntimeStats) Tp() int {
+func (*selectResultRuntimeStats) Tp() int {
 	return execdetails.TpSelectResultRuntimeStats
 }

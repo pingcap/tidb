@@ -18,23 +18,39 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 )
+
+var (
+	// ConstructResultOfShowCreateDatabase should be assigned to executor.ConstructResultOfShowCreateDatabase.
+	// It is used to break cycle import.
+	ConstructResultOfShowCreateDatabase func(sessionctx.Context, *model.DBInfo, bool, *bytes.Buffer) error
+	// ConstructResultOfShowCreateTable should be assigned to executor.ConstructResultOfShowCreateTable.
+	// It is used to break cycle import.
+	ConstructResultOfShowCreateTable func(sessionctx.Context, *model.TableInfo, autoid.Allocators, *bytes.Buffer) error
+)
+
+func init() {
+	mockstore.DDLCheckerInjector = NewStorageDDLInjector
+}
 
 // Checker is used to check the result of SchemaTracker is same as real DDL.
 type Checker struct {
@@ -62,6 +78,11 @@ func (d *Checker) Enable() {
 	d.closed = false
 }
 
+// CreateTestDB creates a `test` database like the default behaviour of TiDB.
+func (d Checker) CreateTestDB() {
+	d.tracker.CreateTestDB()
+}
+
 func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	if d.closed {
 		return
@@ -69,18 +90,75 @@ func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	dbInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).SchemaByName(dbName)
 	dbInfo2 := d.tracker.SchemaByName(dbName)
 
+	if dbInfo == nil || dbInfo2 == nil {
+		if dbInfo == nil && dbInfo2 == nil {
+			return
+		}
+		errStr := fmt.Sprintf("inconsistent dbInfo, dbName: %s, real ddl: %p, schematracker：%p", dbName, dbInfo, dbInfo2)
+		panic(errStr)
+	}
+
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := executor.ConstructResultOfShowCreateDatabase(ctx, dbInfo, false, result)
+	err := ConstructResultOfShowCreateDatabase(ctx, dbInfo, false, result)
 	if err != nil {
 		panic(err)
 	}
 	result2 := bytes.NewBuffer(make([]byte, 0, 512))
-	err = executor.ConstructResultOfShowCreateDatabase(ctx, dbInfo2, false, result2)
+	err = ConstructResultOfShowCreateDatabase(ctx, dbInfo2, false, result2)
 	if err != nil {
 		panic(err)
 	}
 	s1 := result.String()
 	s2 := result2.String()
+	if s1 != s2 {
+		errStr := fmt.Sprintf("%s != %s", s1, s2)
+		panic(errStr)
+	}
+}
+
+func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.CIStr) {
+	if d.closed {
+		return
+	}
+
+	if dbName.L == mysql.SystemDB {
+		// no need to check system tables.
+		return
+	}
+
+	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(dbName, tableName)
+	tableInfo2, _ := d.tracker.TableByName(dbName, tableName)
+
+	if tableInfo == nil || tableInfo2 == nil {
+		if tableInfo == nil && tableInfo2 == nil {
+			return
+		}
+		errStr := fmt.Sprintf("inconsistent tableInfo, dbName: %s, tableName: %s, real ddl: %p, schematracker：%p",
+			dbName, tableName, tableInfo, tableInfo2)
+		panic(errStr)
+	}
+
+	result := bytes.NewBuffer(make([]byte, 0, 512))
+	err := ConstructResultOfShowCreateTable(ctx, tableInfo.Meta(), autoid.Allocators{}, result)
+	if err != nil {
+		panic(err)
+	}
+	result2 := bytes.NewBuffer(make([]byte, 0, 512))
+	err = ConstructResultOfShowCreateTable(ctx, tableInfo2, autoid.Allocators{}, result2)
+	if err != nil {
+		panic(err)
+	}
+
+	// SchemaTracker will always use NONCLUSTERED so it can support more types of DDL.
+	removeClusteredIndexComment := func(s string) string {
+		ret := strings.ReplaceAll(s, " /*T![clustered_index] NONCLUSTERED */", "")
+		ret = strings.ReplaceAll(ret, " /*T![clustered_index] CLUSTERED */", "")
+		return ret
+	}
+
+	s1 := removeClusteredIndexComment(result.String())
+	s2 := removeClusteredIndexComment(result2.String())
+
 	if s1 != s2 {
 		errStr := fmt.Sprintf("%s != %s", s1, s2)
 		panic(errStr)
@@ -127,25 +205,61 @@ func (d Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) 
 	if err != nil {
 		panic(err)
 	}
+
+	d.checkDBInfo(ctx, stmt.Name)
 	return nil
 }
 
 // CreateTable implements the DDL interface.
 func (d Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.CreateTable(ctx, stmt)
+	if err != nil {
+		return err
+	}
+
+	// some unit test will also check warnings, we reset the warnings after SchemaTracker use session context again.
+	count := ctx.GetSessionVars().StmtCtx.WarningCount()
+	// backup old session variables because CreateTable will change them.
+	strictSQLMode := ctx.GetSessionVars().StrictSQLMode
+	enableClusteredIndex := ctx.GetSessionVars().EnableClusteredIndex
+
+	err = d.tracker.CreateTable(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	ctx.GetSessionVars().StrictSQLMode = strictSQLMode
+	ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndex
+	ctx.GetSessionVars().StmtCtx.TruncateWarnings(int(count))
+
+	d.checkTableInfo(ctx, stmt.Table.Schema, stmt.Table.Name)
+	return nil
 }
 
 // CreateView implements the DDL interface.
 func (d Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.CreateView(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.CreateView(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	d.checkTableInfo(ctx, stmt.ViewName.Schema, stmt.ViewName.Name)
+	return nil
 }
 
 // DropTable implements the DDL interface.
 func (d Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	//TODO implement me
-	panic("implement me")
+	err = d.realDDL.DropTable(ctx, stmt)
+	_ = d.tracker.DropTable(ctx, stmt)
+
+	for _, tableName := range stmt.Tables {
+		d.checkTableInfo(ctx, tableName.Schema, tableName.Name)
+	}
+	return err
 }
 
 // RecoverTable implements the DDL interface.
@@ -154,28 +268,76 @@ func (d Checker) RecoverTable(ctx sessionctx.Context, recoverInfo *ddl.RecoverIn
 	panic("implement me")
 }
 
-// DropView implements the DDL interface.
-func (d Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+// FlashbackCluster implements the DDL interface.
+func (d Checker) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) (err error) {
 	//TODO implement me
 	panic("implement me")
+}
+
+// DropView implements the DDL interface.
+func (d Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+	err = d.realDDL.DropView(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.DropView(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, tableName := range stmt.Tables {
+		d.checkTableInfo(ctx, tableName.Schema, tableName.Name)
+	}
+	return nil
 }
 
 // CreateIndex implements the DDL interface.
 func (d Checker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.CreateIndex(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.CreateIndex(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	d.checkTableInfo(ctx, stmt.Table.Schema, stmt.Table.Name)
+	return nil
 }
 
 // DropIndex implements the DDL interface.
 func (d Checker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.DropIndex(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.DropIndex(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	d.checkTableInfo(ctx, stmt.Table.Schema, stmt.Table.Name)
+	return nil
 }
 
 // AlterTable implements the DDL interface.
 func (d Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.AlterTable(ctx, sctx, stmt)
+	if err != nil {
+		return err
+	}
+
+	// some unit test will also check warnings, we reset the warnings after SchemaTracker use session context again.
+	count := sctx.GetSessionVars().StmtCtx.WarningCount()
+	err = d.tracker.AlterTable(ctx, sctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+	sctx.GetSessionVars().StmtCtx.TruncateWarnings(int(count))
+
+	d.checkTableInfo(sctx, stmt.Table.Schema, stmt.Table.Name)
+	return nil
 }
 
 // TruncateTable implements the DDL interface.
@@ -186,26 +348,35 @@ func (d Checker) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) err
 
 // RenameTable implements the DDL interface.
 func (d Checker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.RenameTable(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.RenameTable(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, tableName := range stmt.TableToTables {
+		d.checkTableInfo(ctx, tableName.OldTable.Schema, tableName.OldTable.Name)
+		d.checkTableInfo(ctx, tableName.NewTable.Schema, tableName.NewTable.Name)
+	}
+	return nil
 }
 
 // LockTables implements the DDL interface.
 func (d Checker) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
-	//TODO implement me
-	panic("implement me")
+	return d.realDDL.LockTables(ctx, stmt)
 }
 
 // UnlockTables implements the DDL interface.
 func (d Checker) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
-	//TODO implement me
-	panic("implement me")
+	return d.realDDL.UnlockTables(ctx, lockedTables)
 }
 
 // CleanupTableLock implements the DDL interface.
 func (d Checker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
-	//TODO implement me
-	panic("implement me")
+	return d.realDDL.CleanupTableLock(ctx, tables)
 }
 
 // UpdateTableReplicaInfo implements the DDL interface.
@@ -320,7 +491,7 @@ func (d Checker) RegisterStatsHandle(h *handle.Handle) {
 }
 
 // SchemaSyncer implements the DDL interface.
-func (d Checker) SchemaSyncer() util.SchemaSyncer {
+func (d Checker) SchemaSyncer() syncer.SchemaSyncer {
 	return d.realDDL.SchemaSyncer()
 }
 
@@ -362,4 +533,37 @@ func (d Checker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema
 // DoDDLJob implements the DDL interface.
 func (d Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return d.realDDL.DoDDLJob(ctx, job)
+}
+
+// MoveJobFromQueue2Table implements the DDL interface.
+func (d Checker) MoveJobFromQueue2Table(bool) error {
+	panic("implement me")
+}
+
+// MoveJobFromTable2Queue implements the DDL interface.
+func (d Checker) MoveJobFromTable2Queue() error {
+	panic("implement me")
+}
+
+// StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.
+type StorageDDLInjector struct {
+	kv.Storage
+	Injector func(ddl.DDL) *Checker
+}
+
+// NewStorageDDLInjector creates a new StorageDDLInjector to inject Checker.
+func NewStorageDDLInjector(s kv.Storage) kv.Storage {
+	return StorageDDLInjector{
+		Storage:  s,
+		Injector: NewChecker,
+	}
+}
+
+// UnwrapStorage unwraps StorageDDLInjector for one level.
+func UnwrapStorage(s kv.Storage) kv.Storage {
+	injector, ok := s.(StorageDDLInjector)
+	if !ok {
+		return s
+	}
+	return injector.Storage
 }

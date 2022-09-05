@@ -2,11 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "brietest_test",
+    timeout = "moderate",
     srcs = [
         "backup_restore_test.go",
         "binlog_test.go",
         "main_test.go",
     ],
+    flaky = True,
     deps = [
         "//config",
         "//parser/mysql",

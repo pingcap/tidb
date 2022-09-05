@@ -63,68 +63,68 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 
 	constraints := options.Constraints
-	leaderConstraints := options.LeaderConstraints
+	leaderConst := options.LeaderConstraints
 	learnerConstraints := options.LearnerConstraints
 	followerConstraints := options.FollowerConstraints
 	followerCount := options.Followers
 	learnerCount := options.Learners
 
-	CommonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
+	commonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
 	if err != nil {
 		return nil, fmt.Errorf("%w: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation", err)
 	}
 
-	Rules := []*Rule{}
+	rules := []*Rule{}
 
-	LeaderConstraints, err := NewConstraintsFromYaml([]byte(leaderConstraints))
+	leaderConstraints, err := NewConstraintsFromYaml([]byte(leaderConst))
 	if err != nil {
 		return nil, fmt.Errorf("%w: 'LeaderConstraints' should be [constraint1, ...] or any yaml compatible array representation", err)
 	}
-	for _, cnst := range CommonConstraints {
-		if err := LeaderConstraints.Add(cnst); err != nil {
+	for _, cnst := range commonConstraints {
+		if err := leaderConstraints.Add(cnst); err != nil {
 			return nil, fmt.Errorf("%w: LeaderConstraints conflicts with Constraints", err)
 		}
 	}
-	Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
+	rules = append(rules, NewRule(Leader, 1, leaderConstraints))
 
-	FollowerRules, err := NewRules(Voter, followerCount, followerConstraints)
+	followerRules, err := NewRules(Voter, followerCount, followerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
 	}
-	for _, rule := range FollowerRules {
+	for _, rule := range followerRules {
 		// give a default of 2 followers
 		if rule.Count == 0 {
 			rule.Count = 2
 		}
-		for _, cnst := range CommonConstraints {
+		for _, cnst := range commonConstraints {
 			if err := rule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
 			}
 		}
 	}
-	Rules = append(Rules, FollowerRules...)
+	rules = append(rules, followerRules...)
 
-	LearnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
+	learnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
 	}
-	for _, rule := range LearnerRules {
+	for _, rule := range learnerRules {
 		if rule.Count == 0 {
 			if len(rule.Constraints) > 0 {
 				return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
 			}
 		}
-		for _, cnst := range CommonConstraints {
+		for _, cnst := range commonConstraints {
 			if err := rule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
 			}
 		}
 		if rule.Count > 0 {
-			Rules = append(Rules, rule)
+			rules = append(rules, rule)
 		}
 	}
 
-	return &Bundle{Rules: Rules}, nil
+	return &Bundle{Rules: rules}, nil
 }
 
 // NewBundleFromSugarOptions will transform syntax sugar options into the bundle.
@@ -153,12 +153,12 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	}
 	schedule := options.Schedule
 
-	var Rules []*Rule
+	var rules []*Rule
 
 	// in case empty primaryRegion and regions, just return an empty bundle
 	if primaryRegion == "" && len(regions) == 0 {
-		Rules = append(Rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
-		return &Bundle{Rules: Rules}, nil
+		rules = append(rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
+		return &Bundle{Rules: rules}, nil
 	}
 
 	// regions must include the primary
@@ -181,19 +181,19 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
 	}
 
-	Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+	rules = append(rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
 	if followers+1 > primaryCount {
 		// delete primary from regions
 		regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
 
 		if len(regions) > 0 {
-			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
+			rules = append(rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
 		} else {
-			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect()))
+			rules = append(rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect()))
 		}
 	}
 
-	return &Bundle{Rules: Rules}, nil
+	return &Bundle{Rules: rules}, nil
 }
 
 // Non-Exported functionality function, do not use it directly but NewBundleFromOptions

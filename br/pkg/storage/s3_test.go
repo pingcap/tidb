@@ -34,9 +34,9 @@ type s3Suite struct {
 	storage    *S3Storage
 }
 
-func createS3Suite(c gomock.TestReporter) (s *s3Suite, clean func()) {
-	s = new(s3Suite)
-	s.controller = gomock.NewController(c)
+func createS3Suite(t *testing.T) *s3Suite {
+	s := new(s3Suite)
+	s.controller = gomock.NewController(t)
 	s.s3 = mock.NewMockS3API(s.controller)
 	s.storage = NewS3StorageForTest(
 		s.s3,
@@ -50,11 +50,11 @@ func createS3Suite(c gomock.TestReporter) (s *s3Suite, clean func()) {
 		},
 	)
 
-	clean = func() {
+	t.Cleanup(func() {
 		s.controller.Finish()
-	}
+	})
 
-	return
+	return s
 }
 
 func createGetBucketRegionServer(region string, statusCode int, incHeader bool) *httptest.Server {
@@ -426,8 +426,7 @@ func TestS3Range(t *testing.T) {
 // TestWriteNoError ensures the WriteFile API issues a PutObject request and wait
 // until the object is available in the S3 bucket.
 func TestWriteNoError(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	putCall := s.s3.EXPECT().
@@ -459,8 +458,7 @@ func TestWriteNoError(t *testing.T) {
 // TestReadNoError ensures the ReadFile API issues a GetObject request and correctly
 // read the entire body.
 func TestReadNoError(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -481,8 +479,7 @@ func TestReadNoError(t *testing.T) {
 // TestFileExistsNoError ensures the FileExists API issues a HeadObject request
 // and reports a file exists.
 func TestFileExistsNoError(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -499,8 +496,7 @@ func TestFileExistsNoError(t *testing.T) {
 }
 
 func TestDeleteFileNoError(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -516,8 +512,7 @@ func TestDeleteFileNoError(t *testing.T) {
 }
 
 func TestDeleteFileMissing(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	err := awserr.New(s3.ErrCodeNoSuchKey, "no such key", nil)
@@ -526,8 +521,7 @@ func TestDeleteFileMissing(t *testing.T) {
 }
 
 func TestDeleteFileError(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	expectedErr := errors.New("just some unrelated error")
@@ -544,8 +538,7 @@ func TestDeleteFileError(t *testing.T) {
 // TestFileExistsNoSuckKey ensures FileExists API reports file missing if S3's
 // HeadObject request replied NoSuchKey.
 func TestFileExistsMissing(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -559,8 +552,7 @@ func TestFileExistsMissing(t *testing.T) {
 
 // TestWriteError checks that a PutObject error is propagated.
 func TestWriteError(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	expectedErr := awserr.New(s3.ErrCodeNoSuchBucket, "no such bucket", nil)
@@ -575,8 +567,7 @@ func TestWriteError(t *testing.T) {
 
 // TestWriteError checks that a GetObject error is propagated.
 func TestReadError(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	expectedErr := awserr.New(s3.ErrCodeNoSuchKey, "no such key", nil)
@@ -592,8 +583,7 @@ func TestReadError(t *testing.T) {
 
 // TestFileExistsError checks that a HeadObject error is propagated.
 func TestFileExistsError(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	expectedErr := errors.New("just some unrelated error")
@@ -609,8 +599,7 @@ func TestFileExistsError(t *testing.T) {
 
 // TestOpenAsBufio checks that we can open a file for reading via bufio.
 func TestOpenAsBufio(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -658,8 +647,7 @@ func (r *alphabetReader) Close() error {
 // TestOpenReadSlowly checks that we can open a file for reading, even if the
 // reader emits content one byte at a time.
 func TestOpenReadSlowly(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -678,8 +666,7 @@ func TestOpenReadSlowly(t *testing.T) {
 
 // TestOpenSeek checks that Seek is implemented correctly.
 func TestOpenSeek(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	someRandomBytes := make([]byte, 1000000)
@@ -797,8 +784,7 @@ func (s *s3Suite) expectedCalls(ctx context.Context, t *testing.T, data []byte, 
 
 // TestS3ReaderWithRetryEOF check the Read with retry and end with io.EOF.
 func TestS3ReaderWithRetryEOF(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	someRandomBytes := make([]byte, 100)
@@ -844,8 +830,7 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 
 // TestS3ReaderWithRetryFailed check the Read with retry failed after maxRetryTimes.
 func TestS3ReaderWithRetryFailed(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	someRandomBytes := make([]byte, 100)
@@ -882,8 +867,7 @@ func TestS3ReaderWithRetryFailed(t *testing.T) {
 
 // TestWalkDir checks WalkDir retrieves all directory content under a prefix.
 func TestWalkDir(t *testing.T) {
-	s, clean := createS3Suite(t)
-	defer clean()
+	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	contents := []*s3.Object{

@@ -36,7 +36,7 @@ import (
 // }
 
 /*
-	TODO : test with specified 'regionBlockSize' ...
+TODO : test with specified 'regionBlockSize' ...
 */
 func TestTableRegion(t *testing.T) {
 	cfg := newConfigWithSourceDir("./examples")

@@ -41,10 +41,10 @@ func (k Key) Next() Key {
 //
 // Assume there are keys like:
 //
-//   rowkey1
-//   rowkey1_column1
-//   rowkey1_column2
-//   rowKey2
+//	rowkey1
+//	rowkey1_column1
+//	rowkey1_column2
+//	rowKey2
 //
 // If we seek 'rowkey1' Next, we will get 'rowkey1_column1'.
 // If we seek 'rowkey1' PrefixNext, we will get 'rowkey2'.
@@ -89,9 +89,17 @@ func (k Key) String() string {
 }
 
 // KeyRange represents a range where StartKey <= key < EndKey.
+// Hack: make the layout exactly the same with github.com/pingcap/kvproto/pkg/coprocessor.KeyRange
+// So we can avoid allocation of converting kv.KeyRange to coprocessor.KeyRange
+// Not defined as "type KeyRange = coprocessor.KeyRange" because their field name are different.
+// kv.KeyRange use StartKey,EndKey while coprocessor.KeyRange use Start,End
 type KeyRange struct {
 	StartKey Key
 	EndKey   Key
+
+	XXXNoUnkeyedLiteral struct{}
+	XXXunrecognized     []byte
+	XXXsizecache        int32
 }
 
 // IsPoint checks if the key range represents a point.
@@ -172,7 +180,7 @@ var _ Handle = PartitionHandle{}
 type IntHandle int64
 
 // IsInt implements the Handle interface.
-func (ih IntHandle) IsInt() bool {
+func (IntHandle) IsInt() bool {
 	return true
 }
 
@@ -213,17 +221,17 @@ func (ih IntHandle) Encoded() []byte {
 }
 
 // Len implements the Handle interface.
-func (ih IntHandle) Len() int {
+func (IntHandle) Len() int {
 	return 8
 }
 
 // NumCols implements the Handle interface, not supported for IntHandle type.
-func (ih IntHandle) NumCols() int {
+func (IntHandle) NumCols() int {
 	panic("not supported in IntHandle")
 }
 
 // EncodedCol implements the Handle interface., not supported for IntHandle type.
-func (ih IntHandle) EncodedCol(idx int) []byte {
+func (IntHandle) EncodedCol(_ int) []byte {
 	panic("not supported in IntHandle")
 }
 
@@ -238,12 +246,12 @@ func (ih IntHandle) String() string {
 }
 
 // MemUsage implements the Handle interface.
-func (ih IntHandle) MemUsage() uint64 {
+func (IntHandle) MemUsage() uint64 {
 	return 8
 }
 
 // ExtraMemSize implements the Handle interface.
-func (ih IntHandle) ExtraMemSize() uint64 {
+func (IntHandle) ExtraMemSize() uint64 {
 	return 0
 }
 
@@ -281,12 +289,12 @@ func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 }
 
 // IsInt implements the Handle interface.
-func (ch *CommonHandle) IsInt() bool {
+func (*CommonHandle) IsInt() bool {
 	return false
 }
 
 // IntValue implements the Handle interface, not supported for CommonHandle type.
-func (ch *CommonHandle) IntValue() int64 {
+func (*CommonHandle) IntValue() int64 {
 	panic("not supported in CommonHandle")
 }
 

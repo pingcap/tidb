@@ -631,7 +631,7 @@ func (p *PdController) RemoveSchedulers(ctx context.Context) (undo UndoFunc, err
 }
 
 // RemoveSchedulersWithOrigin pause and remove br related schedule configs and return the origin and modified configs
-func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (ClusterConfig, ClusterConfig, error) {
+func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin ClusterConfig, modified ClusterConfig, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -765,6 +765,7 @@ func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule L
 	return errors.Trace(lastErr)
 }
 
+// DeleteRegionLabelRule deletes a region label rule.
 func (p *PdController) DeleteRegionLabelRule(ctx context.Context, ruleID string) error {
 	var lastErr error
 	for i, addr := range p.addrs {

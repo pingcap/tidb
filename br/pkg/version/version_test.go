@@ -13,6 +13,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
@@ -43,6 +44,74 @@ func TestCheckClusterVersion(t *testing.T) {
 
 	mock := mockPDClient{
 		Client: nil,
+	}
+
+	{
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v5.4.2`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.0.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.1.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* version mismatch when use PiTR v6.2.0\+, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.2.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.NoError(t, err)
+	}
+
+	{
+		build.ReleaseVersion = "v6.1.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v5.4.2`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.1.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.1.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.NoError(t, err)
+	}
+
+	{
+		build.ReleaseVersion = "v6.1.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.2.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* version mismatch when use PiTR v6.1.0, please `, err.Error())
 	}
 
 	{
@@ -193,6 +262,55 @@ func TestCheckClusterVersion(t *testing.T) {
 		require.Error(t, err)
 	}
 
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v6.4.0"}}
+		}
+		originVal := variable.EnableConcurrentDDL.Load()
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
+		require.NoError(t, err)
+		require.Equal(t, originVal, variable.EnableConcurrentDDL.Load())
+	}
+
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v6.2.0"}}
+		}
+		originVal := variable.EnableConcurrentDDL.Load()
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
+		require.NoError(t, err)
+		require.Equal(t, originVal, variable.EnableConcurrentDDL.Load())
+	}
+
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v6.2.0-alpha"}}
+		}
+		originVal := variable.EnableConcurrentDDL.Load()
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
+		require.NoError(t, err)
+		require.Equal(t, originVal, variable.EnableConcurrentDDL.Load())
+	}
+
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v6.1.0"}}
+		}
+		variable.EnableConcurrentDDL.Store(true)
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
+		require.NoError(t, err)
+		require.False(t, variable.EnableConcurrentDDL.Load())
+	}
+
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v5.4.0"}}
+		}
+		variable.EnableConcurrentDDL.Store(true)
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
+		require.NoError(t, err)
+		require.False(t, variable.EnableConcurrentDDL.Load())
+	}
 }
 
 func TestCompareVersion(t *testing.T) {
@@ -298,7 +416,6 @@ func TestCheckVersion(t *testing.T) {
 }
 
 func versionEqualCheck(source *semver.Version, target *semver.Version) (result bool) {
-
 	if source == nil || target == nil {
 		return target == source
 	}
@@ -338,7 +455,7 @@ func TestDetectServerInfo(t *testing.T) {
 		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", ServerTypeTiDB, mkVer(4, 0, 0, "alpha-1263-g635f2e1af")},
 		{4, "5.7.25-TiDB-v3.0.7-58-g6adce2367", ServerTypeTiDB, mkVer(3, 0, 7, "58-g6adce2367")},
 		{5, "5.7.25-TiDB-3.0.6", ServerTypeTiDB, mkVer(3, 0, 6, "")},
-		{6, "invalid version", ServerTypeUnknown, (*semver.Version)(nil)},
+		{6, "invalid version", ServerTypeUnknown, mkVer(0, 0, 0, "")},
 		{7, "Release Version: v5.2.1\nEdition: Community\nGit Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445", ServerTypeTiDB, mkVer(5, 2, 1, "")},
 		{8, "Release Version: v5.4.0-alpha-21-g86caab907\nEdition: Community\nGit Commit Hash: 86caab907c481bbc4243b5a3346ec13907cc8721\nGit Branch: master", ServerTypeTiDB, mkVer(5, 4, 0, "alpha-21-g86caab907")},
 	}
@@ -418,5 +535,45 @@ Check Table Before Drop: false`
 	_, err = FetchVersion(ctx, db)
 	require.Error(t, err)
 	require.Regexp(t, "mock failure$", err.Error())
+}
 
+func TestFetchVersionWithCommitID(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+
+	tidbVersionWithValidReleaseVersion := `Release Version: v5.2.1
+Edition: Community
+Git Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445
+Git Branch: heads/refs/tags/v5.2.1
+UTC Build Time: 2021-09-08 02:32:56
+GoVersion: go1.16.4
+Race Enabled: false
+TiKV Min Version: v3.0.0-60965b006877ca7234adaced7890d7b029ed1306
+Check Table Before Drop: false`
+
+	tidbVersionWithCommitInReleaseVersion := `Release Version: bcf61918
+Git Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445
+Git Branch: heads/refs/tags/v5.2.1
+UTC Build Time: 2021-09-08 02:32:56
+GoVersion: go1.16.4
+Race Enabled: false
+TiKV Min Version: v3.0.0-60965b006877ca7234adaced7890d7b029ed1306
+Check Table Before Drop: false`
+
+	ctx := context.Background()
+
+	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.
+		NewRows([]string{""}).AddRow(tidbVersionWithValidReleaseVersion))
+	versionStr, err := FetchVersion(ctx, db)
+	require.NoError(t, err)
+	require.Equal(t, tidbVersionWithValidReleaseVersion, versionStr)
+
+	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.
+		NewRows([]string{""}).AddRow(tidbVersionWithCommitInReleaseVersion))
+	mock.ExpectQuery("SELECT version\\(\\);").WillReturnRows(sqlmock.
+		NewRows([]string{""}).AddRow("5.7.25"))
+
+	versionStr, err = FetchVersion(ctx, db)
+	require.NoError(t, err)
+	require.Equal(t, "5.7.25", versionStr)
 }

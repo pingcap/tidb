@@ -16,6 +16,7 @@ package stream
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -35,11 +36,17 @@ import (
 const (
 	streamBackupMetaPrefix = "v1/backupmeta"
 
+	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
+
 	metaDataWorkerPoolSize = 128
 )
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
+}
+
+func GetStreamBackupGlobalCheckpointPrefix() string {
+	return streamBackupGlobalCheckpointPrefix
 }
 
 // appendTableObserveRanges builds key ranges corresponding to `tblIDS`.
@@ -135,9 +142,8 @@ func BuildObserveDataRanges(
 ) ([]kv.KeyRange, error) {
 	if len(filterStr) == 1 && filterStr[0] == string("*.*") {
 		return buildObserverAllRange(), nil
-	} else {
-		return buildObserveTableRanges(storage, tableFilter, backupTS)
 	}
+	return buildObserveTableRanges(storage, tableFilter, backupTS)
 }
 
 // BuildObserveMetaRange specifies build key ranges to observe meta KV(contains all of metas)
@@ -167,11 +173,15 @@ func FastUnmarshalMetaData(
 			log.Info("fast read meta file from storage", zap.String("path", readPath))
 			b, err := s.ReadFile(ectx, readPath)
 			if err != nil {
-				return errors.Trace(err)
+				log.Error("failed to read file", zap.String("file", readPath))
+				return errors.Annotatef(err, "during reading meta file %s from storage", readPath)
 			}
 			m := &backuppb.Metadata{}
 			err = m.Unmarshal(b)
 			if err != nil {
+				if !strings.HasSuffix(readPath, ".meta") {
+					return nil
+				}
 				return err
 			}
 			return fn(readPath, m)
@@ -179,7 +189,11 @@ func FastUnmarshalMetaData(
 		return nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		readErr := eg.Wait()
+		if readErr != nil {
+			return errors.Annotatef(readErr, "scanning metadata meets error %s", err)
+		}
+		return errors.Annotate(err, "scanning metadata meets error")
 	}
 	return eg.Wait()
 }

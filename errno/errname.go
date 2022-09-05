@@ -835,6 +835,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrGeneratedColumnNonPrior:                               mysql.Message("Generated column can refer only to generated columns defined prior to it.", nil),
 	ErrDependentByGeneratedColumn:                            mysql.Message("Column '%s' has a generated column dependency.", nil),
 	ErrGeneratedColumnRefAutoInc:                             mysql.Message("Generated column '%s' cannot refer to auto-increment column.", nil),
+	ErrAccountHasBeenLocked:                                  mysql.Message("Access denied for user '%s'@'%s'. Account is locked.", nil),
 	ErrWarnConflictingHint:                                   mysql.Message("Hint %s is ignored as conflicting/duplicated.", nil),
 	ErrUnresolvedHintName:                                    mysql.Message("Unresolved name '%s' for %s hint", nil),
 	ErrInvalidFieldSize:                                      mysql.Message("Invalid size for column '%s'.", nil),
@@ -845,7 +846,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrAggregateInOrderNotSelect:                             mysql.Message("Expression #%d of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with %s", nil),
 	ErrInvalidJSONData:                                       mysql.Message("Invalid JSON data provided to function %s: %s", nil),
 	ErrInvalidJSONText:                                       mysql.Message("Invalid JSON text: %-.192s", []int{0}),
-	ErrInvalidJSONPath:                                       mysql.Message("Invalid JSON path expression %s.", nil),
+	ErrInvalidJSONPath:                                       mysql.Message("Invalid JSON path expression. The error is around character position %d.", []int{0}),
 	ErrInvalidJSONCharset:                                    mysql.Message("Cannot create a JSON value from a string with CHARACTER SET '%s'.", nil),
 	ErrInvalidTypeForJSON:                                    mysql.Message("Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.", nil),
 	ErrInvalidJSONPathWildcard:                               mysql.Message("In this situation, path expressions may not contain the * and ** tokens.", nil),
@@ -913,6 +914,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCTERecursiveForbiddenJoinOrder:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints", nil),
 	ErrInvalidRequiresSingleReference:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must be referenced only once, and not in any subquery", nil),
 	ErrCTEMaxRecursionDepth:                                  mysql.Message("Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value", nil),
+	ErrTableWithoutPrimaryKey:                                mysql.Message("Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),
@@ -1021,6 +1023,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrSettingNoopVariable:           mysql.Message("setting %s has no effect in TiDB", nil),
 	ErrGettingNoopVariable:           mysql.Message("variable %s has no effect in TiDB", nil),
 	ErrCannotMigrateSession:          mysql.Message("cannot migrate the current session: %s", nil),
+	ErrLazyUniquenessCheckFailure:    mysql.Message("transaction aborted because lazy uniqueness check is enabled and an error occurred: %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1066,6 +1069,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrJSONObjectKeyTooLong:        mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
 	ErrPartitionStatsMissing:       mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
 	ErrPartitionColumnStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions", nil),
+	ErrDDLSetting:                  mysql.Message("Error happened when enable/disable DDL: %s", nil),
 	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),

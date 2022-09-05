@@ -93,8 +93,7 @@ func astTableWithAsOf(t *testing.T, dt string) *ast.TableName {
 }
 
 func TestStaleReadProcessorWithSelectTable(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tn := astTableWithAsOf(t, "")
 	p1 := genStaleReadPoint(t, tk)
@@ -180,8 +179,7 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 }
 
 func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	p1 := genStaleReadPoint(t, tk)
 	//p2 := genStaleReadPoint(t, tk)
@@ -260,8 +258,7 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 }
 
 func TestStaleReadProcessorInTxn(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tn := astTableWithAsOf(t, "")
 	p1 := genStaleReadPoint(t, tk)

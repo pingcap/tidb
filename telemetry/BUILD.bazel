@@ -18,6 +18,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/telemetry",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/utils",
         "//config",
         "//domain/infosync",
         "//infoschema",
@@ -47,6 +48,7 @@ go_library(
 
 go_test(
     name = "telemetry_test",
+    timeout = "short",
     srcs = [
         "data_cluster_hardware_test.go",
         "data_feature_usage_test.go",
@@ -56,16 +58,23 @@ go_test(
         "util_test.go",
     ],
     embed = [":telemetry"],
+    flaky = True,
     deps = [
         "//config",
+        "//domain",
         "//kv",
+        "//parser/model",
         "//session",
         "//sessionctx",
         "//sessionctx/variable",
+        "//store/mockstore",
+        "//store/mockstore/unistore",
         "//testkit",
         "//testkit/testsetup",
         "@com_github_jeffail_gabs_v2//:gabs",
+        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_uber_go_goleak//:goleak",
     ],

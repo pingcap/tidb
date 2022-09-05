@@ -7,10 +7,12 @@ go_library(
         "analyze_jobs.go",
         "builder.go",
         "cmsketch.go",
+        "column.go",
         "estimate.go",
         "feedback.go",
         "fmsketch.go",
         "histogram.go",
+        "index.go",
         "row_sampler.go",
         "sample.go",
         "scalar.go",
@@ -60,6 +62,7 @@ go_library(
 
 go_test(
     name = "statistics_test",
+    timeout = "short",
     srcs = [
         "cmsketch_test.go",
         "feedback_test.go",
@@ -75,10 +78,12 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     embed = [":statistics"],
+    flaky = True,
     deps = [
         "//config",
         "//domain",
         "//infoschema",
+        "//kv",
         "//parser",
         "//parser/ast",
         "//parser/model",

@@ -18,7 +18,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/tikv/client-go/v2/oracle"
@@ -37,6 +40,7 @@ import (
 //   - Provides some methods like `activateTxn` and `prepareTxn` to manage the inner transaction.
 //   - Provides default methods `GetTxnInfoSchema`, `GetStmtReadTS` and `GetStmtForUpdateTS` and return the snapshot information schema or ts when `tidb_snapshot` is set.
 //   - Provides other default methods like `Advise`, `OnStmtStart`, `OnStmtRetry` and `OnStmtErrorForNextAction`
+//
 // The subclass can set some inner property of `baseTxnContextProvider` when it is constructed.
 // For example, `getStmtReadTSFunc` and `getStmtForUpdateTSFunc` should be set, and they will be called when `GetStmtReadTS`
 // or `GetStmtForUpdate` to get the timestamp that should be used by the corresponding isolation level.
@@ -45,7 +49,7 @@ type baseTxnContextProvider struct {
 	sctx                   sessionctx.Context
 	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
-	onTxnActive            func(kv.Transaction, sessiontxn.EnterNewTxnType)
+	onTxnActiveFunc        func(kv.Transaction, sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)
 	getStmtForUpdateTSFunc func() (uint64, error)
 
@@ -55,6 +59,10 @@ type baseTxnContextProvider struct {
 	txn             kv.Transaction
 	isTxnPrepared   bool
 	enterNewTxnType sessiontxn.EnterNewTxnType
+	// constStartTS is only used by point get max ts optimization currently.
+	// When constStartTS != 0, we use constStartTS directly without fetching it from tso.
+	// To save the cpu cycles `PrepareTSFuture` will also not be called when warmup (postpone to activate txn).
+	constStartTS uint64
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -72,19 +80,19 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		// There are two main steps here to enter a new txn:
 		// 1. prepareTxnWithOracleTS
 		// 2. ActivateTxn
-		if err := sessiontxn.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
+		if err := internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 			return err
 		}
 		if err := p.prepareTxnWithOracleTS(); err != nil {
 			return err
 		}
 	case sessiontxn.EnterNewTxnWithBeginStmt:
-		if !sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx) {
+		if !canReuseTxnWhenExplicitBegin(p.sctx) {
 			// As we will enter a new txn, we need to commit the old txn if it's still valid.
 			// There are two main steps here to enter a new txn:
 			// 1. prepareTxnWithOracleTS
 			// 2. ActivateTxn
-			if err := sessiontxn.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
+			if err := internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 				return err
 			}
 			if err := p.prepareTxnWithOracleTS(); err != nil {
@@ -154,7 +162,7 @@ func (p *baseTxnContextProvider) GetReadReplicaScope() string {
 	return kv.GlobalReplicaScope
 }
 
-//GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
@@ -190,6 +198,17 @@ func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	return nil
 }
 
+// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
+func (p *baseTxnContextProvider) OnLocalTemporaryTableCreated() {
+	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, p.infoSchema)
+	p.sctx.GetSessionVars().TxnCtx.InfoSchema = p.infoSchema
+	if p.txn != nil && p.txn.Valid() {
+		if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
+			p.txn.SetOption(kv.SnapInterceptor, interceptor)
+		}
+	}
+}
+
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
@@ -219,6 +238,12 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
+	if p.constStartTS != 0 {
+		if err := p.replaceTxnTsFuture(sessiontxn.ConstantFuture(p.constStartTS)); err != nil {
+			return nil, err
+		}
+	}
+
 	txnFuture := p.sctx.GetPreparedTxnFuture()
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
@@ -238,20 +263,23 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if readReplicaType.IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, readReplicaType)
 	}
-	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+
+	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
+		txn.SetOption(kv.SnapInterceptor, interceptor)
+	}
 
 	if sessVars.StmtCtx.WeakConsistency {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
 	}
 
-	sessiontxn.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
+	internal.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
 
 	if p.causalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 
-	if p.onTxnActive != nil {
-		p.onTxnActive(txn, p.enterNewTxnType)
+	if p.onTxnActiveFunc != nil {
+		p.onTxnActiveFunc(txn, p.enterNewTxnType)
 	}
 
 	if p.sctx.GetSessionVars().InRestrictedSQL {
@@ -274,10 +302,10 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 	}
 
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return p.prepareTxnWithTS(snapshotTS)
+		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}
 
-	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
 	return p.replaceTxnTsFuture(future)
 }
 
@@ -289,12 +317,17 @@ func (p *baseTxnContextProvider) prepareTxnWithOracleTS() error {
 		return nil
 	}
 
-	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
 	return p.replaceTxnTsFuture(future)
 }
 
-func (p *baseTxnContextProvider) prepareTxnWithTS(ts uint64) error {
-	return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(ts))
+func (p *baseTxnContextProvider) forcePrepareConstStartTS(ts uint64) error {
+	if p.txn != nil {
+		return errors.New("cannot force prepare const start ts because txn is active")
+	}
+	p.constStartTS = ts
+	p.isTxnPrepared = true
+	return nil
 }
 
 func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error {
@@ -329,7 +362,7 @@ func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
 
 // AdviseWarmup provides warmup for inner state
 func (p *baseTxnContextProvider) AdviseWarmup() error {
-	if p.isBeginStmtWithStaleRead() {
+	if p.isTxnPrepared || p.isBeginStmtWithStaleRead() {
 		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
@@ -375,7 +408,11 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, snapshotTS)
+	snapshot := internal.GetSnapshotWithTS(
+		p.sctx,
+		snapshotTS,
+		temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
+	)
 
 	replicaReadType := sessVars.GetReplicaRead()
 	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
@@ -383,4 +420,46 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	return snapshot, nil
+}
+
+// canReuseTxnWhenExplicitBegin returns whether we should reuse the txn when starting a transaction explicitly
+func canReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
+	sessVars := sctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
+	// need to call NewTxn, which commits the existing transaction and begins a new one.
+	// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
+	// always create a new transaction.
+	// If the variable `tidb_snapshot` is set, we should always create a new transaction because the current txn may be
+	// initialized with snapshot ts.
+	return txnCtx.History == nil && !txnCtx.IsStaleness && sessVars.SnapshotTS == 0
+}
+
+// newOracleFuture creates new future according to the scope and the session context
+func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string) oracle.Future {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("isolation.newOracleFuture", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	failpoint.Inject("requestTsoFromPD", func() {
+		sessiontxn.TsoRequestCountInc(sctx)
+	})
+
+	oracleStore := sctx.GetStore().GetOracle()
+	option := &oracle.Option{TxnScope: scope}
+
+	if sctx.GetSessionVars().LowResolutionTSO {
+		return oracleStore.GetLowResolutionTimestampAsync(ctx, option)
+	}
+	return oracleStore.GetTimestampAsync(ctx, option)
+}
+
+// funcFuture implements oracle.Future
+type funcFuture func() (uint64, error)
+
+// Wait returns a ts got from the func
+func (f funcFuture) Wait() (uint64, error) {
+	return f()
 }

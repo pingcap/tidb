@@ -144,10 +144,10 @@
           "              └─TableFullScan_22 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `sum` is not supported now.",
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
           "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
           "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
-          "MPP mode may be blocked because window function `sum` is not supported now."
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
         ]
       }
     ]
@@ -199,26 +199,26 @@
       {
         "SQL": "explain select *, lead(empid) over () FROM employee",
         "Plan": [
-          "Window_8 10000.00 root  lead(test.employee.empid)->Column#6 over()",
-          "└─TableReader_12 10000.00 root  data:TableFullScan_11",
-          "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader_21 10000.00 root  data:ExchangeSender_20",
+          "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_19 10000.00 mpp[tiflash]  lead(test.employee.empid)->Column#6 over()",
+          "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because window function `lead` is not supported now.",
-          "MPP mode may be blocked because window function `lead` is not supported now."
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select *, lag(empid) over () FROM employee",
         "Plan": [
-          "Window_8 10000.00 root  lag(test.employee.empid)->Column#6 over()",
-          "└─TableReader_12 10000.00 root  data:TableFullScan_11",
-          "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader_21 10000.00 root  data:ExchangeSender_20",
+          "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_19 10000.00 mpp[tiflash]  lag(test.employee.empid)->Column#6 over()",
+          "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because window function `lag` is not supported now.",
-          "MPP mode may be blocked because window function `lag` is not supported now."
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select *, sum(empid) over () FROM employee -- 2. agg functions",
@@ -228,8 +228,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `sum` is not supported now.",
-          "MPP mode may be blocked because window function `sum` is not supported now."
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
         ]
       },
       {
@@ -240,8 +240,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `count` is not supported now.",
-          "MPP mode may be blocked because window function `count` is not supported now."
+          "MPP mode may be blocked because window function `count` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `count` or its arguments are not supported now."
         ]
       },
       {
@@ -252,8 +252,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `min` is not supported now.",
-          "MPP mode may be blocked because window function `min` is not supported now."
+          "MPP mode may be blocked because window function `min` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `min` or its arguments are not supported now."
         ]
       },
       {
@@ -264,20 +264,20 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `max` is not supported now.",
-          "MPP mode may be blocked because window function `max` is not supported now."
+          "MPP mode may be blocked because window function `max` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `max` or its arguments are not supported now."
         ]
       },
       {
         "SQL": "explain select *, avg(empid) over () FROM employee",
         "Plan": [
-          "Window_8 10000.00 root  avg(cast(test.employee.empid, decimal(15,4) BINARY))->Column#6 over()",
+          "Window_8 10000.00 root  avg(cast(test.employee.empid, decimal(10,0) BINARY))->Column#6 over()",
           "└─TableReader_12 10000.00 root  data:TableFullScan_11",
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `avg` is not supported now.",
-          "MPP mode may be blocked because window function `avg` is not supported now."
+          "MPP mode may be blocked because window function `avg` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `avg` or its arguments are not supported now."
         ]
       },
       {
@@ -305,8 +305,8 @@
           "      └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `sum` is not supported now.",
-          "MPP mode may be blocked because window function `sum` is not supported now."
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
         ]
       }
     ]

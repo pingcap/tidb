@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -128,4 +129,73 @@ func TestTruncateSafepoint(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, ts, n, "failed at %d round: truncate safepoint mismatch", i)
 	}
+}
+
+func fakeMetaDatas(cf string) []*backuppb.Metadata {
+	ms := []*backuppb.Metadata{
+		{
+			StoreId: 1,
+			MinTs:   1500,
+			MaxTs:   2000,
+			Files: []*backuppb.DataFileInfo{
+				{
+					MinTs:                 1500,
+					MaxTs:                 2000,
+					Cf:                    cf,
+					MinBeginTsInDefaultCf: 800,
+				},
+			},
+		},
+		{
+			StoreId: 2,
+			MinTs:   3000,
+			MaxTs:   4000,
+			Files: []*backuppb.DataFileInfo{
+				{
+					MinTs:                 3000,
+					MaxTs:                 4000,
+					Cf:                    cf,
+					MinBeginTsInDefaultCf: 2000,
+				},
+			},
+		},
+		{
+			StoreId: 3,
+			MinTs:   5100,
+			MaxTs:   6100,
+			Files: []*backuppb.DataFileInfo{
+				{
+					MinTs:                 5100,
+					MaxTs:                 6100,
+					Cf:                    cf,
+					MinBeginTsInDefaultCf: 1800,
+				},
+			},
+		},
+	}
+	return ms
+}
+
+func TestCalculateShiftTS(t *testing.T) {
+	var (
+		startTs   uint64 = 2900
+		restoreTS uint64 = 4500
+	)
+
+	ms := fakeMetaDatas(stream.WriteCF)
+	shiftTS, exist := restore.CalculateShiftTS(ms, startTs, restoreTS)
+	require.Equal(t, shiftTS, uint64(2000))
+	require.Equal(t, exist, true)
+
+	shiftTS, exist = restore.CalculateShiftTS(ms, startTs, mathutil.MaxUint)
+	require.Equal(t, shiftTS, uint64(1800))
+	require.Equal(t, exist, true)
+
+	shiftTS, exist = restore.CalculateShiftTS(ms, 1999, 3001)
+	require.Equal(t, shiftTS, uint64(800))
+	require.Equal(t, exist, true)
+
+	ms = fakeMetaDatas(stream.DefaultCF)
+	_, exist = restore.CalculateShiftTS(ms, startTs, restoreTS)
+	require.Equal(t, exist, false)
 }

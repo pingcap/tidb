@@ -27,12 +27,14 @@ go_library(
 
 go_test(
     name = "rowcodec_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "main_test.go",
         "rowcodec_test.go",
     ],
     embed = [":rowcodec"],
+    flaky = True,
     deps = [
         "//kv",
         "//parser/mysql",

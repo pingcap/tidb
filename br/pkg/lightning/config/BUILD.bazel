@@ -31,11 +31,13 @@ go_library(
 
 go_test(
     name = "config_test",
+    timeout = "short",
     srcs = [
         "bytesize_test.go",
         "config_test.go",
         "configlist_test.go",
     ],
+    flaky = True,
     deps = [
         ":config",
         "//parser/mysql",

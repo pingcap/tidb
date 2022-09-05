@@ -2,10 +2,12 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "statisticstest_test",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "statistics_test.go",
     ],
+    flaky = True,
     deps = [
         "//statistics/handle",
         "//testkit",

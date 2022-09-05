@@ -68,6 +68,7 @@ go_library(
 
 go_test(
     name = "export_test",
+    timeout = "short",
     srcs = [
         "block_allow_list_test.go",
         "config_test.go",
@@ -88,12 +89,14 @@ go_test(
     ],
     data = glob(["**"]),
     embed = [":export"],
+    flaky = True,
     deps = [
         "//br/pkg/storage",
         "//br/pkg/version",
         "//config",
         "//dumpling/context",
         "//dumpling/log",
+        "//errno",
         "//parser",
         "//util/filter",
         "//util/promutil",

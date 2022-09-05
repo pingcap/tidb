@@ -15,6 +15,7 @@
 package collate
 
 import (
+	"fmt"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -116,11 +117,10 @@ func CompatibleCollate(collate1, collate2 string) bool {
 // When new collations are not enabled, collation id remains the same.
 func RewriteNewCollationIDIfNeeded(id int32) int32 {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
-		if id < 0 {
-			logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
-		} else {
+		if id >= 0 {
 			return -id
 		}
+		logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
 	}
 	return id
 }
@@ -128,11 +128,10 @@ func RewriteNewCollationIDIfNeeded(id int32) int32 {
 // RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
 func RestoreCollationIDIfNeeded(id int32) int32 {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
-		if id > 0 {
-			logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
-		} else {
+		if id <= 0 {
 			return -id
 		}
+		logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
 	}
 	return id
 }
@@ -219,7 +218,7 @@ func SubstituteMissingCollationToDefault(co string) string {
 	if _, err = GetCollationByName(co); err == nil {
 		return co
 	}
-	logutil.BgLogger().Warn(err.Error())
+	logutil.BgLogger().Warn(fmt.Sprintf("The collation %s specified on connection is not supported when new collation is enabled, switch to the default collation: %s", co, mysql.DefaultCollationName))
 	var coll *charset.Collation
 	if coll, err = GetCollationByName(charset.CollationUTF8MB4); err != nil {
 		logutil.BgLogger().Warn(err.Error())

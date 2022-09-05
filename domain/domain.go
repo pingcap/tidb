@@ -27,9 +27,12 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -46,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
@@ -65,6 +69,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
+
+// NewMockDomain is only used for test
+func NewMockDomain() *Domain {
+	do := &Domain{
+		infoCache: infoschema.NewCache(1),
+	}
+	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 1)
+	return do
+}
 
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
@@ -92,6 +105,7 @@ type Domain struct {
 	indexUsageSyncLease  time.Duration
 	dumpFileGcChecker    *dumpFileGcChecker
 	expiredTimeStamp4PC  types.Time
+	logBackupAdvancer    *streamhelper.AdvancerDaemon
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -122,7 +136,7 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	m := meta.NewSnapshotMeta(snapshot)
-	neededSchemaVersion, err := m.GetSchemaVersion()
+	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
@@ -286,8 +300,9 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			return nil, nil, err
 		}
 		if diff == nil {
-			// If diff is missing for any version between used and new version, we fall back to full reload.
-			return nil, nil, fmt.Errorf("failed to get schemadiff")
+			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
+			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
+			continue
 		}
 		diffs = append(diffs, diff)
 	}
@@ -318,7 +333,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica, model.ActionSetTiFlashMode:
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
 		return true
 	}
 	return false
@@ -326,11 +341,6 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 
 // InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
-	if do.infoCache == nil {
-		// Return nil is for test purpose where domain is not well initialized in session context.
-		// In real implementation, the code will not reach here.
-		return nil
-	}
 	return do.infoCache.GetLatest()
 }
 
@@ -759,7 +769,11 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
 // Init initializes a domain.
-func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) (pools.Resource, error)) error {
+func (do *Domain) Init(
+	ddlLease time.Duration,
+	sysExecutorFactory func(*Domain) (pools.Resource, error),
+	ddlInjector func(ddl.DDL) *schematracker.Checker,
+) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
@@ -827,6 +841,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 			do.ddl = d
 		}
 	})
+	if ddlInjector != nil {
+		checker := ddlInjector(do.ddl)
+		checker.CreateTestDB()
+		do.ddl = checker
+	}
 
 	if config.GetGlobalConfig().EnableGlobalKill {
 		if do.etcdClient != nil {
@@ -889,7 +908,31 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
 	}
+	err = do.initLogBackup(ctx, pdClient)
+	if err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
+	cfg := config.GetGlobalConfig()
+	if pdClient == nil || do.etcdClient == nil {
+		log.Warn("pd / etcd client not provided, won't begin Advancer.")
+		return nil
+	}
+	env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+	if err != nil {
+		return err
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
+	loop, err := do.logBackupAdvancer.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	do.wg.Run(loop)
 	return nil
 }
 
@@ -1607,6 +1650,26 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 	if err := do.rebuildSysVarCache(nil); err != nil {
 		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 	}
+}
+
+// LoadSigningCertLoop loads the signing cert periodically to make sure it's fresh new.
+func (do *Domain) LoadSigningCertLoop() {
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Debug("loadSigningCertLoop exited.")
+			util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-time.After(sessionstates.LoadCertInterval):
+				sessionstates.ReloadSigningCert()
+			case <-do.exit:
+				return
+			}
+		}
+	}()
 }
 
 // ServerID gets serverID.

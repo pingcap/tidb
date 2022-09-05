@@ -387,6 +387,9 @@ func (c *innerItemLruCache) put(tblID, id int64, isIndex bool, item statistics.T
 			c.evictIfNeeded()
 		}
 	}()
+	if itemMem.TrackingMemUsage() < 1 {
+		return
+	}
 	isIndexSet, ok := c.elements[tblID]
 	if !ok {
 		c.elements[tblID] = make(map[bool]map[int64]*list.Element)
@@ -427,18 +430,22 @@ func (c *innerItemLruCache) put(tblID, id int64, isIndex bool, item statistics.T
 
 func (c *innerItemLruCache) evictIfNeeded() {
 	curr := c.cache.Back()
-	for c.trackingCost > c.capacity {
+	for c.trackingCost > c.capacity && curr != nil {
 		evictCounter.Inc()
 		prev := curr.Prev()
 		item := curr.Value.(*lruCacheItem)
 		oldMem := item.innerMemUsage
-		// evict cmSketches
-		item.innerItem.DropEvicted()
+		statistics.DropEvicted(item.innerItem)
 		newMem := item.innerItem.MemoryUsage()
 		c.calculateCost(newMem, oldMem)
-		// remove from lru
-		c.cache.Remove(curr)
-		delete(c.elements[item.tblID][item.isIndex], item.id)
+		if newMem.TrackingMemUsage() == 0 || item.innerItem.IsAllEvicted() {
+			// remove from lru
+			c.cache.Remove(curr)
+			delete(c.elements[item.tblID][item.isIndex], item.id)
+		} else {
+			c.cache.MoveToFront(curr)
+			item.innerMemUsage = newMem
+		}
 		if c.onEvict != nil {
 			c.onEvict(item.tblID)
 		}

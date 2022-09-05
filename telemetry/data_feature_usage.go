@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
@@ -47,6 +48,10 @@ type featureUsage struct {
 	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
+	LogBackup             bool                             `json:"logBackup"`
+	EnablePaging          bool                             `json:"enablePaging"`
+	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
 }
 
 type placementPolicyUsage struct {
@@ -73,6 +78,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
 
+	usage.TablePartition = getTablePartitionUsageInfo()
+
 	usage.AutoCapture = getAutoCaptureUsageInfo(sctx)
 
 	collectFeatureUsageFromInfoschema(sctx, &usage)
@@ -80,6 +87,12 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.NonTransactionalUsage = getNonTransactionalUsage()
 
 	usage.GlobalKill = getGlobalKillUsageInfo()
+
+	usage.LogBackup = getLogBackupUsageInfo(sctx)
+
+	usage.EnablePaging = getPagingUsageInfo(sctx)
+
+	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -193,44 +206,56 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 // TxnUsage records the usage info of transaction related features, including
 // async-commit, 1PC and counters of transactions committed with different protocols.
 type TxnUsage struct {
-	AsyncCommitUsed     bool                     `json:"asyncCommitUsed"`
-	OnePCUsed           bool                     `json:"onePCUsed"`
-	TxnCommitCounter    metrics.TxnCommitCounter `json:"txnCommitCounter"`
-	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
-	AssertionLevel      string                   `json:"assertionLevel"`
-	RcCheckTS           bool                     `json:"rcCheckTS"`
+	AsyncCommitUsed           bool                     `json:"asyncCommitUsed"`
+	OnePCUsed                 bool                     `json:"onePCUsed"`
+	TxnCommitCounter          metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	MutationCheckerUsed       bool                     `json:"mutationCheckerUsed"`
+	AssertionLevel            string                   `json:"assertionLevel"`
+	RcCheckTS                 bool                     `json:"rcCheckTS"`
+	SavepointCounter          int64                    `json:"SavepointCounter"`
+	LazyUniqueCheckSetCounter int64                    `json:"lazyUniqueCheckSetCounter"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
+var initialTablePartitionCounter m.TablePartitionUsageCounter
+var initialSavepointStmtCounter int64
+var initialLazyPessimisticUniqueCheckSetCount int64
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableAsyncCommit); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableAsyncCommit); err == nil {
 		asyncCommitUsed = val == variable.On
 	}
 	onePCUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnable1PC); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnable1PC); err == nil {
 		onePCUsed = val == variable.On
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
 	mutationCheckerUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableMutationChecker); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableMutationChecker); err == nil {
 		mutationCheckerUsed = val == variable.On
 	}
 	assertionUsed := ""
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBTxnAssertionLevel); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBTxnAssertionLevel); err == nil {
 		assertionUsed = val
 	}
 	rcCheckTSUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBRCReadCheckTS); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCReadCheckTS); err == nil {
 		rcCheckTSUsed = val == variable.On
 	}
-	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed}
+	currSavepointCount := m.GetSavepointStmtCounter()
+	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
+	currLazyUniqueCheckSetCount := m.GetLazyPessimisticUniqueCheckSetCounter()
+	diffLazyUniqueCheckSetCount := currLazyUniqueCheckSetCount - initialLazyPessimisticUniqueCheckSetCount
+	return &TxnUsage{asyncCommitUsed, onePCUsed, diff,
+		mutationCheckerUsed, assertionUsed, rcCheckTSUsed,
+		diffSavepointCount, diffLazyUniqueCheckSetCount,
+	}
 }
 
 func postReportTxnUsage() {
@@ -239,6 +264,15 @@ func postReportTxnUsage() {
 
 func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
+}
+
+// PostSavepointCount exports for testing.
+func PostSavepointCount() {
+	initialSavepointStmtCounter = m.GetSavepointStmtCounter()
+}
+
+func postReportLazyPessimisticUniqueCheckSetCount() {
+	initialLazyPessimisticUniqueCheckSetCount = m.GetLazyPessimisticUniqueCheckSetCounter()
 }
 
 // getCTEUsageInfo gets the CTE usages.
@@ -258,9 +292,19 @@ func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
 	return &diff
 }
 
+func postReportTablePartitionUsage() {
+	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
+}
+
+func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
+	curr := m.GetTablePartitionCounter()
+	diff := curr.Cal(initialTablePartitionCounter)
+	return &diff
+}
+
 // getAutoCaptureUsageInfo gets the 'Auto Capture' usage
 func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBCapturePlanBaseline); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBCapturePlanBaseline); err == nil {
 		return val == variable.On
 	}
 	return false
@@ -278,4 +322,19 @@ func postReportNonTransactionalCounter() {
 
 func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
+}
+
+func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
+	return utils.CheckLogBackupEnabled(ctx)
+}
+
+func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().CostModelVersion == 2
+}
+
+// getPagingUsageInfo gets the value of system variable `tidb_enable_paging`.
+// This variable is set to true as default since v6.2.0. We want to know many
+// users set it to false manually.
+func getPagingUsageInfo(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().EnablePaging
 }

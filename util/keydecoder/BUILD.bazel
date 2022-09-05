@@ -18,11 +18,13 @@ go_library(
 
 go_test(
     name = "keydecoder_test",
+    timeout = "short",
     srcs = [
         "keydecoder_test.go",
         "main_test.go",
     ],
     embed = [":keydecoder"],
+    flaky = True,
     deps = [
         "//infoschema",
         "//parser/model",

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -49,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	split "github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/infoschema"
@@ -57,7 +58,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/mathutil"
 	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
@@ -201,6 +204,139 @@ type Range struct {
 	end   []byte
 }
 
+type encodingBuilder struct {
+	metrics *metric.Metrics
+}
+
+// NewEncodingBuilder creates an KVEncodingBuilder with local backend implementation.
+func NewEncodingBuilder(ctx context.Context) backend.EncodingBuilder {
+	result := new(encodingBuilder)
+	if m, ok := metric.FromContext(ctx); ok {
+		result.metrics = m
+	}
+	return result
+}
+
+// NewEncoder creates a KV encoder.
+// It implements the `backend.EncodingBuilder` interface.
+func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+	return kv.NewTableKVEncoder(tbl, options, b.metrics, log.FromContext(ctx))
+}
+
+// MakeEmptyRows creates an empty KV rows.
+// It implements the `backend.EncodingBuilder` interface.
+func (b *encodingBuilder) MakeEmptyRows() kv.Rows {
+	return kv.MakeRowsFromKvPairs(nil)
+}
+
+type targetInfoGetter struct {
+	tls          *common.TLS
+	targetDBGlue glue.Glue
+	pdAddr       string
+}
+
+// NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
+func NewTargetInfoGetter(tls *common.TLS, g glue.Glue, pdAddr string) backend.TargetInfoGetter {
+	return &targetInfoGetter{
+		tls:          tls,
+		targetDBGlue: g,
+		pdAddr:       pdAddr,
+	}
+}
+
+// FetchRemoteTableModels obtains the models of all tables given the schema name.
+// It implements the `TargetInfoGetter` interface.
+func (g *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+	return tikv.FetchRemoteTableModelsFromTLS(ctx, g.tls, schemaName)
+}
+
+// CheckRequirements performs the check whether the backend satisfies the version requirements.
+// It implements the `TargetInfoGetter` interface.
+func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
+	// TODO: support lightning via SQL
+	db, _ := g.targetDBGlue.GetDB()
+	versionStr, err := version.FetchVersion(ctx, db)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
+		return err
+	}
+	if err := tikv.CheckPDVersion(ctx, g.tls, g.pdAddr, localMinPDVersion, localMaxPDVersion); err != nil {
+		return err
+	}
+	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
+		return err
+	}
+
+	serverInfo := version.ParseServerInfo(versionStr)
+	return checkTiFlashVersion(ctx, g.targetDBGlue, checkCtx, *serverInfo.ServerVersion)
+}
+
+func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
+	return version.CheckTiDBVersion(versionStr, requiredMinVersion, requiredMaxVersion)
+}
+
+var tiFlashReplicaQuery = "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TIFLASH_REPLICA WHERE REPLICA_COUNT > 0;"
+
+type tblName struct {
+	schema string
+	name   string
+}
+
+type tblNames []tblName
+
+func (t tblNames) String() string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, n := range t {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(common.UniqueTable(n.schema, n.name))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+// check TiFlash replicas.
+// local backend doesn't support TiFlash before tidb v4.0.5
+func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.CheckCtx, tidbVersion semver.Version) error {
+	if tidbVersion.Compare(tiFlashMinVersion) >= 0 {
+		return nil
+	}
+
+	res, err := g.GetSQLExecutor().QueryStringsWithLog(ctx, tiFlashReplicaQuery, "fetch tiflash replica info", log.FromContext(ctx))
+	if err != nil {
+		return errors.Annotate(err, "fetch tiflash replica info failed")
+	}
+
+	tiFlashTablesMap := make(map[tblName]struct{}, len(res))
+	for _, tblInfo := range res {
+		name := tblName{schema: tblInfo[0], name: tblInfo[1]}
+		tiFlashTablesMap[name] = struct{}{}
+	}
+
+	tiFlashTables := make(tblNames, 0)
+	for _, dbMeta := range checkCtx.DBMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			if len(tblMeta.DataFiles) == 0 {
+				continue
+			}
+			name := tblName{schema: tblMeta.DB, name: tblMeta.Name}
+			if _, ok := tiFlashTablesMap[name]; ok {
+				tiFlashTables = append(tiFlashTables, name)
+			}
+		}
+	}
+
+	if len(tiFlashTables) > 0 {
+		helpInfo := "Please either upgrade TiDB to version >= 4.0.5 or add TiFlash replica after load data."
+		return errors.Errorf("lightning local backend doesn't support TiFlash in this TiDB version. conflict tables: %s. "+helpInfo, tiFlashTables)
+	}
+	return nil
+}
+
 type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
@@ -236,6 +372,9 @@ type local struct {
 	metrics      *metric.Metrics
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
+
+	encBuilder       backend.EncodingBuilder
+	targetInfoGetter backend.TargetInfoGetter
 }
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
@@ -344,6 +483,8 @@ func NewLocalBackend(
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
 		writeLimiter:            writeLimiter,
 		logger:                  log.FromContext(ctx),
+		encBuilder:              NewEncodingBuilder(ctx),
+		targetInfoGetter:        NewTargetInfoGetter(tls, g, cfg.TiDB.PdAddr),
 	}
 	if m, ok := metric.FromContext(ctx); ok {
 		local.metrics = m
@@ -355,6 +496,18 @@ func NewLocalBackend(
 	return backend.MakeBackend(local), nil
 }
 
+func (local *local) TotalMemoryConsume() int64 {
+	var memConsume int64 = 0
+	local.engines.Range(func(k, v interface{}) bool {
+		e := v.(*Engine)
+		if e != nil {
+			memConsume += e.TotalMemorySize()
+		}
+		return true
+	})
+	return memConsume + local.bufferPool.TotalSize()
+}
+
 func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 	stores, err := local.pdCtl.GetPDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
@@ -363,7 +516,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 
 	hasTiFlash := false
 	for _, s := range stores {
-		if s.State == metapb.StoreState_Up && version.IsTiFlash(s) {
+		if s.State == metapb.StoreState_Up && engine.IsTiFlash(s) {
 			hasTiFlash = true
 			break
 		}
@@ -371,7 +524,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 
 	for _, s := range stores {
 		// skip stores that are not online
-		if s.State != metapb.StoreState_Up || version.IsTiFlash(s) {
+		if s.State != metapb.StoreState_Up || engine.IsTiFlash(s) {
 			continue
 		}
 		var err error
@@ -1138,7 +1291,7 @@ WriteAndIngest:
 			err = local.writeAndIngestPairs(ctx, engine, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
-				if !common.IsRetryableError(err) {
+				if !local.isRetryableImportTiKVError(err) {
 					return err
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -1168,6 +1321,19 @@ const (
 	retryIngest
 )
 
+func (local *local) isRetryableImportTiKVError(err error) bool {
+	err = errors.Cause(err)
+	// io.EOF is not retryable in normal case
+	// but on TiKV restart, if we're writing to TiKV(through GRPC)
+	// it might return io.EOF(it's GRPC Unavailable in most case),
+	// we need to retry on this error.
+	// see SendMsg in https://pkg.go.dev/google.golang.org/grpc#ClientStream
+	if err == io.EOF {
+		return true
+	}
+	return common.IsRetryableError(err)
+}
+
 func (local *local) writeAndIngestPairs(
 	ctx context.Context,
 	engine *Engine,
@@ -1185,7 +1351,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if !common.IsRetryableError(err) {
+			if !local.isRetryableImportTiKVError(err) {
 				return err
 			}
 
@@ -1328,7 +1494,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				if err == nil || common.IsContextCanceledError(err) {
 					return
 				}
-				if !common.IsRetryableError(err) {
+				if !local.isRetryableImportTiKVError(err) {
 					break
 				}
 				log.FromContext(ctx).Warn("write and ingest by range failed",
@@ -1528,6 +1694,10 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 				if err == nil {
 					return nil
 				}
+				if types.ErrBadNumber.Equal(err) {
+					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+					return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
+				}
 				if log.IsContextCanceledError(err) {
 					return err
 				}
@@ -1652,100 +1822,19 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
-	// TODO: support lightning via SQL
-	db, _ := local.g.GetDB()
-	versionStr, err := version.FetchVersion(ctx, db)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
-		return err
-	}
-	if err := tikv.CheckPDVersion(ctx, local.tls, local.pdAddr, localMinPDVersion, localMaxPDVersion); err != nil {
-		return err
-	}
-	if err := tikv.CheckTiKVVersion(ctx, local.tls, local.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
-		return err
-	}
-
-	serverInfo := version.ParseServerInfo(versionStr)
-	return checkTiFlashVersion(ctx, local.g, checkCtx, *serverInfo.ServerVersion)
-}
-
-func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
-	return version.CheckTiDBVersion(versionStr, requiredMinVersion, requiredMaxVersion)
-}
-
-var tiFlashReplicaQuery = "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TIFLASH_REPLICA WHERE REPLICA_COUNT > 0;"
-
-type tblName struct {
-	schema string
-	name   string
-}
-
-type tblNames []tblName
-
-func (t tblNames) String() string {
-	var b strings.Builder
-	b.WriteByte('[')
-	for i, n := range t {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(common.UniqueTable(n.schema, n.name))
-	}
-	b.WriteByte(']')
-	return b.String()
-}
-
-// check TiFlash replicas.
-// local backend doesn't support TiFlash before tidb v4.0.5
-func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.CheckCtx, tidbVersion semver.Version) error {
-	if tidbVersion.Compare(tiFlashMinVersion) >= 0 {
-		return nil
-	}
-
-	res, err := g.GetSQLExecutor().QueryStringsWithLog(ctx, tiFlashReplicaQuery, "fetch tiflash replica info", log.FromContext(ctx))
-	if err != nil {
-		return errors.Annotate(err, "fetch tiflash replica info failed")
-	}
-
-	tiFlashTablesMap := make(map[tblName]struct{}, len(res))
-	for _, tblInfo := range res {
-		name := tblName{schema: tblInfo[0], name: tblInfo[1]}
-		tiFlashTablesMap[name] = struct{}{}
-	}
-
-	tiFlashTables := make(tblNames, 0)
-	for _, dbMeta := range checkCtx.DBMetas {
-		for _, tblMeta := range dbMeta.Tables {
-			if len(tblMeta.DataFiles) == 0 {
-				continue
-			}
-			name := tblName{schema: tblMeta.DB, name: tblMeta.Name}
-			if _, ok := tiFlashTablesMap[name]; ok {
-				tiFlashTables = append(tiFlashTables, name)
-			}
-		}
-	}
-
-	if len(tiFlashTables) > 0 {
-		helpInfo := "Please either upgrade TiDB to version >= 4.0.5 or add TiFlash replica after load data."
-		return errors.Errorf("lightning local backend doesn't support TiFlash in this TiDB version. conflict tables: %s. "+helpInfo, tiFlashTables)
-	}
-	return nil
+	return local.targetInfoGetter.CheckRequirements(ctx, checkCtx)
 }
 
 func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return tikv.FetchRemoteTableModelsFromTLS(ctx, local.tls, schemaName)
+	return local.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
 
 func (local *local) MakeEmptyRows() kv.Rows {
-	return kv.MakeRowsFromKvPairs(nil)
+	return local.encBuilder.MakeEmptyRows()
 }
 
 func (local *local) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return kv.NewTableKVEncoder(tbl, options, local.metrics, log.FromContext(ctx))
+	return local.encBuilder.NewEncoder(ctx, tbl, options)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
@@ -1858,18 +1947,34 @@ func (local *local) isIngestRetryable(
 		}
 		return retryTy, newRegion, common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
-		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
 		newRegion, err = getRegion()
 		if err != nil {
 			return retryNone, nil, errors.Trace(err)
 		}
-		return retryWrite, newRegion, errors.New(errPb.GetMessage())
+		return retryWrite, newRegion, common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
 	case errPb.ServerIsBusy != nil:
 		return retryNone, nil, common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
 	case errPb.RegionNotFound != nil:
 		return retryNone, nil, common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
+	case errPb.ReadIndexNotReady != nil:
+		// this error happens when this region is splitting, the error might be:
+		//   read index not ready, reason can not read index due to split, region 64037
+		// we have paused schedule, but it's temporary,
+		// if next request takes a long time, there's chance schedule is enabled again
+		// or on key range border, another engine sharing this region tries to split this
+		// region may cause this error too.
+		newRegion, err = getRegion()
+		if err != nil {
+			return retryNone, nil, errors.Trace(err)
+		}
+		return retryWrite, newRegion, common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
+	case errPb.DiskFull != nil:
+		return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 	}
-	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
+	// all others ingest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
+	// here we use a single named-error ErrKVIngestFailed to represent them all
+	// we can separate them later if it's needed
+	return retryNone, nil, common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
 }
 
 // return the smallest []byte that is bigger than current bytes.
@@ -1937,7 +2042,7 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		return 0, 0, err
 	}
 	for _, store := range stores {
-		if store.StatusAddress == "" || version.IsTiFlash(store) {
+		if store.StatusAddress == "" || engine.IsTiFlash(store) {
 			continue
 		}
 		serverInfo := infoschema.ServerInfo{

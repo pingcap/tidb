@@ -43,8 +43,10 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -71,8 +73,7 @@ const dbTestLease = 600 * time.Millisecond
 // Close issue #24580
 // See https://github.com/pingcap/tidb/issues/24580
 func TestIssue24580(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -87,8 +88,7 @@ func TestIssue24580(t *testing.T) {
 // Ref: https://dev.mysql.com/doc/refman/8.0/en/storage-requirements.html#data-types-storage-reqs-strings
 // text(100) in utf8mb4 charset needs max 400 byte length, thus tinytext is not enough.
 func TestCreateTextAdjustLen(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -129,8 +129,7 @@ func TestCreateTextAdjustLen(t *testing.T) {
 }
 
 func TestGetTimeZone(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -173,8 +172,7 @@ func TestGetTimeZone(t *testing.T) {
 
 // for issue #30328
 func TestTooBigFieldLengthAutoConvert(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -201,8 +199,7 @@ func TestTooBigFieldLengthAutoConvert(t *testing.T) {
 // For Close issue #24288
 // see https://github.com/pingcap/tidb/issues/24288
 func TestDdlMaxLimitOfIdentifier(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -227,14 +224,12 @@ func TestDdlMaxLimitOfIdentifier(t *testing.T) {
 
 	// alter table
 	tk.MustExec(fmt.Sprintf("alter table %s change f2 %s int", longTblName, strings.Repeat("二", mysql.MaxColumnNameLength-1)))
-
 }
 
 // Close issue #23321.
 // See https://github.com/pingcap/tidb/issues/23321
 func TestJsonUnmarshalErrWhenPanicInCancellingPath(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -247,8 +242,7 @@ func TestJsonUnmarshalErrWhenPanicInCancellingPath(t *testing.T) {
 }
 
 func TestIssue22819(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test;")
@@ -268,8 +262,7 @@ func TestIssue22819(t *testing.T) {
 }
 
 func TestIssue22307(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -297,8 +290,7 @@ func TestIssue22307(t *testing.T) {
 }
 
 func TestIssue9100(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -316,8 +308,7 @@ func TestIssue9100(t *testing.T) {
 }
 
 func TestIssue22207(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -346,8 +337,7 @@ func TestIssue22207(t *testing.T) {
 }
 
 func TestIssue23473(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -360,8 +350,7 @@ func TestIssue23473(t *testing.T) {
 }
 
 func TestDropCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -374,8 +363,7 @@ func TestDropCheck(t *testing.T) {
 }
 
 func TestAlterOrderBy(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -395,8 +383,7 @@ func TestAlterOrderBy(t *testing.T) {
 }
 
 func TestFKOnGeneratedColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -507,8 +494,7 @@ func TestFKOnGeneratedColumns(t *testing.T) {
 }
 
 func TestSelectInViewFromAnotherDB(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -522,8 +508,7 @@ func TestSelectInViewFromAnotherDB(t *testing.T) {
 }
 
 func TestAddConstraintCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -536,8 +521,7 @@ func TestAddConstraintCheck(t *testing.T) {
 }
 
 func TestCreateTableIgnoreCheckConstraint(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -552,8 +536,7 @@ func TestCreateTableIgnoreCheckConstraint(t *testing.T) {
 }
 
 func TestAutoConvertBlobTypeByLength(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -580,8 +563,7 @@ func TestAutoConvertBlobTypeByLength(t *testing.T) {
 }
 
 func TestAddExpressionIndexRollback(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
@@ -642,7 +624,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+	element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(m, testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)
@@ -651,8 +633,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 }
 
 func TestDropTableOnTiKVDiskFull(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test_disk_full_drop_table(a int);")
@@ -664,8 +645,7 @@ func TestDropTableOnTiKVDiskFull(t *testing.T) {
 }
 
 func TestComment(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ct, ct1")
@@ -757,8 +737,7 @@ func TestRebaseAutoID(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange")) }()
 
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("drop database if exists tidb;")
@@ -786,8 +765,7 @@ func TestRebaseAutoID(t *testing.T) {
 }
 
 func TestProcessColumnFlags(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// check `processColumnFlags()`
@@ -826,8 +804,7 @@ func TestProcessColumnFlags(t *testing.T) {
 }
 
 func TestForbidCacheTableForSystemTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	sysTables := make([]string, 0, 24)
 	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
@@ -845,7 +822,6 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 			} else {
 				require.EqualError(t, err, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)))
 			}
-
 		}
 		sysTables = sysTables[:0]
 	}
@@ -857,8 +833,7 @@ func TestAlterShardRowIDBits(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -889,8 +864,7 @@ func TestAlterShardRowIDBits(t *testing.T) {
 }
 
 func TestShardRowIDBitsOnTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// for global temporary table
@@ -913,9 +887,68 @@ func TestShardRowIDBitsOnTemporaryTable(t *testing.T) {
 		dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE").Error())
 }
 
+func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// global temporary table with auto_increment=0
+	tk.MustExec("drop table if exists global_temp_auto_id")
+	tk.MustExec("create global temporary table global_temp_auto_id(id int primary key auto_increment) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 1 AUTO_INCREMENT"))
+	tk.MustExec("insert into global_temp_auto_id value(null)")
+	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from global_temp_auto_id").Check(testkit.Rows("1"))
+	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 2 AUTO_INCREMENT"))
+	tk.MustExec("commit")
+	tk.MustExec("drop table global_temp_auto_id")
+
+	// global temporary table with auto_increment=100
+	tk.MustExec("create global temporary table global_temp_auto_id(id int primary key auto_increment) auto_increment=100 on commit delete rows")
+	// the result should be the same in each transaction
+	for i := 0; i < 2; i++ {
+		tk.MustQuery("show create table global_temp_auto_id").Check(testkit.Rows("global_temp_auto_id CREATE GLOBAL TEMPORARY TABLE `global_temp_auto_id` (\n" +
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 ON COMMIT DELETE ROWS"))
+		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 100 AUTO_INCREMENT"))
+		tk.MustExec("begin")
+		tk.MustExec("insert into global_temp_auto_id value(null)")
+		tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("100"))
+		tk.MustQuery("select id from global_temp_auto_id").Check(testkit.Rows("100"))
+		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 101 AUTO_INCREMENT"))
+		tk.MustExec("commit")
+	}
+	tk.MustExec("drop table global_temp_auto_id")
+
+	// local temporary table with auto_increment=0
+	tk.MustExec("create temporary table local_temp_auto_id(id int primary key auto_increment)")
+	// It doesn't matter to report an error since `show next_row_id` is an extended syntax.
+	err := tk.QueryToErr("show table local_temp_auto_id next_row_id")
+	require.EqualError(t, err, "[schema:1146]Table 'test.local_temp_auto_id' doesn't exist")
+	tk.MustExec("insert into local_temp_auto_id value(null)")
+	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from local_temp_auto_id").Check(testkit.Rows("1"))
+	tk.MustExec("drop table local_temp_auto_id")
+
+	// local temporary table with auto_increment=100
+	tk.MustExec("create temporary table local_temp_auto_id(id int primary key auto_increment) auto_increment=100")
+	tk.MustQuery("show create table local_temp_auto_id").Check(testkit.Rows("local_temp_auto_id CREATE TEMPORARY TABLE `local_temp_auto_id` (\n" +
+		"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100"))
+	tk.MustExec("insert into local_temp_auto_id value(null)")
+	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("100"))
+	tk.MustQuery("select id from local_temp_auto_id").Check(testkit.Rows("100"))
+	tk.MustQuery("show create table local_temp_auto_id").Check(testkit.Rows("local_temp_auto_id CREATE TEMPORARY TABLE `local_temp_auto_id` (\n" +
+		"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=101"))
+}
+
 func TestDDLJobErrorCount(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddl_error_table, new_ddl_error_table")
@@ -945,8 +978,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 }
 
 func TestCommitTxnWithIndexChange(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	// Prepare work.
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
@@ -1142,8 +1174,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure", `return(true)`))
 	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure")) }()
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	originalVal := variable.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
@@ -1161,8 +1192,7 @@ func TestCreateTableWithIntegerLengthWaring(t *testing.T) {
 	// Inject the strict-integer-display-width variable in parser directly.
 	parsertypes.TiDBStrictIntegerDisplayWidth = true
 	defer func() { parsertypes.TiDBStrictIntegerDisplayWidth = false }()
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1216,8 +1246,7 @@ func TestShowCountWarningsOrErrors(t *testing.T) {
 	// Inject the strict-integer-display-width variable in parser directly.
 	parsertypes.TiDBStrictIntegerDisplayWidth = true
 	defer func() { parsertypes.TiDBStrictIntegerDisplayWidth = false }()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1239,14 +1268,12 @@ func TestShowCountWarningsOrErrors(t *testing.T) {
 	// Error: Table exist
 	_, _ = tk.Exec("create table show_errors (a int)")
 	tk.MustQuery("show count(*) errors").Check(tk.MustQuery("select @@session.error_count").Rows())
-
 }
 
 // Close issue #24172.
 // See https://github.com/pingcap/tidb/issues/24172
 func TestCancelJobWriteConflict(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1269,6 +1296,8 @@ func TestCancelJobWriteConflict(t *testing.T) {
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
 			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL", `return(true)`))
+			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL")) }()
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}
@@ -1293,8 +1322,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 }
 
 func TestTxnSavepointWithDDL(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -1345,8 +1373,7 @@ func TestTxnSavepointWithDDL(t *testing.T) {
 }
 
 func TestAmendTxnSavepointWithDDL(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -1393,8 +1420,7 @@ func TestAmendTxnSavepointWithDDL(t *testing.T) {
 }
 
 func TestSnapshotVersion(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -1456,8 +1482,7 @@ func TestSnapshotVersion(t *testing.T) {
 }
 
 func TestSchemaValidator(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -1510,8 +1535,7 @@ func TestSchemaValidator(t *testing.T) {
 }
 
 func TestLogAndShowSlowLog(t *testing.T) {
-	_, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 
 	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
 	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
@@ -1551,11 +1575,10 @@ func TestLogAndShowSlowLog(t *testing.T) {
 }
 
 func TestReportingMinStartTimestamp(t *testing.T) {
-	_, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	defer clean()
+	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 
 	infoSyncer := dom.InfoSyncer()
-	sm := &testkit.MockSessionManager{
+	sm := &testutil.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	infoSyncer.SetSessionManager(sm)
@@ -1580,8 +1603,7 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 
 // for issue #34931
 func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1618,7 +1640,6 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 	sqlTemplate := "create table %s (id int, name %s, age int, %s index(name%s%s)) charset=%s;"
 	// test character strings for varchar and text
 	for _, tc := range tt {
-
 		for _, cs := range charset.CharacterSetInfos {
 			tableName := fmt.Sprintf("t_%s", cs.Name)
 			tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
@@ -1693,4 +1714,18 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 		}
 	}
+}
+
+func TestTiDBDownBeforeUpdateGlobalVersion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDownBeforeUpdateGlobalVersion", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkDownBeforeUpdateGlobalVersion", `return(true)`))
+	tk.MustExec("alter table t add column b int")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDownBeforeUpdateGlobalVersion"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkDownBeforeUpdateGlobalVersion"))
 }

@@ -257,7 +257,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 	}
 	req.Reset()
 	if e.task == nil {
-		e.getFinishedTask(ctx)
+		e.loadFinishedTask(ctx)
 	}
 	for e.task != nil {
 		select {
@@ -266,7 +266,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 				if e.task.doneErr != nil {
 					return e.task.doneErr
 				}
-				e.getFinishedTask(ctx)
+				e.loadFinishedTask(ctx)
 				continue
 			}
 			req.SwapColumns(result.chk)
@@ -280,14 +280,13 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 	return nil
 }
 
-func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
+// TODO: reuse the finished task memory to build tasks.
+func (e *IndexLookUpMergeJoin) loadFinishedTask(ctx context.Context) {
 	select {
 	case e.task = <-e.resultCh:
 	case <-ctx.Done():
 		e.task = nil
 	}
-
-	// TODO: reuse the finished task memory to build tasks.
 }
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
@@ -295,7 +294,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		if r := recover(); r != nil {
 			task := &lookUpMergeJoinTask{
-				doneErr: errors.New(fmt.Sprintf("%v", r)),
+				doneErr: fmt.Errorf("%v", r),
 				results: make(chan *indexMergeJoinResult, numResChkHold),
 			}
 			close(task.results)

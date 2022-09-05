@@ -68,7 +68,7 @@ func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
 		case types.KindMysqlTime, types.KindMysqlDuration, types.KindFloat32, types.KindFloat64:
 			size += 9
 		case types.KindNull, types.KindMinNotNull, types.KindMaxValue:
-			size += 1
+			size++
 		case types.KindMysqlJSON:
 			size += 2 + len(vals[i].GetBytes())
 		case types.KindMysqlDecimal:
@@ -157,7 +157,12 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 	case types.KindString, types.KindBytes:
 		l = valueSizeOfBytes(val.GetBytes())
 	case types.KindMysqlDecimal:
-		l = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac()) + 1
+		var err error
+		l, err = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac())
+		if err != nil {
+			return 0, err
+		}
+		l = l + 1
 	case types.KindMysqlEnum:
 		l = valueSizeOfUnsignedInt(val.GetMysqlEnum().Value)
 	case types.KindMysqlSet:
@@ -1300,7 +1305,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 			}
 		}
 	default:
-		return nil, errors.New(fmt.Sprintf("invalid eval type %v", ft.EvalType()))
+		return nil, fmt.Errorf("invalid eval type %v", ft.EvalType())
 	}
 	return buf, nil
 }
@@ -1318,8 +1323,7 @@ func ConvertByCollationStr(str string, tp *types.FieldType) string {
 }
 
 // HashCode encodes a Datum into a unique byte slice.
-// It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order
-// 	to make the encoding lossless.
+// It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order to make the encoding lossless.
 func HashCode(b []byte, d types.Datum) []byte {
 	switch d.Kind() {
 	case types.KindInt64:

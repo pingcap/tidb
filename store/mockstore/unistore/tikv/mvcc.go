@@ -186,7 +186,7 @@ func sortMutations(mutations []*kvrpcpb.Mutation) []*kvrpcpb.Mutation {
 }
 
 func sortPrewrite(req *kvrpcpb.PrewriteRequest) []*kvrpcpb.Mutation {
-	if len(req.IsPessimisticLock) == 0 {
+	if len(req.PessimisticActions) == 0 {
 		return sortMutations(req.Mutations)
 	}
 	sorter := pessimisticPrewriteSorter{PrewriteRequest: req}
@@ -211,7 +211,7 @@ func (sorter pessimisticPrewriteSorter) Len() int {
 
 func (sorter pessimisticPrewriteSorter) Swap(i, j int) {
 	sorter.Mutations[i], sorter.Mutations[j] = sorter.Mutations[j], sorter.Mutations[i]
-	sorter.IsPessimisticLock[i], sorter.IsPessimisticLock[j] = sorter.IsPessimisticLock[j], sorter.IsPessimisticLock[i]
+	sorter.PessimisticActions[i], sorter.PessimisticActions[j] = sorter.PessimisticActions[j], sorter.PessimisticActions[i]
 }
 
 func sortKeys(keys [][]byte) [][]byte {
@@ -691,12 +691,15 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 
 func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation, req *kvrpcpb.PrewriteRequest) error {
 	startTS := req.StartVersion
+	reader := reqCtx.getDBReader()
+	txn := reader.GetTxn()
 	for i, m := range mutations {
 		if m.Op == kvrpcpb.Op_CheckNotExists {
 			return kverrors.ErrInvalidOp{Op: m.Op}
 		}
 		lock := store.getLock(reqCtx, m.Key)
-		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i]
+		isPessimisticLock := len(req.PessimisticActions) > 0 && req.PessimisticActions[i] == kvrpcpb.PrewriteRequest_DO_PESSIMISTIC_CHECK
+		needConstraintCheck := len(req.PessimisticActions) > 0 && req.PessimisticActions[i] == kvrpcpb.PrewriteRequest_DO_CONSTRAINT_CHECK
 		lockExists := lock != nil
 		lockMatch := lockExists && lock.StartTS == startTS
 		if isPessimisticLock {
@@ -711,6 +714,23 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 			// Do not overwrite lock ttl if prewrite ttl smaller than pessimisitc lock ttl
 			if uint64(lock.TTL) > req.LockTtl {
 				req.LockTtl = uint64(lock.TTL)
+			}
+		} else if needConstraintCheck {
+			item, err := txn.Get(m.Key)
+			if err != nil && err != badger.ErrKeyNotFound {
+				return errors.Trace(err)
+			}
+			// check conflict
+			if item != nil {
+				userMeta := mvcc.DBUserMeta(item.UserMeta())
+				if userMeta.CommitTS() > startTS {
+					return &kverrors.ErrConflict{
+						StartTS:          startTS,
+						ConflictTS:       userMeta.StartTS(),
+						ConflictCommitTS: userMeta.CommitTS(),
+						Key:              item.KeyCopy(nil),
+					}
+				}
 			}
 		} else {
 			// non pessimistic lock in pessimistic transaction, e.g. non-unique index.
@@ -1364,7 +1384,7 @@ func (store *MVCCStore) UpdateSafePoint(safePoint uint64) {
 }
 
 func tsToTime(ts uint64) time.Time {
-	return time.Unix(0, int64(ts>>18)*1000000)
+	return time.UnixMilli(int64(ts >> 18))
 }
 
 // StartDeadlockDetection implements the MVCCStore interface.

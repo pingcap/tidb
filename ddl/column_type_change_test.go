@@ -40,8 +40,7 @@ import (
 )
 
 func TestColumnTypeChangeBetweenInteger(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -106,8 +105,7 @@ func TestColumnTypeChangeBetweenInteger(t *testing.T) {
 }
 
 func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -175,8 +173,7 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 }
 
 func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -248,15 +245,14 @@ var mockTerrorMap = make(map[string]*terror.Error)
 
 func init() {
 	// Since terror new action will cause data race with other test suite (getTerrorCode) in parallel, we init it all here.
-	mockTerrorMap[model.StateNone.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateNone.String())
-	mockTerrorMap[model.StateDeleteOnly.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateDeleteOnly.String())
-	mockTerrorMap[model.StateWriteOnly.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteOnly.String())
-	mockTerrorMap[model.StateWriteReorganization.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteReorganization.String())
+	mockTerrorMap[model.StateNone.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateNone.String(), nil))
+	mockTerrorMap[model.StateDeleteOnly.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateDeleteOnly.String(), nil))
+	mockTerrorMap[model.StateWriteOnly.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateWriteOnly.String(), nil))
+	mockTerrorMap[model.StateWriteReorganization.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateWriteReorganization.String(), nil))
 }
 
 func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -407,8 +403,7 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 }
 
 func TestColumnTypeChangeBetweenVarcharAndNonVarchar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop database if exists col_type_change_char;")
@@ -436,8 +431,7 @@ func TestColumnTypeChangeBetweenVarcharAndNonVarchar(t *testing.T) {
 }
 
 func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -625,7 +619,7 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify txt json")
 	tk.MustExec("alter table t modify e json")
 	tk.MustExec("alter table t modify s json")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} \"{\\\"k1\\\": \\\"value\\\"}\" \"{\\\"k1\\\": \\\"value\\\"}\""))
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"}"))
 
 	reset(tk)
 	tk.MustExec("insert into t values ('123x', 'x123', 'abc', 'datetime', 'timestamp', 'date', '123', '123')")
@@ -657,7 +651,10 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("alter table t modify c char(15)")
 	tk.MustExec("insert into t(c) values ('{\"k1\": \"value\"')")
+	tk.MustExec("insert into t(e, s) values ('str', 'str')")
 	tk.MustGetErrCode("alter table t modify c json", errno.ErrInvalidJSONText)
+	tk.MustGetErrCode("alter table t modify e json", errno.ErrInvalidJSONText)
+	tk.MustGetErrCode("alter table t modify s json", errno.ErrInvalidJSONText)
 
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1" error.
 	tk.MustExec("insert into t(vc) values ('abc')")
@@ -665,8 +662,7 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 }
 
 func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -930,8 +926,7 @@ func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
 
 // Test issue #20529.
 func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -972,8 +967,7 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 }
 
 func TestColumnTypeChangeFromDateTimeTypeToOthers(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1151,8 +1145,7 @@ func TestColumnTypeChangeFromDateTimeTypeToOthers(t *testing.T) {
 }
 
 func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1545,8 +1538,7 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 }
 
 func TestUpdateDataAfterChangeTimestampToDate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -1568,8 +1560,7 @@ func TestUpdateDataAfterChangeTimestampToDate(t *testing.T) {
 
 // TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
 func TestRowFormat(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1595,8 +1586,7 @@ func TestRowFormat(t *testing.T) {
 // It's good because the insert / update logic will cast the related column to changing column rather than use
 // origin default value directly.
 func TestChangingColOriginDefaultValue(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1672,8 +1662,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 }
 
 func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1760,8 +1749,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 
 // TestChangingColOriginDefaultValueAfterAddColAndCastFail tests #25383.
 func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1818,8 +1806,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 
 // Close issue #22820
 func TestChangingAttributeOfColumnWithFK(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1855,8 +1842,7 @@ func TestChangingAttributeOfColumnWithFK(t *testing.T) {
 }
 
 func TestAlterPrimaryKeyToNull(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1871,8 +1857,7 @@ func TestAlterPrimaryKeyToNull(t *testing.T) {
 
 // Close https://github.com/pingcap/tidb/issues/24839.
 func TestChangeUnsignedIntToDatetime(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -1893,8 +1878,7 @@ func TestChangeUnsignedIntToDatetime(t *testing.T) {
 
 // Close issue #23202
 func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1936,8 +1920,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 
 // Close issue #24253
 func TestChangeIntToBitWillPanicInBackfillIndexes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1967,8 +1950,7 @@ func TestChangeIntToBitWillPanicInBackfillIndexes(t *testing.T) {
 
 // Close issue #24584
 func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2020,8 +2002,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 
 // Close issue #24971, #24973, #24974
 func TestCTCShouldCastTheDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2052,8 +2033,7 @@ func TestCTCShouldCastTheDefaultValue(t *testing.T) {
 // 1: for default value of binary of create-table, it should append the \0 as the suffix to meet flen.
 // 2: when cast the bit to binary, we should consider to convert it to uint then cast uint to string, rather than taking the bit to string directly.
 func TestCTCCastBitToBinary(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2080,8 +2060,7 @@ func TestCTCCastBitToBinary(t *testing.T) {
 }
 
 func TestChangePrefixedIndexColumnToNonPrefixOne(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -2116,8 +2095,7 @@ func TestChangePrefixedIndexColumnToNonPrefixOne(t *testing.T) {
 
 // Fix issue https://github.com/pingcap/tidb/issues/25469
 func TestCastToTimeStampDecodeError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -2142,8 +2120,7 @@ func TestCastToTimeStampDecodeError(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/25285.
 func TestCastFromZeroIntToTimeError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -2189,8 +2166,7 @@ func TestCastFromZeroIntToTimeError(t *testing.T) {
 }
 
 func TestChangeFromTimeToYear(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -2221,8 +2197,7 @@ func TestChangeFromTimeToYear(t *testing.T) {
 // For select statement, it truncates the string and return no errors. (which is 3977-02-22 00:00:00 here)
 // For ddl reorging or changing column in ctc, it needs report some errors.
 func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2257,8 +2232,7 @@ func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/25282.
 func TestChangeFromUnsignedIntToTime(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -2273,8 +2247,7 @@ func TestChangeFromUnsignedIntToTime(t *testing.T) {
 // See https://github.com/pingcap/tidb/issues/25287.
 // Revised according to https://github.com/pingcap/tidb/pull/31031#issuecomment-1001404832.
 func TestChangeFromBitToStringInvalidUtf8ErrMsg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -2286,8 +2259,7 @@ func TestChangeFromBitToStringInvalidUtf8ErrMsg(t *testing.T) {
 }
 
 func TestForIssue24621(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -2299,8 +2271,7 @@ func TestForIssue24621(t *testing.T) {
 }
 
 func TestChangeNullValueFromOtherTypeToTimestamp(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2341,8 +2312,7 @@ func TestChangeNullValueFromOtherTypeToTimestamp(t *testing.T) {
 }
 
 func TestColumnTypeChangeBetweenFloatAndDouble(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// issue #31372
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2365,8 +2335,7 @@ func TestColumnTypeChangeBetweenFloatAndDouble(t *testing.T) {
 }
 
 func TestColumnTypeChangeTimestampToInt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 

@@ -63,13 +63,13 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.ReadCommitted
 			},
-			onTxnActive: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
 	}
 
-	provider.onTxnActive = func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+	provider.onTxnActiveFunc = func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 		txn.SetOption(kv.Pessimistic, true)
 		provider.latestOracleTS = txn.StartTS()
 		provider.latestOracleTSValid = true
@@ -133,7 +133,7 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	var stmtTSFuture oracle.Future
 	switch {
 	case p.stmtUseStartTS:
-		stmtTSFuture = sessiontxn.FuncFuture(p.getTxnStartTS)
+		stmtTSFuture = funcFuture(p.getTxnStartTS)
 	case p.latestOracleTSValid && sessVars.StmtCtx.RCCheckTS:
 		stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	default:
@@ -143,9 +143,9 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	p.stmtTSFuture = stmtTSFuture
 }
 
-func (p *PessimisticRCTxnContextProvider) getOracleFuture() sessiontxn.FuncFuture {
+func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
+	future := newOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
 	return func() (ts uint64, err error) {
 		if ts, err = future.Wait(); err != nil {
 			return

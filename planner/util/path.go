@@ -110,7 +110,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context,
 
 // isColEqCorColOrConstant checks if the expression is a eq function that one side is constant or correlated column
 // and another is column.
-func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expression, col *expression.Column) bool {
+func isColEqCorColOrConstant(_ sessionctx.Context, filter expression.Expression, col *expression.Column) bool {
 	f, ok := filter.(*expression.ScalarFunction)
 	if !ok || f.FuncName.L != ast.EQ {
 		return false

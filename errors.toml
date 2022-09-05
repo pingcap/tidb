@@ -181,6 +181,11 @@ error = '''
 restore checksum mismatch
 '''
 
+["BR:Restore:ErrRestoreIncompatibleSys"]
+error = '''
+incompatible system table
+'''
+
 ["BR:Restore:ErrRestoreInvalidBackup"]
 error = '''
 invalid backup
@@ -204,6 +209,11 @@ restore mode mismatch
 ["BR:Restore:ErrRestoreNoPeer"]
 error = '''
 region does not have peer
+'''
+
+["BR:Restore:ErrRestoreNotFreshCluster"]
+error = '''
+cluster is not fresh
 '''
 
 ["BR:Restore:ErrRestoreRangeMismatch"]
@@ -371,9 +381,24 @@ error = '''
 create kv client error
 '''
 
+["Lightning:KV:ErrKVIngestFailed"]
+error = '''
+ingest tikv failed
+'''
+
+["Lightning:KV:ErrKVRaftProposalDropped"]
+error = '''
+raft proposal dropped
+'''
+
 ["Lightning:KV:NotLeader"]
 error = '''
 not leader
+'''
+
+["Lightning:KV:ReadIndexNotReady"]
+error = '''
+read index not ready
 '''
 
 ["Lightning:KV:RegionNotFound"]
@@ -394,6 +419,11 @@ invalid schema file
 ["Lightning:Loader:ErrTableRoute"]
 error = '''
 table route error
+'''
+
+["Lightning:Loader:ErrTooManySourceFiles"]
+error = '''
+too many source files
 '''
 
 ["Lightning:MetaMgr:ErrMetaMgrUnknown"]
@@ -491,6 +521,11 @@ error = '''
 open duplicate db error
 '''
 
+["Lightning:Restore:ErrResolveDuplicateRows"]
+error = '''
+resolve duplicate rows error on table '%s'
+'''
+
 ["Lightning:Restore:ErrRestoreTable"]
 error = '''
 restore table %s failed
@@ -564,6 +599,11 @@ Invalid allocator type
 ["autoid:8059"]
 error = '''
 Failed to read auto-random value from storage engine
+'''
+
+["ddl:0"]
+error = '''
+TiFlash mode will take effect after at least one TiFlash replica is set for the table
 '''
 
 ["ddl:1025"]
@@ -926,6 +966,11 @@ error = '''
 Table to exchange with partition is partitioned: '%-.64s'
 '''
 
+["ddl:1733"]
+error = '''
+Table to exchange with partition is temporary: '%-.64s'
+'''
+
 ["ddl:1736"]
 error = '''
 Tables have different definitions
@@ -1241,6 +1286,11 @@ error = '''
 column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
 '''
 
+["ddl:8246"]
+error = '''
+Error happened when enable/disable DDL: %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1466,6 +1516,11 @@ error = '''
 setting %s has no effect in TiDB
 '''
 
+["executor:8147"]
+error = '''
+transaction aborted because lazy uniqueness check is enabled and an error occurred: %s
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -1543,7 +1598,7 @@ Invalid JSON text: %-.192s
 
 ["json:3143"]
 error = '''
-Invalid JSON path expression %s.
+Invalid JSON path expression. The error is around character position %d.
 '''
 
 ["json:3144"]
@@ -2096,6 +2151,11 @@ error = '''
 '%s' is unsupported on cache tables.
 '''
 
+["privilege:1045"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
@@ -2229,6 +2289,11 @@ User %s does not exist.
 ["schema:3163"]
 error = '''
 User %s already exists.
+'''
+
+["schema:3750"]
+error = '''
+Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.
 '''
 
 ["schema:4139"]

@@ -32,11 +32,10 @@ import (
 )
 
 func TestExplainPrivileges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
 
@@ -49,7 +48,7 @@ func TestExplainPrivileges(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err = session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "explain", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "explain", Hostname: "%"}, nil, nil))
 	tk1.SetSession(se)
 
 	tk.MustExec(`grant select on explaindatabase.v to 'explain'@'%'`)
@@ -70,8 +69,7 @@ func TestExplainPrivileges(t *testing.T) {
 }
 
 func TestExplainCartesianJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -101,8 +99,7 @@ func TestExplainCartesianJoin(t *testing.T) {
 }
 
 func TestExplainWrite(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -119,8 +116,7 @@ func TestExplainWrite(t *testing.T) {
 }
 
 func TestExplainAnalyzeMemory(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -172,8 +168,7 @@ func checkMemoryInfo(t *testing.T, tk *testkit.TestKit, sql string) {
 }
 
 func TestMemoryAndDiskUsageAfterClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -210,8 +205,7 @@ func TestMemoryAndDiskUsageAfterClose(t *testing.T) {
 }
 
 func TestExplainAnalyzeExecutionInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -262,8 +256,7 @@ func checkExecutionInfo(t *testing.T, tk *testkit.TestKit, sql string) {
 }
 
 func TestExplainAnalyzeActRowsNotEmpty(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -304,8 +297,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableCollectExecutionInfo = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// testSuite1 use default mockstore which is unistore
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -376,8 +368,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 }
 
 func TestExplainAnalyzeCTEMemoryAndDiskInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -399,8 +390,7 @@ func TestExplainAnalyzeCTEMemoryAndDiskInfo(t *testing.T) {
 }
 
 func TestExplainStatementsSummary(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("desc select * from information_schema.statements_summary").Check(testkit.Rows(
@@ -414,8 +404,7 @@ func TestExplainStatementsSummary(t *testing.T) {
 }
 
 func TestFix29401(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt123;")
@@ -438,8 +427,7 @@ func TestFix29401(t *testing.T) {
 }
 
 func TestIssue35296(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -456,8 +444,7 @@ func TestIssue35296(t *testing.T) {
 }
 
 func TestIssue35911(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -494,4 +481,16 @@ func TestIssue35911(t *testing.T) {
 	require.NoError(t, err)
 	// To be consistent with other operators, we should not aggregate the concurrency in the runtime stats.
 	require.EqualValues(t, 5, concurrency)
+}
+
+func TestIssue35105(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("set @@tidb_constraint_check_in_place=1")
+	require.Error(t, tk.ExecToErr("explain analyze insert into t values (1), (2), (3)"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 }

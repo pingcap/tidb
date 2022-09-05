@@ -15,6 +15,7 @@
 package stmtctx
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"strconv"
@@ -208,12 +209,25 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
-	// planNormalized use for cache the normalized plan, avoid duplicate builds.
-	planNormalized        string
-	planDigest            *parser.Digest
-	encodedPlan           string
-	planHint              string
-	planHintSet           bool
+
+	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
+	// We cache the values here to avoid calculating them multiple times.
+	// Note:
+	//   Avoid accessing these fields directly, use their Setter/Getter methods instead.
+	//   Other fields should be the zero value or be consistent with the plan field.
+	// TODO: more clearly distinguish between the value is empty and the value has not been set
+	planNormalized string
+	planDigest     *parser.Digest
+	encodedPlan    string
+	planHint       string
+	planHintSet    bool
+	binaryPlan     string
+	// To avoid cycle import, we use interface{} for the following two fields.
+	// flatPlan should be a *plannercore.FlatPhysicalPlan if it's not nil
+	flatPlan interface{}
+	// plan should be a plannercore.Plan if it's not nil
+	plan interface{}
+
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
@@ -226,7 +240,12 @@ type StatementContext struct {
 	TaskMapBakTS          uint64 // counter for
 
 	// stmtCache is used to store some statement-related values.
-	stmtCache map[StmtCacheKey]interface{}
+	// add mutex to protect stmtCache concurrent access
+	// https://github.com/pingcap/tidb/issues/36159
+	stmtCache struct {
+		mu   sync.Mutex
+		data map[StmtCacheKey]interface{}
+	}
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
@@ -275,7 +294,7 @@ type StatementContext struct {
 		// NeededItems stores the columns/indices whose stats are needed for planner.
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan model.TableItemID
+		ResultCh chan StatsLoadResult
 		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
 		Fallback bool
 		// LoadStartTime is to record the load start time to calculate latency
@@ -292,6 +311,13 @@ type StatementContext struct {
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
+
+	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
+	StatsLoadStatus map[model.TableItemID]string
+	// IsSyncStatsFailed indicates whether any failure happened during sync stats
+	IsSyncStatsFailed bool
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -339,23 +365,29 @@ const (
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
 func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interface{}) interface{} {
-	if sc.stmtCache == nil {
-		sc.stmtCache = make(map[StmtCacheKey]interface{})
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	if sc.stmtCache.data == nil {
+		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
 	}
-	if _, ok := sc.stmtCache[key]; !ok {
-		sc.stmtCache[key] = value
+	if _, ok := sc.stmtCache.data[key]; !ok {
+		sc.stmtCache.data[key] = value
 	}
-	return sc.stmtCache[key]
+	return sc.stmtCache.data[key]
 }
 
 // ResetInStmtCache resets the cache of given key.
 func (sc *StatementContext) ResetInStmtCache(key StmtCacheKey) {
-	delete(sc.stmtCache, key)
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	delete(sc.stmtCache.data, key)
 }
 
 // ResetStmtCache resets all cached values.
 func (sc *StatementContext) ResetStmtCache() {
-	sc.stmtCache = make(map[StmtCacheKey]interface{})
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	sc.stmtCache.data = make(map[StmtCacheKey]interface{})
 }
 
 // SQLDigest gets normalized and digest for provided sql.
@@ -374,9 +406,44 @@ func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Dige
 	})
 }
 
+// ResetSQLDigest sets the normalized and digest for sql anyway, **DO NOT USE THIS UNLESS YOU KNOW WHAT YOU ARE DOING NOW**.
+func (sc *StatementContext) ResetSQLDigest(s string) {
+	sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(s)
+}
+
 // GetPlanDigest gets the normalized plan and plan digest.
 func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *parser.Digest) {
 	return sc.planNormalized, sc.planDigest
+}
+
+// GetPlan gets the plan field of stmtctx
+func (sc *StatementContext) GetPlan() interface{} {
+	return sc.plan
+}
+
+// SetPlan sets the plan field of stmtctx
+func (sc *StatementContext) SetPlan(plan interface{}) {
+	sc.plan = plan
+}
+
+// GetFlatPlan gets the flatPlan field of stmtctx
+func (sc *StatementContext) GetFlatPlan() interface{} {
+	return sc.flatPlan
+}
+
+// SetFlatPlan sets the flatPlan field of stmtctx
+func (sc *StatementContext) SetFlatPlan(flat interface{}) {
+	sc.flatPlan = flat
+}
+
+// GetBinaryPlan gets the binaryPlan field of stmtctx
+func (sc *StatementContext) GetBinaryPlan() string {
+	return sc.binaryPlan
+}
+
+// SetBinaryPlan sets the binaryPlan field of stmtctx
+func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
+	sc.binaryPlan = binaryPlan
 }
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
@@ -954,4 +1021,31 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
 	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
 	return fields
+}
+
+// StatsLoadResult indicates result for StatsLoad
+type StatsLoadResult struct {
+	Item  model.TableItemID
+	Error error
+}
+
+// HasError returns whether result has error
+func (r StatsLoadResult) HasError() bool {
+	return r.Error != nil
+}
+
+// ErrorMsg returns StatsLoadResult err msg
+func (r StatsLoadResult) ErrorMsg() string {
+	if r.Error == nil {
+		return ""
+	}
+	b := bytes.NewBufferString("tableID:")
+	b.WriteString(strconv.FormatInt(r.Item.TableID, 10))
+	b.WriteString(", id:")
+	b.WriteString(strconv.FormatInt(r.Item.ID, 10))
+	b.WriteString(", isIndex:")
+	b.WriteString(strconv.FormatBool(r.Item.IsIndex))
+	b.WriteString(", err:")
+	b.WriteString(r.Error.Error())
+	return b.String()
 }

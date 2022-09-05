@@ -31,6 +31,8 @@ var (
 	ExplainFormatTraditional = "traditional"
 	// ExplainFormatTrueCardCost indicates the optimizer to use true cardinality to calculate the cost.
 	ExplainFormatTrueCardCost = "true_card_cost"
+	// ExplainFormatBinary prints the proto for binary plan.
+	ExplainFormatBinary = "binary"
 
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
@@ -42,5 +44,6 @@ var (
 		ExplainFormatVerbose,
 		ExplainFormatTraditional,
 		ExplainFormatTrueCardCost,
+		ExplainFormatBinary,
 	}
 )

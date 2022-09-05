@@ -855,7 +855,7 @@ func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set, comparer 
 	}
 }
 
-func (d *Datum) compareMysqlJSON(sc *stmtctx.StatementContext, target json.BinaryJSON) (int, error) {
+func (d *Datum) compareMysqlJSON(_ *stmtctx.StatementContext, target json.BinaryJSON) (int, error) {
 	origin, err := d.ToMysqlJSON()
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1069,7 +1069,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.GetFlen(), tp.GetCharset()
 	if flen >= 0 {
-		// overflowed stores the part of the string that is out of the length contraint, it is later checked to see if the
+		// overflowed stores the part of the string that is out of the length constraint, it is later checked to see if the
 		// overflowed part is all whitespaces
 		var overflowed string
 		var characterLen int
@@ -1092,8 +1092,10 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 						r, size = utf8.DecodeLastRuneInString(tempStr)
 						if r == utf8.RuneError && size == 0 {
 							// Empty string
+							continue
 						} else if r == utf8.RuneError && size == 1 {
 							// Invalid string
+							continue
 						} else {
 							// Get the truncate position
 							break
@@ -1124,7 +1126,6 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 					s = truncateStr(s, truncateLen)
 				}
 			}
-
 		} else if len(s) > flen {
 			characterLen = len(s)
 			overflowed = s[flen:]
@@ -1665,12 +1666,20 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	return ret, err
 }
 
-func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldType) (ret Datum, err error) {
+func (d *Datum) convertToMysqlJSON(_ *stmtctx.StatementContext, _ *FieldType) (ret Datum, err error) {
 	switch d.k {
 	case KindString, KindBytes:
 		var j json.BinaryJSON
 		if j, err = json.ParseBinaryFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
+		}
+	case KindMysqlSet, KindMysqlEnum:
+		var j json.BinaryJSON
+		var s string
+		if s, err = d.ToString(); err == nil {
+			if j, err = json.ParseBinaryFromString(s); err == nil {
+				ret.SetMysqlJSON(j)
+			}
 		}
 	case KindInt64:
 		i64 := d.GetInt64()
@@ -1802,8 +1811,7 @@ func (d *Datum) ToDecimal(sc *stmtctx.StatementContext) (*MyDecimal, error) {
 
 // ToInt64 converts to a int64.
 func (d *Datum) ToInt64(sc *stmtctx.StatementContext) (int64, error) {
-	switch d.Kind() {
-	case KindMysqlBit:
+	if d.Kind() == KindMysqlBit {
 		uintVal, err := d.GetBinaryLiteral().ToInt(sc)
 		return int64(uintVal), err
 	}
@@ -2043,7 +2051,7 @@ func (d *Datum) MarshalJSON() ([]byte, error) {
 		jd.MyDecimal = d.GetMysqlDecimal()
 	default:
 		if d.x != nil {
-			return nil, errors.New(fmt.Sprintf("unsupported type: %d", d.k))
+			return nil, fmt.Errorf("unsupported type: %d", d.k)
 		}
 	}
 	return gjson.Marshal(jd)
@@ -2365,14 +2373,17 @@ func getDatumBound(retType *FieldType, rType RoundingType) Datum {
 
 // ChangeReverseResultByUpperLowerBound is for expression's reverse evaluation.
 // Here is an example for what's effort for the function: CastRealAsInt(t.a),
-// 		if the type of column `t.a` is mysql.TypeDouble, and there is a row that t.a == MaxFloat64
-// 		then the cast function will arrive a result MaxInt64. But when we do the reverse evaluation,
-//      if the result is MaxInt64, and the rounding type is ceiling. Then we should get the MaxFloat64
-//      instead of float64(MaxInt64).
+//
+//			if the type of column `t.a` is mysql.TypeDouble, and there is a row that t.a == MaxFloat64
+//			then the cast function will arrive a result MaxInt64. But when we do the reverse evaluation,
+//	     if the result is MaxInt64, and the rounding type is ceiling. Then we should get the MaxFloat64
+//	     instead of float64(MaxInt64).
+//
 // Another example: cast(1.1 as signed) = 1,
-// 		when we get the answer 1, we can only reversely evaluate 1.0 as the column value. So in this
-// 		case, we should judge whether the rounding type are ceiling. If it is, then we should plus one for
-// 		1.0 and get the reverse result 2.0.
+//
+//	when we get the answer 1, we can only reversely evaluate 1.0 as the column value. So in this
+//	case, we should judge whether the rounding type are ceiling. If it is, then we should plus one for
+//	1.0 and get the reverse result 2.0.
 func ChangeReverseResultByUpperLowerBound(
 	sc *stmtctx.StatementContext,
 	retType *FieldType,

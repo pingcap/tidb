@@ -36,12 +36,15 @@ go_library(
 
 go_test(
     name = "ranger_test",
+    timeout = "short",
     srcs = [
+        "bench_test.go",
         "main_test.go",
         "ranger_test.go",
         "types_test.go",
     ],
     data = glob(["testdata/**"]),
+    flaky = True,
     deps = [
         ":ranger",
         "//config",

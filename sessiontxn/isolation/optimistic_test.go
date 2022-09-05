@@ -39,10 +39,13 @@ import (
 )
 
 func TestOptimisticTxnContextProviderTS(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
 
@@ -128,10 +131,11 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 }
 
 func TestOptimisticHandleError(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	provider := initializeOptimisticProvider(t, tk, true)
 	startTS := tk.Session().GetSessionVars().TxnCtx.StartTS
 	checkTS := func() {
@@ -207,13 +211,16 @@ func TestOptimisticHandleError(t *testing.T) {
 }
 
 func TestOptimisticProviderInitialize(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	testfork.RunTest(t, func(t *testfork.T) {
 		clearScopeSettings := forkScopeSettings(t, store)
 		defer clearScopeSettings()
 
 		tk := testkit.NewTestKit(t, store)
+		defer tk.MustExec("rollback")
+
 		se := tk.Session()
 
 		// begin outside a txn
@@ -282,10 +289,13 @@ func TestOptimisticProviderInitialize(t *testing.T) {
 }
 
 func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
 	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
 	safePoint := "20160102-15:04:05 -0700"
@@ -312,7 +322,7 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	checkUseSnapshot := func() {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.Equal(t, snapshotTS, readTS)
@@ -324,7 +334,7 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	checkUseTxn := func() {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, isVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.NotEqual(t, snapshotTS, readTS)
