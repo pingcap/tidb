@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"log"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/ast"
@@ -167,17 +168,18 @@ func TestRegexpLikeConst(t *testing.T) {
 		{"a", "b", 0, nil},
 		{"aA", "aA", 1, nil},
 		{".", "a", 1, nil},
-		{"^.$", "ab", 0, nil},
+		{"^.$", "ab", 0, nil}, // index 5
 		{"..", "b", 0, nil},
 		{".ab", "aab", 1, nil},
 		{".*", "abcd", 1, nil},
 		{"(", "", 0, ErrRegexp},
-		{"(*", "", 0, ErrRegexp},
+		{"(*", "", 0, ErrRegexp}, // index 10
 		{"[a", "", 0, ErrRegexp},
 		{"\\", "", 0, ErrRegexp},
 	}
 
-	for _, tt := range testsExcludeMatchType {
+	for i, tt := range testsExcludeMatchType {
+		log.Println("index: ", i)
 		fc := funcs[ast.Regexp]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		require.NoError(t, err)

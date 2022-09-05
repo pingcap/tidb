@@ -171,6 +171,12 @@ func (reg *regexpMemorizedSig) isMemorizedRegexpInitialized() bool {
 	return !(reg.memorizedRegexp == nil && reg.memorizedErr == nil)
 }
 
+func (reg *regexpMemorizedSig) memorize(compile func(string) (*regexp.Regexp, error), pattern string) {
+	re, err := compile(pattern)
+	reg.memorizedRegexp = re
+	reg.memorizedErr = err
+}
+
 func (reg *regexpMemorizedSig) initMemoizedRegexp(compile func(string) (*regexp.Regexp, error), patterns *chunk.Column, n int) {
 	// Precondition: patterns is generated from a constant expression
 	if n == 0 {
@@ -182,9 +188,7 @@ func (reg *regexpMemorizedSig) initMemoizedRegexp(compile func(string) (*regexp.
 			continue
 		}
 		// Compile this constant pattern, so that we can avoid this repeatable work
-		re, err := compile(patterns.GetString(i))
-		reg.memorizedRegexp = re
-		reg.memorizedErr = err
+		reg.memorize(compile, patterns.GetString(i))
 		break
 	}
 	if !reg.isMemorizedRegexpInitialized() {

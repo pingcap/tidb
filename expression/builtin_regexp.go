@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/pingcap/tidb/parser/charset"
@@ -57,6 +58,7 @@ var validMatchType = map[string]empty{
 type regexpBaseFuncSig struct {
 	baseBuiltinFunc
 	regexpMemorizedSig
+	once sync.Once
 }
 
 func (re *regexpBaseFuncSig) isBinCollation() bool {
@@ -185,33 +187,52 @@ func (re *builtinRegexpLikeFuncSig) vectorized() bool {
 func (re *builtinRegexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	if isNull || err != nil {
-		return 0, true, err
+		return 0, true, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
 	if isNull || err != nil {
-		return 0, true, err
+		return 0, true, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	matchType := ""
 	if len(re.args) == 3 {
 		matchType, isNull, err = re.args[2].EvalString(re.ctx, row)
 		if isNull || err != nil {
-			return 0, true, err
+			return 0, true, ErrRegexp.GenWithStackByArgs(err)
 		}
 	}
 
-	compile, err := re.genCompile(matchType)
-	if err != nil {
-		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+	memorize := func() {
+		compile, err := re.genCompile(matchType)
+		if err != nil {
+			re.memorizedErr = err
+			return
+		}
+		re.memorize(compile, pat)
 	}
 
-	reg, err := compile(pat)
-	if err != nil {
-		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
+	if re.needMemorization() {
+		re.once.Do(memorize) // Avoid data race
 	}
 
-	return boolToInt64(reg.MatchString(expr)), false, nil
+	if !re.isMemorizedRegexpInitialized() {
+		compile, err := re.genCompile(matchType)
+		if err != nil {
+			return 0, true, ErrRegexp.GenWithStackByArgs(err)
+		}
+		reg, err := compile(pat)
+		if err != nil {
+			return 0, true, ErrRegexp.GenWithStackByArgs(err)
+		}
+		return boolToInt64(reg.MatchString(expr)), false, nil
+	}
+
+	if re.memorizedErr != nil {
+		return 0, true, ErrRegexp.GenWithStackByArgs(re.memorizedErr)
+	}
+
+	return boolToInt64(re.memorizedRegexp.MatchString(expr)), false, nil
 }
 
 // we need to memorize the regexp when:
@@ -220,7 +241,7 @@ func (re *builtinRegexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) 
 //
 // return true: need, false: needless
 func (re *builtinRegexpLikeFuncSig) needMemorization() bool {
-	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 2 || re.args[2].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
+	return !re.isMemorizedRegexpInitialized() && (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 2 || re.args[2].ConstItem(re.ctx.GetSessionVars().StmtCtx)))
 }
 
 // Call this function when at least one of the args is vector
@@ -233,7 +254,7 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	for i := 0; i < 2; i++ {
 		param, isConstNull, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
 		if err != nil {
-			return err
+			return ErrRegexp.GenWithStackByArgs(err)
 		}
 		if isConstNull {
 			result.ResizeInt64(n, true)
@@ -248,7 +269,7 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	if isConstNull {
@@ -280,7 +301,7 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		matchType := params[2].getStringVal(i)
 		re, err := re.genRegexp(params[1].getStringVal(i), matchType)
 		if err != nil {
-			return err
+			return ErrRegexp.GenWithStackByArgs(err)
 		}
 		i64s[i] = boolToInt64(re.MatchString(params[0].getStringVal(i)))
 	}
@@ -341,12 +362,12 @@ func (re *builtinRegexpSubstrFuncSig) Clone() builtinFunc {
 func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	if isNull || err != nil {
-		return "", true, err
+		return "", true, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
 	if isNull || err != nil {
-		return "", true, err
+		return "", true, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	pos := int64(1)
@@ -362,7 +383,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 	if arg_num >= 3 {
 		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
 		if isNull || err != nil {
-			return "", true, err
+			return "", true, ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		// Check position and trim expr
@@ -388,7 +409,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 	if arg_num >= 4 {
 		occurrence, isNull, err = re.args[3].EvalInt(re.ctx, row)
 		if isNull || err != nil {
-			return "", true, err
+			return "", true, ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		if occurrence < 1 {
@@ -399,7 +420,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 	if arg_num == 5 {
 		matchType, isNull, err = re.args[4].EvalString(re.ctx, row)
 		if isNull || err != nil {
-			return "", true, err
+			return "", true, ErrRegexp.GenWithStackByArgs(err)
 		}
 	}
 
@@ -468,7 +489,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		fillNullStringIntoResult(result, n)
@@ -481,7 +502,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		fillNullStringIntoResult(result, n)
@@ -494,7 +515,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		fillNullStringIntoResult(result, n)
@@ -508,7 +529,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 
 		compile, err := re.genCompile(matchType)
 		if err != nil {
-			return err
+			return ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		re.initMemoizedRegexp(compile, params[1].getCol(), n)
@@ -596,7 +617,7 @@ type regexpInStrFunctionClass struct {
 
 func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, err
+		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	argTp := []types.EvalType{types.ETString, types.ETString}
@@ -613,7 +634,7 @@ func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
 	if err != nil {
-		return nil, err
+		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	bf.tp.SetFlen(mysql.MaxIntWidth)
@@ -643,12 +664,12 @@ func (re *builtinRegexpInStrFuncSig) vectorized() bool {
 func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	if isNull || err != nil {
-		return 0, true, err
+		return 0, true, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
 	if isNull || err != nil {
-		return 0, true, err
+		return 0, true, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	pos := int64(1)
@@ -665,7 +686,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 	if arg_num >= 3 {
 		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
 		if isNull || err != nil {
-			return 0, true, err
+			return 0, true, ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		// Check position and trim expr
@@ -691,7 +712,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 	if arg_num >= 4 {
 		occurrence, isNull, err = re.args[3].EvalInt(re.ctx, row)
 		if isNull || err != nil {
-			return 0, true, err
+			return 0, true, ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		if occurrence < 1 {
@@ -702,7 +723,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 	if arg_num >= 5 {
 		returnOption, isNull, err = re.args[4].EvalInt(re.ctx, row)
 		if isNull || err != nil {
-			return 0, true, err
+			return 0, true, ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		if returnOption != 0 && returnOption != 1 {
@@ -713,7 +734,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 	if arg_num == 6 {
 		matchType, isNull, err = re.args[5].EvalString(re.ctx, row)
 		if isNull || err != nil {
-			return 0, true, err
+			return 0, true, ErrRegexp.GenWithStackByArgs(err)
 		}
 	}
 
@@ -773,7 +794,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 	for i := 0; i < 2; i++ {
 		param, isConstNull, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
 		if err != nil {
-			return err
+			return ErrRegexp.GenWithStackByArgs(err)
 		}
 		if isConstNull {
 			result.ResizeInt64(n, true)
@@ -790,7 +811,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		result.ResizeInt64(n, true)
@@ -803,7 +824,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		result.ResizeInt64(n, true)
@@ -816,7 +837,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		result.ResizeInt64(n, true)
@@ -829,7 +850,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		result.ResizeInt64(n, true)
@@ -843,7 +864,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 
 		compile, err := re.genCompile(matchType)
 		if err != nil {
-			return err
+			return ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		re.initMemoizedRegexp(compile, params[1].getCol(), n)
@@ -900,7 +921,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 		matchType := params[5].getStringVal(i)
 		reg, err := re.genRegexp(params[1].getStringVal(i), matchType)
 		if err != nil {
-			return err
+			return ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		// Find index
@@ -943,7 +964,7 @@ type regexpReplaceFunctionClass struct {
 
 func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, err
+		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	argTp := []types.EvalType{types.ETString, types.ETString}
@@ -960,7 +981,7 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTp...)
 	if err != nil {
-		return nil, err
+		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	argType := args[0].GetType()
@@ -992,17 +1013,17 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	trimmedExpr := expr
 	if isNull || err != nil {
-		return "", true, err
+		return "", true, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	pat, isNull, err := re.args[1].EvalString(re.ctx, row)
 	if isNull || err != nil {
-		return "", true, err
+		return "", true, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	repl, isNull, err := re.args[2].EvalString(re.ctx, row)
 	if isNull || err != nil {
-		return "", true, err
+		return "", true, ErrRegexp.GenWithStackByArgs(err)
 	}
 
 	pos := int64(1)
@@ -1021,7 +1042,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 	if arg_num >= 4 {
 		pos, isNull, err = re.args[3].EvalInt(re.ctx, row)
 		if isNull || err != nil {
-			return "", true, err
+			return "", true, ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		// Check position and trim expr
@@ -1047,7 +1068,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 	if arg_num >= 5 {
 		occurrence, isNull, err = re.args[4].EvalInt(re.ctx, row)
 		if isNull || err != nil {
-			return "", true, err
+			return "", true, ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		if occurrence < 0 {
@@ -1058,7 +1079,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 	if arg_num == 6 {
 		matchType, isNull, err = re.args[5].EvalString(re.ctx, row)
 		if isNull || err != nil {
-			return "", true, err
+			return "", true, ErrRegexp.GenWithStackByArgs(err)
 		}
 	}
 
@@ -1136,7 +1157,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 	for i := 0; i < 2; i++ {
 		param, isConstNull, err := buildStringParam(&re.baseBuiltinFunc, i, input, false)
 		if err != nil {
-			return err
+			return ErrRegexp.GenWithStackByArgs(err)
 		}
 		if isConstNull {
 			fillNullStringIntoResult(result, n)
@@ -1153,7 +1174,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		fillNullStringIntoResult(result, n)
@@ -1166,7 +1187,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		fillNullStringIntoResult(result, n)
@@ -1179,7 +1200,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		fillNullStringIntoResult(result, n)
@@ -1192,7 +1213,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 	params = append(params, param)
 
 	if err != nil {
-		return err
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
 	if isConstNull {
 		fillNullStringIntoResult(result, n)
@@ -1206,7 +1227,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 
 		compile, err := re.genCompile(matchType)
 		if err != nil {
-			return err
+			return ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		re.initMemoizedRegexp(compile, params[1].getCol(), n)
@@ -1265,7 +1286,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 		matchType := params[5].getStringVal(i)
 		reg, err := re.genRegexp(params[1].getStringVal(i), matchType)
 		if err != nil {
-			return err
+			return ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		if len(expr) == 0 {
