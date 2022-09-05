@@ -61,6 +61,22 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		store:   store,
 	}
 	tk.RefreshSession()
+	
+	dom, _ := session.GetDomain(store)
+	sm := dom.InfoSyncer().GetSessionManager()
+	if sm != nil {
+		mockSm, ok := sm.(*MockSessionManager)
+		if ok {
+			mockSm.Mu.Lock()
+			if mockSm.Conn == nil {
+				mockSm.Conn = make(map[uint64]session.Session)
+			}
+			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
+			mockSm.Mu.Unlock()
+		}
+		tk.session.SetSessionManager(sm)
+	}
+
 	return tk
 }
 

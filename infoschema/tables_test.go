@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
@@ -128,7 +127,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &testutil.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
@@ -294,7 +293,7 @@ func TestSomeTables(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
-	sm := &testutil.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
@@ -351,7 +350,7 @@ func TestSomeTables(t *testing.T) {
 			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
-	sm = &testutil.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
@@ -1382,7 +1381,7 @@ func TestTiDBTrx(t *testing.T) {
 	// by digest.
 	tk.MustExec("update test_tidb_trx set i = i + 1")
 	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
-	sm := &testutil.MockSessionManager{TxnInfo: make([]*txninfo.TxnInfo, 2)}
+	sm := &testkit.MockSessionManager{TxnInfo: make([]*txninfo.TxnInfo, 2)}
 	sm.TxnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),

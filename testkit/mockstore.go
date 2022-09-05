@@ -60,7 +60,11 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
-	return schematracker.UnwrapStorage(store), bootstrap(t, store, 0)
+	dom := bootstrap(t, store, 500*time.Millisecond)
+	sm := MockSessionManager{}
+	dom.InfoSyncer().SetSessionManager(&sm)
+	sm.Dom = dom
+	return schematracker.UnwrapStorage(store), dom
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
@@ -89,5 +93,9 @@ func CreateMockStoreWithSchemaLease(t testing.TB, lease time.Duration, opts ...m
 func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
-	return schematracker.UnwrapStorage(store), bootstrap(t, store, lease)
+	dom := bootstrap(t, store, lease)
+	sm := MockSessionManager{}
+	dom.InfoSyncer().SetSessionManager(&sm)
+	sm.Dom = dom
+	return schematracker.UnwrapStorage(store), dom
 }

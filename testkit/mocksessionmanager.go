@@ -12,11 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testutil
+package testkit
 
 import (
 	"crypto/tls"
+	"sync"
 
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/util"
 )
@@ -26,6 +29,9 @@ type MockSessionManager struct {
 	PS      []*util.ProcessInfo
 	SerID   uint64
 	TxnInfo []*txninfo.TxnInfo
+	Conn    map[uint64]session.Session
+	Dom     *domain.Domain
+	Mu      sync.Mutex
 }
 
 // ShowTxnList is to show txn list.
