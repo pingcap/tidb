@@ -1082,7 +1082,7 @@ func TestRegexpReplaceVec(t *testing.T) {
 
 	cases := make([]vecExprBenchCase, 0, 50)
 
-	// cases = append(cases, getVecExprBenchCaseForRegexp(types.ETString, false, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETString, false, args...))
 	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETString, true, args...))
 
 	// Prepare data: expr is constant
