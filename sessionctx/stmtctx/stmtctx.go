@@ -316,6 +316,8 @@ type StatementContext struct {
 	StatsLoadStatus map[model.TableItemID]string
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
 }
 
 // StmtHints are SessionVars related sql hints.

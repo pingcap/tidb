@@ -56,6 +56,10 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 	}
 	var argCombines [][]*types.FieldType
 	for i := 0; i < len(typeList); i++ {
+		if typeList[i].GetCharset() == charset.CharsetBin {
+			// skip because binary charset cannot be used as key.
+			continue
+		}
 		for j := 0; j < len(typeList); j++ {
 			argTypes := []*types.FieldType{typeList[i], typeList[j]}
 			argCombines = append(argCombines, argTypes)
@@ -112,6 +116,10 @@ func TestJsonObjectagg(t *testing.T) {
 	}
 	var argCombines [][]*types.FieldType
 	for i := 0; i < len(typeList); i++ {
+		if typeList[i].GetCharset() == charset.CharsetBin {
+			// skip because binary charset cannot be used as key.
+			continue
+		}
 		for j := 0; j < len(typeList); j++ {
 			argTypes := []*types.FieldType{typeList[i], typeList[j]}
 			argCombines = append(argCombines, argTypes)
