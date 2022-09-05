@@ -15,10 +15,14 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -27,10 +31,18 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
+	tikverr "github.com/tikv/client-go/v2/error"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/rangetask"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -41,6 +53,11 @@ var pdScheduleKey = []string{
 	"region-schedule-limit",
 	"replica-schedule-limit",
 }
+
+const (
+	flashbackMaxBackoff = 300000           // 300s
+	flashbackTimeout    = 30 * time.Second // 30s
+)
 
 func closePDSchedule() error {
 	closeMap := make(map[string]interface{})
@@ -223,6 +240,91 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRa
 	return keyRanges, nil
 }
 
+func flashbackToVersion(
+	ctx context.Context,
+	s tikv.Storage,
+	version uint64,
+	r tikvstore.KeyRange,
+) (rangetask.TaskStat, error) {
+	startKey, rangeEndKey := r.StartKey, r.EndKey
+	var taskStat rangetask.TaskStat
+	for {
+		select {
+		case <-ctx.Done():
+			return taskStat, errors.WithStack(ctx.Err())
+		default:
+		}
+
+		if len(rangeEndKey) > 0 && bytes.Compare(startKey, rangeEndKey) >= 0 {
+			break
+		}
+
+		bo := tikv.NewBackoffer(ctx, flashbackMaxBackoff)
+		loc, err := s.GetRegionCache().LocateKey(bo, startKey)
+		if err != nil {
+			return taskStat, err
+		}
+
+		endKey := loc.EndKey
+		isLast := len(endKey) == 0 || (len(rangeEndKey) > 0 && bytes.Compare(endKey, rangeEndKey) >= 0)
+		// If it is the last region
+		if isLast {
+			endKey = rangeEndKey
+		}
+
+		req := tikvrpc.NewRequest(tikvrpc.CmdFlashbackToVersion, &kvrpcpb.FlashbackToVersionRequest{
+			Version:  version,
+			StartKey: startKey,
+			EndKey:   endKey,
+		})
+
+		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
+		if err != nil {
+			return taskStat, err
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return taskStat, err
+		}
+		if regionErr != nil {
+			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
+			if err != nil {
+				return taskStat, err
+			}
+			continue
+		}
+		if resp.Resp == nil {
+			return taskStat, errors.WithStack(tikverr.ErrBodyMissing)
+		}
+		flashbackToVersionResp := resp.Resp.(*kvrpcpb.FlashbackToVersionResponse)
+		if err := flashbackToVersionResp.GetError(); err != "" {
+			return taskStat, errors.Errorf("unexpected flashback to version err: %v", err)
+		}
+		taskStat.CompletedRegions++
+		if isLast {
+			break
+		}
+		startKey = endKey
+	}
+	return taskStat, nil
+}
+
+func FlashbackToVersion(
+	ctx context.Context,
+	d *ddlCtx,
+	version uint64,
+	startKey []byte, endKey []byte,
+) (err error) {
+	return rangetask.NewRangeTaskRunner(
+		"flashback-to-version-runner",
+		d.store.(tikv.Storage),
+		int(variable.GetFlashbackConcurrency()),
+		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+			return flashbackToVersion(ctx, d.store.(tikv.Storage), version, r)
+		},
+	).RunOnRange(ctx, startKey, endKey)
+}
+
 // A Flashback has 3 different stages.
 // 1. before lock flashbackClusterJobID, check clusterJobID and lock it.
 // 2. before flashback start, check timestamp, disable GC and close PD schedule.
@@ -283,11 +385,19 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		defer w.sessPool.put(sess)
-		_, err = GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
+		keyRanges, err := GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
+		for _, ranges := range keyRanges {
+			if err = FlashbackToVersion(context.Background(), d, flashbackTS, ranges.StartKey, ranges.EndKey); err != nil {
+				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
+				return ver, err
+			}
+		}
+
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionFlashbackCluster})
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
 		return ver, nil
