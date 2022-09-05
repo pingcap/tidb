@@ -65,7 +65,7 @@ func NewEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 func (ei *engineInfo) Flush() error {
 	err := ei.openedEngine.Flush(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}
 	return nil
@@ -78,13 +78,13 @@ func (ei *engineInfo) Clean() {
 	indexEngine := ei.openedEngine
 	closedEngine, err := indexEngine.Close(ei.ctx, ei.cfg)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 	ei.openedEngine = nil
 	// Here the local intermediate files will be removed.
 	err = closedEngine.Cleanup(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 }
 
@@ -139,14 +139,14 @@ func (ei *engineInfo) NewWriterCtx(id int) (*WriterContext, error) {
 
 	wCtx, err := ei.newWriterContext(id)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCreateContextFail, zap.Int64("index ID", ei.indexID),
+		logutil.BgLogger().Error(LitErrCreateContextFail, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID),
 			zap.Int("worker ID", id))
 		return nil, err
 	}
 
 	ei.memRoot.Consume(StructSizeWriterCtx)
-	logutil.BgLogger().Info(LitInfoCreateWrite, zap.Int64("index ID", ei.indexID),
-		zap.Int("worker ID", id),
+	logutil.BgLogger().Info(LitInfoCreateWrite, zap.Int64("job ID", ei.jobID),
+		zap.Int64("index ID", ei.indexID), zap.Int("worker ID", id),
 		zap.Int64("allocate memory", StructSizeWriterCtx),
 		zap.Int64("current memory usage", ei.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", ei.memRoot.MaxMemoryQuota()))
