@@ -62,9 +62,6 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 		id := openedEn.GetEngineUUID()
 		en = NewEngineInfo(bc.ctx, job.ID, indexID, cfg, openedEn, id, 1, m.MemRoot, m.DiskRoot)
 		m.Store(indexID, en)
-		if err != nil {
-			return errors.New(LitErrCreateEngineFail)
-		}
 		m.MemRoot.Consume(StructSizeEngineInfo)
 		m.MemRoot.ConsumeWithTag(encodeEngineTag(job.ID, indexID), engineCacheSize)
 	} else {

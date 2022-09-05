@@ -114,5 +114,8 @@ func genLightningDataDir() (string, error) {
 	return sortPath, nil
 }
 
+// GenRLimitForTest is only used for test.
+var GenRLimitForTest = genRLimit
+
 // GenLightningDataDirForTest is only used for test.
 var GenLightningDataDirForTest = genLightningDataDir
