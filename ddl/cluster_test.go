@@ -158,9 +158,9 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	defer resetGC()
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	// Try canceled on StateNone, cancel success
+	// Try canceled on StateWriteOnly, cancel success
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
-		return job.SchemaState == model.StateNone
+		return job.SchemaState == model.StateWriteOnly
 	})
 	dom.DDL().SetHook(hook)
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)), errno.ErrCancelledDDLJob)

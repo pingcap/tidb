@@ -231,56 +231,62 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Trace(err)
 	}
 
-	flashbackJobID, err := t.GetFlashbackClusterJobID()
-	if err != nil {
-		return ver, err
-	}
-
+	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and save the PD schedule.
-	if flashbackJobID == 0 {
-		err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			return meta.NewMeta(txn).SetFlashbackClusterJobID(job.ID)
-		})
+	case model.StateNone:
+		flashbackJobID, err := t.GetFlashbackClusterJobID()
+		if err != nil {
+			return ver, err
+		}
+		if flashbackJobID == 0 || flashbackJobID == job.ID {
+			err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
+				return meta.NewMeta(txn).SetFlashbackClusterJobID(job.ID)
+			})
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			if err = savePDSchedule(job); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		} else {
+			job.State = model.JobStateCancelled
+			return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
+		}
+		job.SchemaState = model.StateWriteOnly
+		return ver, nil
+	// Stage 2, check flashbackTS, close GC and PD schedule.
+	case model.StateWriteOnly:
+		sess, err := w.sessPool.get()
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		if err = savePDSchedule(job); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateNone
-		return ver, nil
-	} else if flashbackJobID != job.ID {
-		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
-	}
-
-	sess, err := w.sessPool.get()
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, nil
-	}
-	defer w.sessPool.put(sess)
-
-	// Stage 2, check flashbackTS, close GC and PD schedule.
-	if job.SchemaState == model.StateNone {
+		defer w.sessPool.put(sess)
 		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteReorganization
 		return ver, nil
-	}
-
 	// Stage 3, get key ranges.
-	_, err = GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
+	case model.StateWriteReorganization:
+		sess, err := w.sessPool.get()
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		defer w.sessPool.put(sess)
+		_, err = GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 
-	job.State = model.JobStateDone
-	job.SchemaState = model.StatePublic
+		job.State = model.JobStateDone
+		job.SchemaState = model.StatePublic
+		return ver, nil
+	}
 	return ver, nil
 }
 
