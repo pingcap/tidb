@@ -26,6 +26,7 @@ import (
 )
 
 var _ = yyLexer(&Scanner{})
+var _ = yyparameterizeLexer(&Scanner4Parameterize{})
 
 // Pos represents the position of a token.
 type Pos struct {
@@ -80,6 +81,11 @@ type Scanner struct {
 
 	// true if a dot follows an identifier
 	identifierDot bool
+}
+
+// Scanner4Parameterize implements the yyparameterizeLexer interface.
+type Scanner4Parameterize struct {
+	*Scanner
 }
 
 // Errors returns the errors and warns during a scan.
@@ -264,6 +270,41 @@ func (s *Scanner) Lex(v *yySymType) int {
 	return tok
 }
 
+// Lex returns a token and store the token value in v.
+// Scanner4Parameterize satisfies yyparameterizeLexer interface.
+// 0 and invalid are special token id this function would return:
+// return 0 tells parser that scanner meets EOF,
+// return invalid tells parser that scanner meets illegal character.
+func (s *Scanner4Parameterize) Lex(v *yyparameterizeSymType) int {
+	tok, pos, lit := s.scan()
+	s.lastScanOffset = pos.Offset
+	s.lastKeyword3 = s.lastKeyword2
+	s.lastKeyword2 = s.lastKeyword
+	s.lastKeyword = 0
+	v.offset = pos.Offset
+	v.ident = lit
+	if tok == identifier {
+		v.ident = lit
+		if tok1, ok := parameterizeTokenMap[strings.ToUpper(lit)]; ok {
+			return tok1
+		}
+	}
+
+	switch tok {
+	case intLit:
+		return toInt4Parameterize(s, v, lit)
+	case floatLit:
+		return toFloat4Parameterize(s, v, lit)
+	case null:
+		v.item = nil
+		tok = pNull
+	case identifier:
+		tok = pIdentifier
+	}
+
+	return tok
+}
+
 // LexLiteral returns the value of the converted literal
 func (s *Scanner) LexLiteral() interface{} {
 	symType := &yySymType{}
@@ -307,6 +348,22 @@ func NewScanner(s string) *Scanner {
 }
 
 func (*Scanner) handleIdent(lval *yySymType) int {
+	str := lval.ident
+	// A character string literal may have an optional character set introducer and COLLATE clause:
+	// [_charset_name]'string' [COLLATE collation_name]
+	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+	if !strings.HasPrefix(str, "_") {
+		return identifier
+	}
+	cs, _ := charset.GetCharsetInfo(str[1:])
+	if cs == nil {
+		return identifier
+	}
+	lval.ident = cs.Name
+	return underscoreCS
+}
+
+func (*Scanner4Parameterize) handleIdent(lval *yyparameterizeSymType) int {
 	str := lval.ident
 	// A character string literal may have an optional character set introducer and COLLATE clause:
 	// [_charset_name]'string' [COLLATE collation_name]

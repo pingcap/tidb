@@ -1578,8 +1578,8 @@ func (s *session) Parameterize(ctx context.Context, originSQL string) (exec *ast
 	if !s.GetSessionVars().EnableGeneralPlanCache {
 		return nil, false
 	}
-	paramSQL, params, ok, err := plannercore.Parameterize(s, originSQL)
-	if !ok || err != nil {
+	paramSQL, params, ok := plannercore.Parameterize(s, originSQL)
+	if !ok {
 		return nil, false
 	}
 	cachedStmt, err := s.CacheGeneralStmt(paramSQL)

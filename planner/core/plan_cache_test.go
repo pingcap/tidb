@@ -95,3 +95,25 @@ func TestGeneralPlanCacheParameterizer(t *testing.T) {
 	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
+
+func TestGeneralPlanCache4GeneratedParameterizer(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKitWithGeneralPlanCache(t, store)
+
+	tk.MustExec("set tidb_enable_general_plan_cache=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (0), (1), (2), (3), (4), (5)")
+	tk.MustQuery("select * from t where a > 1").Sort().Check(testkit.Rows("2", "3", "4", "5"))
+	tk.MustQuery("select * from t where a > 3").Sort().Check(testkit.Rows("4", "5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where a > 1 and a < 5").Sort().Check(testkit.Rows("2", "3", "4"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("select * from t t1 join t t2 on t1.a = t2.a")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("select * from t t1 join t t2 on t1.a = t2.a")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}

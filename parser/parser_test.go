@@ -347,6 +347,15 @@ func TestSpecialComments(t *testing.T) {
 	require.Len(t, sel.TableHints, 0)
 }
 
+func TestParameterizer(t *testing.T) {
+	p := parser.NewParameterizer()
+
+	parseSQL, params, err := p.ParseOneStmt(`SELECT * FROM t WHERE a > 1 AND b < 2`, "", "")
+	require.NoError(t, err)
+	require.Equal(t, "SELECT * FROM t WHERE a> ? AND b< ? ", parseSQL)
+	require.Equal(t, len(params), 2)
+}
+
 type testCase struct {
 	src     string
 	ok      bool
