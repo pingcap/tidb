@@ -145,6 +145,7 @@ type StatementContext struct {
 	// in stmtCtx
 	IsStaleness     bool
 	InRestrictedSQL bool
+	ViewDepth       int32
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
