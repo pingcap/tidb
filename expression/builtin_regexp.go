@@ -21,7 +21,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -163,11 +162,7 @@ func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 
-	if c.funcName == ast.Regexp {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpSig)
-	} else {
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeSig)
-	}
+	sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeSig)
 
 	return &sig, nil
 }
