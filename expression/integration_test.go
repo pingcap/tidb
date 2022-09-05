@@ -2385,6 +2385,10 @@ func TestJSONBuiltin(t *testing.T) {
 
 	r = tk.MustQuery(`select json_valid('"2019-8-19"');`)
 	r.Check(testkit.Rows("1"))
+
+	tk.MustGetErrCode(`select json_merge(1, 2);`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_merge_preserve(1, 2);`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_merge_patch(1, 2);`, mysql.ErrInvalidTypeForJSON)
 }
 
 func TestTimeLiteral(t *testing.T) {
