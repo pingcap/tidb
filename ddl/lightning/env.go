@@ -113,3 +113,6 @@ func genLightningDataDir() (string, error) {
 	logutil.BgLogger().Info(LitInfoSortDir, zap.String("data path:", sortPath))
 	return sortPath, nil
 }
+
+// GenLightningDataDirForTest is only used for test.
+var GenLightningDataDirForTest = genLightningDataDir
