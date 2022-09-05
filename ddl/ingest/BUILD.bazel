@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "lightning",
+    name = "ingest",
     srcs = [
         "backend.go",
         "backend_mgr.go",
@@ -13,7 +13,7 @@ go_library(
         "mem_root.go",
         "message.go",
     ],
-    importpath = "github.com/pingcap/tidb/ddl/lightning",
+    importpath = "github.com/pingcap/tidb/ddl/ingest",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
@@ -44,14 +44,14 @@ go_library(
 )
 
 go_test(
-    name = "lightning_test",
+    name = "ingest_test",
     srcs = [
         "env_test.go",
         "mem_root_test.go",
     ],
     flaky = True,
     deps = [
-        ":lightning",
+        ":ingest",
         "//config",
         "@com_github_stretchr_testify//require",
     ],
