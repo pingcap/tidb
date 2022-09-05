@@ -2009,11 +2009,13 @@ func TestHJBuildAndProbeHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(a int primary key, b int not null)")
 	tk.MustExec("create table t2(a int primary key, b int not null)")
+	tk.MustExec("create table t3(a int primary key, b int not null)")
 	tk.MustExec("insert into t1 values(1,1),(2,2)")
 	tk.MustExec("insert into t2 values(1,1),(2,1)")
+	tk.MustExec("insert into t3 values(1,1),(2,1)")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
