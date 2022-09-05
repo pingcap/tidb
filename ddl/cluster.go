@@ -236,6 +236,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	case model.StateNone:
 		flashbackJobID, err := t.GetFlashbackClusterJobID()
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, err
 		}
 		if flashbackJobID == 0 || flashbackJobID == job.ID {
