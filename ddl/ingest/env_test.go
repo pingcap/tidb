@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package lightning_test
+package ingest_test
 
 import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/lightning"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +28,7 @@ func TestGenLightningDataDir(t *testing.T) {
 		conf.TempDir = tmpDir
 		conf.Port = iPort
 	})
-	sPath, err := lightning.GenLightningDataDirForTest()
+	sPath, err := injest.GenLightningDataDirForTest()
 	require.NoError(t, err)
 	require.Equal(t, tmpDir+"/tmp_ddl-"+port, sPath)
 }

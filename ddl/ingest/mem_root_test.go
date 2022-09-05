@@ -12,17 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package lightning_test
+package ingest_test
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/ddl/lightning"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMemoryRoot(t *testing.T) {
-	memRoot := lightning.MemRoot(lightning.NewMemRootImpl(1024, nil))
+	memRoot := injest.MemRoot(injest.NewMemRootImpl(1024, nil))
 	require.Equal(t, int64(1024), memRoot.MaxMemoryQuota())
 	require.Equal(t, int64(0), memRoot.CurrentUsage())
 
