@@ -16,6 +16,9 @@ package core
 
 import (
 	"errors"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/types"
 	"strings"
 	"sync"
 
@@ -126,4 +129,24 @@ func RestoreASTWithParams(_ sessionctx.Context, stmt ast.StmtNode, params []*dri
 	pr.params = params
 	stmt.Accept(pr)
 	return pr.err
+}
+
+// Params2Expressions converts these parameters to an expression list.
+func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
+	exprs := make([]expression.Expression, 0, len(params))
+	for _, p := range params {
+		tp := new(types.FieldType)
+		types.DefaultParamTypeForValue(p.Datum.GetValue(), tp)
+		exprs = append(exprs, &expression.Constant{
+			Value:   p.Datum,
+			RetType: tp,
+		})
+	}
+	return exprs
+}
+
+// Available4GeneralPlanCache checks where this stmt is available for general plan cache.
+func Available4GeneralPlanCache(_ sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) bool {
+	// TODO: implement this function
+	return true
 }
