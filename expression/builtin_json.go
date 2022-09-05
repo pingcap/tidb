@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -496,6 +497,9 @@ func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	for i := 0; i < len(args)-1; i += 2 {
+		if args[i].GetType().EvalType() == types.ETString && args[i].GetType().GetCharset() == charset.CharsetBin {
+			return nil, json.ErrInvalidJSONCharset.GenWithStackByArgs(args[i].GetType().GetCharset())
+		}
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)

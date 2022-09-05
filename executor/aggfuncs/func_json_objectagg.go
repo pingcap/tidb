@@ -79,6 +79,10 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			return 0, json.ErrJSONDocumentNULLKey
 		}
 
+		if e.args[0].GetType().GetCharset() == charset.CharsetBin {
+			return 0, json.ErrInvalidJSONCharset.GenWithStackByArgs(e.args[0].GetType().GetCharset())
+		}
+
 		value, err := e.args[1].Eval(row)
 		if err != nil {
 			return 0, errors.Trace(err)
