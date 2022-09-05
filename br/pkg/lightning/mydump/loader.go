@@ -30,6 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// MDDatabaseMeta contains some parsed metadata for a database in the source by MyDumper Loader.
 type MDDatabaseMeta struct {
 	Name       string
 	SchemaFile FileInfo
@@ -45,6 +46,7 @@ func NewMDDatabaseMeta(charSet string) *MDDatabaseMeta {
 	}
 }
 
+// GetSchema gets the schema SQL for a source database.
 func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
 	if m.SchemaFile.FileMeta.Path != "" {
 		schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
@@ -61,6 +63,7 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 	return "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
 }
 
+// MDTableMeta contains some parsed metadata for a table in the source by MyDumper Loader.
 type MDTableMeta struct {
 	DB           string
 	Name         string
@@ -72,6 +75,7 @@ type MDTableMeta struct {
 	IsRowOrdered bool
 }
 
+// SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
 type SourceFileMeta struct {
 	Path        string
 	Type        SourceType
@@ -87,7 +91,19 @@ func NewMDTableMeta(charSet string) *MDTableMeta {
 	}
 }
 
+// GetSchema gets the table-creating SQL for a source table.
 func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {
+	schemaFilePath := m.SchemaFile.FileMeta.Path
+	if len(schemaFilePath) <= 0 {
+		return "", errors.Errorf("schema file is missing for the table '%s.%s'", m.DB, m.Name)
+	}
+	fileExists, err := store.FileExists(ctx, schemaFilePath)
+	if err != nil {
+		return "", errors.Annotate(err, "check table schema file exists error")
+	}
+	if !fileExists {
+		return "", errors.Errorf("the provided schema file (%s) for the table '%s.%s' doesn't exist", schemaFilePath, m.DB, m.Name)
+	}
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
 		log.FromContext(ctx).Error("failed to extract table schema",
@@ -124,9 +140,7 @@ func WithMaxScanFiles(maxScanFiles int) MDLoaderSetupOption {
 	}
 }
 
-/*
-Mydumper File Loader
-*/
+// MDLoader is for 'Mydumper File Loader', which loads the files in the data source and generates a set of metadata.
 type MDLoader struct {
 	store  storage.ExternalStorage
 	dbs    []*MDDatabaseMeta
@@ -148,6 +162,7 @@ type mdLoaderSetup struct {
 	setupCfg      *MDLoaderSetupConfig
 }
 
+// NewMyDumpLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
 func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	u, err := storage.ParseBackend(cfg.Mydumper.SourceDir, nil)
 	if err != nil {
@@ -161,6 +176,7 @@ func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSe
 	return NewMyDumpLoaderWithStore(ctx, cfg, s, opts...)
 }
 
+// NewMyDumpLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
 func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
@@ -238,6 +254,7 @@ const (
 	fileTypeTableData
 )
 
+// String implements the Stringer interface.
 func (ftype fileType) String() string {
 	switch ftype {
 	case fileTypeDatabaseSchema:
@@ -251,6 +268,7 @@ func (ftype fileType) String() string {
 	}
 }
 
+// FileInfo contains the information for a data file in a table.
 type FileInfo struct {
 	TableName filter.Table
 	FileMeta  SourceFileMeta
@@ -502,7 +520,7 @@ func (s *mdLoaderSetup) insertDB(f FileInfo) (*MDDatabaseMeta, bool) {
 	return ptr, false
 }
 
-func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool) {
+func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (tblMeta *MDTableMeta, dbExists bool, tableExists bool) {
 	dbFileInfo := FileInfo{
 		TableName: filter.Table{
 			Schema: fileInfo.TableName.Schema,
@@ -528,7 +546,7 @@ func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool
 	return ptr, dbExists, false
 }
 
-func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (bool, bool) {
+func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, tableExists bool) {
 	dbFileInfo := FileInfo{
 		TableName: filter.Table{
 			Schema: fileInfo.TableName.Schema,
@@ -551,10 +569,12 @@ func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (bool, bool) {
 	return dbExists, ok
 }
 
+// GetDatabases gets the list of scanned MDDatabaseMeta for the loader.
 func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 	return l.dbs
 }
 
+// GetStore gets the external storage used by the loader.
 func (l *MDLoader) GetStore() storage.ExternalStorage {
 	return l.store
 }
