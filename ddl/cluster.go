@@ -92,13 +92,7 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
-func checkAndSetFlashbackClusterInfo(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
-	sess, err := w.sessPool.get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer w.sessPool.put(sess)
-
+func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
 		return err
 	}
@@ -255,15 +249,23 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		job.SchemaState = model.StateNone
 		return ver, nil
 	} else if flashbackJobID != job.ID {
 		job.State = model.JobStateCancelled
 		return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
 	}
 
+	sess, err := w.sessPool.get()
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, nil
+	}
+	defer w.sessPool.put(sess)
+
 	// Stage 2, check flashbackTS, close GC and PD schedule.
 	if job.SchemaState == model.StateNone {
-		if err = checkAndSetFlashbackClusterInfo(w, d, t, job, flashbackTS); err != nil {
+		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -272,7 +274,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	}
 
 	// Stage 3, get key ranges.
-	_, err = GetFlashbackKeyRanges(w.sess, tablecodec.EncodeTablePrefix(0))
+	_, err = GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
