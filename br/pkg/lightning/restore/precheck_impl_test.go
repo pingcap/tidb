@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -59,7 +60,7 @@ func (s *precheckImplSuite) setMockImportData(mockDataMap map[string]*mock.MockD
 	if err != nil {
 		return err
 	}
-	s.preInfoGetter, err = NewPreRestoreInfoGetter(s.cfg, s.mockSrc.GetAllDBFileMetas(), s.mockSrc.GetStorage(), s.mockTarget, nil, nil, WithIgnoreDBNotExist(true))
+	s.preInfoGetter, err = NewPreRestoreInfoGetter(s.cfg, s.mockSrc.GetAllDBFileMetas(), s.mockSrc.GetStorage(), s.mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
 	if err != nil {
 		return err
 	}
