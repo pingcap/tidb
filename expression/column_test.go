@@ -263,3 +263,10 @@ func TestGcColumnExprIsTidbShard(t *testing.T) {
 	shardExpr := NewFunctionInternal(ctx, ast.TiDBShard, ft, col)
 	require.True(t, GcColumnExprIsTidbShard(shardExpr))
 }
+
+func TestColumnMemeoryUsage(t *testing.T) {
+	col1 := Column{OrigName: "Origin"}
+	col2 := Column{OrigName: "OriginName"}
+
+	require.Greater(t, col2.MemoryUsage(), col1.MemoryUsage())
+}

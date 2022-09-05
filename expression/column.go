@@ -16,8 +16,6 @@ package expression
 
 import (
 	"fmt"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -30,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"golang.org/x/exp/slices"
+	"strings"
+	"unsafe"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -722,4 +722,19 @@ func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
 	}
 
 	return true
+}
+
+const emptyColumnSize = int64(unsafe.Sizeof(Column{}))
+
+// MemoryUsage return the memory usage of Column
+func (col *Column) MemoryUsage() (sum int64) {
+	if col == nil {
+		return
+	}
+
+	sum = emptyColumnSize +
+		int64(cap(col.hashcode)) +
+		int64(len(col.OrigName)+len(col.charset)+len(col.collation))
+
+	return
 }
