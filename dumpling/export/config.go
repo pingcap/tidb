@@ -17,6 +17,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -103,6 +104,7 @@ type Config struct {
 	User     string
 	Password string `json:"-"`
 	Security struct {
+		DriveTLSName string `json:"-"`
 		CAPath       string
 		CertPath     string
 		KeyPath      string
@@ -666,8 +668,8 @@ func registerTLSConfig(conf *Config) error {
 		if conf.Host == "127.0.0.1" || len(conf.Security.SSLCertBytes) == 0 || len(conf.Security.SSLKEYBytes) == 0 {
 			tlsConfig.InsecureSkipVerify = true
 		}
-		// TODO: use separate name when dumpling as DM library
-		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)
+		conf.Security.DriveTLSName = "dumpling" + uuid.NewString()
+		err = mysql.RegisterTLSConfig(conf.Security.DriveTLSName, tlsConfig)
 		if err != nil {
 			return errors.Trace(err)
 		}
