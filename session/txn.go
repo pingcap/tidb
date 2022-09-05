@@ -450,6 +450,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 		}
 		keys = append(keys, k)
 	})
+
 	return keys, nil
 }
 
@@ -483,6 +484,13 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		// meta key always need to lock.
 		return true
 	}
+
+	// a pessimistic locking is skipped, perform the conflict check and
+	// constraint check (more accurately, PresumeKeyNotExist) in prewrite (or later pessimistic locking)
+	if flags.HasNeedConstraintCheckInPrewrite() {
+		return false
+	}
+
 	if flags.HasPresumeKeyNotExists() {
 		return true
 	}

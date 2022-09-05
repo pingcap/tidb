@@ -43,7 +43,7 @@ func (bucketMap SlowQueryBucket) String() string {
 	if bucketMap == nil {
 		return "nil"
 	}
-	var retStr string = "{"
+	var retStr = "{"
 	for k, v := range bucketMap {
 		retStr += k + ":" + strconv.Itoa(v) + ","
 	}
