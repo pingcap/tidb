@@ -264,7 +264,7 @@ func TestGcColumnExprIsTidbShard(t *testing.T) {
 	require.True(t, GcColumnExprIsTidbShard(shardExpr))
 }
 
-func TestColumnMemeoryUsage(t *testing.T) {
+func TestColumnMemoryUsage(t *testing.T) {
 	col1 := Column{OrigName: "Origin"}
 	col2 := Column{OrigName: "OriginName"}
 
