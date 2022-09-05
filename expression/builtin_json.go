@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -427,6 +428,18 @@ type jsonMergeFunctionClass struct {
 	baseFunctionClass
 }
 
+func (c *jsonMergeFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	for i, arg := range args {
+		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge")
+		}
+	}
+	return nil
+}
+
 type builtinJSONMergeSig struct {
 	baseBuiltinFunc
 }
@@ -496,6 +509,9 @@ func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	for i := 0; i < len(args)-1; i += 2 {
+		if args[i].GetType().EvalType() == types.ETString && args[i].GetType().GetCharset() == charset.CharsetBin {
+			return nil, json.ErrInvalidJSONCharset.GenWithStackByArgs(args[i].GetType().GetCharset())
+		}
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
@@ -1050,6 +1066,18 @@ type jsonMergePatchFunctionClass struct {
 	baseFunctionClass
 }
 
+func (c *jsonMergePatchFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	for i, arg := range args {
+		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_patch")
+		}
+	}
+	return nil
+}
+
 func (c *jsonMergePatchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -1105,6 +1133,18 @@ func (b *builtinJSONMergePatchSig) evalJSON(row chunk.Row) (res json.BinaryJSON,
 
 type jsonMergePreserveFunctionClass struct {
 	baseFunctionClass
+}
+
+func (c *jsonMergePreserveFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	for i, arg := range args {
+		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_preserve")
+		}
+	}
+	return nil
 }
 
 func (c *jsonMergePreserveFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {

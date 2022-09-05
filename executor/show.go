@@ -799,17 +799,6 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 	return nil
 }
 
-func (e *ShowExec) sysVarHiddenForSem(sysVarNameInLower string) bool {
-	if !sem.IsEnabled() || !sem.IsInvisibleSysVar(sysVarNameInLower) {
-		return false
-	}
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker == nil || checker.RequestDynamicVerification(e.ctx.GetSessionVars().ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
-		return false
-	}
-	return true
-}
-
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
 		value       string
@@ -839,7 +828,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
 				}
-				if e.sysVarHiddenForSem(v.Name) {
+				if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 					continue
 				}
 				value, err = sessionVars.GetGlobalSystemVar(v.Name)
@@ -864,7 +853,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if e.sysVarHiddenForSem(v.Name) {
+		if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 			continue
 		}
 		value, err = sessionVars.GetSessionOrGlobalSystemVar(v.Name)
@@ -1764,10 +1753,6 @@ func (e *ShowExec) tableAccessDenied(access string, table string) error {
 
 func (e *ShowExec) appendRow(row []interface{}) {
 	for i, col := range row {
-		if col == nil {
-			e.result.AppendNull(i)
-			continue
-		}
 		switch x := col.(type) {
 		case nil:
 			e.result.AppendNull(i)

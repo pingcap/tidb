@@ -1196,6 +1196,9 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	require.Equal(t, "cop[tikv]", rows[len(rows)-1][2])
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	// allowing mpp will generate mpp[tiflash] plan, the test framework will time out due to
+	// "retry for TiFlash peer with region missing", so disable mpp mode to use cop mode instead.
+	tk.MustExec("set @@session.tidb_allow_mpp=0")
 	tk.MustExec("execute stmt")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}

@@ -245,6 +245,9 @@ type Transaction interface {
 
 	// RollbackMemDBToCheckpoint rollbacks the transaction's memDB to the specified checkpoint.
 	RollbackMemDBToCheckpoint(*tikv.MemDBCheckpoint)
+
+	// UpdateMemBufferFlags updates the flags of a node in the mem buffer.
+	UpdateMemBufferFlags(key []byte, flags ...FlagsOp)
 }
 
 // AssertionProto is an interface defined for the assertion protocol.

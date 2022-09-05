@@ -1783,6 +1783,18 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptInt64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(DefTiDBConstraintCheckInPlacePessimistic), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
+			if !s.ConstraintCheckInPlacePessimistic {
+				metrics.LazyPessimisticUniqueCheckSetCount.Inc()
+			}
+			return nil
+		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashReadForWriteStmt, Value: BoolToOnOff(DefTiDBEnableTiFlashReadForWriteStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableTiFlashReadForWriteStmt = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -2091,6 +2103,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
-	//SQLRequirePrimaryKey is the name of `sql_require_primary_key` system variable.
+	// SQLRequirePrimaryKey is the name of `sql_require_primary_key` system variable.
 	SQLRequirePrimaryKey = "sql_require_primary_key"
 )
