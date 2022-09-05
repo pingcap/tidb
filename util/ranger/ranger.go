@@ -468,7 +468,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
 func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCount int,
 	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
-	ranges, newAccessConds, newFilterConds, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessConds)
+	ranges, newAccessConds, remainedConds, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessConds)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -483,7 +483,7 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCoun
 		}
 	}
 
-	return ranges, newAccessConds, newFilterConds, nil
+	return ranges, newAccessConds, remainedConds, nil
 }
 
 type sortRange struct {
@@ -679,15 +679,17 @@ func points2EqOrInCond(ctx sessionctx.Context, points []*point, col *expression.
 }
 
 // DetachCondAndBuildRangeForPartition will detach the index filters from table filters.
+// When rangeMemQuota is 0, there is no memory limit for building ranges.
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
 func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) (*DetachRangeResult, error) {
+	lengths []int, rangeMemQuota int64) (*DetachRangeResult, error) {
 	d := &rangeDetacher{
 		sctx:             sctx,
 		allConds:         conditions,
 		cols:             cols,
 		lengths:          lengths,
 		mergeConsecutive: false,
+		rangeMemQuota:    rangeMemQuota,
 	}
 	return d.detachCondAndBuildRangeForCols()
 }

@@ -276,12 +276,15 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	if emptyRange {
 		return res, nil
 	}
-	var newFilterConds []expression.Expression
-	ranges, accessConds, newFilterConds, err = d.buildRangeOnColsByCNFCond(tpSlice, len(accessConds), accessConds)
+	var remainedConds []expression.Expression
+	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(tpSlice, len(accessConds), accessConds)
 	if err != nil {
 		return nil, err
 	}
-	filterConds = append(filterConds, newFilterConds...)
+	if len(remainedConds) > 0 {
+		filterConds = removeConditions(filterConds, remainedConds)
+		newConditions = append(newConditions, remainedConds...)
+	}
 	for ; eqCount < len(accessConds); eqCount++ {
 		if accessConds[eqCount].(*expression.ScalarFunction).FuncName.L != ast.EQ {
 			break
@@ -394,11 +397,11 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		}
 		// `eqOrInCount` must be 0 when coming here.
 		res.AccessConds, res.RemainedConds = detachColumnCNFConditions(d.sctx, newConditions, checker)
-		ranges, res.AccessConds, newFilterConds, err = d.buildCNFIndexRange(tpSlice, 0, res.AccessConds)
+		ranges, res.AccessConds, remainedConds, err = d.buildCNFIndexRange(tpSlice, 0, res.AccessConds)
 		if err != nil {
 			return nil, err
 		}
-		res.RemainedConds = append(res.RemainedConds, newFilterConds...)
+		res.RemainedConds = append(res.RemainedConds, remainedConds...)
 		res.Ranges = ranges
 		return res, nil
 	}
@@ -409,11 +412,11 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		}
 		accessConds = append(accessConds, cond)
 	}
-	ranges, accessConds, newFilterConds, err = d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
+	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
 	if err != nil {
 		return nil, err
 	}
-	filterConds = append(filterConds, newFilterConds...)
+	filterConds = append(filterConds, remainedConds...)
 	res.Ranges = ranges
 	res.AccessConds = accessConds
 	res.RemainedConds = filterConds
@@ -639,7 +642,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		}
 	}
 	// We should remove all accessConds, so that they will not be added to filter conditions.
-	newConditions = removeAccessConditions(newConditions, accesses)
+	newConditions = removeConditions(newConditions, accesses)
 	return accesses, filters, newConditions, columnValues, false
 }
 
@@ -675,6 +678,9 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				hasResidual = true
 			}
 			totalRanges = append(totalRanges, ranges...)
+			if d.rangeMemQuota > 0 && totalRanges.MemUsage() > d.rangeMemQuota {
+				return FullRange(), nil, nil, true, nil
+			}
 			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(d.sctx, accesses...))
 			if res.ColumnValues != nil {
 				if i == 0 {
@@ -711,6 +717,9 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				return FullRange(), nil, nil, true, nil
 			}
 			totalRanges = append(totalRanges, ranges...)
+			if d.rangeMemQuota > 0 && totalRanges.MemUsage() > d.rangeMemQuota {
+				return FullRange(), nil, nil, true, nil
+			}
 			newAccessItems = append(newAccessItems, item)
 			if i == 0 {
 				columnValues[0] = extractValueInfo(item)
@@ -855,10 +864,10 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions [
 	return res.Ranges, res.AccessConds, err
 }
 
-func removeAccessConditions(conditions, accessConds []expression.Expression) []expression.Expression {
+func removeConditions(conditions, condsToRemove []expression.Expression) []expression.Expression {
 	filterConds := make([]expression.Expression, 0, len(conditions))
 	for _, cond := range conditions {
-		if !expression.Contains(accessConds, cond) {
+		if !expression.Contains(condsToRemove, cond) {
 			filterConds = append(filterConds, cond)
 		}
 	}
@@ -1113,7 +1122,7 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 	// remove the accesses from newConditions
 	newConditions := make([]expression.Expression, 0, len(conditions))
 	newConditions = append(newConditions, conditions...)
-	newConditions = removeAccessConditions(newConditions, accesses)
+	newConditions = removeConditions(newConditions, accesses)
 
 	// add Gc condition for accesses and return new condition to newAccesses
 	newAccesses, err := AddGcColumnCond(sctx, cols, accesses, columnValues)

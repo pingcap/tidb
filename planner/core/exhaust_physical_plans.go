@@ -1576,11 +1576,10 @@ func appendTailColumnRange(oldRanges, colRanges ranger.Ranges, rangeMemQuota int
 	newRanges := make(ranger.Ranges, 0, len(oldRanges))
 	for _, oldRan := range oldRanges {
 		for _, colRan := range colRanges {
-			newRan := &ranger.Range{
-				LowVal:    append(oldRan.LowVal, colRan.LowVal[0]),
-				HighVal:   append(oldRan.HighVal, colRan.HighVal[0]),
-				Collators: append(oldRan.Collators, colRan.Collators[0]),
-			}
+			newRan := oldRan.Clone()
+			newRan.LowVal = append(newRan.LowVal, colRan.LowVal[0])
+			newRan.HighVal = append(newRan.HighVal, colRan.HighVal[0])
+			newRan.Collators = append(newRan.Collators, colRan.Collators[0])
 			if len(newRanges) == 0 && rangeMemQuota > 0 && newRan.MemUsage()*int64(len(newRanges))*int64(len(colRanges)) > rangeMemQuota {
 				return oldRanges, false
 			}
