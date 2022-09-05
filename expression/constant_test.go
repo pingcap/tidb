@@ -507,3 +507,10 @@ func TestSpecificConstant(t *testing.T) {
 	require.Equal(t, null.RetType.GetFlen(), 1)
 	require.Equal(t, null.RetType.GetDecimal(), 0)
 }
+
+func TestConstantMemoryUsage(t *testing.T) {
+	c1 := Constant{Value: types.NewIntDatum(1)}
+	c2 := Constant{Value: types.NewStringDatum("11")}
+
+	require.Greater(t, c2.MemoryUsage(), c1.MemoryUsage())
+}
