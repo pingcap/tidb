@@ -500,7 +500,10 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		joinResult.err = errors.New("mockIndexHashJoinInnerWorkerErr")
 	})
 	if joinResult.err != nil {
-		resultCh <- joinResult
+		select {
+		case resultCh <- joinResult:
+		case <-ctx.Done():
+		}
 		return
 	}
 	// When task.keepOuterOrder is TRUE(resultCh != iw.resultCh), the last
