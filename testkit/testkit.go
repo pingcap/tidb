@@ -67,12 +67,12 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 	if sm != nil {
 		mockSm, ok := sm.(*MockSessionManager)
 		if ok {
-			mockSm.Mu.Lock()
-			if mockSm.Conn == nil {
-				mockSm.Conn = make(map[uint64]session.Session)
+			mockSm.mu.Lock()
+			if mockSm.conn == nil {
+				mockSm.conn = make(map[uint64]session.Session)
 			}
-			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
-			mockSm.Mu.Unlock()
+			mockSm.conn[tk.session.GetSessionVars().ConnectionID] = tk.session
+			mockSm.mu.Unlock()
 		}
 		tk.session.SetSessionManager(sm)
 	}

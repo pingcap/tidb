@@ -29,9 +29,9 @@ type MockSessionManager struct {
 	PS      []*util.ProcessInfo
 	SerID   uint64
 	TxnInfo []*txninfo.TxnInfo
-	Conn    map[uint64]session.Session
 	Dom     *domain.Domain
-	Mu      sync.Mutex
+	conn    map[uint64]session.Session
+	mu      sync.Mutex
 }
 
 // ShowTxnList is to show txn list.
