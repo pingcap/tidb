@@ -500,13 +500,19 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version=1")
 	defer tk.MustExec("set @@tidb_analyze_version=2")
+	originalSampleSize := executor.MaxRegionSampleSize
+	// Increase MaxRegionSampleSize to ensure all samples are collected for building histogram, otherwise the test will be unstable.
+	executor.MaxRegionSampleSize = 10000
+	defer func() {
+		executor.MaxRegionSampleSize = originalSampleSize
+	}()
 	tk.MustExec("drop database if exists test_default_val_for_analyze;")
 	tk.MustExec("create database test_default_val_for_analyze;")
 	tk.MustExec("use test_default_val_for_analyze")
 
 	tk.MustExec("create table t (a int, key(a));")
-	for i := 0; i < 2048; i++ {
-		tk.MustExec("insert into t values (0)")
+	for i := 0; i < 256; i++ {
+		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
 	}
 	for i := 1; i < 4; i++ {
 		tk.MustExec("insert into t values (?)", i)
@@ -517,7 +523,7 @@ func TestDefaultValForAnalyze(t *testing.T) {
 
 	tk.MustQuery("select @@tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.tidb_enable_fast_analyze").Check(testkit.Rows("0"))
-	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustExec("analyze table t with 0 topn, 2 buckets, 10000 samples")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 512.00 root  index:IndexRangeScan",
 		"└─IndexRangeScan 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader 0.00 root  index:IndexRangeScan",
@@ -525,11 +531,15 @@ func TestDefaultValForAnalyze(t *testing.T) {
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, key(a));")
-	for i := 0; i < 2048; i++ {
-		tk.MustExec("insert into t values (0)")
+	for i := 0; i < 256; i++ {
+		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
 	}
-	for i := 1; i < 2049; i++ {
-		tk.MustExec("insert into t values (?)", i)
+	for i := 1; i < 2049; i += 8 {
+		vals := make([]string, 0, 8)
+		for j := i; j < i+8; j += 1 {
+			vals = append(vals, fmt.Sprintf("(%v)", j))
+		}
+		tk.MustExec("insert into t values " + strings.Join(vals, ","))
 	}
 	tk.MustExec("analyze table t with 0 topn;")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 1.00 root  index:IndexRangeScan",
