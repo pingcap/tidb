@@ -86,7 +86,7 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 		return errors.Errorf("cannot set flashback timestamp to future time")
 	}
 	if oracle.GetTimeFromTS(flashBackTS).After(expression.GetMinSafeTime(sctx)) {
-		return errors.Errorf("cannot set flashback timestamp to greater than resolved ts from store")
+		return errors.Errorf("cannot set flashback timestamp to too close to present time")
 	}
 	gcSafePoint, err := gcutil.GetGCSafePoint(sctx)
 	if err != nil {
