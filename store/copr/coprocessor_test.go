@@ -655,3 +655,63 @@ func TestCalculateRemain(t *testing.T) {
 		rangeEqual(t, toRange(remain), "a", "c", "e", "g")
 	}
 }
+
+func TestBasicSmallTaskConc(t *testing.T) {
+	require.False(t, isSmallTask(&copTask{RowCountHint: -1}))
+	require.False(t, isSmallTask(&copTask{RowCountHint: 0}))
+	require.True(t, isSmallTask(&copTask{RowCountHint: 1}))
+	require.True(t, isSmallTask(&copTask{RowCountHint: 6}))
+	require.False(t, isSmallTask(&copTask{RowCountHint: 7}))
+	_, conc := smallTaskConcurrency([]*copTask{})
+	require.GreaterOrEqual(t, conc, 0)
+}
+
+func TestBuildCopTasksWithRowCountHint(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+	_, _, _ = testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	req := &kv.Request{}
+	req.FixedRowCountHint = []int{1, 1, 3, copSmallTaskRow}
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z"), req, nil)
+	require.Nil(t, err)
+	require.Equal(t, len(tasks), 4)
+	// task[0] ["a"-"c", "d"-"e"]
+	require.Equal(t, tasks[0].RowCountHint, 2)
+	// task[1] ["h"-"n"]
+	require.Equal(t, tasks[1].RowCountHint, 3)
+	// task[2] ["n"-"t"]
+	require.Equal(t, tasks[2].RowCountHint, 3)
+	// task[3] ["t"-"x", "y"-"z"]
+	require.Equal(t, tasks[3].RowCountHint, 3+copSmallTaskRow)
+	_, conc := smallTaskConcurrency(tasks)
+	require.Equal(t, conc, 1)
+
+	req.FixedRowCountHint = []int{1, 1, 3, 3}
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z"), req, nil)
+	require.Nil(t, err)
+	require.Equal(t, len(tasks), 4)
+	// task[0] ["a"-"c", "d"-"e"]
+	require.Equal(t, tasks[0].RowCountHint, 2)
+	// task[1] ["h"-"n"]
+	require.Equal(t, tasks[1].RowCountHint, 3)
+	// task[2] ["n"-"t"]
+	require.Equal(t, tasks[2].RowCountHint, 3)
+	// task[3] ["t"-"x", "y"-"z"]
+	require.Equal(t, tasks[3].RowCountHint, 6)
+	_, conc = smallTaskConcurrency(tasks)
+	require.Equal(t, conc, 2)
+}
