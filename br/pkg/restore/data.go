@@ -4,16 +4,13 @@ package restore
 import (
 	"context"
 	"io"
-	"sort"
 	"time"
 
-	"github.com/emirpasic/gods/maps/treemap"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	recovpb "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -228,12 +225,12 @@ func (recovery *Recovery) getTotalRegions() int {
 	return len(regions)
 }
 
-// RecoverRegions send the recovery plan to recovery region (force leader etc)
+// RecoverRegion send the recovery plan to recovery region (force leader etc)
 // only tikvs have regions whose have to recover be sent
 func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalRecoveredStores := len(recovery.recoveryPlan)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, maxStoreConcurrency)), "Recover Regions")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, maxStoreConcurrency)), "Recover RecoverRegion")
 
 	for storeId, plan := range recovery.recoveryPlan {
 		if err := ectx.Err(); err != nil {
@@ -363,9 +360,9 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 
 }
 
-type Regions struct {
+type RecoverRegion struct {
 	*recovpb.RegionMeta
-	storeId uint64
+	StoreId uint64
 }
 
 // generate the related the recovery plan to tikvs:
@@ -374,186 +371,55 @@ type Regions struct {
 // 3. get max allocate id
 func (recovery *Recovery) makeRecoveryPlan() error {
 
-	// Group region peer info by region id. find the max allcateId
+	// Group region peer info by region id. find the max allocateId
 	// region [id] [peer[0-n]]
-	var regions = make(map[uint64][]Regions, 0)
+	var regions = make(map[uint64][]*RecoverRegion, 0)
 	for _, v := range recovery.storeMetas {
 		storeId := v.storeId
 		maxId := storeId
 		for _, m := range v.regionMetas {
 			if regions[m.RegionId] == nil {
-				regions[m.RegionId] = make([]Regions, 0, len(recovery.allStores))
+				regions[m.RegionId] = make([]*RecoverRegion, 0, len(recovery.allStores))
 			}
-			regions[m.RegionId] = append(regions[m.RegionId], Regions{m, storeId})
+			regions[m.RegionId] = append(regions[m.RegionId], &RecoverRegion{m, storeId})
 			maxId = mathutil.Max(maxId, mathutil.Max(m.RegionId, m.PeerId))
 		}
 		recovery.maxAllocID = mathutil.Max(recovery.maxAllocID, maxId)
 	}
 
-	// last log term -> last index -> commit index
-	cmps := []func(a, b *Regions) int{
-		func(a, b *Regions) int {
-			return int(a.GetLastLogTerm() - b.GetLastLogTerm())
-		},
-		func(a, b *Regions) int {
-			return int(a.GetLastIndex() - b.GetLastIndex())
-		},
-		func(a, b *Regions) int {
-			return int(a.GetCommitIndex() - b.GetCommitIndex())
-		},
+	regionInfos := SortRecoverRegions(regions)
+
+	validPeers, err := CheckConsistencyAndValidPeer(regionInfos)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	// TODO: the following code may need a refactoring, at least struct Region and RegionEndKey may merge into one struct
-	type Region struct {
-		regionId      uint64
-		regionVersion uint64
-	}
-	// Sort region peer by last log term -> last index -> commit index, and collect all regions' version.
-	var versions = make([]Region, 0, len(regions))
-	for regionId, peers := range regions {
-		sort.Slice(peers, func(i, j int) bool {
-			for _, cmp := range cmps {
-				if v := cmp(&peers[i], &peers[j]); v != 0 {
-					return v > 0
-				}
-			}
-			return false
-		})
-		var v = peers[0].Version
-		versions = append(versions, Region{regionId, v})
-	}
-
-	sort.Slice(versions, func(i, j int) bool { return versions[i].regionVersion > versions[j].regionVersion })
-
-	type RegionEndKey struct {
-		endKey []byte
-		rid    uint64
-	}
-	// split and merge in progressing during the backup, there may some overlap region, we have to handle it
-	// Resolve version conflicts.
-	var topo = treemap.NewWith(keyCmpInterface)
-	for _, p := range versions {
-		var sk = prefixStartKey(regions[p.regionId][0].StartKey)
-		var ek = prefixEndKey(regions[p.regionId][0].EndKey)
-		var fk, fv interface{}
-		fk, _ = topo.Ceiling(sk)
-		// keyspace overlap sk within ceiling - fk
-		if fk != nil && (keyEq(fk.([]byte), sk) || keyCmp(fk.([]byte), ek) < 0) {
-			continue
-		}
-
-		// keyspace overlap sk within floor - fk.end_key
-		fk, fv = topo.Floor(sk)
-		if fk != nil && keyCmp(fv.(RegionEndKey).endKey, sk) > 0 {
-			continue
-		}
-		topo.Put(sk, RegionEndKey{ek, p.regionId})
-	}
-
-	// After resolved, all validPeer regions shouldn't be tombstone.
-	// do some sanity check
-	var validPeer = make(map[uint64]struct{}, 0)
-	var iter = topo.Iterator()
-	var prevEndKey = prefixStartKey([]byte{})
-	var prevR uint64 = 0
-	for iter.Next() {
-		v := iter.Value().(RegionEndKey)
-		if regions[v.rid][0].Tombstone {
-			log.Error("validPeer shouldn't be tombstone", zap.Uint64("regionID", v.rid))
-			// TODO, some enhancement may need, a PoC or test may need for decision
-			return errors.Annotatef(berrors.ErrRestoreInvalidPeer,
-				"Peer shouldn't be tombstone")
-		}
-		if !keyEq(prevEndKey, iter.Key().([]byte)) {
-			log.Error("region doesn't conject to region", zap.Uint64("preRegion", prevR), zap.Uint64("curRegion", v.rid))
-			// TODO, some enhancement may need, a PoC or test may need for decision
-			return errors.Annotatef(berrors.ErrRestoreInvalidRange,
-				"invalid region range")
-		}
-		prevEndKey = v.endKey
-		prevR = v.rid
-		validPeer[v.rid] = struct{}{}
-	}
-
-	// all plans per region key=storeId, value=reqs stream
+	// all plans per region key=StoreId, value=reqs stream
 	//regionsPlan := make(map[uint64][]*recovmetapb.RecoveryCmdRequest, 0)
 	// Generate recover commands.
 	for regionId, peers := range regions {
-		if _, ok := validPeer[regionId]; !ok {
+		if _, ok := validPeers[regionId]; !ok {
 			// TODO: Generate a tombstone command.
-			// 1, peer is tomebstone
-			// 2, split region in progressing, old one can be a tomebstone
+			// 1, peer is tombstone
+			// 2, split region in progressing, old one can be a tombstone
+			log.Warn("detected tombstone peer for region", zap.Uint64("region id", regionId))
 			for _, peer := range peers {
 				plan := &recovpb.RecoverRegionRequest{Tombstone: true, AsLeader: false}
-				recovery.recoveryPlan[peer.storeId] = append(recovery.recoveryPlan[peer.storeId], plan)
+				recovery.recoveryPlan[peer.StoreId] = append(recovery.recoveryPlan[peer.StoreId], plan)
 			}
 		} else {
 			// Generate normal commands.
-			log.Debug("valid peer", zap.Uint64("peer", regionId))
+			log.Debug("detected valid peer", zap.Uint64("region id", regionId))
 			for i, peer := range peers {
-				log.Debug("make plan", zap.Uint64("storeid", peer.storeId), zap.Uint64("regionid", peer.RegionId))
-				plan := &recovpb.RecoverRegionRequest{RegionId: peer.RegionId, AsLeader: (i == 0)}
+				log.Debug("make plan", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId))
+				plan := &recovpb.RecoverRegionRequest{RegionId: peer.RegionId, AsLeader: i == 0}
 				// sorted by log term -> last index -> commit index in a region
 				if plan.AsLeader {
-					log.Debug("as leader peer", zap.Uint64("storeid", peer.storeId), zap.Uint64("regionid", peer.RegionId))
-					recovery.recoveryPlan[peer.storeId] = append(recovery.recoveryPlan[peer.storeId], plan)
+					log.Debug("as leader peer", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId))
+					recovery.recoveryPlan[peer.StoreId] = append(recovery.recoveryPlan[peer.StoreId], plan)
 				}
 			}
 		}
 	}
-
 	return nil
-}
-
-func prefixStartKey(key []byte) []byte {
-	var sk = make([]byte, 0, len(key)+1)
-	sk = append(sk, 'z')
-	sk = append(sk, key...)
-	return sk
-}
-
-func prefixEndKey(key []byte) []byte {
-	if len(key) == 0 {
-		return []byte{'z' + 1}
-	}
-	return prefixStartKey(key)
-}
-
-func keyEq(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func keyCmp(a, b []byte) int {
-	var length = 0
-	var chosen = 0
-	if len(a) < len(b) {
-		length = len(a)
-		chosen = -1
-	} else if len(a) == len(b) {
-		length = len(a)
-		chosen = 0
-	} else {
-		length = len(b)
-		chosen = 1
-	}
-	for i := 0; i < length; i++ {
-		if a[i] < b[i] {
-			return -1
-		} else if a[i] > b[i] {
-			return 1
-		}
-	}
-	return chosen
-}
-
-func keyCmpInterface(a, b interface{}) int {
-	return keyCmp(a.([]byte), b.([]byte))
 }

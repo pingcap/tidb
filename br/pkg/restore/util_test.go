@@ -5,6 +5,7 @@ package restore_test
 import (
 	"context"
 	"encoding/binary"
+	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -291,7 +292,7 @@ func TestPaginateScanRegion(t *testing.T) {
 	_, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
 	require.Error(t, err)
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
-	require.Regexp(t, ".*region endKey not equal to next region startKey.*", err.Error())
+	require.Regexp(t, ".*region endKey not equal to next region StartKey.*", err.Error())
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/scanRegionBackoffer"))
 }
@@ -349,4 +350,75 @@ func TestRewriteFileKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)
+}
+
+func newPeerMeta(
+	regionId uint64,
+	peerId uint64,
+	storeId uint64,
+	startKey []byte,
+	endKey []byte,
+	lastLogTerm uint64,
+	lastIndex uint64,
+	commitIndex uint64,
+	version uint64,
+	tombstone bool,
+) *restore.RecoverRegion {
+	return &restore.RecoverRegion{
+		&recover_data.RegionMeta{
+			RegionId:    regionId,
+			PeerId:      peerId,
+			StartKey:    startKey,
+			EndKey:      endKey,
+			LastLogTerm: lastLogTerm,
+			LastIndex:   lastIndex,
+			CommitIndex: commitIndex,
+			Version:     version,
+			Tombstone:   tombstone,
+		},
+		storeId,
+	}
+}
+
+func newRecoverRegionInfo(r *restore.RecoverRegion) *restore.RecoverRegionInfo {
+	return &restore.RecoverRegionInfo{
+		RegionVersion: r.Version,
+		RegionId:      r.RegionId,
+		StartKey:      restore.PrefixStartKey(r.StartKey),
+		EndKey:        restore.PrefixEndKey(r.EndKey),
+		TombStone:     r.Tombstone,
+	}
+}
+
+func TestSortRecoverRegions(t *testing.T) {
+	selectedPeer1 := newPeerMeta(9, 11, 2, []byte("aa"), nil, 2, 0, 0, 0, false)
+	selectedPeer2 := newPeerMeta(19, 22, 3, []byte("bbb"), nil, 2, 1, 0, 1, false)
+	selectedPeer3 := newPeerMeta(29, 30, 1, []byte("c"), nil, 2, 1, 1, 2, false)
+	regions := map[uint64][]*restore.RecoverRegion{
+		9: {
+			// peer 11 should be selected because of log term
+			newPeerMeta(9, 10, 1, []byte("a"), nil, 1, 1, 1, 1, false),
+			selectedPeer1,
+			newPeerMeta(9, 12, 3, []byte("aaa"), nil, 0, 0, 0, 0, false),
+		},
+		19: {
+			// peer 22 should be selected because of log index
+			newPeerMeta(19, 20, 1, []byte("b"), nil, 1, 1, 1, 1, false),
+			newPeerMeta(19, 21, 2, []byte("bb"), nil, 2, 0, 0, 0, false),
+			selectedPeer2,
+		},
+		29: {
+			// peer 30 should be selected because of log index
+			selectedPeer3,
+			newPeerMeta(29, 31, 2, []byte("cc"), nil, 2, 0, 0, 0, false),
+			newPeerMeta(29, 32, 3, []byte("ccc"), nil, 2, 1, 0, 0, false),
+		},
+	}
+	regionsInfos := restore.SortRecoverRegions(regions)
+	expectRegionInfos := []*restore.RecoverRegionInfo{
+		newRecoverRegionInfo(selectedPeer3),
+		newRecoverRegionInfo(selectedPeer2),
+		newRecoverRegionInfo(selectedPeer1),
+	}
+	require.Equal(t, expectRegionInfos, regionsInfos)
 }
