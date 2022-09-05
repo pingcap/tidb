@@ -192,6 +192,16 @@ func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
 	return true
 }
 
+// MemoryUsage return the memory usage of CorrelatedColumn
+func (col *CorrelatedColumn) MemoryUsage() (sum int64) {
+	if col == nil {
+		return
+	}
+
+	sum = col.Column.MemoryUsage() + int64(unsafe.Sizeof(col.Data))
+	return sum
+}
+
 // Column represents a column.
 type Column struct {
 	RetType *types.FieldType
