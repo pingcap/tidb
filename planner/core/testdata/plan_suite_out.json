@@ -4649,5 +4649,296 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestHJBuildAndProbeHint4StaticPartitionTable",
+    "Cases": [
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─PartitionUnion(Build) 49900.05 root  ",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
+          "│ └─TableReader 9980.01 root  data:Selection",
+          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo",
+          "└─PartitionUnion(Probe) 39920.04 root  ",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
+          "  └─TableReader 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─PartitionUnion(Build) 39920.04 root  ",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
+          "│ └─TableReader 9980.01 root  data:Selection",
+          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo",
+          "└─PartitionUnion(Probe) 49900.05 root  ",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
+          "  └─TableReader 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─PartitionUnion(Build) 39920.04 root  ",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
+          "│ └─TableReader 9980.01 root  data:Selection",
+          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo",
+          "└─PartitionUnion(Probe) 49900.05 root  ",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
+          "  └─TableReader 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─PartitionUnion(Build) 49900.05 root  ",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
+          "│ └─TableReader 9980.01 root  data:Selection",
+          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo",
+          "└─PartitionUnion(Probe) 39920.04 root  ",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
+          "  └─TableReader 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestHJBuildAndProbeHint4DynamicPartitionTable",
+    "Cases": [
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestHJBuildAndProbeHint4TiFlash",
+    "Cases": [
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      }
+    ]
   }
 ]

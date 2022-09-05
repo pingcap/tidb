@@ -932,5 +932,32 @@
       "select /*+ hash_join_build(t1) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
       "select /*+ hash_join_probe(t1) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
     ]
+  },
+  {
+    "name": "TestHJBuildAndProbeHint4StaticPartitionTable",
+    "cases": [
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
+    ]
+  },
+  {
+    "name": "TestHJBuildAndProbeHint4DynamicPartitionTable",
+    "cases": [
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
+    ]
+  },
+  {
+    "name": "TestHJBuildAndProbeHint4TiFlash",
+    "cases": [
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
+    ]
   }
 ]
