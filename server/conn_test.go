@@ -1104,49 +1104,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
 }
 
-func TestAuthPlugin2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	cfg := newTestConfig()
-	cfg.Port = 0
-	cfg.Status.StatusPort = 0
-
-	drv := NewTiDBDriver(store)
-	srv, err := NewServer(cfg, drv)
-	require.NoError(t, err)
-
-	cc := &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "root",
-	}
-	ctx := context.Background()
-	se, _ := session.CreateSession4Test(store)
-	tc := &TiDBContext{
-		Session: se,
-		stmts:   make(map[int]*TiDBStatement),
-	}
-	cc.ctx = tc
-
-	resp := handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-	}
-
-	cc.isUnixSocket = true
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	respAuthSwitch, err := cc.checkAuthPlugin(ctx, &resp)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-	require.Equal(t, respAuthSwitch, []byte(mysql.AuthNativePassword))
-	require.NoError(t, err)
-
-}
-
 func TestMaxAllowedPacket(t *testing.T) {
 	// Test cases from issue 31422: https://github.com/pingcap/tidb/issues/31422
 	// The string "SELECT length('') as len;" has 25 chars,

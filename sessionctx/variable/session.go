@@ -956,26 +956,6 @@ type SessionVars struct {
 		data [2]stmtctx.StatementContext
 	}
 
-	// EnablePaging indicates whether enable paging in coprocessor requests.
-	EnablePaging bool
-
-	// EnableLegacyInstanceScope says if SET SESSION can be used to set an instance
-	// scope variable. The default is TRUE.
-	EnableLegacyInstanceScope bool
-
-	// SysdateIsNow indicates whether Sysdate is an alias of Now function
-	SysdateIsNow bool
-	// EnableMutationChecker indicates whether to check data consistency for mutations
-	EnableMutationChecker bool
-	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
-	IgnorePreparedCacheCloseStmt bool
-	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
-	BatchPendingTiFlashCount int
-	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
-	RcReadCheckTS bool
-	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
-	RemoveOrderbyInSubquery bool
-
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
 }
@@ -1210,9 +1190,7 @@ func NewSessionVars() *SessionVars {
 		TMPTableSize:                DefTiDBTmpTableMaxSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
-		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
-		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
-		MaxAllowedPacket:            DefMaxAllowedPacket,
+		EnablePlacementChecks:       DefEnablePlacementCheck,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
