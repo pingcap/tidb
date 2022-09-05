@@ -493,6 +493,7 @@ func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMerge
 	p.tp = plancodec.TypeIndexMergeJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
+	p.self = &p
 	return &p
 }
 
@@ -502,6 +503,7 @@ func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJo
 	p.tp = plancodec.TypeIndexHashJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
+	p.self = &p
 	return &p
 }
 
