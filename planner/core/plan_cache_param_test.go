@@ -27,35 +27,30 @@ func TestParameterize(t *testing.T) {
 	sctx := MockContext()
 	cases := []struct {
 		sql        string
-		ok         bool
 		paramSQL   string
 		params     []interface{}
 		restoreSQL string
 	}{
 		{
 			"select * from t where a<10",
-			true,
 			"SELECT * FROM `t` WHERE `a`<?",
 			[]interface{}{int64(10)},
 			"SELECT * FROM `t` WHERE `a`<10",
 		},
 		{
 			"select * from t",
-			true,
 			"SELECT * FROM `t`",
 			[]interface{}{},
 			"SELECT * FROM `t`",
 		},
 		{
 			"select * from t where a<10 and b<20 and c=30 and d>40",
-			true,
 			"SELECT * FROM `t` WHERE `a`<? AND `b`<? AND `c`=? AND `d`>?",
 			[]interface{}{int64(10), int64(20), int64(30), int64(40)},
 			"SELECT * FROM `t` WHERE `a`<10 AND `b`<20 AND `c`=30 AND `d`>40",
 		},
 		{
 			"select * from t where a='a' and b='bbbbbbbbbbbbbbbbbbbbbbbb'",
-			true,
 			"SELECT * FROM `t` WHERE `a`=? AND `b`=?",
 			[]interface{}{"a", "bbbbbbbbbbbbbbbbbbbbbbbb"},
 			"SELECT * FROM `t` WHERE `a`=_UTF8MB4'a' AND `b`=_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbb'",
