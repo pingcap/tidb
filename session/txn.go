@@ -123,6 +123,14 @@ func (txn *LazyTxn) flushStmtBuf() {
 		return
 	}
 	buf := txn.Transaction.GetMemBuffer()
+
+	keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) bool {
+		return flags.HasPresumeKeyNotExists()
+	})
+	for _, key := range keysNeedSetPersistentPNE {
+		buf.UpdateFlags(key, kv.SetPreviousPresumeKeyNotExists)
+	}
+
 	buf.Release(txn.stagingHandle)
 	txn.initCnt = buf.Len()
 }

@@ -3324,3 +3324,38 @@ func TestLazyUniquenessCheckForInsertIgnore(t *testing.T) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
+
+func TestLazyUpdateWithConcurrentInsert(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t5(id int primary key, uk int, unique key i1(uk))")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+
+	// TiKV will perform a constraint check before reporting assertion failure.
+	// And constraint violation precedes assertion failure.
+	if !*realtikvtest.WithRealTiKV {
+		tk.MustExec("set @@tidb_txn_assertion_level=off")
+	}
+
+	// case: update unique key, but conflict with concurrent write, in DML
+	tk.MustExec("truncate table t5")
+	tk.MustExec("insert into t5 values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	println("after begin")
+	// tk.MustExec("update t5 set uk = 3 where id = 1") // should skip lock uk=3
+	tk.MustExec("insert into t5 values (3, 3)") // skip handle=3, uk=3
+	println("after first update")
+	tk2.MustExec("insert into t5 values (2, 3)")
+	println("after insert")
+	err := tk.ExecToErr("update t5 set id = 10 where uk = 3") // write conflict -> unset PresumeKNE -> retry -> lock without PresumeKNE
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Duplicate entry '3' for key 'i1'")
+	require.False(t, tk.Session().GetSessionVars().InTxn())
+	println("after second update")
+	// tk.MustExec("commit")
+	tk.MustExec("admin check table t5")
+}
+
