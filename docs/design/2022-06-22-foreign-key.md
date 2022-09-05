@@ -17,7 +17,6 @@ Table's foreign key information will be stored in `model.TableInfo`:
 type TableInfo struct {
     ...
     ForeignKeys         []*FKInfo            `json:"fk_info"`
-    ReferredForeignKeys []*ReferredFKInfo    `json:"referred_fk_info"`
     // MaxFKIndexID uses to allocate foreign key ID.
     MaxForeignKeyID     int64                `json:"max_fk_id"`
     ...
@@ -36,22 +35,12 @@ type FKInfo struct {
     State       SchemaState `json:"state"`
     Version     int         `json:"version"`
 }
-
-// ReferredFKInfo provides the referred foreign key in the child table.
-type ReferredFKInfo struct {
-    Cols          []CIStr `json:"cols"`
-    ChildSchema   CIStr   `json:"child_schema"`
-    ChildTable    CIStr   `json:"child_table"`
-    ChildFKName   CIStr   `json:"child_fk"`
-}
-
 ```
 
 Struct `FKInfo` uses for child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
   - `Version`: uses to distinguish between old and new versions.
-Struct `ReferredFKInfo` is used to record the tables that are referencing the current table.
 
-Why `FKInfo` and `ReferredFKInfo` record the table/schema name instead of table/schema id? Because we may don't know the table/schema id when build `FKInfo`. Here is an example:
+Why `FKInfo` record the table/schema name instead of table/schema id? Because we may don't know the table/schema id when build `FKInfo`. Here is an example:
 
 ```sql
 >set @@foreign_key_checks=0;
@@ -133,6 +122,16 @@ How to maintain `ReferredFKInfo` in reference table? When we create table with f
 when `foreign_key_checks` variable value is `OFF`, the user can create child table before reference table.
 
 We decided to maintain `ReferredFKInfo` while TiDB loading schema. At first, `infoSchema` will record all table's `ReferredFKInfo`:
+
+```sql
+// ReferredFKInfo provides the referred foreign key in the child table.
+type ReferredFKInfo struct {
+    Cols          []CIStr `json:"cols"`
+    ChildSchema   CIStr   `json:"child_schema"`
+    ChildTable    CIStr   `json:"child_table"`
+    ChildFKName   CIStr   `json:"child_fk"`
+}
+```
 
 ```go
 type infoSchema struct {
@@ -455,6 +454,17 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 ```
 
 ### Issue need to be discussed
+
+#### Impact when upgrading
+
+Create table with foreign key requires a multi-step state change(none -> write-only -> public),
+when the table's state changes from write-only to public, infoSchema need to drop the old table
+which state is write-only, otherwise, infoSchema.sortedTablesBuckets will contain 2 table both
+have the same ID, but one state is write-only, another table's state is public, it's unexpected.
+
+Warning, this change will break the compatibility if execute create table with foreign key DDL when upgrading TiDB,
+since old-version TiDB doesn't know to delete the old table, Since the cluster-index feature also has similar problem, 
+we chose to prevent DDL execution during the upgrade process to avoid this issue.
 
 #### Affect Row
 
