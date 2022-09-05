@@ -247,7 +247,7 @@ type ExecStmt struct {
 }
 
 // GetStmtNode returns the stmtNode inside Statement
-func (a ExecStmt) GetStmtNode() ast.StmtNode {
+func (a *ExecStmt) GetStmtNode() ast.StmtNode {
 	return a.StmtNode
 }
 
@@ -312,7 +312,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
-			sctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+			sctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
 	}
 
@@ -486,7 +486,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
-			a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
 	}
 
@@ -720,9 +720,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	return nil, err
 }
 
-func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
+func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err error) {
 	sctx := a.Ctx
-	// Do not active the transaction here.
+	// Do not activate the transaction here.
 	// When autocommit = 0 and transaction in pessimistic mode,
 	// statements like set xxx = xxx; should not active the transaction.
 	txn, err := sctx.Txn(false)
@@ -730,6 +730,27 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
+	defer func() {
+		if err != nil && !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic {
+			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
+			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
+			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
+			stmtText := a.OriginText()
+			if sctx.GetSessionVars().EnableRedactLog {
+				stmtText = parser.Normalize(stmtText)
+			}
+			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
+				"Note this may not be a uniqueness violation.",
+				zap.Error(err),
+				zap.String("statement", stmtText),
+				zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+				zap.Uint64("txnStartTS", txnCtx.StartTS),
+				zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
+			)
+			sctx.GetSessionVars().SetInTxn(false)
+			err = ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
+		}
+	}()
 	for {
 		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
@@ -1476,7 +1497,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtCtx := sessVars.StmtCtx
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
-		stmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
