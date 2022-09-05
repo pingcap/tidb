@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/util"
 	"github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
@@ -32,12 +33,15 @@ import (
 )
 
 type TLS struct {
-	caPath   string
-	certPath string
-	keyPath  string
-	inner    *tls.Config
-	client   *http.Client
-	url      string
+	caPath    string
+	certPath  string
+	keyPath   string
+	caBytes   []byte
+	certBytes []byte
+	keyBytes  []byte
+	inner     *tls.Config
+	client    *http.Client
+	url       string
 }
 
 // ToTLSConfig constructs a `*tls.Config` from the CA, certification and key
@@ -89,25 +93,28 @@ func ToTLSConfig(caPath, certPath, keyPath string) (*tls.Config, error) {
 // certificate and key paths.
 //
 // If the CA path is empty, returns an instance where TLS is disabled.
-func NewTLS(caPath, certPath, keyPath, host string) (*TLS, error) {
-	if len(caPath) == 0 {
+func NewTLS(caPath, certPath, keyPath, host string, caBytes, certBytes, keyBytes []byte) (*TLS, error) {
+	if len(caBytes) == 0 && len(certBytes) == 0 && len(keyBytes) == 0 {
 		return &TLS{
 			inner:  nil,
 			client: &http.Client{},
 			url:    "http://" + host,
 		}, nil
 	}
-	inner, err := ToTLSConfig(caPath, certPath, keyPath)
+	inner, err := util.NewTLSConfigWithVerifyCN(caBytes, certBytes, keyBytes, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return &TLS{
-		caPath:   caPath,
-		certPath: certPath,
-		keyPath:  keyPath,
-		inner:    inner,
-		client:   httputil.NewClient(inner),
-		url:      "https://" + host,
+		caPath:    caPath,
+		certPath:  certPath,
+		keyPath:   keyPath,
+		caBytes:   caBytes,
+		certBytes: certBytes,
+		keyBytes:  keyBytes,
+		inner:     inner,
+		client:    httputil.NewClient(inner),
+		url:       "https://" + host,
 	}, nil
 }
 
@@ -158,12 +165,16 @@ func (tc *TLS) GetJSON(ctx context.Context, path string, v interface{}) error {
 
 func (tc *TLS) ToPDSecurityOption() pd.SecurityOption {
 	return pd.SecurityOption{
-		CAPath:   tc.caPath,
-		CertPath: tc.certPath,
-		KeyPath:  tc.keyPath,
+		CAPath:       tc.caPath,
+		CertPath:     tc.certPath,
+		KeyPath:      tc.keyPath,
+		SSLCABytes:   tc.caBytes,
+		SSLCertBytes: tc.certBytes,
+		SSLKEYBytes:  tc.keyBytes,
 	}
 }
 
+// TODO: TiKV does not support pass in content
 func (tc *TLS) ToTiKVSecurityConfig() config.Security {
 	return config.Security{
 		ClusterSSLCA:    tc.caPath,

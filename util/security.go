@@ -131,9 +131,10 @@ func NewTLSConfigWithVerifyCN(caData, certData, keyData []byte, verifyCN []strin
 
 	/* #nosec G402 */
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS10,
-		Certificates: certificates,
-		NextProtos:   []string{"h2", "http/1.2"}, // specify `h2` to let Go use HTTP/2.
+		MinVersion:         tls.VersionTLS10,
+		Certificates:       certificates,
+		InsecureSkipVerify: true,
+		NextProtos:         []string{"h2", "http/1.2"}, // specify `h2` to let Go use HTTP/2.
 	}
 
 	if len(caData) != 0 {

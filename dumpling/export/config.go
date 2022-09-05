@@ -4,11 +4,10 @@ package export
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"text/template"
@@ -211,8 +210,8 @@ func (conf *Config) GetDSN(db string) string {
 	hostPort := net.JoinHostPort(conf.Host, strconv.Itoa(conf.Port))
 	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?collation=utf8mb4_general_ci&readTimeout=%s&writeTimeout=30s&interpolateParams=true&maxAllowedPacket=0",
 		conf.User, conf.Password, hostPort, db, conf.ReadTimeout)
-	if len(conf.Security.CAPath) > 0 {
-		dsn += "&tls=dumpling-tls-target"
+	if conf.Security.DriveTLSName != "" {
+		dsn += "&tls=" + conf.Security.DriveTLSName
 	}
 	if conf.AllowCleartextPasswords {
 		dsn += "&allowCleartextPasswords=1"
@@ -637,44 +636,39 @@ func adjustConfig(conf *Config, fns ...func(*Config) error) error {
 }
 
 func registerTLSConfig(conf *Config) error {
+	if len(conf.Security.CAPath) == 0 && len(conf.Security.CertPath) == 0 && len(conf.Security.KeyPath) == 0 {
+		return nil
+	}
+
+	var err error
 	if len(conf.Security.CAPath) > 0 {
-		var err error
-		var tlsConfig *tls.Config
-		if len(conf.Security.SSLCABytes) == 0 {
-			conf.Security.SSLCABytes, err = ioutil.ReadFile(conf.Security.CAPath)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if len(conf.Security.CertPath) > 0 {
-				conf.Security.SSLCertBytes, err = ioutil.ReadFile(conf.Security.CertPath)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-			if len(conf.Security.KeyPath) > 0 {
-				conf.Security.SSLKEYBytes, err = ioutil.ReadFile(conf.Security.KeyPath)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-		tlsConfig, err = util.NewTLSConfigWithVerifyCN(conf.Security.SSLCABytes,
-			conf.Security.SSLCertBytes, conf.Security.SSLKEYBytes, []string{})
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// NOTE for local test(use a self-signed or invalid certificate), we don't need to check CA file.
-		// see more here https://github.com/go-sql-driver/mysql#tls
-		if conf.Host == "127.0.0.1" || len(conf.Security.SSLCertBytes) == 0 || len(conf.Security.SSLKEYBytes) == 0 {
-			tlsConfig.InsecureSkipVerify = true
-		}
-		conf.Security.DriveTLSName = "dumpling" + uuid.NewString()
-		err = mysql.RegisterTLSConfig(conf.Security.DriveTLSName, tlsConfig)
+		conf.Security.SSLCABytes, err = os.ReadFile(conf.Security.CAPath)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	return nil
+	if len(conf.Security.CertPath) > 0 {
+		conf.Security.SSLCertBytes, err = os.ReadFile(conf.Security.CertPath)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if len(conf.Security.KeyPath) > 0 {
+		conf.Security.SSLKEYBytes, err = os.ReadFile(conf.Security.KeyPath)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	tlsConfig, err2 := util.NewTLSConfigWithVerifyCN(conf.Security.SSLCABytes,
+		conf.Security.SSLCertBytes, conf.Security.SSLKEYBytes, []string{})
+	if err2 != nil {
+		return errors.Trace(err2)
+	}
+
+	conf.Security.DriveTLSName = "dumpling" + uuid.NewString()
+	err = mysql.RegisterTLSConfig(conf.Security.DriveTLSName, tlsConfig)
+	return errors.Trace(err)
 }
 
 func validateSpecifiedSQL(conf *Config) error {
