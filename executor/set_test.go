@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 func (s *testSerialSuite1) TestSetVar(c *C) {
@@ -586,9 +587,6 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = 0")
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
-<<<<<<< HEAD
-	c.Assert(tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"), NotNil)
-=======
 	require.Error(t, tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"))
 
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
@@ -641,7 +639,6 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '0'"))
 	result = tk.MustQuery("select @@global.max_allowed_packet;")
 	result.Check(testkit.Rows("1024"))
->>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {

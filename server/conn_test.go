@@ -1103,8 +1103,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
 }
-<<<<<<< HEAD
-=======
 
 func TestAuthPlugin2(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -1176,4 +1174,3 @@ func TestMaxAllowedPacket(t *testing.T) {
 	_, err = pkt.readPacket()
 	require.Error(t, err)
 }
->>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)

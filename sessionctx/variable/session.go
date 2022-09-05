@@ -955,11 +955,6 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
-<<<<<<< HEAD
-=======
-
-	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
-	Rng *utilMath.MysqlRng
 
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
@@ -968,18 +963,10 @@ type SessionVars struct {
 	// scope variable. The default is TRUE.
 	EnableLegacyInstanceScope bool
 
-	// ReadConsistency indicates the read consistency requirement.
-	ReadConsistency ReadConsistencyLevel
-
-	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
-	StatsLoadSyncWait int64
-
 	// SysdateIsNow indicates whether Sysdate is an alias of Now function
 	SysdateIsNow bool
 	// EnableMutationChecker indicates whether to check data consistency for mutations
 	EnableMutationChecker bool
-	// AssertionLevel controls how strict the assertions on data mutations should be.
-	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
@@ -991,7 +978,6 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
->>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1224,15 +1210,9 @@ func NewSessionVars() *SessionVars {
 		TMPTableSize:                DefTiDBTmpTableMaxSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
-<<<<<<< HEAD
-		EnablePlacementChecks:       DefEnablePlacementCheck,
-=======
-		Rng:                         utilMath.NewWithTime(),
-		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
->>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
