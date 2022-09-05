@@ -158,7 +158,7 @@ func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 
 	bf.tp.SetFlen(1)
-	sig := regexpLikeFuncSig{
+	sig := builtinRegexpLikeFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeSig)
@@ -166,22 +166,22 @@ func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return &sig, nil
 }
 
-type regexpLikeFuncSig struct {
+type builtinRegexpLikeFuncSig struct {
 	regexpBaseFuncSig
 }
 
-func (re *regexpLikeFuncSig) Clone() builtinFunc {
-	newSig := &regexpLikeFuncSig{}
+func (re *builtinRegexpLikeFuncSig) Clone() builtinFunc {
+	newSig := &builtinRegexpLikeFuncSig{}
 	newSig.cloneFrom(&re.baseBuiltinFunc)
 	newSig.clone(&re.regexpBaseFuncSig)
 	return newSig
 }
 
-func (re *regexpLikeFuncSig) vectorized() bool {
+func (re *builtinRegexpLikeFuncSig) vectorized() bool {
 	return true
 }
 
-func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (re *builtinRegexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	if isNull || err != nil {
 		return 0, true, err
@@ -218,13 +218,13 @@ func (re *regexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 //  2. pattern is const and there is no match type argument
 //
 // return true: need, false: needless
-func (re *regexpLikeFuncSig) needMemorization() bool {
+func (re *builtinRegexpLikeFuncSig) needMemorization() bool {
 	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 2 || re.args[2].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
 // REGEXP_LIKE(expr, pat[, match_type])
-func (re *regexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (re *builtinRegexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*regexpParam, 0, 3)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
@@ -314,7 +314,7 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 
 	argType := args[0].GetType()
 	bf.tp.SetFlen(argType.GetFlen())
-	sig := regexpSubstrFuncSig{
+	sig := builtinRegexpSubstrFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrSig)
@@ -322,22 +322,22 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	return &sig, nil
 }
 
-type regexpSubstrFuncSig struct {
+type builtinRegexpSubstrFuncSig struct {
 	regexpBaseFuncSig
 }
 
-func (re *regexpSubstrFuncSig) vectorized() bool {
+func (re *builtinRegexpSubstrFuncSig) vectorized() bool {
 	return true
 }
 
-func (re *regexpSubstrFuncSig) Clone() builtinFunc {
-	newSig := &regexpSubstrFuncSig{}
+func (re *builtinRegexpSubstrFuncSig) Clone() builtinFunc {
+	newSig := &builtinRegexpSubstrFuncSig{}
 	newSig.cloneFrom(&re.baseBuiltinFunc)
 	newSig.clone(&re.regexpBaseFuncSig)
 	return newSig
 }
 
-func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
+func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
@@ -436,13 +436,13 @@ func (re *regexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, error) {
 //  2. pattern is const and match type is null
 //
 // return true: need, false: needless
-func (re *regexpSubstrFuncSig) needMemorization() bool {
+func (re *builtinRegexpSubstrFuncSig) needMemorization() bool {
 	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 4 || re.args[4].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
 // REGEXP_SUBSTR(expr, pat[, pos[, occurrence[, match_type]]])
-func (re *regexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*regexpParam, 0, 5)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
@@ -616,7 +616,7 @@ func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 
 	bf.tp.SetFlen(mysql.MaxIntWidth)
-	sig := regexpInStrFuncSig{
+	sig := builtinRegexpInStrFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrSig)
@@ -624,22 +624,22 @@ func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return &sig, nil
 }
 
-type regexpInStrFuncSig struct {
+type builtinRegexpInStrFuncSig struct {
 	regexpBaseFuncSig
 }
 
-func (re *regexpInStrFuncSig) Clone() builtinFunc {
-	newSig := &regexpInStrFuncSig{}
+func (re *builtinRegexpInStrFuncSig) Clone() builtinFunc {
+	newSig := &builtinRegexpInStrFuncSig{}
 	newSig.cloneFrom(&re.baseBuiltinFunc)
 	newSig.clone(&re.regexpBaseFuncSig)
 	return newSig
 }
 
-func (re *regexpInStrFuncSig) vectorized() bool {
+func (re *builtinRegexpInStrFuncSig) vectorized() bool {
 	return true
 }
 
-func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	if isNull || err != nil {
 		return 0, true, err
@@ -758,13 +758,13 @@ func (re *regexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
 //  2. pattern is const and match type is null
 //
 // return true: need, false: needless
-func (re *regexpInStrFuncSig) needMemorization() bool {
+func (re *builtinRegexpInStrFuncSig) needMemorization() bool {
 	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 || re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
 // REGEXP_INSTR(expr, pat[, pos[, occurrence[, return_option[, match_type]]]])
-func (re *regexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*regexpParam, 0, 5)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
@@ -964,7 +964,7 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 
 	argType := args[0].GetType()
 	bf.tp.SetFlen(argType.GetFlen())
-	sig := regexpReplaceFuncSig{
+	sig := builtinRegexpReplaceFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceSig)
@@ -972,22 +972,22 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 	return &sig, nil
 }
 
-type regexpReplaceFuncSig struct {
+type builtinRegexpReplaceFuncSig struct {
 	regexpBaseFuncSig
 }
 
-func (re *regexpReplaceFuncSig) vectorized() bool {
+func (re *builtinRegexpReplaceFuncSig) vectorized() bool {
 	return true
 }
 
-func (re *regexpReplaceFuncSig) Clone() builtinFunc {
-	newSig := &regexpReplaceFuncSig{}
+func (re *builtinRegexpReplaceFuncSig) Clone() builtinFunc {
+	newSig := &builtinRegexpReplaceFuncSig{}
 	newSig.cloneFrom(&re.baseBuiltinFunc)
 	newSig.clone(&re.regexpBaseFuncSig)
 	return newSig
 }
 
-func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) {
+func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(re.ctx, row)
 	trimmedExpr := expr
 	if isNull || err != nil {
@@ -1121,13 +1121,13 @@ func (re *regexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, error) 
 //  2. pattern is const and match type is null
 //
 // return true: need, false: needless
-func (re *regexpReplaceFuncSig) needMemorization() bool {
+func (re *builtinRegexpReplaceFuncSig) needMemorization() bool {
 	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 || re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // Call this function when at least one of the args is vector
 // REGEXP_REPLACE(expr, pat, repl[, pos[, occurrence[, match_type]]])
-func (re *regexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*regexpParam, 0, 6)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
