@@ -67,10 +67,8 @@ func (pr *paramReplacer) Reset() { pr.params = nil }
 
 // ParameterizeAST parameterizes this StmtNode.
 // e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23].
-func ParameterizeAST(sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, ok bool, err error) {
-	if !Available4GeneralPlanCache(sctx, stmt) { // not support
-		return "", nil, false, nil
-	}
+// NOTICE: this function may modify the input stmt.
+func ParameterizeAST(sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
 	pr := paramReplacerPool.Get().(*paramReplacer)
 	pCtx := paramCtxPool.Get().(*format.RestoreCtx)
 	defer func() {
@@ -82,9 +80,9 @@ func ParameterizeAST(sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL strin
 	stmt.Accept(pr)
 	if err := stmt.Restore(pCtx); err != nil {
 		err = RestoreASTWithParams(sctx, stmt, pr.params)
-		return "", nil, false, err
+		return "", nil, err
 	}
-	paramSQL, params, ok = pCtx.In.(*strings.Builder).String(), pr.params, true
+	paramSQL, params = pCtx.In.(*strings.Builder).String(), pr.params
 	return
 }
 
@@ -128,28 +126,4 @@ func RestoreASTWithParams(_ sessionctx.Context, stmt ast.StmtNode, params []*dri
 	pr.params = params
 	stmt.Accept(pr)
 	return pr.err
-}
-
-// Available4GeneralPlanCache returns whether this AST is available for general plan cache.
-func Available4GeneralPlanCache(sctx sessionctx.Context, stmt ast.StmtNode) bool {
-	// Now only support: select {col} from {single-table} where {cond} and {cond} ...
-	n, ok := stmt.(*ast.SelectStmt)
-	if !ok { // TODO: support DML statements
-		return false
-	}
-	if len(n.TableHints) > 0 || // hints
-		n.Distinct || n.GroupBy != nil || n.Having != nil || // agg
-		n.WindowSpecs != nil || // window function
-		n.OrderBy != nil || n.Limit != nil || // order / limit
-		n.LockInfo != nil || n.SelectIntoOpt != nil { // lock info
-		return false
-	}
-	if n.From == nil || n.From.TableRefs == nil { // not from a general table
-		return false
-	}
-	if n.From.TableRefs.Right != nil { // no join
-		return false
-	}
-	// TODO: check function calls, partition tables, generated cols, collations and temp-tables.
-	return true
 }

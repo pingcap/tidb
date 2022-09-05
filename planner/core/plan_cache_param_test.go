@@ -61,49 +61,24 @@ func TestParameterize(t *testing.T) {
 			"SELECT * FROM `t` WHERE `a`=_UTF8MB4'a' AND `b`=_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbb'",
 		},
 		// TODO: more test cases
-
-		// unsupported cases
-		{
-			"select * from t1, t2 where a=1", // join
-			false, "", nil, "",
-		},
-		{
-			"select /*+ use_index(t, k) */ * from t where a=1", // hint
-			false, "", nil, "",
-		},
-		{
-			"select * from t where a=1 limit 1", // limit
-			false, "", nil, "",
-		},
-		{
-			"select count(*) from t where a=1 group by b", // agg
-			false, "", nil, "",
-		},
-		{
-			"select * from t where a=1 order by a", // sort
-			false, "", nil, "",
-		},
 	}
 
 	for _, c := range cases {
 		stmt, err := parser.New().ParseOneStmt(c.sql, "", "")
 		require.Nil(t, err)
-		paramSQL, params, ok, err := ParameterizeAST(sctx, stmt)
+		paramSQL, params, err := ParameterizeAST(sctx, stmt)
 		require.Nil(t, err)
-		require.Equal(t, c.ok, ok)
-		if ok {
-			require.Equal(t, c.paramSQL, paramSQL)
-			require.Equal(t, len(c.params), len(params))
-			for i := range params {
-				require.Equal(t, c.params[i], params[i].Datum.GetValue())
-			}
-
-			err := RestoreASTWithParams(sctx, stmt, params)
-			require.Nil(t, err)
-			var buf strings.Builder
-			rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
-			require.Nil(t, stmt.Restore(rCtx))
-			require.Equal(t, c.restoreSQL, buf.String())
+		require.Equal(t, c.paramSQL, paramSQL)
+		require.Equal(t, len(c.params), len(params))
+		for i := range params {
+			require.Equal(t, c.params[i], params[i].Datum.GetValue())
 		}
+
+		err = RestoreASTWithParams(sctx, stmt, params)
+		require.Nil(t, err)
+		var buf strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+		require.Nil(t, stmt.Restore(rCtx))
+		require.Equal(t, c.restoreSQL, buf.String())
 	}
 }
