@@ -1969,6 +1969,7 @@ func TestParallelRenameTable(t *testing.T) {
 	require.Error(t, checkErr)
 	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	checkErr = nil
+	tk.MustExec("rename table t1 to t")
 
 	// rename then add column, but rename to other database
 	concurrentDDLQuery = "alter table t add column g int"
