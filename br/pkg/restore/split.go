@@ -397,12 +397,20 @@ func PaginateScanRegion(
 				break
 			}
 		}
+<<<<<<< HEAD
 		if err := checkRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
 			return err
 		}
 		return nil
 	}, newScanRegionBackoffer())
+=======
+		if err != nil {
+			log.Warn("scatter region meet error", logutil.ShortError(err))
+		}
+		return err
+	}, &split.ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
+>>>>>>> 4ce539b42... br: Add scatter timeout (#37605)
 
 	return regions, err
 }

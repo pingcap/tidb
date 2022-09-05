@@ -91,6 +91,46 @@ func NewSplitClient(client pd.Client, tlsConf *tls.Config, isRawKv bool) SplitCl
 		storeCache: make(map[uint64]*metapb.Store),
 		isRawKv:    isRawKv,
 	}
+<<<<<<< HEAD:br/pkg/restore/split_client.go
+=======
+	return cli
+}
+
+func (c *pdClient) needScatter(ctx context.Context) bool {
+	c.needScatterInit.Do(func() {
+		var err error
+		c.needScatterVal, err = c.checkNeedScatter(ctx)
+		if err != nil {
+			log.Warn("failed to check whether need to scatter, use permissive strategy: always scatter", logutil.ShortError(err))
+			c.needScatterVal = true
+		}
+		if !c.needScatterVal {
+			log.Info("skipping scatter because the replica number isn't less than store count.")
+		}
+	})
+	return c.needScatterVal
+}
+
+// ScatterRegions scatters regions in a batch.
+func (c *pdClient) ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	regionsID := make([]uint64, 0, len(regionInfo))
+	for _, v := range regionInfo {
+		regionsID = append(regionsID, v.Region.Id)
+		log.Debug("scattering regions", logutil.Key("start", v.Region.StartKey),
+			logutil.Key("end", v.Region.EndKey),
+			zap.Uint64("id", v.Region.Id))
+	}
+	resp, err := c.client.ScatterRegions(ctx, regionsID)
+	if err != nil {
+		return err
+	}
+	if pbErr := resp.GetHeader().GetError(); pbErr.GetType() != pdpb.ErrorType_OK {
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "pd returns error during batch scattering: %s", pbErr)
+	}
+	return nil
+>>>>>>> 4ce539b42... br: Add scatter timeout (#37605):br/pkg/restore/split/client.go
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
