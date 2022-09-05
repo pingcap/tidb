@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -414,9 +413,9 @@ func TestDeferredExprNotNull(t *testing.T) {
 	xDur, _, _ := cst.EvalDuration(ctx, chunk.Row{})
 	require.Equal(t, 0, xDur.Compare(m.i.(types.Duration)))
 
-	m.i = json.BinaryJSON{}
+	m.i = types.BinaryJSON{}
 	xJsn, _, _ := cst.EvalJSON(ctx, chunk.Row{})
-	require.Equal(t, xJsn.String(), m.i.(json.BinaryJSON).String())
+	require.Equal(t, xJsn.String(), m.i.(types.BinaryJSON).String())
 
 	cln := cst.Clone().(*Constant)
 	require.Equal(t, cst.DeferredExpr, cln.DeferredExpr)
