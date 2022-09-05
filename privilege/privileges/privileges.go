@@ -198,11 +198,11 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		return false
 	}
 
-	if record.AuthPlugin == mysql.AuthSM3Password {
+	if record.AuthPlugin == mysql.AuthTiDBSM3Password {
 		if len(pwd) == mysql.SM3PWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a sm3_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("user password from system DB not like a tidb_sm3_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	}
 
@@ -343,10 +343,10 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			if !authok {
 				return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-		case mysql.AuthSM3Password:
+		case mysql.AuthTiDBSM3Password:
 			authOK, err := auth.CheckSM3Password([]byte(pwd), string(authentication))
 			if err != nil {
-				logutil.BgLogger().Error("Failed to check sm3_password", zap.Error(err))
+				logutil.BgLogger().Error("Failed to check tidb_sm3_password", zap.Error(err))
 			}
 
 			if !authOK {

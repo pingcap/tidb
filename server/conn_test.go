@@ -1039,7 +1039,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
-	// client trying to authenticate with sm3_password
+	// client trying to authenticate with tidb_sm3_password
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
 	cc = &clientConn{
 		connectionID: 1,
@@ -1055,7 +1055,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthSM3Password,
+		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
@@ -1130,7 +1130,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
-	// client trying to authenticate with sm3_password
+	// client trying to authenticate with tidb_sm3_password
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
 	cc = &clientConn{
 		connectionID: 1,
@@ -1146,7 +1146,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthSM3Password,
+		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
@@ -1222,7 +1222,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
-	// client trying to authenticate with sm3_password
+	// client trying to authenticate with tidb_sm3_password
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
 	cc = &clientConn{
 		connectionID: 1,
@@ -1238,7 +1238,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthSM3Password,
+		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
@@ -1265,8 +1265,8 @@ func TestHandleAuthPlugin(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
 
-	// === Target account has sm3_password ===
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeUser", "return(\"sm3_password\")"))
+	// === Target account has tidb_sm3_password ===
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeUser", "return(\"tidb_sm3_password\")"))
 
 	// 5.7 or newer client trying to authenticate with mysql_native_password
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
@@ -1288,7 +1288,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthSM3Password), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthTiDBSM3Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// 8.0 or newer client trying to authenticate with caching_sha2_password
@@ -1311,10 +1311,10 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthSM3Password), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthTiDBSM3Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
-	// client trying to authenticate with sm3_password
+	// client trying to authenticate with tidb_sm3_password
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
 	cc = &clientConn{
 		connectionID: 1,
@@ -1330,11 +1330,11 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthSM3Password,
+		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthSM3Password), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthTiDBSM3Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// MySQL 5.1 or older client, without authplugin support
