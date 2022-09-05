@@ -61,7 +61,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		store:   store,
 	}
 	tk.RefreshSession()
-	
+
 	dom, _ := session.GetDomain(store)
 	sm := dom.InfoSyncer().GetSessionManager()
 	if sm != nil {
