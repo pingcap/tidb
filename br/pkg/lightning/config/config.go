@@ -607,6 +607,10 @@ func (sec *Security) RegisterMySQL() error {
 	if err := sec.LoadTLSContent(); err != nil {
 		return err
 	}
+	if len(sec.CABytes) == 0 && len(sec.CertBytes) == 0 && len(sec.KeyBytes) == 0 {
+		return nil
+	}
+
 	tlsConfig, err := util.NewTLSConfigWithVerifyCN(sec.CABytes, sec.CertBytes, sec.KeyBytes, nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -1191,7 +1195,9 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 
 	switch cfg.TiDB.TLS {
 	case "":
-		if len(cfg.TiDB.Security.CAPath) > 0 {
+		if len(cfg.TiDB.Security.CAPath) > 0 || len(cfg.TiDB.Security.CABytes) > 0 ||
+			len(cfg.TiDB.Security.CertPath) > 0 || len(cfg.TiDB.Security.CertBytes) > 0 ||
+			len(cfg.TiDB.Security.KeyPath) > 0 || len(cfg.TiDB.Security.KeyBytes) > 0 {
 			if cfg.TiDB.Security.TLSConfigName == "" {
 				cfg.TiDB.Security.TLSConfigName = uuid.NewString() // adjust this the default value
 			}
