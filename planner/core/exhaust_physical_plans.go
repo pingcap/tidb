@@ -2279,9 +2279,9 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 	{
 		allSupported := true
 		for _, windowFunc := range lw.WindowFuncDescs {
-			if !windowFunc.CanPushDownToTiFlash() {
+			if !windowFunc.CanPushDownToTiFlash(lw.SCtx()) {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-					"MPP mode may be blocked because window function `" + windowFunc.Name + "` is not supported now.")
+					"MPP mode may be blocked because window function `" + windowFunc.Name + "` or its arguments are not supported now.")
 				allSupported = false
 			} else if !expression.IsPushDownEnabled(windowFunc.Name, kv.TiFlash) {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because window function `" + windowFunc.Name + "` is blocked by blacklist, check `table mysql.expr_pushdown_blacklist;` for more information.")
