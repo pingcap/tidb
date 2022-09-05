@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package json
+package types
 
 import (
 	"fmt"
@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+const jsonBenchStr = `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`
 
 func TestBinaryJSONMarshalUnmarshal(t *testing.T) {
 	expectedList := []string{
@@ -85,7 +87,7 @@ func TestBinaryJSONExtract(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		var pathExprList = make([]PathExpression, 0)
+		var pathExprList = make([]JSONPathExpression, 0)
 		for _, peStr := range test.pathExprStrings {
 			pe, err := ParseJSONPathExpr(peStr)
 			require.NoError(t, err)
@@ -120,7 +122,7 @@ func TestBinaryJSONType(t *testing.T) {
 
 	// we can't parse '9223372036854775808' to JSON::Uint64 now,
 	// because go builtin JSON parser treats that as DOUBLE.
-	require.Equal(t, "UNSIGNED INTEGER", CreateBinary(uint64(1<<63)).Type())
+	require.Equal(t, "UNSIGNED INTEGER", CreateBinaryJSON(uint64(1<<63)).Type())
 }
 
 func TestBinaryJSONUnquote(t *testing.T) {
@@ -167,7 +169,7 @@ func TestQuoteString(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		require.Equal(t, test.quoted, quoteString(test.raw))
+		require.Equal(t, test.quoted, quoteJSONString(test.raw))
 	}
 }
 
@@ -178,34 +180,34 @@ func TestBinaryJSONModify(t *testing.T) {
 		setValue string
 		expected string
 		success  bool
-		mt       ModifyType
+		mt       JSONModifyType
 	}{
-		{`null`, "$", `{}`, `{}`, true, ModifySet},
-		{`{}`, "$.a", `3`, `{"a": 3}`, true, ModifySet},
-		{`{"a": 3}`, "$.a", `[]`, `{"a": []}`, true, ModifyReplace},
-		{`{"a": 3}`, "$.b", `"3"`, `{"a": 3, "b": "3"}`, true, ModifySet},
-		{`{"a": []}`, "$.a[0]", `3`, `{"a": [3]}`, true, ModifySet},
-		{`{"a": [3]}`, "$.a[1]", `4`, `{"a": [3, 4]}`, true, ModifyInsert},
-		{`{"a": [3]}`, "$[0]", `4`, `4`, true, ModifySet},
-		{`{"a": [3]}`, "$[1]", `4`, `[{"a": [3]}, 4]`, true, ModifySet},
-		{`{"b": true}`, "$.b", `false`, `{"b": false}`, true, ModifySet},
+		{`null`, "$", `{}`, `{}`, true, JSONModifySet},
+		{`{}`, "$.a", `3`, `{"a": 3}`, true, JSONModifySet},
+		{`{"a": 3}`, "$.a", `[]`, `{"a": []}`, true, JSONModifyReplace},
+		{`{"a": 3}`, "$.b", `"3"`, `{"a": 3, "b": "3"}`, true, JSONModifySet},
+		{`{"a": []}`, "$.a[0]", `3`, `{"a": [3]}`, true, JSONModifySet},
+		{`{"a": [3]}`, "$.a[1]", `4`, `{"a": [3, 4]}`, true, JSONModifyInsert},
+		{`{"a": [3]}`, "$[0]", `4`, `4`, true, JSONModifySet},
+		{`{"a": [3]}`, "$[1]", `4`, `[{"a": [3]}, 4]`, true, JSONModifySet},
+		{`{"b": true}`, "$.b", `false`, `{"b": false}`, true, JSONModifySet},
 
 		// nothing changed because the path is empty and we want to insert.
-		{`{}`, "$", `1`, `{}`, true, ModifyInsert},
+		{`{}`, "$", `1`, `{}`, true, JSONModifyInsert},
 		// nothing changed because the path without last leg doesn't exist.
-		{`{"a": [3, 4]}`, "$.b[1]", `3`, `{"a": [3, 4]}`, true, ModifySet},
+		{`{"a": [3, 4]}`, "$.b[1]", `3`, `{"a": [3, 4]}`, true, JSONModifySet},
 		// nothing changed because the path without last leg doesn't exist.
-		{`{"a": [3, 4]}`, "$.a[2].b", `3`, `{"a": [3, 4]}`, true, ModifySet},
+		{`{"a": [3, 4]}`, "$.a[2].b", `3`, `{"a": [3, 4]}`, true, JSONModifySet},
 		// nothing changed because we want to insert but the full path exists.
-		{`{"a": [3, 4]}`, "$.a[0]", `30`, `{"a": [3, 4]}`, true, ModifyInsert},
+		{`{"a": [3, 4]}`, "$.a[0]", `30`, `{"a": [3, 4]}`, true, JSONModifyInsert},
 		// nothing changed because we want to replace but the full path doesn't exist.
-		{`{"a": [3, 4]}`, "$.a[2]", `30`, `{"a": [3, 4]}`, true, ModifyReplace},
+		{`{"a": [3, 4]}`, "$.a[2]", `30`, `{"a": [3, 4]}`, true, JSONModifyReplace},
 
 		// bad path expression.
-		{"null", "$.*", "{}", "null", false, ModifySet},
-		{"null", "$[*]", "{}", "null", false, ModifySet},
-		{"null", "$**.a", "{}", "null", false, ModifySet},
-		{"null", "$**[3]", "{}", "null", false, ModifySet},
+		{"null", "$.*", "{}", "null", false, JSONModifySet},
+		{"null", "$[*]", "{}", "null", false, JSONModifySet},
+		{"null", "$**.a", "{}", "null", false, JSONModifySet},
+		{"null", "$**[3]", "{}", "null", false, JSONModifySet},
 	}
 
 	for _, test := range tests {
@@ -215,7 +217,7 @@ func TestBinaryJSONModify(t *testing.T) {
 		base := mustParseBinaryFromString(t, test.base)
 		value := mustParseBinaryFromString(t, test.setValue)
 		expected := mustParseBinaryFromString(t, test.expected)
-		obtain, err := base.Modify([]PathExpression{pathExpr}, []BinaryJSON{value}, test.mt)
+		obtain, err := base.Modify([]JSONPathExpression{pathExpr}, []BinaryJSON{value}, test.mt)
 		if test.success {
 			require.NoError(t, err)
 			require.Equal(t, expected.String(), obtain.String())
@@ -251,7 +253,7 @@ func TestBinaryJSONRemove(t *testing.T) {
 
 		base := mustParseBinaryFromString(t, test.base)
 		expected := mustParseBinaryFromString(t, test.expected)
-		obtain, err := base.Remove([]PathExpression{pathExpr})
+		obtain, err := base.Remove([]JSONPathExpression{pathExpr})
 		if test.success {
 			require.NoError(t, err)
 			require.Equal(t, expected.String(), obtain.String())
@@ -265,7 +267,7 @@ func TestCompareBinary(t *testing.T) {
 	jNull := mustParseBinaryFromString(t, `null`)
 	jBoolTrue := mustParseBinaryFromString(t, `true`)
 	jBoolFalse := mustParseBinaryFromString(t, `false`)
-	jIntegerLarge := CreateBinary(uint64(1 << 63))
+	jIntegerLarge := CreateBinaryJSON(uint64(1 << 63))
 	jIntegerSmall := mustParseBinaryFromString(t, `3`)
 	jStringLarge := mustParseBinaryFromString(t, `"hello, world"`)
 	jStringSmall := mustParseBinaryFromString(t, `"hello"`)
@@ -287,39 +289,39 @@ func TestCompareBinary(t *testing.T) {
 		{jArraySmall, jArrayLarge, -1},
 		{jArrayLarge, jBoolFalse, -1},
 		{jBoolFalse, jBoolTrue, -1},
-		{CreateBinary(int64(922337203685477580)), CreateBinary(int64(922337203685477580)), 0},
-		{CreateBinary(int64(922337203685477580)), CreateBinary(int64(922337203685477581)), -1},
-		{CreateBinary(int64(922337203685477581)), CreateBinary(int64(922337203685477580)), 1},
+		{CreateBinaryJSON(int64(922337203685477580)), CreateBinaryJSON(int64(922337203685477580)), 0},
+		{CreateBinaryJSON(int64(922337203685477580)), CreateBinaryJSON(int64(922337203685477581)), -1},
+		{CreateBinaryJSON(int64(922337203685477581)), CreateBinaryJSON(int64(922337203685477580)), 1},
 
-		{CreateBinary(int64(-1)), CreateBinary(uint64(18446744073709551615)), -1},
-		{CreateBinary(int64(922337203685477580)), CreateBinary(uint64(922337203685477581)), -1},
-		{CreateBinary(int64(2)), CreateBinary(uint64(1)), 1},
-		{CreateBinary(int64(math.MaxInt64)), CreateBinary(uint64(math.MaxInt64)), 0},
+		{CreateBinaryJSON(int64(-1)), CreateBinaryJSON(uint64(18446744073709551615)), -1},
+		{CreateBinaryJSON(int64(922337203685477580)), CreateBinaryJSON(uint64(922337203685477581)), -1},
+		{CreateBinaryJSON(int64(2)), CreateBinaryJSON(uint64(1)), 1},
+		{CreateBinaryJSON(int64(math.MaxInt64)), CreateBinaryJSON(uint64(math.MaxInt64)), 0},
 
-		{CreateBinary(uint64(18446744073709551615)), CreateBinary(int64(-1)), 1},
-		{CreateBinary(uint64(922337203685477581)), CreateBinary(int64(922337203685477580)), 1},
-		{CreateBinary(uint64(1)), CreateBinary(int64(2)), -1},
-		{CreateBinary(uint64(math.MaxInt64)), CreateBinary(int64(math.MaxInt64)), 0},
+		{CreateBinaryJSON(uint64(18446744073709551615)), CreateBinaryJSON(int64(-1)), 1},
+		{CreateBinaryJSON(uint64(922337203685477581)), CreateBinaryJSON(int64(922337203685477580)), 1},
+		{CreateBinaryJSON(uint64(1)), CreateBinaryJSON(int64(2)), -1},
+		{CreateBinaryJSON(uint64(math.MaxInt64)), CreateBinaryJSON(int64(math.MaxInt64)), 0},
 
-		{CreateBinary(float64(9.0)), CreateBinary(int64(9)), 0},
-		{CreateBinary(float64(8.9)), CreateBinary(int64(9)), -1},
-		{CreateBinary(float64(9.1)), CreateBinary(int64(9)), 1},
+		{CreateBinaryJSON(float64(9.0)), CreateBinaryJSON(int64(9)), 0},
+		{CreateBinaryJSON(float64(8.9)), CreateBinaryJSON(int64(9)), -1},
+		{CreateBinaryJSON(float64(9.1)), CreateBinaryJSON(int64(9)), 1},
 
-		{CreateBinary(float64(9.0)), CreateBinary(uint64(9)), 0},
-		{CreateBinary(float64(8.9)), CreateBinary(uint64(9)), -1},
-		{CreateBinary(float64(9.1)), CreateBinary(uint64(9)), 1},
+		{CreateBinaryJSON(float64(9.0)), CreateBinaryJSON(uint64(9)), 0},
+		{CreateBinaryJSON(float64(8.9)), CreateBinaryJSON(uint64(9)), -1},
+		{CreateBinaryJSON(float64(9.1)), CreateBinaryJSON(uint64(9)), 1},
 
-		{CreateBinary(int64(9)), CreateBinary(float64(9.0)), 0},
-		{CreateBinary(int64(9)), CreateBinary(float64(8.9)), 1},
-		{CreateBinary(int64(9)), CreateBinary(float64(9.1)), -1},
+		{CreateBinaryJSON(int64(9)), CreateBinaryJSON(float64(9.0)), 0},
+		{CreateBinaryJSON(int64(9)), CreateBinaryJSON(float64(8.9)), 1},
+		{CreateBinaryJSON(int64(9)), CreateBinaryJSON(float64(9.1)), -1},
 
-		{CreateBinary(uint64(9)), CreateBinary(float64(9.0)), 0},
-		{CreateBinary(uint64(9)), CreateBinary(float64(8.9)), 1},
-		{CreateBinary(uint64(9)), CreateBinary(float64(9.1)), -1},
+		{CreateBinaryJSON(uint64(9)), CreateBinaryJSON(float64(9.0)), 0},
+		{CreateBinaryJSON(uint64(9)), CreateBinaryJSON(float64(8.9)), 1},
+		{CreateBinaryJSON(uint64(9)), CreateBinaryJSON(float64(9.1)), -1},
 	}
 
 	for _, test := range tests {
-		result := CompareBinary(test.left, test.right)
+		result := CompareBinaryJSON(test.left, test.right)
 		comment := fmt.Sprintf("left: %v, right: %v, expect: %v, got: %v", test.left, test.right, test.result, result)
 		require.Equal(t, test.result, result, comment)
 	}
@@ -347,22 +349,22 @@ func TestBinaryJSONMerge(t *testing.T) {
 		for _, s := range test.suffixes {
 			suffixes = append(suffixes, mustParseBinaryFromString(t, s))
 		}
-		result := MergeBinary(suffixes)
-		cmp := CompareBinary(result, mustParseBinaryFromString(t, test.expected))
+		result := MergeBinaryJSON(suffixes)
+		cmp := CompareBinaryJSON(result, mustParseBinaryFromString(t, test.expected))
 		require.Equal(t, 0, cmp)
 	}
 }
 
 func mustParseBinaryFromString(t *testing.T, s string) BinaryJSON {
-	result, err := ParseBinaryFromString(s)
+	result, err := ParseBinaryJSONFromString(s)
 	require.NoError(t, err)
 	return result
 }
 
 func BenchmarkBinaryMarshal(b *testing.B) {
 	b.ReportAllocs()
-	b.SetBytes(int64(len(benchStr)))
-	bj, _ := ParseBinaryFromString(benchStr)
+	b.SetBytes(int64(len(jsonBenchStr)))
+	bj, _ := ParseBinaryJSONFromString(jsonBenchStr)
 	for i := 0; i < b.N; i++ {
 		_, _ = bj.MarshalJSON()
 	}
@@ -395,7 +397,7 @@ func TestBinaryJSONContains(t *testing.T) {
 	for _, test := range tests {
 		obj := mustParseBinaryFromString(t, test.input)
 		target := mustParseBinaryFromString(t, test.target)
-		require.Equal(t, test.expected, ContainsBinary(obj, target))
+		require.Equal(t, test.expected, ContainsBinaryJSON(obj, target))
 	}
 }
 
@@ -423,7 +425,7 @@ func TestGetKeys(t *testing.T) {
 		b.WriteByte('a')
 	}
 	b.WriteString("\": 1}")
-	parsedBJ, err := ParseBinaryFromString(b.String())
+	parsedBJ, err := ParseBinaryJSONFromString(b.String())
 	require.Error(t, err)
 	require.EqualError(t, err, "[types:8129]TiDB does not yet support JSON objects with the key length >= 65536")
 }
@@ -449,33 +451,33 @@ func TestBinaryJSONDepth(t *testing.T) {
 }
 
 func TestParseBinaryFromString(t *testing.T) {
-	obj, err := ParseBinaryFromString("")
+	obj, err := ParseBinaryJSONFromString("")
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
 	require.Contains(t, err.Error(), "The document is empty")
 
-	obj, err = ParseBinaryFromString(`"a""`)
+	obj, err = ParseBinaryJSONFromString(`"a""`)
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
 	require.Contains(t, err.Error(), "The document root must not be followed by other values.")
 }
 
 func TestCreateBinary(t *testing.T) {
-	bj := CreateBinary(int64(1 << 62))
-	require.Equal(t, TypeCodeInt64, bj.TypeCode)
+	bj := CreateBinaryJSON(int64(1 << 62))
+	require.Equal(t, JSONTypeCodeInt64, bj.TypeCode)
 	require.NotNil(t, bj.Value)
 
-	bj = CreateBinary(123456789.1234567)
-	require.Equal(t, TypeCodeFloat64, bj.TypeCode)
+	bj = CreateBinaryJSON(123456789.1234567)
+	require.Equal(t, JSONTypeCodeFloat64, bj.TypeCode)
 
-	bj = CreateBinary(0.00000001)
-	require.Equal(t, TypeCodeFloat64, bj.TypeCode)
+	bj = CreateBinaryJSON(0.00000001)
+	require.Equal(t, JSONTypeCodeFloat64, bj.TypeCode)
 
-	bj = CreateBinary(1e-20)
-	require.Equal(t, TypeCodeFloat64, bj.TypeCode)
+	bj = CreateBinaryJSON(1e-20)
+	require.Equal(t, JSONTypeCodeFloat64, bj.TypeCode)
 	require.NotNil(t, bj.Value)
 
-	bj2 := CreateBinary(bj)
+	bj2 := CreateBinaryJSON(bj)
 	require.Equal(t, bj.TypeCode, bj2.TypeCode)
 	require.NotNil(t, bj2.Value)
 
@@ -484,14 +486,14 @@ func TestCreateBinary(t *testing.T) {
 			r := recover()
 			require.Regexp(t, "^unknown type:", r)
 		}()
-		bj = CreateBinary(int8(123))
+		bj = CreateBinaryJSON(int8(123))
 		require.Equal(t, bj.TypeCode, bj.TypeCode)
 	}()
 }
 
 func TestFunctions(t *testing.T) {
 	testByte := []byte{'\\', 'b', 'f', 'n', 'r', 't', 'u', 'z', '0'}
-	testOutput, err := unquoteString(string(testByte))
+	testOutput, err := unquoteJSONString(string(testByte))
 	require.Equal(t, "\bfnrtuz0", testOutput)
 	require.NoError(t, err)
 
@@ -556,7 +558,7 @@ func TestBinaryJSONExtractCallback(t *testing.T) {
 		require.NoError(t, err)
 
 		count := 0
-		cb := func(fullPath PathExpression, bj BinaryJSON) (stop bool, err error) {
+		cb := func(fullPath JSONPathExpression, bj BinaryJSON) (stop bool, err error) {
 			require.Less(t, count, len(test.expected))
 			if count < len(test.expected) {
 				require.Equal(t, test.expected[count].path, fullPath.String())
@@ -566,7 +568,7 @@ func TestBinaryJSONExtractCallback(t *testing.T) {
 			return false, nil
 		}
 
-		fullPath := PathExpression{legs: make([]pathLeg, 0), flags: pathExpressionFlag(0)}
+		fullPath := JSONPathExpression{legs: make([]jsonPathLeg, 0), flags: jsonPathExpressionFlag(0)}
 		_, err = test.bj.extractToCallback(pe, cb, fullPath)
 		require.NoError(t, err)
 		require.Equal(t, len(test.expected), count)
@@ -618,7 +620,7 @@ func TestBinaryJSONWalk(t *testing.T) {
 
 	for _, test := range tests {
 		count := 0
-		cb := func(fullPath PathExpression, bj BinaryJSON) (stop bool, err error) {
+		cb := func(fullPath JSONPathExpression, bj BinaryJSON) (stop bool, err error) {
 			require.Less(t, count, len(test.expected))
 			if count < len(test.expected) {
 				require.Equal(t, test.expected[count].path, fullPath.String())
@@ -630,7 +632,7 @@ func TestBinaryJSONWalk(t *testing.T) {
 
 		var err error
 		if len(test.paths) > 0 {
-			peList := make([]PathExpression, 0, len(test.paths))
+			peList := make([]JSONPathExpression, 0, len(test.paths))
 			for _, path := range test.paths {
 				pe, errPath := ParseJSONPathExpr(path)
 				require.NoError(t, errPath)
@@ -653,7 +655,7 @@ func TestBinaryJSONOpaque(t *testing.T) {
 	}{
 		{
 			BinaryJSON{
-				TypeCode: TypeCodeOpaque,
+				TypeCode: JSONTypeCodeOpaque,
 				Value:    []byte{233, 1, '9'},
 			},
 			Opaque{
@@ -664,7 +666,7 @@ func TestBinaryJSONOpaque(t *testing.T) {
 		},
 		{
 			BinaryJSON{
-				TypeCode: TypeCodeOpaque,
+				TypeCode: JSONTypeCodeOpaque,
 				Value:    append([]byte{233, 0x80, 0x01}, make([]byte, 128)...),
 			},
 			Opaque{
