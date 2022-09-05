@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
@@ -193,12 +192,12 @@ func TestGetUint64FromConstant(t *testing.T) {
 
 func TestSetExprColumnInOperand(t *testing.T) {
 	col := &Column{RetType: newIntFieldType()}
-	require.True(t, setExprColumnInOperand(col).(*Column).InOperand)
+	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
 
 	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
 	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f}
-	setExprColumnInOperand(fun)
+	SetExprColumnInOperand(fun)
 	require.True(t, f.getArgs()[0].(*Column).InOperand)
 }
 
@@ -561,11 +560,11 @@ func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val type
 	}
 	return types.Duration{}, m.i == nil, m.err
 }
-func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error) {
-	if x, ok := m.i.(json.BinaryJSON); ok {
+func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
+	if x, ok := m.i.(types.BinaryJSON); ok {
 		return x, false, m.err
 	}
-	return json.BinaryJSON{}, m.i == nil, m.err
+	return types.BinaryJSON{}, m.i == nil, m.err
 }
 func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err

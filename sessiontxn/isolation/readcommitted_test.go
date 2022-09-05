@@ -391,7 +391,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	checkUseSnapshot := func() {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.Equal(t, snapshotTS, readTS)
@@ -403,7 +403,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	checkUseTxn := func(useTxnTs bool) {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, isVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.NotEqual(t, snapshotTS, readTS)

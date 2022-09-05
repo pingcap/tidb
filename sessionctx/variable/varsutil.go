@@ -59,12 +59,12 @@ func GetDDLReorgBatchSize() int32 {
 
 // SetDDLErrorCountLimit sets ddlErrorCountlimit size.
 func SetDDLErrorCountLimit(cnt int64) {
-	atomic.StoreInt64(&ddlErrorCountlimit, cnt)
+	atomic.StoreInt64(&ddlErrorCountLimit, cnt)
 }
 
 // GetDDLErrorCountLimit gets ddlErrorCountlimit size.
 func GetDDLErrorCountLimit() int64 {
-	return atomic.LoadInt64(&ddlErrorCountlimit)
+	return atomic.LoadInt64(&ddlErrorCountLimit)
 }
 
 // SetDDLReorgRowFormat sets ddlReorgRowFormat version.
@@ -423,6 +423,16 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 		return err
 	}
 	s.ReadStaleness = time.Duration(sValue) * time.Second
+	return nil
+}
+
+// switchDDL turns on/off DDL in an instance.
+func switchDDL(on bool) error {
+	if on && EnableDDL != nil {
+		return EnableDDL()
+	} else if !on && DisableDDL != nil {
+		return DisableDDL()
+	}
 	return nil
 }
 

@@ -30,50 +30,53 @@ import (
 )
 
 // ShuffleExec is the executor to run other executors in a parallel manner.
+//
 //  1. It fetches chunks from M `DataSources` (value of M depends on the actual executor, e.g. M = 1 for WindowExec, M = 2 for MergeJoinExec).
+//
 //  2. It splits tuples from each `DataSource` into N partitions (Only "split by hash" is implemented so far).
+//
 //  3. It invokes N workers in parallel, each one has M `receiver` to receive partitions from `DataSources`
+//
 //  4. It assigns partitions received as input to each worker and executes child executors.
+//
 //  5. It collects outputs from each worker, then sends outputs to its parent.
 //
-//                                +-------------+
-//                        +-------| Main Thread |
-//                        |       +------+------+
-//                        |              ^
-//                        |              |
-//                        |              +
-//                        v             +++
-//                 outputHolderCh       | | outputCh (1 x Concurrency)
-//                        v             +++
-//                        |              ^
-//                        |              |
-//                        |      +-------+-------+
-//                        v      |               |
-//                 +--------------+             +--------------+
-//          +----- |    worker    |   .......   |    worker    |  worker (N Concurrency): child executor, eg. WindowExec (+SortExec)
-//          |      +------------+-+             +-+------------+
-//          |                 ^                 ^
-//          |                 |                 |
-//          |                +-+  +-+  ......  +-+
-//          |                | |  | |          | |
-//          |                ...  ...          ...  inputCh (Concurrency x 1)
-//          v                | |  | |          | |
-//    inputHolderCh          +++  +++          +++
-//          v                 ^    ^            ^
-//          |                 |    |            |
-//          |          +------o----+            |
-//          |          |      +-----------------+-----+
-//          |          |                              |
-//          |      +---+------------+------------+----+-----------+
-//          |      |              Partition Splitter              |
-//          |      +--------------+-+------------+-+--------------+
-//          |                             ^
-//          |                             |
-//          |             +---------------v-----------------+
-//          +---------->  |    fetch data from DataSource   |
-//                        +---------------------------------+
-//
-//
+//     +-------------+
+//     +-------| Main Thread |
+//     |       +------+------+
+//     |              ^
+//     |              |
+//     |              +
+//     v             +++
+//     outputHolderCh       | | outputCh (1 x Concurrency)
+//     v             +++
+//     |              ^
+//     |              |
+//     |      +-------+-------+
+//     v      |               |
+//     +--------------+             +--------------+
+//     +----- |    worker    |   .......   |    worker    |  worker (N Concurrency): child executor, eg. WindowExec (+SortExec)
+//     |      +------------+-+             +-+------------+
+//     |                 ^                 ^
+//     |                 |                 |
+//     |                +-+  +-+  ......  +-+
+//     |                | |  | |          | |
+//     |                ...  ...          ...  inputCh (Concurrency x 1)
+//     v                | |  | |          | |
+//     inputHolderCh          +++  +++          +++
+//     v                 ^    ^            ^
+//     |                 |    |            |
+//     |          +------o----+            |
+//     |          |      +-----------------+-----+
+//     |          |                              |
+//     |      +---+------------+------------+----+-----------+
+//     |      |              Partition Splitter              |
+//     |      +--------------+-+------------+-+--------------+
+//     |                             ^
+//     |                             |
+//     |             +---------------v-----------------+
+//     +---------->  |    fetch data from DataSource   |
+//     +---------------------------------+
 type ShuffleExec struct {
 	baseExecutor
 	concurrency int

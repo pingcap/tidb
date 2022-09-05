@@ -83,6 +83,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 
+	if p.IndexInfo != nil {
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, p.TblInfo.Name.O+":"+p.IndexInfo.Name.O)
+	}
+
 	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
 		if e.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != e.readReplicaScope {

@@ -59,25 +59,26 @@ var (
 //
 
 var (
-	mMetaPrefix       = []byte("m")
-	mNextGlobalIDKey  = []byte("NextGlobalID")
-	mSchemaVersionKey = []byte("SchemaVersionKey")
-	mDBs              = []byte("DBs")
-	mDBPrefix         = "DB"
-	mTablePrefix      = "Table"
-	mSequencePrefix   = "SID"
-	mSeqCyclePrefix   = "SequenceCycle"
-	mTableIDPrefix    = "TID"
-	mIncIDPrefix      = "IID"
-	mRandomIDPrefix   = "TARID"
-	mBootstrapKey     = []byte("BootstrapKey")
-	mSchemaDiffPrefix = "Diff"
-	mPolicies         = []byte("Policies")
-	mPolicyPrefix     = "Policy"
-	mPolicyGlobalID   = []byte("PolicyGlobalID")
-	mPolicyMagicByte  = CurrentMagicByteVer
-	mDDLTableVersion  = []byte("DDLTableVersion")
-	mConcurrentDDL    = []byte("concurrentDDL")
+	mMetaPrefix         = []byte("m")
+	mNextGlobalIDKey    = []byte("NextGlobalID")
+	mSchemaVersionKey   = []byte("SchemaVersionKey")
+	mDBs                = []byte("DBs")
+	mDBPrefix           = "DB"
+	mTablePrefix        = "Table"
+	mSequencePrefix     = "SID"
+	mSeqCyclePrefix     = "SequenceCycle"
+	mTableIDPrefix      = "TID"
+	mIncIDPrefix        = "IID"
+	mRandomIDPrefix     = "TARID"
+	mBootstrapKey       = []byte("BootstrapKey")
+	mSchemaDiffPrefix   = "Diff"
+	mPolicies           = []byte("Policies")
+	mPolicyPrefix       = "Policy"
+	mPolicyGlobalID     = []byte("PolicyGlobalID")
+	mPolicyMagicByte    = CurrentMagicByteVer
+	mDDLTableVersion    = []byte("DDLTableVersion")
+	mConcurrentDDL      = []byte("concurrentDDL")
+	mInFlashbackCluster = []byte("InFlashbackCluster")
 )
 
 const (
@@ -359,10 +360,12 @@ func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 
 // GetSchemaVersionWithNonEmptyDiff gets current global schema version, if diff is nil, we should return version - 1.
 // Consider the following scenario:
+/*
 //             t1            		t2			      t3             t4
 //             |					|				   |
 //    update schema version         |              set diff
 //                             stale read ts
+*/
 // At the first time, t2 reads the schema version v10, but the v10's diff is not set yet, so it loads v9 infoSchema.
 // But at t4 moment, v10's diff has been set and been cached in the memory, so stale read on t2 will get v10 schema from cache,
 // and inconsistency happen.
@@ -585,6 +588,24 @@ func (m *Meta) CheckDDLTableExists() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	return len(v) != 0, nil
+}
+
+// SetFlashbackClusterJobID set flashback cluster jobID
+func (m *Meta) SetFlashbackClusterJobID(jobID int64) error {
+	return errors.Trace(m.txn.Set(mInFlashbackCluster, m.jobIDKey(jobID)))
+}
+
+// GetFlashbackClusterJobID returns flashback cluster jobID.
+func (m *Meta) GetFlashbackClusterJobID() (int64, error) {
+	val, err := m.txn.Get(mInFlashbackCluster)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return 0, nil
+	}
+
+	return int64(binary.BigEndian.Uint64(val)), nil
 }
 
 // SetConcurrentDDL set the concurrent DDL flag.

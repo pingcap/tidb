@@ -718,15 +718,15 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 // authSha implements the caching_sha2_password specific part of the protocol.
 func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
 	const (
-		ShaCommand       = 1
-		RequestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
-		FastAuthOk       = 3
-		FastAuthFail     = 4
+		shaCommand       = 1
+		requestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
+		fastAuthOk       = 3
+		fastAuthFail     = 4
 	)
 
 	// Currently we always send a "FastAuthFail" as the cached part of the protocol isn't implemented yet.
 	// This triggers the client to send the full response.
-	err := cc.writePacket([]byte{0, 0, 0, 0, ShaCommand, FastAuthFail})
+	err := cc.writePacket([]byte{0, 0, 0, 0, shaCommand, fastAuthFail})
 	if err != nil {
 		logutil.Logger(ctx).Error("authSha packet write failed", zap.Error(err))
 		return nil, err
@@ -809,8 +809,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 			logutil.BgLogger().Warn("verify session token failed", zap.String("username", cc.user), zap.Error(err))
 			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 		}
-	} else if !cc.ctx.Auth(userIdentity, authData, cc.salt) {
-		return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+	} else if err = cc.ctx.Auth(userIdentity, authData, cc.salt); err != nil {
+		return err
 	}
 	cc.ctx.SetPort(port)
 	if cc.dbname != "" {
@@ -858,6 +858,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 			zap.String("user", cc.user), zap.String("host", host))
 	}
 	failpoint.Inject("FakeUser", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		userplugin = val.(string)
 	})
 	if userplugin == mysql.AuthSocket {
@@ -1372,7 +1373,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 func (cc *clientConn) writeStats(ctx context.Context) error {
 	var err error
-	var uptime int64 = 0
+	var uptime int64
 	info := serverInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
@@ -1414,6 +1415,7 @@ func (cc *clientConn) flush(ctx context.Context) error {
 		startTime  time.Time
 	)
 	if stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey); stmtDetailRaw != nil {
+		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 		startTime = time.Now()
 	}
@@ -1441,11 +1443,15 @@ func (cc *clientConn) flush(ctx context.Context) error {
 }
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
-	msg := cc.ctx.LastMessage()
-	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.OKHeader)
+	return cc.writeOkWith(ctx, mysql.OKHeader, true, cc.ctx.Status())
 }
 
-func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16, header byte) error {
+func (cc *clientConn) writeOkWith(ctx context.Context, header byte, flush bool, status uint16) error {
+	msg := cc.ctx.LastMessage()
+	affectedRows := cc.ctx.AffectedRows()
+	lastInsertID := cc.ctx.LastInsertID()
+	warnCnt := cc.ctx.WarningCount()
+
 	enclen := 0
 	if len(msg) > 0 {
 		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
@@ -1470,10 +1476,11 @@ func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows,
 		return err
 	}
 
-	if header == mysql.EOFHeader {
-		return nil
+	if flush {
+		return cc.flush(ctx)
 	}
-	return cc.flush(ctx)
+
+	return nil
 }
 
 func (cc *clientConn) writeError(ctx context.Context, e error) error {
@@ -1514,15 +1521,15 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 	return cc.flush(ctx)
 }
 
-// writeEOF writes an EOF packet.
+// writeEOF writes an EOF packet or if ClientDeprecateEOF is set it
+// writes an OK packet with EOF indicator.
 // Note this function won't flush the stream because maybe there are more
 // packets following it.
-// serverStatus, a flag bit represents server information
-// in the packet.
-func (cc *clientConn) writeEOF(serverStatus uint16) error {
+// serverStatus, a flag bit represents server information in the packet.
+// Note: it is callers' responsibility to ensure correctness of serverStatus.
+func (cc *clientConn) writeEOF(ctx context.Context, serverStatus uint16) error {
 	if cc.capability&mysql.ClientDeprecateEOF > 0 {
-		logutil.Logger(context.Background()).Error(
-			"Attempt to write EOF to client that has the ClientDeprecateEOF flag set", zap.Stack("stack"))
+		return cc.writeOkWith(ctx, mysql.EOFHeader, false, serverStatus)
 	}
 
 	data := cc.alloc.AllocWithLen(4, 9)
@@ -1530,9 +1537,7 @@ func (cc *clientConn) writeEOF(serverStatus uint16) error {
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
 		data = dumpUint16(data, cc.ctx.WarningCount())
-		status := cc.ctx.Status()
-		status |= serverStatus
-		data = dumpUint16(data, status)
+		data = dumpUint16(data, serverStatus)
 	}
 
 	err := cc.writePacket(data)
@@ -1801,8 +1806,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
-	stmts, err := cc.ctx.Parse(ctx, sql)
-	if err != nil {
+	var stmts []ast.StmtNode
+	if execStmt, ok := cc.ctx.Parameterize(ctx, sql); ok {
+		stmts = append(stmts, execStmt)
+	} else if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		return err
 	}
 
@@ -1918,8 +1925,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	var rowKeys []kv.Key //nolint: prealloc
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
-		switch stmt.(type) {
-		case *ast.UseStmt:
+		if _, ok := stmt.(*ast.UseStmt); ok {
 			// If there is a "use db" statement, we shouldn't cache even if it's possible.
 			// Consider the scenario where there are statements that could execute on multiple
 			// schemas, but the schema is actually different.
@@ -1937,8 +1943,8 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 		// Only support Update for now.
 		// TODO: support other point plans.
-		switch x := p.(type) {
-		case *plannercore.Update:
+		if x, ok := p.(*plannercore.Update); ok {
+			//nolint:forcetypeassert
 			updateStmt := stmt.(*ast.UpdateStmt)
 			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
 				if pp.PartitionInfo != nil {
@@ -2028,6 +2034,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	handled, err := cc.handleQuerySpecial(ctx, status)
 	if handled {
 		if execStmt := cc.ctx.Value(session.ExecStmtVarKey); execStmt != nil {
+			//nolint:forcetypeassert
 			execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err, false)
 		}
 	}
@@ -2044,6 +2051,7 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 	if loadDataInfo != nil {
 		handled = true
 		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
+		//nolint:forcetypeassert
 		if err := cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 			return handled, err
 		}
@@ -2053,6 +2061,7 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 	if loadStats != nil {
 		handled = true
 		defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
+		//nolint:forcetypeassert
 		if err := cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
 			return handled, err
 		}
@@ -2062,6 +2071,7 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 	if indexAdvise != nil {
 		handled = true
 		defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
+		//nolint:forcetypeassert
 		if err := cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo)); err != nil {
 			return handled, err
 		}
@@ -2071,12 +2081,13 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 	if planReplayerLoad != nil {
 		handled = true
 		defer cc.ctx.SetValue(executor.PlanReplayerLoadVarKey, nil)
+		//nolint:forcetypeassert
 		if err := cc.handlePlanReplayerLoad(ctx, planReplayerLoad.(*executor.PlanReplayerLoadInfo)); err != nil {
 			return handled, err
 		}
 	}
 
-	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount(), mysql.OKHeader)
+	return handled, cc.writeOkWith(ctx, mysql.OKHeader, true, status)
 }
 
 // handleFieldList returns the field list for a table.
@@ -2103,16 +2114,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 			return err
 		}
 	}
-	if cc.capability&mysql.ClientDeprecateEOF > 0 {
-		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
-			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.EOFHeader)
-		if err != nil {
-			return err
-		}
-		err = cc.pkt.flush()
-		return err
-	}
-	if err := cc.writeEOF(0); err != nil {
+	if err := cc.writeEOF(ctx, cc.ctx.Status()); err != nil {
 		return err
 	}
 	return cc.flush(ctx)
@@ -2154,7 +2156,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
+func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
@@ -2167,10 +2169,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 			return err
 		}
 	}
-	if cc.capability&mysql.ClientDeprecateEOF > 0 {
-		return nil
-	}
-	return cc.writeEOF(serverStatus)
+	return nil
 }
 
 // writeChunks writes data from a Chunk, which filled data by a ResultSet, into a connection.
@@ -2186,10 +2185,12 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
+		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
+			//nolint:forcetypeassert
 			switch value.(string) {
 			case "firstNext":
 				failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
@@ -2212,8 +2213,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			if stmtDetail != nil {
 				start = time.Now()
 			}
-			if err = cc.writeColumnInfo(columns, serverStatus); err != nil {
+			if err = cc.writeColumnInfo(columns); err != nil {
 				return false, err
+			}
+			if cc.capability&mysql.ClientDeprecateEOF == 0 {
+				// metadata only needs EOF marker for old clients without ClientDeprecateEOF
+				if err = cc.writeEOF(ctx, serverStatus); err != nil {
+					return false, err
+				}
 			}
 			if stmtDetail != nil {
 				stmtDetail.WriteSQLRespDuration += time.Since(start)
@@ -2254,14 +2261,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		start = time.Now()
 	}
 
-	var err error
-	if cc.capability&mysql.ClientDeprecateEOF > 0 {
-		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
-			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), mysql.EOFHeader)
-	} else {
-		err = cc.writeEOF(serverStatus)
-	}
-
+	err := cc.writeEOF(ctx, serverStatus)
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
 	}
@@ -2302,7 +2302,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
 		terror.Call(rs.Close)
-		return cc.writeEOF(serverStatus)
+		return cc.writeEOF(ctx, serverStatus)
 	}
 
 	// construct the rows sent to the client according to fetchSize.
@@ -2320,6 +2320,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
+		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
 	var (
@@ -2348,7 +2349,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	if stmtDetail != nil {
 		start = time.Now()
 	}
-	err = cc.writeEOF(serverStatus)
+	err = cc.writeEOF(ctx, serverStatus)
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
 	}
