@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -113,6 +115,12 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	originHook := dom.DDL().GetHook()
 	tk := testkit.NewTestKit(t, store)
 
+	injectSafeTS := oracle.GoTimeToTS(time.Now().Add(10 * time.Second))
+	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+
 	oldValue := map[string]interface{}{
 		"hot-region-schedule-limit": 1,
 	}
@@ -145,6 +153,9 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
 	require.NoError(t, err)
 	require.EqualValues(t, finishValue["hot-region-schedule-limit"], 1)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 }
 
 func TestCancelFlashbackCluster(t *testing.T) {
@@ -153,6 +164,12 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
+
+	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
+	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
@@ -175,4 +192,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	hook.MustCancelFailed(t)
 
 	dom.DDL().SetHook(originHook)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 }
