@@ -59,6 +59,7 @@ type regexpBaseFuncSig struct {
 	baseBuiltinFunc
 	regexpMemorizedSig
 	once sync.Once
+	lock sync.Mutex
 }
 
 func (re *regexpBaseFuncSig) isBinCollation() bool {
@@ -280,17 +281,20 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	}
 
 	// Check memorization
+	re.lock.Lock()
 	if re.needMemorization() {
 		// matchType must be const or null
 		matchType := params[2].getStringVal(0)
 
 		compile, err := re.genCompile(matchType)
 		if err != nil {
+			re.lock.Unlock()
 			return ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		re.initMemoizedRegexp(compile, params[1].getCol(), n)
 	}
+	re.lock.Unlock()
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(getBuffers(params)...)
@@ -555,17 +559,20 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 	}
 
 	// Check memorization
+	re.lock.Lock()
 	if re.needMemorization() {
 		// matchType must be const or null
 		matchType := params[4].getStringVal(0)
 
 		compile, err := re.genCompile(matchType)
 		if err != nil {
+			re.lock.Unlock()
 			return ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		re.initMemoizedRegexp(compile, params[1].getCol(), n)
 	}
+	re.lock.Unlock()
 
 	result.ReserveString(n)
 	buffers := getBuffers(params)
@@ -921,17 +928,20 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 	}
 
 	// Check memorization
+	re.lock.Lock()
 	if re.needMemorization() {
 		// matchType must be const or null
 		matchType := params[5].getStringVal(0)
 
 		compile, err := re.genCompile(matchType)
 		if err != nil {
+			re.lock.Unlock()
 			return ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		re.initMemoizedRegexp(compile, params[1].getCol(), n)
 	}
+	re.lock.Unlock()
 
 	// Start to calculate
 	result.ResizeInt64(n, false)
@@ -1315,17 +1325,20 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 	}
 
 	// Check memorization
+	re.lock.Lock()
 	if re.needMemorization() {
 		// matchType must be const or null
 		matchType := params[5].getStringVal(0)
 
 		compile, err := re.genCompile(matchType)
 		if err != nil {
+			re.lock.Unlock()
 			return ErrRegexp.GenWithStackByArgs(err)
 		}
 
 		re.initMemoizedRegexp(compile, params[1].getCol(), n)
 	}
+	re.lock.Unlock()
 
 	result.ReserveString(n)
 	buffers := getBuffers(params)
