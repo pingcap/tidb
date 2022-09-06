@@ -843,8 +843,9 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			}
 		}
 	}
+	i := 1
 ForColumnsTag:
-	for i, col := range tbl.Columns {
+	for _, col := range tbl.Columns {
 		if col.Hidden {
 			continue
 		}
@@ -961,7 +962,7 @@ ForColumnsTag:
 			schema.Name.O,         // TABLE_SCHEMA
 			tbl.Name.O,            // TABLE_NAME
 			col.Name.O,            // COLUMN_NAME
-			i+1,                   // ORIGINAL_POSITION
+			i,                     // ORDINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
 			types.TypeToStr(ft.GetType(), ft.GetCharset()), // DATA_TYPE
@@ -980,6 +981,7 @@ ForColumnsTag:
 			col.GeneratedExprString, // GENERATION_EXPRESSION
 		)
 		e.rows = append(e.rows, record)
+		i++
 	}
 }
 
