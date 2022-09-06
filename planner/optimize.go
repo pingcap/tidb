@@ -131,6 +131,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if err := txnManger.AdviseWarmup(); err != nil {
 		return nil, nil, err
 	}
+
 	useBinding := sessVars.UsePlanBaselines
 	stmtNode, ok := node.(ast.StmtNode)
 	if !ok {

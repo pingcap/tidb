@@ -77,7 +77,7 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 		provider.latestOracleTS = txn.StartTS()
 		provider.latestOracleTSValid = true
 	}
-	provider.getStmtReadTSFunc = provider.getStmtTS
+	provider.getStmtReadTSFunc = provider.getStmtReadTS
 	provider.getStmtForUpdateTSFunc = provider.getStmtForUpdateTS
 	return provider
 }
@@ -92,6 +92,10 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 	// using read-consistency isolation level.
 	if node != nil && NeedSetRCCheckTSFlag(p.sctx, node) {
 		p.sctx.GetSessionVars().StmtCtx.RCCheckTS = true
+	}
+
+	if p.checkTSInWriteStmt {
+		p.resetCheckTSInWriteStmt()
 	}
 
 	return p.prepareStmt(!p.isTxnPrepared)
@@ -163,7 +167,7 @@ func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 	}
 }
 
-func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
+func (p *PessimisticRCTxnContextProvider) getStmtTS(getForUpdateTs bool) (ts uint64, err error) {
 	if p.stmtTS != 0 {
 		return p.stmtTS, nil
 	}
@@ -180,31 +184,23 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 
 	txn.SetOption(kv.SnapshotTS, ts)
 	p.stmtTS = ts
+
+	// We reuse the current ts of transaction as for-update-ts for point-write statement,
+	// which may not find the latest committed version when read value by a key. So we set RCCheckTS
+	// isolation to detect write-confilict if exists and retry the statement by the latest ts from PD.
+	if getForUpdateTs && p.checkTSInWriteStmt {
+		txn.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
+
 	return
 }
 
+func (p *PessimisticRCTxnContextProvider) getStmtReadTS() (ts uint64, err error) {
+	return p.getStmtTS(false)
+}
+
 func (p *PessimisticRCTxnContextProvider) getStmtForUpdateTS() (ts uint64, err error) {
-	if p.stmtTS != 0 {
-		return p.stmtTS, nil
-	}
-
-	var txn kv.Transaction
-	if txn, err = p.ActivateTxn(); err != nil {
-		return 0, err
-	}
-
-	p.prepareStmtTS()
-	if ts, err = p.stmtTSFuture.Wait(); err != nil {
-		return 0, err
-	}
-
-	txn.SetOption(kv.SnapshotTS, ts)
-	p.stmtTS = ts
-
-	if p.checkTSInWriteStmt {
-		txn.SetOption(kv.IsolationLevel, kv.RCCheckTS)
-	}
-	return
+	return p.getStmtTS(true)
 }
 
 // handleAfterQueryError will be called when the handle point is `StmtErrAfterQuery`.
@@ -216,7 +212,8 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 	}
 
 	p.latestOracleTSValid = false
-	p.checkTSInWriteStmt = false
+	p.resetCheckTSInWriteStmt()
+
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
 	return sessiontxn.RetryReady()
@@ -224,7 +221,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
 	p.latestOracleTSValid = false
-	p.checkTSInWriteStmt = false
+	p.resetCheckTSInWriteStmt()
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
@@ -261,10 +258,11 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 	return nil
 }
 
+// planSkipGetTsoFromPD identifies the plans which don't need get newest ts from PD.
 func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
-		return (v.Lock || inLockOrWriteStmt)
+		return v.Lock || inLockOrWriteStmt
 	case plannercore.PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false
@@ -284,14 +282,19 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 	return false
 }
 
+func (p *PessimisticRCTxnContextProvider) resetCheckTSInWriteStmt() {
+	if p.checkTSInWriteStmt {
+		p.txn.SetOption(kv.IsolationLevel, kv.SI)
+		p.checkTSInWriteStmt = false
+	}
+}
+
 // AdviseOptimizeWithPlan in read-committed covers as many cases as repeatable-read.
 // We do not fetch latest ts immediately for such scenes.
 // 1. A query like the form of "SELECT ... FOR UPDATE" whose execution plan is "PointGet".
 // 2. An INSERT statement without "SELECT" subquery.
-// 3. A UPDATE statement whose execution plan is "PointGet".
-// 4. A DELETE statement whose execution plan is "PointGet".
-// The function `planner.Optimize` always calls the `txnManger.AdviseWarmup` to warmup in the past, it makes a tso request
-// for all sqls except `SELECT` with RcCheckTs, but whether to use the tso request and wait it depends on `AdviseOptimizeWithPlan`.
+// 3. A UPDATE statement whose sub execution plan is "PointGet".
+// 4. A DELETE statement whose sub execution plan is "PointGet".
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
@@ -310,13 +313,18 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 	}
 
 	useLastOracleTS := false
-	if v, ok := plan.(*plannercore.Insert); ok && v.SelectPlan == nil {
-		useLastOracleTS = true
-	} else {
-		if !p.sctx.GetSessionVars().RetryInfo.Retrying {
-			useLastOracleTS = planSkipGetTsoFromPD(p.sctx, plan, false)
-			if useLastOracleTS {
-				p.checkTSInWriteStmt = true
+	sessionVars := p.sctx.GetSessionVars()
+	if !sessionVars.RetryInfo.Retrying {
+		if v, ok := plan.(*plannercore.Insert); ok && v.SelectPlan == nil {
+			if len(v.OnDuplicate) == 0 && !v.IsReplace {
+				useLastOracleTS = true
+			}
+		} else {
+			if sessionVars.ConnectionID > 0 && sessionVars.InTxn() {
+				useLastOracleTS = planSkipGetTsoFromPD(p.sctx, plan, false)
+				if useLastOracleTS {
+					p.checkTSInWriteStmt = true
+				}
 			}
 		}
 	}
@@ -343,4 +351,9 @@ func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapsh
 	}
 
 	return snapshot, nil
+}
+
+// IsCheckTSInWriteStmtMode is only used for test
+func (p *PessimisticRCTxnContextProvider) IsCheckTSInWriteStmtMode() bool {
+	return p.checkTSInWriteStmt
 }
