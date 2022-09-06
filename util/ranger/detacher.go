@@ -375,7 +375,8 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 					// TODO: maybe better fallback than res.Ranges
 					d.reachRangeMemQuota = true
 					res.RemainedConds = append(res.RemainedConds, tailRes.AccessConds...)
-					res.RemainedConds = append(res.RemainedConds, tailRes.RemainedConds...)
+					// Some conditions may be in both tailRes.AccessConds and tailRes.RemainedConds so we call appendConditionsIfNotExist here.
+					res.RemainedConds = appendConditionsIfNotExist(res.RemainedConds, tailRes.RemainedConds)
 					return res, nil
 				}
 				res.Ranges = newRanges
@@ -401,7 +402,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		if err != nil {
 			return nil, err
 		}
-		res.RemainedConds = append(res.RemainedConds, remainedConds...)
+		res.RemainedConds = appendConditionsIfNotExist(res.RemainedConds, remainedConds)
 		res.Ranges = ranges
 		return res, nil
 	}
@@ -872,6 +873,16 @@ func removeConditions(conditions, condsToRemove []expression.Expression) []expre
 		}
 	}
 	return filterConds
+}
+
+func appendConditionsIfNotExist(conditions, condsToAppend []expression.Expression) []expression.Expression {
+	shouldAppend := make([]expression.Expression, 0, len(condsToAppend))
+	for _, cond := range condsToAppend {
+		if !expression.Contains(conditions, cond) {
+			shouldAppend = append(shouldAppend, cond)
+		}
+	}
+	return append(conditions, shouldAppend...)
 }
 
 // ExtractAccessConditionsForColumn extracts the access conditions used for range calculation. Since
