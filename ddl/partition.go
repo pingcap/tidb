@@ -2750,7 +2750,7 @@ func checkNoTimestampArgs(tbInfo *model.TableInfo, exprs ...ast.ExprNode) error 
 	return nil
 }
 
-// hexIfNonPrint checks if printable UTF-8 characters,
+// hexIfNonPrint checks if printable UTF-8 characters from a single quoted string,
 // if so, just returns the string
 // else returns a hex string of the binary string (i.e. actual encoding, not unicode code points!)
 func hexIfNonPrint(s string) string {
@@ -2765,7 +2765,7 @@ func hexIfNonPrint(s string) string {
 	if isPrint {
 		return s
 	}
-	return "0x" + hex.EncodeToString([]byte(s))
+	return "0x" + hex.EncodeToString([]byte(driver.UnwrapFromSingleQuotes(s)))
 }
 
 // AppendPartitionDefs generates a list of partition definitions needed for SHOW CREATE TABLE (in executor/show.go)
