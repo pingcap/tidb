@@ -52,6 +52,8 @@ type PessimisticRCTxnContextProvider struct {
 	latestOracleTS uint64
 	// latestOracleTSValid shows whether we have already fetched a ts from pd and whether the ts we fetched is still valid.
 	latestOracleTSValid bool
+	// checkTSInWriteStmt is used to set RCCheckTS isolation for getting value when doing point-write
+	checkTSInWriteStmt bool
 }
 
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
@@ -76,7 +78,7 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 		provider.latestOracleTSValid = true
 	}
 	provider.getStmtReadTSFunc = provider.getStmtTS
-	provider.getStmtForUpdateTSFunc = provider.getStmtTS
+	provider.getStmtForUpdateTSFunc = provider.getStmtForUpdateTS
 	return provider
 }
 
@@ -181,6 +183,30 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	return
 }
 
+func (p *PessimisticRCTxnContextProvider) getStmtForUpdateTS() (ts uint64, err error) {
+	if p.stmtTS != 0 {
+		return p.stmtTS, nil
+	}
+
+	var txn kv.Transaction
+	if txn, err = p.ActivateTxn(); err != nil {
+		return 0, err
+	}
+
+	p.prepareStmtTS()
+	if ts, err = p.stmtTSFuture.Wait(); err != nil {
+		return 0, err
+	}
+
+	txn.SetOption(kv.SnapshotTS, ts)
+	p.stmtTS = ts
+
+	if p.checkTSInWriteStmt {
+		txn.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
+	return
+}
+
 // handleAfterQueryError will be called when the handle point is `StmtErrAfterQuery`.
 // At this point the query will be retried from the beginning.
 func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) (sessiontxn.StmtErrorAction, error) {
@@ -190,6 +216,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 	}
 
 	p.latestOracleTSValid = false
+	p.checkTSInWriteStmt = false
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
 	return sessiontxn.RetryReady()
@@ -197,6 +224,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
 	p.latestOracleTSValid = false
+	p.checkTSInWriteStmt = false
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
@@ -252,10 +280,6 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
 	case *plannercore.Delete:
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
-	case *plannercore.Insert:
-		// RcInsertUseLastTso controls whether to make a tso request, but not to whether to wait tso requst.
-		// Insert sqls are always optimized to use last tso here.
-		return v.SelectPlan == nil
 	}
 	return false
 }
@@ -291,7 +315,9 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 	} else {
 		if !p.sctx.GetSessionVars().RetryInfo.Retrying {
 			useLastOracleTS = planSkipGetTsoFromPD(p.sctx, plan, false)
-			p.sctx.GetSessionVars().StmtCtx.RCCheckTS = true
+			if useLastOracleTS {
+				p.checkTSInWriteStmt = true
+			}
 		}
 	}
 
