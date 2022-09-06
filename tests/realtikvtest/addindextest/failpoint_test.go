@@ -25,7 +25,7 @@ func initTestFailpoint(t *testing.T) *suiteContext {
 }
 
 func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
-	//t.Skip()
+	t.Skip()
 	var colIDs = [][]int{
 		{1, 4, 7, 10, 13, 16, 19, 22, 25},
 		{2, 5, 8, 11, 14, 17, 20, 23, 26},
