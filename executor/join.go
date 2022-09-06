@@ -135,7 +135,6 @@ func (e *HashJoinExec) Close() error {
 		if e.probeChkResourceCh != nil {
 			close(e.probeChkResourceCh)
 			channel.Clear(e.probeChkResourceCh)
-
 		}
 		for i := range e.probeResultChs {
 			channel.Clear(e.probeResultChs[i])
