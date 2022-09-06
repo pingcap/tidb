@@ -812,6 +812,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 			lockOptions = stmt.PasswordOrLockOptions
 		}
 		if len(lockOptions) > 0 {
+			// Multiple lock options are supported for the parser, but only the last ont option takes effect.
 			for i := len(lockOptions) - 1; i >= 0; i-- {
 				if lockOptions[i].Type == ast.Lock {
 					b.Ti.AccountLockTelemetry.LockUser += 1
