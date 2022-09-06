@@ -20,7 +20,6 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/sessionctx"
@@ -143,10 +142,4 @@ func Params2Expressions(params []*driver.ValueExpr) []expression.Expression {
 		})
 	}
 	return exprs
-}
-
-// Available4GeneralPlanCache checks where this stmt is available for general plan cache.
-func Available4GeneralPlanCache(_ sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) bool {
-	// TODO: implement this function
-	return true
 }

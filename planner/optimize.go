@@ -76,7 +76,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 // getPlanFromGeneralPlanCache tries to get an available cached plan from the General Plan Cache for this stmt.
 func getPlanFromGeneralPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (core.Plan, types.NameSlice, bool, error) {
 	if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		!core.Available4GeneralPlanCache(sctx, stmt, is) {
+		!core.GeneralPlanCacheableWithCtx(sctx, stmt, is) {
 		return nil, nil, false, nil
 	}
 	paramSQL, params, err := core.ParameterizeAST(sctx, stmt)
