@@ -90,10 +90,10 @@ func InitLogger(cfg *Config, _ string) error {
 		Level:         cfg.Level,
 		DisableCaller: false, // FilterCore requires zap.AddCaller.
 	}
-	filterTiDBLog := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-		// Filter logs from TiDB and PD.
-		return NewFilterCore(core, "github.com/pingcap/tidb/br/", "main.main")
-	})
+	//filterTiDBLog := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+	//	// Filter logs from TiDB and PD.
+	//	return NewFilterCore(core, "github.com/pingcap/tidb/br/", "main.main")
+	//})
 	// "-" is a special config for log to stdout.
 	if len(cfg.File) > 0 && cfg.File != "-" {
 		logCfg.File = pclog.FileLogConfig{
@@ -103,7 +103,7 @@ func InitLogger(cfg *Config, _ string) error {
 			MaxBackups: cfg.FileMaxBackups,
 		}
 	}
-	logger, props, err := pclog.InitLogger(logCfg, filterTiDBLog)
+	logger, props, err := pclog.InitLogger(logCfg)
 	if err != nil {
 		return err
 	}
