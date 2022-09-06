@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/terror"
@@ -25,231 +26,6 @@ import (
 )
 
 func TestForeignKeyOnInsertChildTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1")
-	tk.MustExec("use test")
-
-	// Case-1: test unique index only contain foreign key columns.
-	cases := []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "create table t1 (id int key,a int, b int, unique index(a, b));"},
-		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (-1, 1, 1);"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "insert into t2 values (2, null, 1);"},
-		{sql: "insert into t2 values (3, 1, null);"},
-		{sql: "insert into t2 values (4, null, null);"},
-		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
-	}
-	checkCaseFn := func() {
-		for _, ca := range cases {
-			if ca.err == nil {
-				tk.MustExec(ca.sql)
-			} else {
-				err := tk.ExecToErr(ca.sql)
-				msg := fmt.Sprintf("sql: %v, err: %v, expected_err: %v", ca.sql, err, ca.err)
-				require.NotNil(t, err, msg)
-				require.True(t, ca.err.Equal(err), msg)
-			}
-		}
-	}
-	checkCaseFn()
-
-	// Case-2: test unique index contain foreign key columns and other columns.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int key,a int, b int, unique index(a, b, id));"},
-		{sql: "create table t2 (id int key,a int, b int, index (a,b,id), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (-1, 1, 1);"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "insert into t2 values (2, null, 1);"},
-		{sql: "insert into t2 values (3, 1, null);"},
-		{sql: "insert into t2 values (4, null, null);"},
-		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
-	}
-	checkCaseFn()
-
-	// Case-3: test non-unique index only contain foreign key columns.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int key,a int, b int, index(a, b));"},
-		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (-1, 1, 1);"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "insert into t2 values (2, null, 1);"},
-		{sql: "insert into t2 values (3, 1, null);"},
-		{sql: "insert into t2 values (4, null, null);"},
-		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
-	}
-	checkCaseFn()
-
-	// Case-4: test non-unique index contain foreign key columns and other columns.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int key,a int, b int, index(a, b, id));"},
-		{sql: "create table t2 (id int key,a int, b int, index (a,b,id), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (-1, 1, 1);"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "insert into t2 values (2, null, 1);"},
-		{sql: "insert into t2 values (3, 1, null);"},
-		{sql: "insert into t2 values (4, null, null);"},
-		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
-	}
-	checkCaseFn()
-
-	// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=0;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
-		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (-1, 1, 1);"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "insert into t2 values (2, null, 1);"},
-		{sql: "insert into t2 values (3, 1, null);"},
-		{sql: "insert into t2 values (4, null, null);"},
-		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
-	}
-	checkCaseFn()
-
-	// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=1;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
-		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (-1, 1, 1);"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "insert into t2 values (2, null, 1);"},
-		{sql: "insert into t2 values (3, 1, null);"},
-		{sql: "insert into t2 values (4, null, null);"},
-		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
-	}
-	checkCaseFn()
-
-	// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=0;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, b int, primary key(a, b, id));"},
-		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (-1, 1, 1);"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "insert into t2 values (2, null, 1);"},
-		{sql: "insert into t2 values (3, 1, null);"},
-		{sql: "insert into t2 values (4, null, null);"},
-		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
-	}
-	checkCaseFn()
-
-	// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=1;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, b int, primary key(a, b, id));"},
-		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (-1, 1, 1);"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "insert into t2 values (2, null, 1);"},
-		{sql: "insert into t2 values (3, 1, null);"},
-		{sql: "insert into t2 values (4, null, null);"},
-		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
-	}
-	checkCaseFn()
-
-	// Case-9: test primary key is handle and contain foreign key column.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=0;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, primary key(id));"},
-		{sql: "create table t2 (id int key,a int, index (a), foreign key fk(a) references t1(id));"},
-		{sql: "insert into t1 values (1, 1);"},
-		{sql: "insert into t2 values (1, 1);"},
-		{sql: "insert into t2 values (2, null);"},
-		{sql: "insert into t2 (id) values (10);"},
-		{sql: "insert into t2 values (3, 2);", err: plannercore.ErrNoReferencedRow2},
-	}
-	checkCaseFn()
-
-	// Case-10: test primary key is handle and contain foreign key column.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=0;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, primary key(id));"},
-		{sql: "create table t2 (id int key,a int not null default 0, index (a), foreign key fk(a) references t1(id));"},
-		{sql: "insert into t1 values (1, 1);"},
-		{sql: "insert into t2 values (1, 1);"},
-		{sql: "insert into t2 (id) values (10);", err: plannercore.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (3, 2);", err: plannercore.ErrNoReferencedRow2},
-	}
-	checkCaseFn()
-}
-
-func TestForeignKeyOnInsertChildTableInTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
@@ -287,8 +63,40 @@ func TestForeignKeyOnInsertChildTableInTxn(t *testing.T) {
 				"create table t2 (name varchar(10), b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
 			},
 		},
+	}
 
-		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 (id, a, b) values (-1, 1, 1);")
+		tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1)")
+		tk.MustExec("insert into t2 (id, a, b) values (2, null, 1)")
+		tk.MustExec("insert into t2 (id, a, b) values (3, 1, null)")
+		tk.MustExec("insert into t2 (id, a, b) values (4, null, null)")
+		execToErr(t, tk, "insert into t2 (id, a, b) values (5, 1, 2);", plannercore.ErrNoReferencedRow2)
+		execToErr(t, tk, "insert into t2 (id, a, b) values (6, 0, 2);", plannercore.ErrNoReferencedRow2)
+		execToErr(t, tk, "insert into t2 (id, a, b) values (7, 2, 2);", plannercore.ErrNoReferencedRow2)
+
+		// Test in txn
+		tk.MustExec("delete from t2")
+		tk.MustExec("begin")
+		tk.MustExec("delete from t1 where a=1")
+		err := tk.ExecToErr("insert into t2 (id, a, b) values (1, 1, 1)")
+		require.NotNil(t, err)
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+		tk.MustExec("insert into t1 (id, a, b) values (2, 2, 2)")
+		tk.MustExec("insert into t2 (id, a, b) values (2, 2, 2)")
+		tk.MustExec("rollback")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("-1 1 1"))
+		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows())
+	}
+
+	cases = []struct {
+		prepareSQLs []string
+	}{ // Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
 		{
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
@@ -329,14 +137,19 @@ func TestForeignKeyOnInsertChildTableInTxn(t *testing.T) {
 			},
 		},
 	}
-
 	for _, ca := range cases {
 		tk.MustExec("drop table if exists t2;")
 		tk.MustExec("drop table if exists t1;")
 		for _, sql := range ca.prepareSQLs {
 			tk.MustExec(sql)
 		}
-		tk.MustExec("insert into t1 (id, a, b) values (-1, 1, 1);")
+		tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1);")
+		tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1)")
+		execToErr(t, tk, "insert into t2 (id, a, b) values (2, 0, 2);", plannercore.ErrNoReferencedRow2)
+		execToErr(t, tk, "insert into t2 (id, a, b) values (3, 2, 3);", plannercore.ErrNoReferencedRow2)
+
+		// Test in txn
+		tk.MustExec("delete from t2")
 		tk.MustExec("begin")
 		tk.MustExec("delete from t1 where a=1")
 		err := tk.ExecToErr("insert into t2 (id, a, b) values (1, 1, 1)")
@@ -345,9 +158,35 @@ func TestForeignKeyOnInsertChildTableInTxn(t *testing.T) {
 		tk.MustExec("insert into t1 (id, a, b) values (2, 2, 2)")
 		tk.MustExec("insert into t2 (id, a, b) values (2, 2, 2)")
 		tk.MustExec("rollback")
-		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("-1 1 1"))
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
 		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows())
 	}
+
+	// Case-10: test primary key is handle and contain foreign key column, and foreign key column has default value.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (id int,a int, primary key(id));")
+	tk.MustExec("create table t2 (id int key,a int not null default 0, index (a), foreign key fk(a) references t1(id));")
+	tk.MustExec("insert into t1 values (1, 1);")
+	tk.MustExec("insert into t2 values (1, 1);")
+	execToErr(t, tk, "insert into t2 (id) values (10);", plannercore.ErrNoReferencedRow2)
+	execToErr(t, tk, "insert into t2 values (3, 2);", plannercore.ErrNoReferencedRow2)
+
+	// Case-11: test primary key is handle and contain foreign key column, and foreign key column doesn't have default value.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (id int key,a int, index (a), foreign key fk(a) references t1(id));")
+	tk.MustExec("insert into t2 values (1, 1);")
+	tk.MustExec("insert into t2 (id) values (10);")
+	execToErr(t, tk, "insert into t2 values (3, 2);", plannercore.ErrNoReferencedRow2)
+}
+
+func execToErr(t *testing.T, tk *testkit.TestKit, sql string, expectErr *terror.Error) {
+	err := tk.ExecToErr(sql)
+	require.NotNil(t, err)
+	require.True(t, expectErr.Equal(err), err.Error())
 }
 
 func TestForeignKeyOnUpdateChildTable(t *testing.T) {
@@ -860,7 +699,39 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a"))
 		tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("1 a"))
 
-		// TODO: add test in pessimistic txn
+		// Test in pessimistic txn
+		tk.MustExec("delete from t2")
+		// Test insert child table
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into t2 (a, name) values (1, 'a');")
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := tk2.ExecToErr("delete from t1 where id = 1")
+			require.Error(t, err)
+			require.Equal(t, "[planner:1451]Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))", err.Error())
+		}()
+		tk.MustExec("commit")
+		wg.Wait()
+		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a"))
+		tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("1 a"))
+
+		// Test update child table
+		tk.MustExec("insert into t1 (id, name) values (2, 'b');")
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("update t2 set a=2 where a = 1")
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := tk2.ExecToErr("delete from t1 where id = 2")
+			require.Error(t, err)
+			require.Equal(t, "[planner:1451]Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))", err.Error())
+		}()
+		tk.MustExec("commit")
+		wg.Wait()
+		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a", "2 b"))
+		tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("2 a"))
 	}
 }
 
@@ -1338,4 +1209,39 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 	require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 111 21", "4 14 24", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
+}
+
+func TestForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	// Test table has more than 1 foreign keys.
+	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
+	tk.MustExec("create table t2 (id int, a int, b int,  primary key (id));")
+	tk.MustExec("create table t3 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id),  foreign key (b) references t2(id));")
+	tk.MustExec("insert into t1 (id, a, b) values (1, 11, 111), (2, 22, 222);")
+	tk.MustExec("insert into t2 (id, a, b) values (2, 22, 222);")
+	execToErr(t, tk, "insert into t3 (id, a, b) values (1, 1, 1)", plannercore.ErrNoReferencedRow2)
+	execToErr(t, tk, "insert into t3 (id, a, b) values (2, 3, 2)", plannercore.ErrNoReferencedRow2)
+	tk.MustExec("insert into t3 (id, a, b) values (0, 1, 2);")
+	tk.MustExec("insert into t3 (id, a, b) values (1, 2, 2);")
+	execToErr(t, tk, "update t3 set a=3 where a=1", plannercore.ErrNoReferencedRow2)
+	execToErr(t, tk, "update t3 set b=4 where id=1", plannercore.ErrNoReferencedRow2)
+
+	// Test table has been referenced by more than tables.
+	tk.MustExec("drop table if exists t3,t2,t1;")
+	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
+	tk.MustExec("create table t2 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id));")
+	tk.MustExec("create table t3 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id));")
+	tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1);")
+	tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1);")
+	tk.MustExec("insert into t3 (id, a, b) values (1, 1, 1);")
+	execToErr(t, tk, "delete from t1 where a=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("delete from t2 where id=1")
+	execToErr(t, tk, "delete from t1 where a=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("delete from t3 where id=1")
+	tk.MustExec("delete from t1 where id=1")
 }
