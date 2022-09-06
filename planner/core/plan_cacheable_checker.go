@@ -176,7 +176,7 @@ func GeneralPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is info
 		return false
 	}
 	if len(selectStmt.TableHints) > 0 || // hints
-		selectStmt.Distinct == true || selectStmt.GroupBy != nil || selectStmt.Having != nil || // agg
+		selectStmt.Distinct || selectStmt.GroupBy != nil || selectStmt.Having != nil || // agg
 		selectStmt.WindowSpecs != nil || // window function
 		selectStmt.OrderBy != nil || // order
 		selectStmt.Limit != nil || // limit
@@ -187,12 +187,12 @@ func GeneralPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is info
 	if from == nil || selectStmt.From.TableRefs == nil {
 		return false
 	}
-	join := from.TableRefs
-	if join.Right != nil {
+	tableRefs := from.TableRefs
+	if tableRefs.Right != nil {
 		// We don't support the join for the general plan cache now.
 		return false
 	}
-	switch x := join.Left.(type) {
+	switch x := tableRefs.Left.(type) {
 	case *ast.TableSource:
 		_, isTableName := x.Source.(*ast.TableName)
 		if !isTableName {
@@ -226,10 +226,8 @@ func (checker *generalPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, sk
 			return in, true
 		}
 	case *ast.FuncCallExpr:
-		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
-			checker.cacheable = false
-			return in, true
-		}
+		checker.cacheable = false
+		return in, true
 	case *ast.TableName:
 		if checker.schema != nil {
 			if isPartitionTable(checker.schema, node) {

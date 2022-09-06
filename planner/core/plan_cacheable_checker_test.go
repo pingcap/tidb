@@ -284,20 +284,17 @@ func TestGeneralPlanCacheable(t *testing.T) {
 	require.False(t, core.GeneralPlanCacheable(stmt, is))
 
 	// test SelectStmt
-	whereExpr = &ast.FuncCallExpr{}
 	stmt = &ast.SelectStmt{
 		From:  tableRefsClause,
 		Where: whereExpr,
 	}
-	require.True(t, core.GeneralPlanCacheable(stmt, is))
+	require.False(t, core.GeneralPlanCacheable(stmt, is))
 
-	for funcName := range expression.UnCacheableFunctions {
-		whereExpr.FnName = model.NewCIStr(funcName)
-		require.False(t, core.GeneralPlanCacheable(stmt, is))
+	stmt = &ast.SelectStmt{
+		From:  tableRefsClause,
+		Where: whereExpr,
 	}
-
-	whereExpr.FnName = model.NewCIStr(ast.Rand)
-	require.True(t, core.GeneralPlanCacheable(stmt, is))
+	require.False(t, core.GeneralPlanCacheable(stmt, is))
 
 	stmt = &ast.SelectStmt{
 		Where: &ast.ExistsSubqueryExpr{},
