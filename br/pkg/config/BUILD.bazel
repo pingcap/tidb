@@ -16,7 +16,7 @@ go_library(
 go_test(
     name = "config_test",
     srcs = ["ebs_test.go"],
-    embed = [":config"],
     data = ["ebs_backup.json"],
+    embed = [":config"],
     deps = ["@com_github_stretchr_testify//require"],
 )
