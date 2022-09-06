@@ -190,7 +190,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 	switch funcName {
 	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce, ast.Greatest, ast.Least:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
-	case ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace, ast.Substring, ast.Mid, ast.Translate, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr, ast.RegexpReplace:
+	case ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace, ast.Substring, ast.Mid, ast.Translate:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0])
 	case ast.InsertFunc:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[3])
@@ -204,7 +204,9 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		if argTps[0] == types.ETString {
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
 		}
-	case ast.Locate, ast.Instr, ast.Position:
+	case ast.RegexpReplace:
+		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1], args[2])
+	case ast.Locate, ast.Instr, ast.Position, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
 	case ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.Strcmp:
 		// if compare type is string, we should determine which collation should be used.

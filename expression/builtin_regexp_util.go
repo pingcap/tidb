@@ -16,6 +16,7 @@ package expression
 
 import (
 	"regexp"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
@@ -165,6 +166,7 @@ func getColumnConstValInt(col *chunk.Column, n int) (int64, bool) {
 type regexpMemorizedSig struct {
 	memorizedRegexp *regexp.Regexp
 	memorizedErr    error
+	lock            sync.RWMutex
 }
 
 func (reg *regexpMemorizedSig) isMemorizedRegexpInitialized() bool {
@@ -179,7 +181,9 @@ func (reg *regexpMemorizedSig) memorize(compile func(string) (*regexp.Regexp, er
 
 func (reg *regexpMemorizedSig) initMemoizedRegexp(compile func(string) (*regexp.Regexp, error), patterns *chunk.Column, n int) {
 	// Precondition: patterns is generated from a constant expression
-	if n == 0 {
+	reg.lock.Lock()
+	defer reg.lock.Unlock()
+	if n == 0 || reg.isMemorizedRegexpInitialized() {
 		// If the input rownum is zero, the Regexp error shouldn't be generated.
 		return
 	}

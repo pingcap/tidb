@@ -19,6 +19,7 @@ package expression
 import (
 	"flag"
 	"fmt"
+	"log"
 	"math"
 	"math/rand"
 	"net"
@@ -1512,7 +1513,8 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 		testFunc[arg] = true
 	}
 	for funcName, testCases := range vecExprCases {
-		for _, testCase := range testCases {
+		for i, testCase := range testCases {
+			log.Println("index: ", i)
 			ctx := mock.NewContext()
 			err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.BlockEncryptionMode, testCase.aesModes)
 			require.NoError(t, err)
