@@ -4893,6 +4893,7 @@ func TestSchemaDMLNotChange(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t")
