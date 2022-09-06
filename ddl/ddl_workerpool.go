@@ -103,8 +103,8 @@ func newBackfillWorkerPool(resPool *pools.ResourcePool) *backfilWorkerPool {
 
 // setCapacity changes the capacity of the pool.
 // A setCapacity of 0 is equivalent to closing the backfilWorkerPool.
-func (bwp *backfilWorkerPool) setCapacity(cap int) error {
-	return bwp.resPool.SetCapacity(cap)
+func (bwp *backfilWorkerPool) setCapacity(capacity int) error {
+	return bwp.resPool.SetCapacity(capacity)
 }
 
 // get gets backfilWorkerPool from context resource pool.
