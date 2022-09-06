@@ -15,6 +15,8 @@
 package core_test
 
 import (
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/mysql"
 	"testing"
 
 	"github.com/pingcap/tidb/expression"
@@ -251,100 +253,68 @@ func TestGeneralPlanCacheable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("create table t1(a int, b int) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
+	tk.MustExec("create table t1(a int, b int, index idx_b(b)) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
 	tk.MustExec("create table t3(a int, b int)")
-	tbl := &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")}
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-	var stmt ast.Node = &ast.ShowStmt{}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
 
-	stmt = &ast.LoadDataStmt{}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
+	p := parser.New()
+	charset := mysql.DefaultCharset
+	collation := mysql.DefaultCollationName
 
-	// test SetOprStmt
-	stmt = &ast.SetOprStmt{}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
-
-	tableRefsClause := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{Source: tbl}}}
-	// Test SelectStmt
-	stmt = &ast.SelectStmt{From: tableRefsClause}
+	// select statement
+	q := "select * from t1 where a > 1 and b < 2"
+	stmt, err := p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
 	require.True(t, core.GeneralPlanCacheable(stmt, is))
 
-	// test InsertStmt
-	stmt = &ast.InsertStmt{Table: tableRefsClause}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
+	q = "select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2"
+	stmt, err = p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
+	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support hint
 
-	// test DeleteStmt
-	whereExpr := &ast.FuncCallExpr{}
-	stmt = &ast.DeleteStmt{
-		TableRefs: tableRefsClause,
-		Where:     whereExpr,
-	}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
+	q = "select distinct a from t1 where a > 1 and b < 2"
+	stmt, err = p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
+	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support agg
 
-	// test SelectStmt
-	stmt = &ast.SelectStmt{
-		From:  tableRefsClause,
-		Where: whereExpr,
-	}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
+	q = "select count(*) from t1 where a > 1 and b < 2 group by a"
+	stmt, err = p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
+	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support agg
 
-	stmt = &ast.SelectStmt{
-		From:  tableRefsClause,
-		Where: whereExpr,
-	}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
+	q = "select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1"
+	stmt, err = p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
+	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support agg
 
-	stmt = &ast.SelectStmt{
-		Where: &ast.ExistsSubqueryExpr{},
-	}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
+	q = "select * from t1 limit 1"
+	stmt, err = p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
+	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support Limit
 
-	limitStmt := &ast.Limit{
-		Count: &driver.ParamMarkerExpr{},
-	}
-	stmt = &ast.SelectStmt{
-		Limit: limitStmt,
-	}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
+	q = "select * from t1 order by a"
+	stmt, err = p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
+	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support order by
 
-	limitStmt = &ast.Limit{
-		Offset: &driver.ParamMarkerExpr{},
-	}
-	stmt = &ast.SelectStmt{
-		Limit: limitStmt,
-	}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
+	q = "select * from t1, t2"
+	stmt, err = p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
+	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support Join
 
-	limitStmt = &ast.Limit{}
-	stmt = &ast.SelectStmt{
-		From:  tableRefsClause,
-		Limit: limitStmt,
-	}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
+	q = "select * from (select * from t1) t"
+	stmt, err = p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
+	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support subquery
 
-	paramExpr := &driver.ParamMarkerExpr{}
-	orderByClause := &ast.OrderByClause{Items: []*ast.ByItem{{Expr: paramExpr}}}
-	stmt = &ast.SelectStmt{
-		From:    tableRefsClause,
-		OrderBy: orderByClause,
-	}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
+	q = "insert into t1 values(1, 1)"
+	stmt, err = p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
+	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support insert
 
-	valExpr := &driver.ValueExpr{}
-	orderByClause = &ast.OrderByClause{Items: []*ast.ByItem{{Expr: valExpr}}}
-	stmt = &ast.SelectStmt{
-		From:    tableRefsClause,
-		OrderBy: orderByClause,
-	}
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
-
-	stmt.(*ast.SelectStmt).TableHints = append(stmt.(*ast.SelectStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(core.HintIgnorePlanCache),
-	})
-	require.False(t, core.GeneralPlanCacheable(stmt, is))
-
-	boundExpr := &ast.FrameBound{Expr: &driver.ParamMarkerExpr{}}
-	require.False(t, core.GeneralPlanCacheable(boundExpr, is))
+	q = "insert into t1(a, b) select a, b from t1"
+	stmt, err = p.ParseOneStmt(q, charset, collation)
+	require.NoError(t, err)
+	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support insert into select
 }
