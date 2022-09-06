@@ -31,14 +31,13 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
 func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
-	sm := &testutil.MockSessionManager{}
+	sm := &testkit.MockSessionManager{}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
