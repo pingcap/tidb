@@ -67,6 +67,9 @@ type LazyTxn struct {
 		sync.RWMutex
 		txninfo.TxnInfo
 	}
+
+	// mark the txn enables lazy uniqueness check in pessimistic transactions.
+	lazyUniquenessCheckEnabled bool
 }
 
 // GetTableInfo returns the cached index name.
@@ -124,11 +127,13 @@ func (txn *LazyTxn) flushStmtBuf() {
 	}
 	buf := txn.Transaction.GetMemBuffer()
 
-	keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) bool {
-		return flags.HasPresumeKeyNotExists()
-	})
-	for _, key := range keysNeedSetPersistentPNE {
-		buf.UpdateFlags(key, kv.SetPreviousPresumeKeyNotExists)
+	if txn.lazyUniquenessCheckEnabled {
+		keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) bool {
+			return flags.HasPresumeKeyNotExists()
+		})
+		for _, key := range keysNeedSetPersistentPNE {
+			buf.UpdateFlags(key, kv.SetPreviousPresumeKeyNotExists)
+		}
 	}
 
 	buf.Release(txn.stagingHandle)
@@ -482,6 +487,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 			sctx.GetSessionVars().TxnCtx.StartTS = 0
 			return txn, err
 		}
+		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
 	}
 	return txn, nil
 }
