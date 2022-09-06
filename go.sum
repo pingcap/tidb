@@ -246,8 +246,8 @@ github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21 h1:YEetp8
 github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21/go.mod h1:+020luEh2TKB4/GOp8oxxtq0Daoen/Cii55CzbTV6DU=
 github.com/eapache/queue v1.1.0 h1:YOEu7KNc61ntiQlcEeUIoDTJ2o8mQznoNvUhiigpIqc=
 github.com/eapache/queue v1.1.0/go.mod h1:6eCeP0CKFpHLu8blIFXhExK/dRa7WDZfr6jVFPTqq+I=
-github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20220905095740-fc98630e21bc h1:QLA0XicyFAzgYsueHC5HO9LoolA9bGOAVLeo97WwtyU=
-github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20220905095740-fc98630e21bc/go.mod h1:DqgQZKxPtMRazyELFyj7Ic2iOo+5XGTetxDp2KYnODs=
+github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20220906083209-d4dc6abc619b h1:/nMQsktLxy0Kjs9wq/deKh/0FlInk9UN1IQe4Q5cumc=
+github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20220906083209-d4dc6abc619b/go.mod h1:DqgQZKxPtMRazyELFyj7Ic2iOo+5XGTetxDp2KYnODs=
 github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385/go.mod h1:0vRUJqYpeSZifjYj7uP3BG/gKcuzL9xWVV/Y+cK33KM=
 github.com/elastic/gosigar v0.9.0/go.mod h1:cdorVVzy1fhmEqmtgqkoE3bYtCfSCkVyjTyCIo22xvs=
 github.com/elazarl/go-bindata-assetfs v1.0.0/go.mod h1:v+YaWX3bdea5J/mo8dSETolEo7R71Vk1u8bnjau5yw4=
