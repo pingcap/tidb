@@ -437,6 +437,21 @@ type cteInfo struct {
 	isInline bool
 }
 
+type subQueryCtx = uint64
+
+const (
+	notHandlingSubquery subQueryCtx = iota
+	rewritingExistsSubquery
+	rewritingCompareSubquery
+	rewritingInSubquery
+	rewritingScalarSubquery
+)
+
+const (
+	HintFlagSemiJoinRewrite uint64 = 1 << iota
+	HintFlagNoDecorrelate
+)
+
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
@@ -512,14 +527,21 @@ type PlanBuilder struct {
 	//Check whether the current building query is a CTE
 	isCTE bool
 
-	// checkSemiJoinHint checks whether the SEMI_JOIN_REWRITE hint is possible to be applied on the current SELECT stmt.
-	// We need this variable for the hint since the hint is set in subquery, but we check its availability in its outer scope.
-	//   e.g. select * from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t1 where t.a=t1.a)
-	// Whether the hint can be applied or not is checked after the subquery is fully built.
-	checkSemiJoinHint bool
-	// hasValidSemijoinHint would tell the outer APPLY/JOIN operator that there's valid hint to be checked later
-	// if there's SEMI_JOIN_REWRITE hint and we find checkSemiJoinHint is true.
-	hasValidSemiJoinHint bool
+	// subQueryCtx and subQueryHintFlags are for handling subquery related hints.
+	// We need these fields to passing information because:
+	//   1. We know what kind of subquery is this only when we're in the outer query block.
+	//   2. We know if there are such hints only when we're in the subquery block.
+	//   3. These hints are only applicable when they are in a subquery block. And for some hints, they are only
+	//     applicable for some kinds of subquery.
+	//   4. If a hint is set and is applicable, the corresponding logic is handled in the outer query block.
+	// Example SQL: select * from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t1 where t.a=t1.a)
+
+	// subQueryCtx indicates if we are handling a subquery, and what kind of subquery is it.
+	subQueryCtx subQueryCtx
+	// subQueryHintFlags stores subquery related hints that are set and applicable in the query block.
+	// It's for returning information to buildSubquery().
+	subQueryHintFlags uint64
+
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
 }
