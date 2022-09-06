@@ -265,8 +265,11 @@ func TestGcColumnExprIsTidbShard(t *testing.T) {
 }
 
 func TestColumnMemoryUsage(t *testing.T) {
-	c1 := Column{OrigName: "Origin"}
+	c1 := &Column{OrigName: "Origin"}
 	c2 := Column{OrigName: "OriginName"}
 
 	require.Greater(t, c2.MemoryUsage(), c1.MemoryUsage())
+
+	c1 = nil
+	require.Equal(t, c1.MemoryUsage(), int64(0))
 }

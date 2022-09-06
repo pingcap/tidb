@@ -973,7 +973,9 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyBaseBuiltinFunc
+	sum = emptyBaseBuiltinFunc + b.bufAllocator.MemoryUsage() +
+		b.tp.MemoryUsage() + int64(unsafe.Sizeof(*b.childrenVectorizedOnce)) +
+		int64(unsafe.Sizeof(*b.childrenReversedOnce)) + int64(len(b.charset)+len(b.collation))
 	for _, e := range b.args {
 		sum += e.MemoryUsage()
 	}
