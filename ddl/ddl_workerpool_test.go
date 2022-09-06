@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,23 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package json
+package ddl
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/testkit/testsetup"
-	"go.uber.org/goleak"
+	"github.com/ngaut/pools"
 )
 
-const benchStr = `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`
-
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+func TestBackfillWorkerPool(t *testing.T) {
+	f := func() func() (pools.Resource, error) {
+		return func() (pools.Resource, error) {
+			wk := newWorker(nil, addIdxWorker, nil, nil, nil, true)
+			return wk, nil
+		}
 	}
-	goleak.VerifyTestMain(m, opts...)
+	pool := newDDLWorkerPool(pools.NewResourcePool(f(), 1, 2, 0), reorg)
+	pool.close()
+	pool.put(nil)
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -920,7 +919,7 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 }
 
 func newJSONDatum(t *testing.T, s string) (d types.Datum) {
-	j, err := json.ParseBinaryFromString(s)
+	j, err := types.ParseBinaryJSONFromString(s)
 	require.NoError(t, err)
 	d.SetMysqlJSON(j)
 	return d
