@@ -130,7 +130,6 @@ func TestGeneralPlanCacheBasically(t *testing.T) {
 	}
 
 	for _, query := range queries {
-		fmt.Println(">>>> ", query)
 		tk.MustExec(`set tidb_enable_general_plan_cache=0`)
 		resultNormal := tk.MustQuery(query).Sort()
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
