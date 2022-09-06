@@ -576,39 +576,19 @@ type Security struct {
 	KeyBytes  []byte `toml:"-" json:"-"`
 }
 
-// LoadTLSContent loads the file content from CA/Cert/Key. This function should be called every time before using the content,
-// to support certificate rotation.
-func (sec *Security) LoadTLSContent() error {
-	var err error
-	load := func(path string, target *[]byte) {
-		if err != nil {
-			return
-		}
-		if path != "" {
-			*target, err = os.ReadFile(path)
-		}
-	}
-
-	load(sec.CAPath, &sec.CABytes)
-	load(sec.CertPath, &sec.CertBytes)
-	load(sec.KeyPath, &sec.KeyBytes)
-	return err
-}
-
 // RegisterMySQL registers the TLS config with name "cluster" or security.TLSConfigName
 // for use in `sql.Open()`. This method is goroutine-safe.
 func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
 		return nil
 	}
-	if err := sec.LoadTLSContent(); err != nil {
-		return err
-	}
-	if len(sec.CABytes) == 0 && len(sec.CertBytes) == 0 && len(sec.KeyBytes) == 0 {
-		return nil
-	}
 
-	tlsConfig, err := util.NewTLSConfigWithVerifyCN(sec.CABytes, sec.CertBytes, sec.KeyBytes, nil)
+	tlsConfig, err := util.NewTLSConfig(
+		util.WithCAPath(sec.CAPath),
+		util.WithCertAndKeyPath(sec.CertPath, sec.KeyPath),
+		util.WithCAContent(sec.CABytes),
+		util.WithCertAndKeyContent(sec.CertBytes, sec.KeyBytes),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}

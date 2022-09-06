@@ -28,8 +28,6 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,46 +36,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
-
-func respondPathHandler(w http.ResponseWriter, req *http.Request) {
-	io.WriteString(w, `{"path":"`)
-	io.WriteString(w, req.URL.Path)
-	io.WriteString(w, `"}`)
-}
-
-func TestGetJSONInsecure(t *testing.T) {
-	mockServer := httptest.NewServer(http.HandlerFunc(respondPathHandler))
-	defer mockServer.Close()
-
-	u, err := url.Parse(mockServer.URL)
-	require.NoError(t, err)
-
-	tls, err := util.NewTLS("", "", "", u.Host, nil)
-	require.NoError(t, err)
-
-	var result struct{ Path string }
-	err = tls.GetJSON("/aaa", &result)
-	require.NoError(t, err)
-	require.Equal(t, "/aaa", result.Path)
-	err = tls.GetJSON("/bbbb", &result)
-	require.NoError(t, err)
-	require.Equal(t, "/bbbb", result.Path)
-}
-
-func TestGetJSONSecure(t *testing.T) {
-	mockServer := httptest.NewTLSServer(http.HandlerFunc(respondPathHandler))
-	defer mockServer.Close()
-
-	tls := util.NewTLSFromMockServer(mockServer)
-
-	var result struct{ Path string }
-	err := tls.GetJSON("/ccc", &result)
-	require.NoError(t, err)
-	require.Equal(t, "/ccc", result.Path)
-	err = tls.GetJSON("/dddd", &result)
-	require.NoError(t, err)
-	require.Equal(t, "/dddd", result.Path)
-}
 
 func TestInvalidTLS(t *testing.T) {
 	tempDir := t.TempDir()
@@ -104,14 +62,18 @@ func TestInvalidTLS(t *testing.T) {
 	require.Regexp(t, "could not load client key pair: tls.*", err.Error())
 }
 
-func TestVerifyCN(t *testing.T) {
+func TestVerifyCommonNameAndRotate(t *testing.T) {
 	caData, certs, keys := generateCerts(t, []string{"server", "client1", "client2"})
 	serverCert, serverKey := certs[0], keys[0]
 	client1Cert, client1Key := certs[1], keys[1]
 	client2Cert, client2Key := certs[2], keys[2]
 
 	// only allow client1 to visit
-	serverTLS, err := util.NewTLSConfigWithVerifyCN(caData, serverCert, serverKey, []string{"client1"})
+	serverTLS, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(serverCert, serverKey),
+		util.WithVerifyCommonName([]string{"client1"}),
+	)
 	require.NoError(t, err)
 	port := 9292
 	url := fmt.Sprintf("https://127.0.0.1:%d", port)
@@ -122,7 +84,10 @@ func TestVerifyCN(t *testing.T) {
 		server.Close()
 	}()
 
-	clientTLS1, err := util.NewTLSConfigWithVerifyCN(caData, client1Cert, client1Key, []string{})
+	clientTLS1, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(client1Cert, client1Key),
+	)
 	require.NoError(t, err)
 	resp, err := util.ClientWithTLS(clientTLS1).Get(url)
 	require.NoError(t, err)
@@ -132,23 +97,51 @@ func TestVerifyCN(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	// client2 can't visit server
-	clientTLS2, err := util.NewTLSConfigWithVerifyCN(caData, client2Cert, client2Key, []string{})
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "client.pem")
+	keyPath := filepath.Join(dir, "client.key")
+	err = os.WriteFile(certPath, client2Cert, 0600)
 	require.NoError(t, err)
-	resp, err = util.ClientWithTLS(clientTLS2).Get(url)
+	err = os.WriteFile(keyPath, client2Key, 0600)
+	require.NoError(t, err)
+
+	clientTLS2, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyPath(certPath, keyPath),
+	)
+	require.NoError(t, err)
+	client2 := util.ClientWithTLS(clientTLS2)
+	resp, err = client2.Get(url)
 	require.ErrorContains(t, err, "tls: bad certificate")
 	if resp != nil {
 		require.NoError(t, resp.Body.Close())
 	}
+
+	// test certificate rotation
+	err = os.WriteFile(certPath, client1Cert, 0600)
+	require.NoError(t, err)
+	err = os.WriteFile(keyPath, client1Key, 0600)
+	require.NoError(t, err)
+
+	resp, err = client2.Get(url)
+	require.NoError(t, err)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "This an example server", string(body))
+	require.NoError(t, resp.Body.Close())
 }
 
-func TestWithOrWithoutCA(t *testing.T) {
+func TestCA(t *testing.T) {
 	caData, certs, keys := generateCerts(t, []string{"server", "client"})
 	serverCert, serverKey := certs[0], keys[0]
 	clientCert, clientKey := certs[1], keys[1]
 
 	caData2, _, _ := generateCerts(t, nil)
 
-	serverTLS, err := util.NewTLSConfigWithVerifyCN(caData, serverCert, serverKey, nil)
+	serverTLS, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(serverCert, serverKey),
+	)
 	require.NoError(t, err)
 	port := 9293
 	url := fmt.Sprintf("https://127.0.0.1:%d", port)
@@ -160,7 +153,9 @@ func TestWithOrWithoutCA(t *testing.T) {
 	}()
 
 	// test only CA
-	clientTLS1, err := util.NewTLSConfigWithVerifyCN(caData, nil, nil, nil)
+	clientTLS1, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+	)
 	require.NoError(t, err)
 	resp, err := util.ClientWithTLS(clientTLS1).Get(url)
 	require.NoError(t, err)
@@ -170,7 +165,9 @@ func TestWithOrWithoutCA(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	// test without CA
-	clientTLS2, err := util.NewTLSConfigWithVerifyCN(nil, clientCert, clientKey, nil)
+	clientTLS2, err := util.NewTLSConfig(
+		util.WithCertAndKeyContent(clientCert, clientKey),
+	)
 	require.NoError(t, err)
 	// inject CA to imitate our generated CA is a trusted CA
 	clientTLS2.RootCAs = clientTLS1.RootCAs
@@ -182,7 +179,9 @@ func TestWithOrWithoutCA(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	// test wrong CA should fail
-	clientTLS3, err := util.NewTLSConfigWithVerifyCN(caData2, nil, nil, []string{})
+	clientTLS3, err := util.NewTLSConfig(
+		util.WithCAContent(caData2),
+	)
 	require.NoError(t, err)
 	// inject CA to imitate our generated CA is a trusted CA
 	certPool := x509.NewCertPool()

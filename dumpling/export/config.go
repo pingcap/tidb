@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"text/template"
@@ -109,7 +108,7 @@ type Config struct {
 		KeyPath      string
 		SSLCABytes   []byte `json:"-"`
 		SSLCertBytes []byte `json:"-"`
-		SSLKEYBytes  []byte `json:"-"`
+		SSLKeyBytes  []byte `json:"-"`
 	}
 
 	LogLevel      string
@@ -636,34 +635,18 @@ func adjustConfig(conf *Config, fns ...func(*Config) error) error {
 }
 
 func registerTLSConfig(conf *Config) error {
-	if len(conf.Security.CAPath) == 0 && len(conf.Security.CertPath) == 0 && len(conf.Security.KeyPath) == 0 {
+	tlsConfig, err := util.NewTLSConfig(
+		util.WithCAPath(conf.Security.CAPath),
+		util.WithCertAndKeyPath(conf.Security.CertPath, conf.Security.KeyPath),
+		util.WithCAContent(conf.Security.SSLCABytes),
+		util.WithCertAndKeyContent(conf.Security.SSLCertBytes, conf.Security.SSLKeyBytes),
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if tlsConfig == nil {
 		return nil
-	}
-
-	var err error
-	if len(conf.Security.CAPath) > 0 {
-		conf.Security.SSLCABytes, err = os.ReadFile(conf.Security.CAPath)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if len(conf.Security.CertPath) > 0 {
-		conf.Security.SSLCertBytes, err = os.ReadFile(conf.Security.CertPath)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if len(conf.Security.KeyPath) > 0 {
-		conf.Security.SSLKEYBytes, err = os.ReadFile(conf.Security.KeyPath)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	tlsConfig, err2 := util.NewTLSConfigWithVerifyCN(conf.Security.SSLCABytes,
-		conf.Security.SSLCertBytes, conf.Security.SSLKEYBytes, []string{})
-	if err2 != nil {
-		return errors.Trace(err2)
 	}
 
 	conf.Security.DriveTLSName = "dumpling" + uuid.NewString()
