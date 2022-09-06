@@ -1,7 +1,5 @@
-FROM busybox
+FROM golang:alpine
 
 COPY tidb-lightning /
 
-CMD []
-
-ENTRYPOINT ["/tidb-lightning"]
+CMD /bin/sh

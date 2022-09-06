@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lightning-test
+spec:
+  containers:
+  - name: lightning
+    image: 385595570414.dkr.ecr.us-east-1.amazonaws.com/dbaas/jujiajia/tidb-lightning:test
