@@ -388,6 +388,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		return nil, nil, nil, errors.Trace(err)
 	}
 	if rangeFallback {
+		sctx.GetSessionVars().StmtCtx.AppendRangeFallbackWarning(rangeMemQuota)
 		return FullRange(), nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
@@ -452,7 +453,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 			return nil, nil, nil, errors.Trace(err)
 		}
 		if rangeFallback {
-			d.sctx.GetSessionVars().StmtCtx.RangeFallbackUnderMemQuota = true
+			d.sctx.GetSessionVars().StmtCtx.AppendRangeFallbackWarning(d.rangeMemQuota)
 			return ranges, accessConds[:i], accessConds[i:], nil
 		}
 	}
@@ -474,7 +475,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		return nil, nil, nil, errors.Trace(err)
 	}
 	if rangeFallback {
-		d.sctx.GetSessionVars().StmtCtx.RangeFallbackUnderMemQuota = true
+		d.sctx.GetSessionVars().StmtCtx.AppendRangeFallbackWarning(d.rangeMemQuota)
 		return lastRanges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
 	}
 	return ranges, accessConds, nil, nil

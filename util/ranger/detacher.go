@@ -372,7 +372,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			if len(tailRes.AccessConds) > 0 {
 				newRanges, rangeFallback := appendRanges2PointRanges(pointRanges, tailRes.Ranges, d.rangeMemQuota)
 				if rangeFallback {
-					d.sctx.GetSessionVars().StmtCtx.RangeFallbackUnderMemQuota = true
+					d.sctx.GetSessionVars().StmtCtx.AppendRangeFallbackWarning(d.rangeMemQuota)
 					res.RemainedConds = append(res.RemainedConds, tailRes.AccessConds...)
 					// Some conditions may be in both tailRes.AccessConds and tailRes.RemainedConds so we call appendConditionsIfNotExist here.
 					res.RemainedConds = appendConditionsIfNotExist(res.RemainedConds, tailRes.RemainedConds)
@@ -679,7 +679,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			}
 			totalRanges = append(totalRanges, ranges...)
 			if d.rangeMemQuota > 0 && totalRanges.MemUsage() > d.rangeMemQuota {
-				d.sctx.GetSessionVars().StmtCtx.RangeFallbackUnderMemQuota = true
+				d.sctx.GetSessionVars().StmtCtx.AppendRangeFallbackWarning(d.rangeMemQuota)
 				return FullRange(), nil, nil, true, nil
 			}
 			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(d.sctx, accesses...))
@@ -715,12 +715,12 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				return nil, nil, nil, false, errors.Trace(err)
 			}
 			if rangeFallback {
-				d.sctx.GetSessionVars().StmtCtx.RangeFallbackUnderMemQuota = true
+				d.sctx.GetSessionVars().StmtCtx.AppendRangeFallbackWarning(d.rangeMemQuota)
 				return FullRange(), nil, nil, true, nil
 			}
 			totalRanges = append(totalRanges, ranges...)
 			if d.rangeMemQuota > 0 && totalRanges.MemUsage() > d.rangeMemQuota {
-				d.sctx.GetSessionVars().StmtCtx.RangeFallbackUnderMemQuota = true
+				d.sctx.GetSessionVars().StmtCtx.AppendRangeFallbackWarning(d.rangeMemQuota)
 				return FullRange(), nil, nil, true, nil
 			}
 			newAccessItems = append(newAccessItems, item)

@@ -984,6 +984,16 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 	return time.Unix(0, startTime)
 }
 
+// AppendRangeFallbackWarning appends a warning to indicate that building accurate ranges exceeds the memory quota so it
+// falls back to more inaccurate ranges such as full range. It only appends one warning even if building ranges happens
+// several times when optimizing one query.
+func (sc *StatementContext) AppendRangeFallbackWarning(rangeMemQuota int64) {
+	if !sc.RangeFallbackUnderMemQuota {
+		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_optimizer_mem_quota' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMemQuota))
+		sc.RangeFallbackUnderMemQuota = true
+	}
+}
+
 // CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int

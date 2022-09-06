@@ -17,6 +17,8 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/testkit/testutil"
+	"github.com/pingcap/tidb/util"
 	"regexp"
 	"strconv"
 	"strings"
@@ -7128,4 +7130,59 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestRangeFallbackForPlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10), b varchar(10), c varchar(10), index idx_a_b(a, b))")
+	// 1330 is the memory usage of ["aa","aa"], ["bb","bb"], ["cc","cc"], ["dd","dd"], ["ee","ee"].
+	tk.MustExec("set @@tidb_optimizer_mem_quota=1330")
+	tk.MustQuery("explain format='brief' select * from t where a in ('aa', 'bb', 'cc', 'dd', 'ee') and b in ('ff', 'gg', 'hh', 'ii', 'jj')").Check(testkit.Rows(
+		"IndexLookUp 0.25 root  ",
+		"├─Selection(Build) 0.25 cop[tikv]  in(test.t.b, \"ff\", \"gg\", \"hh\", \"ii\", \"jj\")",
+		"│ └─IndexRangeScan 50.00 cop[tikv] table:t, index:idx_a_b(a, b) range:[\"aa\",\"aa\"], [\"bb\",\"bb\"], [\"cc\",\"cc\"], [\"dd\",\"dd\"], [\"ee\",\"ee\"], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 0.25 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// 1330 is not enough for ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"].
+	// So it falls back to table full scan.
+	tk.MustQuery("explain format='brief' select * from t where a in ('aaaaaaaaaa', 'bbbbbbbbbb', 'cccccccccc', 'dddddddddd', 'eeeeeeeeee') and b in ('ffffffffff', 'gggggggggg', 'hhhhhhhhhh', 'iiiiiiiiii', 'jjjjjjjjjj')").Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  in(test.t.a, \"aaaaaaaaaa\", \"bbbbbbbbbb\", \"cccccccccc\", \"dddddddddd\", \"eeeeeeeeee\"), in(test.t.b, \"ffffffffff\", \"gggggggggg\", \"hhhhhhhhhh\", \"iiiiiiiiii\", \"jjjjjjjjjj\")",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustExec("prepare stmt from 'select * from t where a in (?, ?, ?, ?, ?) and b in (?, ?, ?, ?, ?)'")
+	tk.MustExec("set @a='aa', @b='bb', @c='cc', @d='dd', @e='ee', @f='ff', @g='gg', @h='hh', @i='ii', @j='jj'")
+	tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"Selection_13 0.25 root  in(test.t.a, \"aa\", \"bb\", \"cc\", \"dd\", \"ee\"), in(test.t.b, \"ff\", \"gg\", \"hh\", \"ii\", \"jj\")",
+		"└─IndexLookUp_12 0.25 root  ",
+		"  ├─Selection_11(Build) 0.25 cop[tikv]  in(test.t.b, \"ff\", \"gg\", \"hh\", \"ii\", \"jj\")",
+		"  │ └─IndexRangeScan_9 50.00 cop[tikv] table:t, index:idx_a_b(a, b) range:[\"aa\",\"aa\"], [\"bb\",\"bb\"], [\"cc\",\"cc\"], [\"dd\",\"dd\"], [\"ee\",\"ee\"], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_10(Probe) 0.25 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustExec("set @a='aaaaaaaaaa', @b='bbbbbbbbbb', @c='cccccccccc', @d='dddddddddd', @e='eeeeeeeeee', @f='ffffffffff', @g='gggggggggg', @h='hhhhhhhhhh', @i='iiiiiiiiii', @j='jjjjjjjjjj'")
+	tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
+	// AccessCondition of the cached plan is `a in (?, ?, ?, ?, ?)`. When rebuilding ranges from `a in (?, ?, ?, ?, ?)` for the cached plan, we don't limit the memory usage.
+	// Hence ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"] is built even if tidb_optimizer_mem_quota is 1330.
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"Selection_13 0.25 root  in(test.t.a, \"aaaaaaaaaa\", \"bbbbbbbbbb\", \"cccccccccc\", \"dddddddddd\", \"eeeeeeeeee\"), in(test.t.b, \"ffffffffff\", \"gggggggggg\", \"hhhhhhhhhh\", \"iiiiiiiiii\", \"jjjjjjjjjj\")",
+		"└─IndexLookUp_12 0.25 root  ",
+		"  ├─Selection_11(Build) 0.25 cop[tikv]  in(test.t.b, \"ffffffffff\", \"gggggggggg\", \"hhhhhhhhhh\", \"iiiiiiiiii\", \"jjjjjjjjjj\")",
+		"  │ └─IndexRangeScan_9 50.00 cop[tikv] table:t, index:idx_a_b(a, b) range:[\"aaaaaaaaaa\",\"aaaaaaaaaa\"], [\"bbbbbbbbbb\",\"bbbbbbbbbb\"], [\"cccccccccc\",\"cccccccccc\"], [\"dddddddddd\",\"dddddddddd\"], [\"eeeeeeeeee\",\"eeeeeeeeee\"], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_10(Probe) 0.25 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// Changing tidb_optimizer_mem_quota doesn't invalid the cached plan.
+	tk.MustExec("set @@tidb_optimizer_mem_quota=1330")
+	tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
