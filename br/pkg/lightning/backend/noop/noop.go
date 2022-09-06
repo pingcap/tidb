@@ -151,10 +151,6 @@ func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.T
 	panic("Unsupported Operation")
 }
 
-func (b noopBackend) CollectRemoteDuplicateIndex(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions, indexID int64) (bool, error) {
-	panic("Unsupported Operation")
-}
-
 func (b noopBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
 	return nil
 }

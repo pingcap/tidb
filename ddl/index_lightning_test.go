@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/lightning"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -110,7 +110,7 @@ func TestAddIndexMergeProcess(t *testing.T) {
 	tk.MustExec("create table t (c1 int primary key, c2 int, c3 int)")
 	tk.MustExec("insert into t values (1, 2, 3), (4, 5, 6);")
 	// Force onCreateIndex use the backfill-merge process.
-	lightning.GlobalEnv.IsInited = false
+	ingest.LitInitialized = false
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErr error

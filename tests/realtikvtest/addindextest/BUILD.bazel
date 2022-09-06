@@ -12,6 +12,7 @@ go_library(
         "//kv",
         "//testkit",
         "//util/logutil",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
     ],
@@ -21,12 +22,16 @@ go_test(
     name = "addindextest_test",
     srcs = [
         "add_index_test.go",
-        "failpoint_test.go"
+        "failpoint_test.go",
         "main_test.go",
+        "memory_test.go",
     ],
     embed = [":addindextest"],
     deps = [
+        "//config",
+        "//ddl/ingest",
         "//testkit",
         "//tests/realtikvtest",
+        "@com_github_stretchr_testify//require",
     ],
 )

@@ -50,9 +50,10 @@ go_library(
         ":ddl_friend",
     ],
     deps = [
+        "//br/pkg/utils",
         "//config",
+        "//ddl/ingest",
         "//ddl/label",
-        "//ddl/lightning",
         "//ddl/placement",
         "//ddl/syncer",
         "//ddl/util",
@@ -83,7 +84,6 @@ go_library(
         "//statistics/handle",
         "//store/copr",
         "//store/driver/backoff",
-        "//store/driver/txn",
         "//store/helper",
         "//table",
         "//table/tables",
@@ -195,6 +195,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//config",
+        "//ddl/ingest",
         "//ddl/placement",
         "//ddl/schematracker",
         "//ddl/testutil",

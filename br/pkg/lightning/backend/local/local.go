@@ -1667,24 +1667,6 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 	return atomicHasDupe.Load(), nil
 }
 
-func (local *local) CollectRemoteDuplicateIndex(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions, indexID int64) (hasDupe bool, err error) {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Int64("indexID", indexID)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
-	defer func() {
-		logger.End(zap.ErrorLevel, err)
-	}()
-
-	atomicHasDupe := atomic.NewBool(false)
-	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if err := duplicateManager.CollectDuplicateIndexFromTiKV(ctx, local.importClientFactory, indexID); err != nil {
-		return false, errors.Trace(err)
-	}
-	return atomicHasDupe.Load(), nil
-}
-
 func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
 	defer func() {

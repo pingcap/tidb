@@ -26,7 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/lightning"
+	"github.com/pingcap/tidb/ddl/ingest"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -715,14 +715,13 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			// Disk quota checking and import partial data into TiKV if needed.
 			// Do lightning flush data to make checkpoint.
-			if bc, ok := lightning.BackCtxMgr.Load(job.ID); ok {
-				engineKey := lightning.GenEngineInfoKey(job.ID, reorgInfo.currElement.ID)
-				err := bc.Flush(engineKey)
+			if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
+				err := bc.Flush(reorgInfo.currElement.ID)
 				if err != nil {
 					return errors.Trace(err)
 				}
 			} else {
-				return errors.New(lightning.LitErrGetBackendFail)
+				return errors.New(ingest.LitErrGetBackendFail)
 			}
 		}
 		remains, err := w.sendRangeTaskToWorkers(t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
@@ -750,13 +749,13 @@ func spawnAddIndexWorker(sessCtx sessionctx.Context, seq int, job *model.Job, t 
 		go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 		return idxWorker.backfillWorker, nil
 	case model.ReorgTypeLitMerge:
-		bc, ok := lightning.BackCtxMgr.Load(job.ID)
+		bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 		if !ok {
-			return nil, errors.Trace(errors.New(lightning.LitErrGetBackendFail))
+			return nil, errors.Trace(errors.New(ingest.LitErrGetBackendFail))
 		}
 		err := bc.EngMgr.Register(bc, job, reorgInfo.currElement.ID)
 		if err != nil {
-			return nil, errors.Trace(errors.New(lightning.LitErrCreateEngineFail))
+			return nil, errors.Trace(errors.New(ingest.LitErrCreateEngineFail))
 		}
 		idxWorker, err := newAddIndexWorkerLit(sessCtx, seq, t, decodeColMap, reorgInfo, jc)
 		if err != nil {

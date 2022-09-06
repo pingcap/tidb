@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/lightning"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -326,7 +326,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		// For lightning there is a part import should be counted.
-		if _, ok := lightning.BackCtxMgr.Load(reorgInfo.Job.ID); ok {
+		if _, ok := ingest.LitBackCtxMgr.Load(reorgInfo.Job.ID); ok {
 			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorgInfo.SchemaName, tblInfo.Name.String()).Set(BackfillProgressPercent * progress * 100)
 		} else {
 			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
@@ -396,7 +396,7 @@ type reorgInfo struct {
 }
 
 func (r *reorgInfo) String() string {
-	_, isEnabled := lightning.BackCtxMgr.Load(r.Job.ID)
+	_, isEnabled := ingest.LitBackCtxMgr.Load(r.Job.ID)
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
 		"StartHandle:" + tryDecodeToHandleString(r.StartKey) + "," +

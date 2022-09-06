@@ -212,9 +212,6 @@ type AbstractBackend interface {
 	//  the data import by other lightning.
 	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
 
-	// CollectRemoteDuplicateIndex collect duplicate keys of one index from remote TiKV storage.
-	CollectRemoteDuplicateIndex(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions, indexID int64) (hasDupe bool, err error)
-
 	// ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 	// according to the required algorithm.
 	ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error
@@ -391,10 +388,6 @@ func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table
 
 func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl, tableName, opts)
-}
-
-func (be Backend) CollectRemoteDuplicateIndex(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions, indexID int64) (bool, error) {
-	return be.abstract.CollectRemoteDuplicateIndex(ctx, tbl, tableName, opts, indexID)
 }
 
 func (be Backend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {

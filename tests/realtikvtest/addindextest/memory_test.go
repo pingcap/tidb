@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl/lightning"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -45,9 +45,9 @@ func TestLitAddIndexMemoryUsage(t *testing.T) {
 	}
 	sb.WriteString(";")
 	tk.MustExec(sb.String())
-	require.Equal(t, int64(0), lightning.BackCtxMgr.MemRoot.CurrentUsage())
+	require.Equal(t, int64(0), ingest.LitMemRoot.CurrentUsage())
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("alter table t add unique index idx1(b);")
 	tk.MustExec("admin check table t;")
-	require.Equal(t, int64(0), lightning.BackCtxMgr.MemRoot.CurrentUsage())
+	require.Equal(t, int64(0), ingest.LitMemRoot.CurrentUsage())
 }

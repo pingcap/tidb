@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/lightning"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -683,13 +683,13 @@ func pickBackfillProcess(w *worker, job *model.Job) model.ReorgType {
 	}
 	if IsEnableFastReorg() {
 		piTREnabled := isPiTREnable(w)
-		if lightning.GlobalEnv.IsInited && !piTREnabled {
+		if ingest.LitInitialized && !piTREnabled {
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge
 		}
 		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 		logutil.BgLogger().Info("fallback to txn-merge backfill process",
-			zap.Bool("lightning env initialized", lightning.GlobalEnv.IsInited),
+			zap.Bool("lightning env initialized", ingest.LitInitialized),
 			zap.Bool("PiTR enabled", piTREnabled))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		return model.ReorgTypeTxnMerge
@@ -735,7 +735,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		switch bfProcess {
 		case model.ReorgTypeLitMerge:
 			logutil.BgLogger().Info("Lightning backfill state running")
-			bc, ok := lightning.BackCtxMgr.Load(job.ID)
+			bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 			if ok && bc.Done() {
 				break
 			}
@@ -748,14 +748,14 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				job.SnapshotVer = 0
 				return false, ver, nil
 			}
-			bc, err = lightning.BackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
+			bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
 			if err != nil {
 				fallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
 			}
 			done, ver, err = runReorgJobAndHandleAddIndexErr(w, d, t, job, tbl, indexInfo)
 			if err != nil {
-				lightning.BackCtxMgr.Unregister(job.ID)
+				ingest.LitBackCtxMgr.Unregister(job.ID)
 				fallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
 			}
@@ -771,7 +771,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 					logutil.BgLogger().Warn("Lightning import error:", zap.Error(err))
 					fallbackToTxnMerge(job, err)
 				}
-				lightning.BackCtxMgr.Unregister(job.ID)
+				ingest.LitBackCtxMgr.Unregister(job.ID)
 				return false, ver, errors.Trace(err)
 			}
 			bc.SetDone()
@@ -793,7 +793,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		logutil.BgLogger().Info("Lightning backfill state merge Sync")
 		indexInfo.BackfillState = model.BackfillStateMerging
 		if bfProcess == model.ReorgTypeLitMerge {
-			lightning.BackCtxMgr.Unregister(job.ID)
+			ingest.LitBackCtxMgr.Unregister(job.ID)
 			err = rh.RemoveDDLReorgHandle(job, elem)
 			if err != nil {
 				logutil.BgLogger().Info("Lightning: [DDL] remove reorg handle", zap.Error(err))

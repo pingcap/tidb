@@ -22,7 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	lit "github.com/pingcap/tidb/ddl/lightning"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -70,14 +71,13 @@ func isPiTREnable(w *worker) bool {
 		logutil.BgLogger().Info("Lightning: Failpoint enable PiTR.")
 		failpoint.Return(true)
 	})
-	return lit.CheckPiTR(ctx)
+	return utils.CheckLogBackupEnabled(ctx)
 }
 
 // importIndexDataToStore import local index sst file into TiKV.
 func importIndexDataToStore(jobID int64, indexID int64, unique bool, tbl table.Table) error {
-	if bc, ok := lit.BackCtxMgr.Load(jobID); ok {
-		engineInfoKey := lit.GenEngineInfoKey(jobID, indexID)
-		err := bc.FinishImport(engineInfoKey, unique, tbl)
+	if bc, ok := ingest.LitBackCtxMgr.Load(jobID); ok {
+		err := bc.FinishImport(indexID, unique, tbl)
 		if err != nil {
 			err = errors.Trace(err)
 			return err
@@ -91,7 +91,7 @@ type addIndexWorkerLit struct {
 	addIndexWorker
 
 	// Lightning relative variable.
-	writerCtx *lit.WorkerContext
+	writerCtx *ingest.WriterContext
 }
 
 func newAddIndexWorkerLit(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*addIndexWorkerLit, error) {
@@ -104,10 +104,9 @@ func newAddIndexWorkerLit(sessCtx sessionctx.Context, id int, t table.PhysicalTa
 	}
 	jobID := reorgInfo.Job.ID
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
-	engineInfoKey := lit.GenEngineInfoKey(jobID, index.Meta().ID)
-	bc, _ := lit.BackCtxMgr.Load(jobID)
-	ei, _ := bc.EngMgr.Load(engineInfoKey)
-	lwCtx, err := ei.NewWorkerCtx(id)
+	bc, _ := ingest.LitBackCtxMgr.Load(jobID)
+	ei, _ := bc.EngMgr.Load(index.Meta().ID)
+	lwCtx, err := ei.NewWriterCtx(id)
 	if err != nil {
 		return nil, err
 	}

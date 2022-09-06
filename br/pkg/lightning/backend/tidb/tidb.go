@@ -579,10 +579,6 @@ func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table
 	panic("Unsupported Operation")
 }
 
-func (be *tidbBackend) CollectRemoteDuplicateIndex(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions, indexID int64) (bool, error) {
-	panic("Unsupported Operation")
-}
-
 func (be *tidbBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
 	return nil
 }
