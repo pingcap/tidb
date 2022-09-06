@@ -358,7 +358,7 @@ func TestRecoverClusterWithTiFlash(t *testing.T) {
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 }
 
-func TestRecoverClusterWithSafeTs(t *testing.T) {
+func TestFlashbackWithSafeTs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
