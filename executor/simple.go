@@ -1495,10 +1495,8 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	var pwd string
 	switch authplugin {
-	case mysql.AuthCachingSha2Password:
-		pwd = auth.NewSha2Password(s.Password)
-	case mysql.AuthTiDBSM3Password:
-		pwd = auth.NewSM3Password(s.Password)
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		pwd = auth.NewHashPassword(s.Password, authplugin)
 	case mysql.AuthSocket:
 		e.ctx.GetSessionVars().StmtCtx.AppendNote(ErrSetPasswordAuthPlugin.GenWithStackByArgs(u, h))
 		pwd = ""

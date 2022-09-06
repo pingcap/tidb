@@ -742,7 +742,7 @@ func (b *builtinSM3Sig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals SM3(str).
+// evalString evals Sm3Hash(str).
 // The value is returned as a string of 70 hexadecimal digits, or NULL if the argument was NULL.
 func (b *builtinSM3Sig) evalString(row chunk.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)

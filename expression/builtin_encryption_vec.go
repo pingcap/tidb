@@ -521,7 +521,7 @@ func (b *builtinSM3Sig) vectorized() bool {
 	return true
 }
 
-// vecEvalString evals SM3(str).
+// vecEvalString evals Sm3Hash(str).
 func (b *builtinSM3Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()

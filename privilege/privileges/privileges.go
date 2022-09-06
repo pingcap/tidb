@@ -186,7 +186,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.PWDHashLen+1 {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a mysql_native_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	}
 
@@ -194,7 +194,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.SHAPWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a caching_sha2_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	}
 
@@ -202,7 +202,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.SM3PWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a tidb_sm3_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	}
 
@@ -210,7 +210,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		return true
 	}
 
-	logutil.BgLogger().Error("user password from system DB not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+	logutil.BgLogger().Error("user password from the mysql.user table not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 	return false
 }
 
@@ -334,23 +334,14 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
 				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-		case mysql.AuthCachingSha2Password:
-			authok, err := auth.CheckShaPassword([]byte(pwd), string(authentication))
+		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
 			if err != nil {
 				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
 			}
 
 			if !authok {
 				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-			}
-		case mysql.AuthTiDBSM3Password:
-			authOK, err := auth.CheckSM3Password([]byte(pwd), string(authentication))
-			if err != nil {
-				logutil.BgLogger().Error("Failed to check tidb_sm3_password", zap.Error(err))
-			}
-
-			if !authOK {
-				return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		case mysql.AuthSocket:
 			if string(authentication) != authUser && string(authentication) != pwd {
