@@ -74,7 +74,7 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 
-	MetaKVBatchSize = 5 * 1024 * 1024
+	MetaKVBatchSize = 64 * 1024 * 1024
 )
 
 // Client sends requests to restore files.
@@ -2206,8 +2206,18 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 	cf string,
 ) ([]*KvEntryWithTS, error) {
 	nextKvEntries := make([]*KvEntryWithTS, 0)
+	curKvEntries := make([]*KvEntryWithTS, 0)
 	if len(files) == 0 && len(kvEntries) == 0 {
 		return nextKvEntries, nil
+	}
+
+	// filter the kv from kvEntries again.
+	for _, kv := range kvEntries {
+		if kv.ts < filterTS {
+			curKvEntries = append(curKvEntries, kv)
+		} else {
+			nextKvEntries = append(nextKvEntries, kv)
+		}
 	}
 
 	// read all of entries from files.
@@ -2217,17 +2227,17 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 			return nextKvEntries, errors.Trace(err)
 		}
 
-		kvEntries = append(kvEntries, es...)
+		curKvEntries = append(curKvEntries, es...)
 		nextKvEntries = append(nextKvEntries, nextEs...)
 	}
 
 	// sort these entries.
-	slices.SortFunc(kvEntries, func(i, j *KvEntryWithTS) bool {
+	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) bool {
 		return i.ts < j.ts
 	})
 
 	// restore these entries with rawPut() method.
-	kvCount, size, err := rc.restoreMetaKvEntries(ctx, schemasReplace, kvEntries, cf)
+	kvCount, size, err := rc.restoreMetaKvEntries(ctx, schemasReplace, curKvEntries, cf)
 	if err != nil {
 		return nextKvEntries, errors.Trace(err)
 	}
