@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -68,6 +69,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
+
+// NewMockDomain is only used for test
+func NewMockDomain() *Domain {
+	do := &Domain{
+		infoCache: infoschema.NewCache(1),
+	}
+	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 1)
+	return do
+}
 
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
@@ -323,7 +333,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica, model.ActionSetTiFlashMode:
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
 		return true
 	}
 	return false
@@ -331,11 +341,6 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 
 // InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
-	if do.infoCache == nil {
-		// Return nil is for test purpose where domain is not well initialized in session context.
-		// In real implementation, the code will not reach here.
-		return nil
-	}
 	return do.infoCache.GetLatest()
 }
 
@@ -764,7 +769,11 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
 // Init initializes a domain.
-func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) (pools.Resource, error)) error {
+func (do *Domain) Init(
+	ddlLease time.Duration,
+	sysExecutorFactory func(*Domain) (pools.Resource, error),
+	ddlInjector func(ddl.DDL) *schematracker.Checker,
+) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
@@ -832,6 +841,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 			do.ddl = d
 		}
 	})
+	if ddlInjector != nil {
+		checker := ddlInjector(do.ddl)
+		checker.CreateTestDB()
+		do.ddl = checker
+	}
 
 	if config.GetGlobalConfig().EnableGlobalKill {
 		if do.etcdClient != nil {

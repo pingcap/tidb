@@ -63,4 +63,10 @@ const (
 	AutoRandomAlterChangeFromAutoInc = "auto_random can only be converted from auto_increment clustered primary key"
 	// AutoRandomAllocatorNotFound is reported when auto_random ID allocator not found during changing from auto_inc to auto_random.
 	AutoRandomAllocatorNotFound = "auto_random ID allocator not found in table '%s.%s'"
+	// AutoRandomInvalidRangeBits is reported when the auto_random_range_bits is invalid.
+	AutoRandomInvalidRangeBits = "auto_random range bits must be between %d and %d, but got %d"
+	// AutoRandomIncrementalBitsTooSmall is reported when the auto_random available use space is too small.
+	AutoRandomIncrementalBitsTooSmall = "auto_random ID space is too small, please decrease the shard bits or increase the range bits"
+	// AutoRandomUnsupportedAlterRangeBits is reported when the auto_random range_bits is changed.
+	AutoRandomUnsupportedAlterRangeBits = "alter the range bits of auto_random column is not supported"
 )

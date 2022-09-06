@@ -193,6 +193,7 @@ func TestAuth(t *testing.T) {
 
 	ts.runTestAuth(t)
 	ts.runTestIssue3682(t)
+	ts.runTestAccountLock(t)
 }
 
 func TestIssues(t *testing.T) {
@@ -271,7 +272,8 @@ func TestStatusAPIWithTLS(t *testing.T) {
 
 	// but plain http connection should fail.
 	cli.statusScheme = "http"
-	_, err = cli.fetchStatus("/status") // nolint: bodyclose
+	//nolint:bodyclose
+	_, err = cli.fetchStatus("/status")
 	require.Error(t, err)
 
 	server.Close()
@@ -328,7 +330,8 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 		client1CertPath,
 		client1KeyPath,
 	)
-	_, err = hc.Get(cli.statusURL("/status")) // nolint: bodyclose
+	//nolint:bodyclose
+	_, err = hc.Get(cli.statusURL("/status"))
 	require.Error(t, err)
 
 	hc = newTLSHttpClient(t, caPath,
@@ -1235,7 +1238,7 @@ func TestGracefulShutdown(t *testing.T) {
 
 	time.Sleep(time.Second * 2)
 
-	// nolint: bodyclose
+	//nolint:bodyclose
 	_, err = cli.fetchStatus("/status") // status is gone
 	require.Error(t, err)
 	require.Regexp(t, "connect: connection refused$", err.Error())

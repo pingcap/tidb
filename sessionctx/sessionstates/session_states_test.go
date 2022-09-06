@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
@@ -855,8 +855,7 @@ func TestPreparedStatements(t *testing.T) {
 				return stmtID
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
-				datum := []types.Datum{types.NewDatum(1)}
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), datum)
+				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), expression.Args2Expressions4Test(1))
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
 			},
@@ -878,8 +877,7 @@ func TestPreparedStatements(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
 				tk.MustQuery("execute stmt").Check(testkit.Rows("10"))
-				datum := []types.Datum{types.NewDatum(1)}
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), datum)
+				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), expression.Args2Expressions4Test(1))
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
 			},
@@ -911,8 +909,7 @@ func TestPreparedStatements(t *testing.T) {
 				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[1], nil)
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows())
-				datum := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-				_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[0], datum)
+				_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[0], expression.Args2Expressions4Test(1, 2, 3))
 				require.NoError(t, err)
 				rs, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[1], nil)
 				require.NoError(t, err)
@@ -961,14 +958,14 @@ func TestPreparedStatements(t *testing.T) {
 		//		rootTk := testkit.NewTestKit(t, store)
 		//		rootTk.MustExec(`CREATE USER 'u1'@'localhost'`)
 		//		rootTk.MustExec("create table test.t1(id int)")
-		//		require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+		//		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 		//		rootTk.MustExec(`GRANT SELECT ON test.t1 TO 'u1'@'localhost'`)
 		//		tk.MustExec("prepare stmt from 'select * from test.t1'")
 		//		rootTk.MustExec(`REVOKE SELECT ON test.t1 FROM 'u1'@'localhost'`)
 		//		return nil
 		//	},
 		//	prepareFunc: func(tk *testkit.TestKit, conn server.MockConn) {
-		//		require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+		//		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 		//	},
 		//	restoreErr: errno.ErrNoSuchTable,
 		//	cleanFunc: func(tk *testkit.TestKit) {
@@ -982,6 +979,7 @@ func TestPreparedStatements(t *testing.T) {
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+		conn1.Context().Session.GetSessionVars().User = nil
 		var param any
 		if tt.setFunc != nil {
 			param = tt.setFunc(tk1, conn1)
@@ -1365,6 +1363,7 @@ func TestShowStateFail(t *testing.T) {
 	})
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
+		conn1.Context().Session.GetSessionVars().User = nil
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 		tt.setFunc(tk1, conn1)
 		if tt.showErr == 0 {

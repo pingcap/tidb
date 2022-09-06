@@ -34,12 +34,12 @@ go_test(
     deps = [
         "//config",
         "//errno",
+        "//expression",
         "//parser/mysql",
         "//parser/terror",
         "//server",
         "//sessionctx/variable",
         "//testkit",
-        "//types",
         "//util",
         "//util/sem",
         "@com_github_pingcap_errors//:errors",

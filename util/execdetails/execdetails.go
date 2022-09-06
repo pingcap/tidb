@@ -86,8 +86,10 @@ const (
 	CommitBackoffTimeStr = "Commit_backoff_time"
 	// BackoffTypesStr means the backoff type.
 	BackoffTypesStr = "Backoff_types"
-	// SlowestCommitRPCDetailStr means the details of the slowest RPC during the transaction commit process.
-	SlowestCommitRPCDetailStr = "Slowest_commit_rpc_detail"
+	// SlowestPrewriteRPCDetailStr means the details of the slowest RPC during the transaction 2pc prewrite process.
+	SlowestPrewriteRPCDetailStr = "Slowest_prewrite_rpc_detail"
+	// CommitPrimaryRPCDetailStr means the details of the slowest RPC during the transaction 2pc commit process.
+	CommitPrimaryRPCDetailStr = "Commit_primary_rpc_detail"
 	// ResolveLockTimeStr means the time of resolving lock.
 	ResolveLockTimeStr = "Resolve_lock_time"
 	// LocalLatchWaitTimeStr means the time of waiting in local latch.
@@ -159,14 +161,23 @@ func (d ExecDetails) String() string {
 		if commitBackoffTime > 0 {
 			parts = append(parts, CommitBackoffTimeStr+": "+strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64))
 		}
-		if len(commitDetails.Mu.BackoffTypes) > 0 {
-			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
+		if len(commitDetails.Mu.PrewriteBackoffTypes) > 0 {
+			parts = append(parts, "Prewrite_"+BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.PrewriteBackoffTypes))
 		}
-		if commitDetails.Mu.SlowestReqTotalTime > 0 {
-			parts = append(parts, SlowestCommitRPCDetailStr+": {total:"+strconv.FormatFloat(commitDetails.Mu.SlowestReqTotalTime.Seconds(), 'f', 3, 64)+
-				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestRegion, 10)+
-				", store: "+commitDetails.Mu.SlowestStoreAddr+
-				", "+commitDetails.Mu.SlowestExecDetails.String()+"}")
+		if len(commitDetails.Mu.CommitBackoffTypes) > 0 {
+			parts = append(parts, "Commit_"+BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.CommitBackoffTypes))
+		}
+		if commitDetails.Mu.SlowestPrewrite.ReqTotalTime > 0 {
+			parts = append(parts, SlowestPrewriteRPCDetailStr+": {total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
+				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestPrewrite.Region, 10)+
+				", store: "+commitDetails.Mu.SlowestPrewrite.StoreAddr+
+				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}")
+		}
+		if commitDetails.Mu.CommitPrimary.ReqTotalTime > 0 {
+			parts = append(parts, CommitPrimaryRPCDetailStr+": {total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
+				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestPrewrite.Region, 10)+
+				", store: "+commitDetails.Mu.SlowestPrewrite.StoreAddr+
+				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}")
 		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
@@ -263,8 +274,23 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 		if commitBackoffTime > 0 {
 			fields = append(fields, zap.String("commit_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
 		}
-		if len(commitDetails.Mu.BackoffTypes) > 0 {
-			fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes)))
+		if len(commitDetails.Mu.PrewriteBackoffTypes) > 0 {
+			fields = append(fields, zap.String("Prewrite_"+BackoffTypesStr, fmt.Sprintf("%v", commitDetails.Mu.PrewriteBackoffTypes)))
+		}
+		if len(commitDetails.Mu.CommitBackoffTypes) > 0 {
+			fields = append(fields, zap.String("Commit_"+BackoffTypesStr, fmt.Sprintf("%v", commitDetails.Mu.CommitBackoffTypes)))
+		}
+		if commitDetails.Mu.SlowestPrewrite.ReqTotalTime > 0 {
+			fields = append(fields, zap.String(SlowestPrewriteRPCDetailStr, "total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
+				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestPrewrite.Region, 10)+
+				", store: "+commitDetails.Mu.SlowestPrewrite.StoreAddr+
+				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}"))
+		}
+		if commitDetails.Mu.CommitPrimary.ReqTotalTime > 0 {
+			fields = append(fields, zap.String(CommitPrimaryRPCDetailStr, "{total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
+				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestPrewrite.Region, 10)+
+				", store: "+commitDetails.Mu.SlowestPrewrite.StoreAddr+
+				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}"))
 		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
@@ -905,21 +931,36 @@ func (e *RuntimeStatsWithCommit) String() string {
 		if commitBackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
 			buf.WriteString(FormatDuration(time.Duration(commitBackoffTime)))
-			if len(e.Commit.Mu.BackoffTypes) > 0 {
-				buf.WriteString(", type: ")
-				buf.WriteString(e.formatBackoff(e.Commit.Mu.BackoffTypes))
+			if len(e.Commit.Mu.PrewriteBackoffTypes) > 0 {
+				buf.WriteString(", prewrite type: ")
+				buf.WriteString(e.formatBackoff(e.Commit.Mu.PrewriteBackoffTypes))
+			}
+			if len(e.Commit.Mu.CommitBackoffTypes) > 0 {
+				buf.WriteString(", commit type: ")
+				buf.WriteString(e.formatBackoff(e.Commit.Mu.CommitBackoffTypes))
 			}
 			buf.WriteString("}")
 		}
-		if e.Commit.Mu.SlowestReqTotalTime > 0 {
-			buf.WriteString(", slowest_commit_rpc: {total: ")
-			buf.WriteString(strconv.FormatFloat(e.Commit.Mu.SlowestReqTotalTime.Seconds(), 'f', 3, 64))
+		if e.Commit.Mu.SlowestPrewrite.ReqTotalTime > 0 {
+			buf.WriteString(", slowest_prewrite_rpc: {total: ")
+			buf.WriteString(strconv.FormatFloat(e.Commit.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64))
 			buf.WriteString("s, region_id: ")
-			buf.WriteString(strconv.FormatUint(e.Commit.Mu.SlowestRegion, 10))
+			buf.WriteString(strconv.FormatUint(e.Commit.Mu.SlowestPrewrite.Region, 10))
 			buf.WriteString(", store: ")
-			buf.WriteString(e.Commit.Mu.SlowestStoreAddr)
+			buf.WriteString(e.Commit.Mu.SlowestPrewrite.StoreAddr)
 			buf.WriteString(", ")
-			buf.WriteString(e.Commit.Mu.SlowestExecDetails.String())
+			buf.WriteString(e.Commit.Mu.SlowestPrewrite.ExecDetails.String())
+			buf.WriteString("}")
+		}
+		if e.Commit.Mu.CommitPrimary.ReqTotalTime > 0 {
+			buf.WriteString(", commit_primary_rpc: {total: ")
+			buf.WriteString(strconv.FormatFloat(e.Commit.Mu.CommitPrimary.ReqTotalTime.Seconds(), 'f', 3, 64))
+			buf.WriteString("s, region_id: ")
+			buf.WriteString(strconv.FormatUint(e.Commit.Mu.CommitPrimary.Region, 10))
+			buf.WriteString(", store: ")
+			buf.WriteString(e.Commit.Mu.CommitPrimary.StoreAddr)
+			buf.WriteString(", ")
+			buf.WriteString(e.Commit.Mu.CommitPrimary.ExecDetails.String())
 			buf.WriteString("}")
 		}
 		e.Commit.Mu.Unlock()
@@ -1028,12 +1069,12 @@ func (*RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 
 // FormatDuration uses to format duration, this function will prune precision before format duration.
 // Pruning precision is for human readability. The prune rule is:
-// 1. if the duration was less than 1us, return the original string.
-// 2. readable value >=10, keep 1 decimal, otherwise, keep 2 decimal. such as:
-//    9.412345ms  -> 9.41ms
-//    10.412345ms -> 10.4ms
-//    5.999s      -> 6s
-//    100.45µs    -> 100.5µs
+//  1. if the duration was less than 1us, return the original string.
+//  2. readable value >=10, keep 1 decimal, otherwise, keep 2 decimal. such as:
+//     9.412345ms  -> 9.41ms
+//     10.412345ms -> 10.4ms
+//     5.999s      -> 6s
+//     100.45µs    -> 100.5µs
 func FormatDuration(d time.Duration) string {
 	if d <= time.Microsecond {
 		return d.String()

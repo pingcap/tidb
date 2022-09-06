@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -509,11 +510,6 @@ func TestIsIngestRetryable(t *testing.T) {
 	require.Equal(t, retryWrite, retryType)
 	require.Error(t, err)
 
-	resp.Error = &errorpb.Error{Message: "unknown error"}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryNone, retryType)
-	require.EqualError(t, err, "non-retryable error: unknown error")
-
 	resp.Error = &errorpb.Error{
 		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
 			Reason: "test",
@@ -522,6 +518,27 @@ func TestIsIngestRetryable(t *testing.T) {
 	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryWrite, retryType)
 	require.Error(t, err)
+
+	resp.Error = &errorpb.Error{
+		Message: "raft: proposal dropped",
+	}
+	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryWrite, retryType)
+	require.True(t, berrors.Is(err, common.ErrKVRaftProposalDropped))
+
+	resp.Error = &errorpb.Error{
+		DiskFull: &errorpb.DiskFull{},
+	}
+	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryNone, retryType)
+	require.Contains(t, err.Error(), "non-retryable error")
+
+	resp.Error = &errorpb.Error{
+		StaleCommand: &errorpb.StaleCommand{},
+	}
+	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
+	require.Equal(t, retryNone, retryType)
+	require.True(t, berrors.Is(err, common.ErrKVIngestFailed))
 }
 
 type testIngester struct{}
@@ -1253,6 +1270,6 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
 	l := local{}
-	require.True(t, l.isRetryableTiKVWriteError(io.EOF))
-	require.True(t, l.isRetryableTiKVWriteError(errors.Trace(io.EOF)))
+	require.True(t, l.isRetryableImportTiKVError(io.EOF))
+	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }

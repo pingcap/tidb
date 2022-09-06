@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -77,6 +78,24 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "NXN7IPIOSAAKDEEOLMAF", s3.AccessKey)
 	require.Equal(t, "nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", s3.SecretAccessKey)
 	require.True(t, s3.ForcePathStyle)
+
+	// parse role ARN and external ID
+	testRoleARN := "arn:aws:iam::888888888888:role/my-role"
+	testExternalID := "abcd1234"
+	s, err = ParseBackend(
+		fmt.Sprintf(
+			"s3://bucket5/prefix/path?role-arn=%s&external-id=%s",
+			url.QueryEscape(testRoleARN),
+			url.QueryEscape(testExternalID),
+		), nil,
+	)
+	require.NoError(t, err)
+	s3 = s.GetS3()
+	require.NotNil(t, s3)
+	require.Equal(t, "bucket5", s3.Bucket)
+	require.Equal(t, "prefix/path", s3.Prefix)
+	require.Equal(t, testRoleARN, s3.RoleArn)
+	require.Equal(t, testExternalID, s3.ExternalId)
 
 	gcsOpt := &BackendOptions{
 		GCS: GCSBackendOptions{

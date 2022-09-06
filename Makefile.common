@@ -113,3 +113,8 @@ DUMPLING_GOBUILD := CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(
 DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LDFLAGS)'
 
 TEST_COVERAGE_DIR := "test_coverage"
+
+ifneq ("$(CI)", "0")
+	BAZEL_GLOBAL_CONFIG := --output_user_root=/home/jenkins/.tidb/tmp
+	BAZEL_CMD_CONFIG := --config=ci
+endif

@@ -293,7 +293,8 @@ func (f *fakeCluster) splitAndScatter(keys ...string) {
 		f.splitAt(key)
 	}
 	for _, r := range f.regions {
-		f.transferRegionTo(r.id, f.chooseStores(3))
+		chosen := f.chooseStores(3)
+		f.transferRegionTo(r.id, chosen)
 		f.shuffleLeader(r.id)
 	}
 }
@@ -308,7 +309,9 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 	minCheckpoint := uint64(math.MaxUint64)
 	for _, r := range f.regions {
 		f.updateRegion(r.id, func(r *region) {
-			r.checkpoint += rand.Uint64() % 256
+			// The current implementation assumes that the server never returns checkpoint with value 0.
+			// This assumption is true for the TiKV implementation, simulating it here.
+			r.checkpoint += rand.Uint64()%256 + 1
 			if r.checkpoint < minCheckpoint {
 				minCheckpoint = r.checkpoint
 			}

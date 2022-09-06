@@ -112,10 +112,18 @@ func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
 	return &newHRC
 }
 
+// GetMatchedRows get matched rows from probeRow. It can be called
+// in multiple goroutines while each goroutine should keep its own
+// h and buf.
+func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row) ([]chunk.Row, error) {
+	matchedRows, _, err := c.GetMatchedRowsAndPtrs(probeKey, probeRow, hCtx, matched, nil, false)
+	return matchedRows, err
+}
+
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr) ([]chunk.Row, []chunk.RowPtr, error) {
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr, needPtr bool) ([]chunk.Row, []chunk.RowPtr, error) {
 	var err error
 	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
@@ -139,7 +147,9 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			continue
 		}
 		matched = append(matched, matchedRow)
-		matchedPtrs = append(matchedPtrs, ptr)
+		if needPtr {
+			matchedPtrs = append(matchedPtrs, ptr)
+		}
 	}
 	return matched, matchedPtrs, err
 }

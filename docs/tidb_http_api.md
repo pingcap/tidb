@@ -463,12 +463,19 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/ddl/history
     ```
+	**Note**: When the DDL history is very very long, it may consume a lot memory and even cause OOM. Consider adding `start_job_id` and `limit`.
 
 1. Get count {number} TiDB DDL job history information.
 
     ```shell
     curl http://{TiDBIP}:10080/ddl/history?limit={number}
     ```
+
+1. Get count {number} TiDB DDL job history information, start with job {id}
+
+	```shell
+	curl http://{TIDBIP}:10080/ddl/history?start_job_id={id}&limit={number}
+	```
 
 1. Download TiDB debug info
 

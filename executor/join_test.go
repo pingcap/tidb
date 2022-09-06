@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
@@ -65,7 +66,7 @@ func TestJoinInDisk(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	tk.MustExec("use test")
 
-	sm := &testkit.MockSessionManager{
+	sm := &testutil.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -2149,8 +2150,8 @@ func TestIssue11390(t *testing.T) {
 }
 
 func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
-	plannercore.ForceUseOuterBuild4Test = true
-	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
+	plannercore.ForceUseOuterBuild4Test.Store(true)
+	defer func() { plannercore.ForceUseOuterBuild4Test.Store(false) }()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2235,8 +2236,8 @@ func TestIssue14514(t *testing.T) {
 }
 
 func TestOuterMatchStatusIssue14742(t *testing.T) {
-	plannercore.ForceUseOuterBuild4Test = true
-	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
+	plannercore.ForceUseOuterBuild4Test.Store(true)
+	defer func() { plannercore.ForceUseOuterBuild4Test.Store(false) }()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2262,8 +2263,8 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 	// Two necessary factors to reproduce this issue:
 	// (1) taking HashLeftJoin, i.e., letting the probing tuple lay at the left side of joined tuples
 	// (2) the projection only contains a part of columns from the build side, i.e., pruning the same probe side
-	plannercore.ForcedHashLeftJoin4Test = true
-	defer func() { plannercore.ForcedHashLeftJoin4Test = false }()
+	plannercore.ForcedHashLeftJoin4Test.Store(true)
+	defer func() { plannercore.ForcedHashLeftJoin4Test.Store(false) }()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2595,9 +2596,9 @@ func TestIssue20270(t *testing.T) {
 	err := tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	require.Equal(t, executor.ErrQueryInterrupted, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk"))
-	plannercore.ForceUseOuterBuild4Test = true
+	plannercore.ForceUseOuterBuild4Test.Store(true)
 	defer func() {
-		plannercore.ForceUseOuterBuild4Test = false
+		plannercore.ForceUseOuterBuild4Test.Store(false)
 	}()
 	err = failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
 	require.NoError(t, err)

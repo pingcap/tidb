@@ -333,6 +333,10 @@ partition by range (a)
     partition p0 values less than (200),
     partition p1 values less than (300),
     partition p2 values less than maxvalue)`)
+
+	// Fix https://github.com/pingcap/tidb/issues/35827
+	tk.MustExec(`create table t37 (id tinyint unsigned, idpart tinyint, i varchar(255)) partition by range (idpart) (partition p1 values less than (-1));`)
+	tk.MustGetErrCode(`create table t38 (id tinyint unsigned, idpart tinyint unsigned, i varchar(255)) partition by range (idpart) (partition p1 values less than (-1));`, errno.ErrPartitionConstDomain)
 }
 
 func TestCreateTableWithHashPartition(t *testing.T) {
@@ -2103,6 +2107,22 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	require.NoError(t, err)
 
 	tk.MustExec("alter table e15 exchange partition p0 with table e16")
+
+	tk.MustExec("create table e17 (a int)")
+	tk.MustExec("alter table e17 set tiflash replica 1")
+	tk.MustExec("insert into e17 values (1)")
+
+	tk.MustExec("create table e18 (a int) partition by range (a) (partition p0 values less than (4), partition p1 values less than (10))")
+	tk.MustExec("alter table e18 set tiflash replica 1")
+	tk.MustExec("insert into e18 values (2)")
+
+	tk.MustExec("alter table e18 exchange partition p0 with table e17")
+	tk.MustQuery("select * /*+ read_from_storage(tiflash[e18]) */ from e18").Check(testkit.Rows("1"))
+	tk.MustQuery("select * /*+ read_from_storage(tiflash[e17]) */ from e17").Check(testkit.Rows("2"))
+
+	tk.MustExec("create table e19 (a int) partition by hash(a) partitions 1")
+	tk.MustExec("create temporary table e20 (a int)")
+	tk.MustGetErrCode("alter table e19 exchange partition p0 with table e20", errno.ErrPartitionExchangeTempTable)
 }
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
@@ -2318,6 +2338,20 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			"alter table pt32 exchange partition p0 with table nt32;",
 			dbterror.ErrTablesDifferentMetadata,
 		},
+		{
+			// global temporary table
+			"create table pt33 (id int) partition by hash(id) partitions 1;",
+			"create global temporary table nt33 (id int) on commit delete rows;",
+			"alter table pt33 exchange partition p0 with table nt33;",
+			dbterror.ErrPartitionExchangeTempTable,
+		},
+		{
+			// local temporary table
+			"create table pt34 (id int) partition by hash(id) partitions 1;",
+			"create temporary table nt34 (id int);",
+			"alter table pt34 exchange partition p0 with table nt34;",
+			dbterror.ErrPartitionExchangeTempTable,
+		},
 	}
 
 	tk := testkit.NewTestKit(t, store)
@@ -2375,6 +2409,35 @@ func TestExchangePartitionHook(t *testing.T) {
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
+}
+
+func TestExchangePartitionAutoID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int primary key auto_increment) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 values less than (9),
+        PARTITION p3 values less than (50000000)
+		);`)
+	tk.MustExec(`create table nt(a int primary key auto_increment);`)
+	tk.MustExec(`insert into pt values (0), (4)`)
+	tk.MustExec("insert into nt values (1)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
+	}()
+
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustExec("insert into nt values (NULL)")
+	tk.MustQuery("select count(*) from nt where a >= 4000000").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from pt where a >= 4000000").Check(testkit.Rows("1"))
 }
 
 func TestExchangePartitionExpressIndex(t *testing.T) {
@@ -3691,6 +3754,550 @@ func TestDuplicatePartitionNames(t *testing.T) {
 		" PARTITION `p3` VALUES IN (3))"))
 }
 
+func checkCreateSyntax(t *testing.T, tk *testkit.TestKit, ok bool, sql, showCreate string) {
+	for i, sqlStmt := range []string{sql, showCreate} {
+		_, err := tk.Exec(sqlStmt)
+		// ignore warnings for now
+		if ok {
+			require.NoError(t, err, "%d sql: %s", i, sql)
+		} else {
+			require.Error(t, err, "sql: %s", sql)
+			// If not ok, no need to check anything else
+			return
+		}
+		res := tk.MustQuery("show create table t")
+		require.Equal(t, showCreate, res.Rows()[0][1], "Compatible! (%d) sql: %s", i, sqlStmt)
+		tk.MustExec("drop table t")
+	}
+}
+
+func TestCreateIntervalPartitionSyntax(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database IntervalPartitionSyntax")
+	defer tk.MustExec("drop database IntervalPartitionSyntax")
+	tk.MustExec("use IntervalPartitionSyntax")
+
+	type testCase struct {
+		sql        string
+		ok         bool
+		showCreate string
+	}
+
+	cases := []testCase{
+
+		{
+			"CREATE TABLE `t` (\n" +
+				"  `id` int(11) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE (`id`)\n" +
+				"(PARTITION `pNull` VALUES LESS THAN (-9223372036854775808),\n" +
+				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
+				" PARTITION `p_10000000` VALUES LESS THAN (10000000),\n" +
+				" PARTITION `p_20000000` VALUES LESS THAN (20000000),\n" +
+				" PARTITION `p_30000000` VALUES LESS THAN (30000000),\n" +
+				" PARTITION `p_40000000` VALUES LESS THAN (40000000),\n" +
+				" PARTITION `p_50000000` VALUES LESS THAN (50000000),\n" +
+				" PARTITION `p_60000000` VALUES LESS THAN (60000000),\n" +
+				" PARTITION `p_70000000` VALUES LESS THAN (70000000),\n" +
+				" PARTITION `p_80000000` VALUES LESS THAN (80000000),\n" +
+				" PARTITION `p_90000000` VALUES LESS THAN (90000000),\n" +
+				" PARTITION `p_Maxvalue` VALUES LESS THAN (MAXVALUE))",
+			true,
+			"CREATE TABLE `t` (\n" +
+				"  `id` int(11) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE (`id`)\n" +
+				"(PARTITION `pNull` VALUES LESS THAN (-9223372036854775808),\n" +
+				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
+				" PARTITION `p_10000000` VALUES LESS THAN (10000000),\n" +
+				" PARTITION `p_20000000` VALUES LESS THAN (20000000),\n" +
+				" PARTITION `p_30000000` VALUES LESS THAN (30000000),\n" +
+				" PARTITION `p_40000000` VALUES LESS THAN (40000000),\n" +
+				" PARTITION `p_50000000` VALUES LESS THAN (50000000),\n" +
+				" PARTITION `p_60000000` VALUES LESS THAN (60000000),\n" +
+				" PARTITION `p_70000000` VALUES LESS THAN (70000000),\n" +
+				" PARTITION `p_80000000` VALUES LESS THAN (80000000),\n" +
+				" PARTITION `p_90000000` VALUES LESS THAN (90000000),\n" +
+				" PARTITION `p_Maxvalue` VALUES LESS THAN (MAXVALUE))",
+		},
+
+		{
+			"CREATE TABLE `t` (\n" +
+				"  `id` int(11) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE COLUMNS(`id`)\n" +
+				"(PARTITION `pNull` VALUES LESS THAN (-2147483648),\n" +
+				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
+				" PARTITION `p_10000000` VALUES LESS THAN (10000000),\n" +
+				" PARTITION `p_20000000` VALUES LESS THAN (20000000),\n" +
+				" PARTITION `p_30000000` VALUES LESS THAN (30000000),\n" +
+				" PARTITION `p_40000000` VALUES LESS THAN (40000000),\n" +
+				" PARTITION `p_50000000` VALUES LESS THAN (50000000),\n" +
+				" PARTITION `p_60000000` VALUES LESS THAN (60000000),\n" +
+				" PARTITION `p_70000000` VALUES LESS THAN (70000000),\n" +
+				" PARTITION `p_80000000` VALUES LESS THAN (80000000),\n" +
+				" PARTITION `p_90000000` VALUES LESS THAN (90000000),\n" +
+				" PARTITION `pMaxvalue` VALUES LESS THAN (MAXVALUE))",
+			true,
+			"CREATE TABLE `t` (\n" +
+				"  `id` int(11) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE COLUMNS(`id`)\n" +
+				"(PARTITION `pNull` VALUES LESS THAN (-2147483648),\n" +
+				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
+				" PARTITION `p_10000000` VALUES LESS THAN (10000000),\n" +
+				" PARTITION `p_20000000` VALUES LESS THAN (20000000),\n" +
+				" PARTITION `p_30000000` VALUES LESS THAN (30000000),\n" +
+				" PARTITION `p_40000000` VALUES LESS THAN (40000000),\n" +
+				" PARTITION `p_50000000` VALUES LESS THAN (50000000),\n" +
+				" PARTITION `p_60000000` VALUES LESS THAN (60000000),\n" +
+				" PARTITION `p_70000000` VALUES LESS THAN (70000000),\n" +
+				" PARTITION `p_80000000` VALUES LESS THAN (80000000),\n" +
+				" PARTITION `p_90000000` VALUES LESS THAN (90000000),\n" +
+				" PARTITION `pMaxvalue` VALUES LESS THAN (MAXVALUE))",
+		},
+
+		{
+			"create table t (id int) partition by range (id) interval (10000000) first partition less than (0) last partition less than (90000000) NULL PARTITION maxvalue partition",
+			true,
+			"CREATE TABLE `t` (\n" +
+				"  `id` int(11) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE (`id`)\n" +
+				"(PARTITION `P_NULL` VALUES LESS THAN (-9223372036854775808),\n" +
+				" PARTITION `P_LT_0` VALUES LESS THAN (0),\n" +
+				" PARTITION `P_LT_10000000` VALUES LESS THAN (10000000),\n" +
+				" PARTITION `P_LT_20000000` VALUES LESS THAN (20000000),\n" +
+				" PARTITION `P_LT_30000000` VALUES LESS THAN (30000000),\n" +
+				" PARTITION `P_LT_40000000` VALUES LESS THAN (40000000),\n" +
+				" PARTITION `P_LT_50000000` VALUES LESS THAN (50000000),\n" +
+				" PARTITION `P_LT_60000000` VALUES LESS THAN (60000000),\n" +
+				" PARTITION `P_LT_70000000` VALUES LESS THAN (70000000),\n" +
+				" PARTITION `P_LT_80000000` VALUES LESS THAN (80000000),\n" +
+				" PARTITION `P_LT_90000000` VALUES LESS THAN (90000000),\n" +
+				" PARTITION `P_MAXVALUE` VALUES LESS THAN (MAXVALUE))",
+		},
+		{
+			"create table t (id int) partition by range columns (id) interval (10000000) first partition less than (0) last partition less than (90000000) NULL PARTITION maxvalue partition",
+			true,
+			"CREATE TABLE `t` (\n" +
+				"  `id` int(11) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE COLUMNS(`id`)\n" +
+				"(PARTITION `P_NULL` VALUES LESS THAN (-2147483648),\n" +
+				" PARTITION `P_LT_0` VALUES LESS THAN (0),\n" +
+				" PARTITION `P_LT_10000000` VALUES LESS THAN (10000000),\n" +
+				" PARTITION `P_LT_20000000` VALUES LESS THAN (20000000),\n" +
+				" PARTITION `P_LT_30000000` VALUES LESS THAN (30000000),\n" +
+				" PARTITION `P_LT_40000000` VALUES LESS THAN (40000000),\n" +
+				" PARTITION `P_LT_50000000` VALUES LESS THAN (50000000),\n" +
+				" PARTITION `P_LT_60000000` VALUES LESS THAN (60000000),\n" +
+				" PARTITION `P_LT_70000000` VALUES LESS THAN (70000000),\n" +
+				" PARTITION `P_LT_80000000` VALUES LESS THAN (80000000),\n" +
+				" PARTITION `P_LT_90000000` VALUES LESS THAN (90000000),\n" +
+				" PARTITION `P_MAXVALUE` VALUES LESS THAN (MAXVALUE))",
+		},
+	}
+	for _, tt := range cases {
+		checkCreateSyntax(t, tk, tt.ok, tt.sql, tt.showCreate)
+	}
+}
+
+func TestCreateAndAlterIntervalPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database IntervalPartition")
+	defer tk.MustExec("drop database IntervalPartition")
+	tk.MustExec("use IntervalPartition")
+	tk.MustExec("create table ipt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90) MAXVALUE PARTITION")
+	tk.MustExec("insert into ipt values (0, '0'), (1, '1'), (2, '2')")
+	tk.MustExec("insert into ipt select id + 10, concat('1', val) FROM ipt")
+	tk.MustExec("insert into ipt select id + 20, concat('2', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 30, concat('3', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 40, concat('4', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 50, concat('5', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 60, concat('6', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 70, concat('7', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 80, concat('8', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 90, concat('9', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 100, concat('10', val) FROM ipt where id < 10")
+	tk.MustQuery("SHOW CREATE TABLE ipt").Check(testkit.Rows(
+		"ipt CREATE TABLE `ipt` (\n" +
+			"  `id` bigint(20) unsigned NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `val` (`val`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`)\n" +
+			"(PARTITION `P_LT_10` VALUES LESS THAN (10),\n" +
+			" PARTITION `P_LT_20` VALUES LESS THAN (20),\n" +
+			" PARTITION `P_LT_30` VALUES LESS THAN (30),\n" +
+			" PARTITION `P_LT_40` VALUES LESS THAN (40),\n" +
+			" PARTITION `P_LT_50` VALUES LESS THAN (50),\n" +
+			" PARTITION `P_LT_60` VALUES LESS THAN (60),\n" +
+			" PARTITION `P_LT_70` VALUES LESS THAN (70),\n" +
+			" PARTITION `P_LT_80` VALUES LESS THAN (80),\n" +
+			" PARTITION `P_LT_90` VALUES LESS THAN (90),\n" +
+			" PARTITION `P_MAXVALUE` VALUES LESS THAN (MAXVALUE))"))
+
+	err := tk.ExecToErr("alter table ipt LAST partition less than (100)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported LAST PARTITION when MAXVALUE partition exists", err.Error())
+
+	tk.MustExec("alter table ipt first partition less than (30)")
+	tk.MustQuery("select count(*) from ipt").Check(testkit.Rows("27"))
+	tk.MustQuery("SHOW CREATE TABLE ipt").Check(testkit.Rows(
+		"ipt CREATE TABLE `ipt` (\n" +
+			"  `id` bigint(20) unsigned NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `val` (`val`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`)\n" +
+			"(PARTITION `P_LT_30` VALUES LESS THAN (30),\n" +
+			" PARTITION `P_LT_40` VALUES LESS THAN (40),\n" +
+			" PARTITION `P_LT_50` VALUES LESS THAN (50),\n" +
+			" PARTITION `P_LT_60` VALUES LESS THAN (60),\n" +
+			" PARTITION `P_LT_70` VALUES LESS THAN (70),\n" +
+			" PARTITION `P_LT_80` VALUES LESS THAN (80),\n" +
+			" PARTITION `P_LT_90` VALUES LESS THAN (90),\n" +
+			" PARTITION `P_MAXVALUE` VALUES LESS THAN (MAXVALUE))"))
+
+	err = tk.ExecToErr("alter table ipt merge first partition less than (60)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported MERGE FIRST PARTITION", err.Error())
+
+	err = tk.ExecToErr("alter table ipt split maxvalue partition less than (140)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported SPLIT LAST PARTITION", err.Error())
+
+	tk.MustQuery("select count(*) from ipt").Check(testkit.Rows("27"))
+
+	tk.MustExec("create table idpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
+	tk.MustQuery("SHOW CREATE TABLE idpt").Check(testkit.Rows(
+		"idpt CREATE TABLE `idpt` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"(PARTITION `P_NULL` VALUES LESS THAN ('0000-01-01'),\n" +
+			" PARTITION `P_LT_2022-02-01` VALUES LESS THAN ('2022-02-01'),\n" +
+			" PARTITION `P_LT_2022-02-08` VALUES LESS THAN ('2022-02-08'),\n" +
+			" PARTITION `P_LT_2022-02-15` VALUES LESS THAN ('2022-02-15'),\n" +
+			" PARTITION `P_LT_2022-02-22` VALUES LESS THAN ('2022-02-22'),\n" +
+			" PARTITION `P_LT_2022-03-01` VALUES LESS THAN ('2022-03-01'),\n" +
+			" PARTITION `P_LT_2022-03-08` VALUES LESS THAN ('2022-03-08'),\n" +
+			" PARTITION `P_LT_2022-03-15` VALUES LESS THAN ('2022-03-15'),\n" +
+			" PARTITION `P_LT_2022-03-22` VALUES LESS THAN ('2022-03-22'),\n" +
+			" PARTITION `P_LT_2022-03-29` VALUES LESS THAN ('2022-03-29'),\n" +
+			" PARTITION `P_MAXVALUE` VALUES LESS THAN (MAXVALUE))"))
+
+	// Notice that '2022-01-31' + INTERVAL n MONTH returns '2022-02-28', '2022-03-31' etc.
+	// So having a range of the last of the month (normally what you want is LESS THAN first of the months) will work
+	// if using a month with 31 days.
+	// But managing partitions with the day-part of 29, 30 or 31 will be troublesome, since once the FIRST is not 31
+	// both the ALTER TABLE t FIRST PARTITION and MERGE FIRST PARTITION will have issues
+	tk.MustExec("create table t (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31')")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"(PARTITION `P_LT_2022-01-31` VALUES LESS THAN ('2022-01-31'),\n" +
+			" PARTITION `P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
+			" PARTITION `P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
+			" PARTITION `P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
+			" PARTITION `P_LT_2022-05-31` VALUES LESS THAN ('2022-05-31'))"))
+	tk.MustExec("alter table t first partition less than ('2022-02-28')")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"(PARTITION `P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
+			" PARTITION `P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
+			" PARTITION `P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
+			" PARTITION `P_LT_2022-05-31` VALUES LESS THAN ('2022-05-31'))"))
+	// Now we are stuck, since we will use the current FIRST PARTITION to check the INTERVAL!
+	// Should we check and limit FIRST PARTITION for QUARTER and MONTH to not have day part in (29,30,31)?
+	err = tk.ExecToErr("alter table t first partition less than ('2022-03-31')")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	err = tk.ExecToErr("alter table t last partition less than ('2022-06-30')")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported LAST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	err = tk.ExecToErr("alter table t last partition less than ('2022-07-31')")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported LAST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"(PARTITION `P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
+			" PARTITION `P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
+			" PARTITION `P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
+			" PARTITION `P_LT_2022-05-31` VALUES LESS THAN ('2022-05-31'))"))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t2 (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90)")
+	tk.MustExec("alter table t2 first partition less than (20)")
+	tk.MustExec("alter table t2 LAST partition less than (110)")
+	err = tk.ExecToErr("alter table t2 merge first partition less than (60)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported MERGE FIRST PARTITION", err.Error())
+
+	err = tk.ExecToErr("alter table t2 split maxvalue partition less than (140)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported SPLIT LAST PARTITION", err.Error())
+
+	tk.MustQuery("show create table t2").Check(testkit.Rows(
+		"t2 CREATE TABLE `t2` (\n" +
+			"  `id` bigint(20) unsigned NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `val` (`val`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`)\n" +
+			"(PARTITION `P_LT_20` VALUES LESS THAN (20),\n" +
+			" PARTITION `P_LT_30` VALUES LESS THAN (30),\n" +
+			" PARTITION `P_LT_40` VALUES LESS THAN (40),\n" +
+			" PARTITION `P_LT_50` VALUES LESS THAN (50),\n" +
+			" PARTITION `P_LT_60` VALUES LESS THAN (60),\n" +
+			" PARTITION `P_LT_70` VALUES LESS THAN (70),\n" +
+			" PARTITION `P_LT_80` VALUES LESS THAN (80),\n" +
+			" PARTITION `P_LT_90` VALUES LESS THAN (90),\n" +
+			" PARTITION `P_LT_100` VALUES LESS THAN (100),\n" +
+			" PARTITION `P_LT_110` VALUES LESS THAN (110))"))
+	err = tk.ExecToErr("alter table t2 first partition less than (20)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, given value does not generate a list of partition names to be dropped", err.Error())
+	err = tk.ExecToErr("alter table t2 first partition less than (10)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (10) not matching FIRST + n INTERVALs (20 + n * 10)", err.Error())
+	err = tk.ExecToErr("alter table t2 last partition less than (110)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (110) not matching FIRST + n INTERVALs (110 + n * 10)", err.Error())
+	err = tk.ExecToErr("alter table t2 last partition less than (100)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (100) not matching FIRST + n INTERVALs (110 + n * 10)", err.Error())
+	tk.MustExec("drop table t2")
+
+	err = tk.ExecToErr("create table t (id timestamp, val varchar(255)) partition by range columns (id) interval (1 minute) first partition less than ('2022-01-01 00:01:00') last partition less than ('2022-01-01 01:00:00')")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1659]Field 'id' is of a not allowed type for this type of partitioning", err.Error())
+	err = tk.ExecToErr("create table t (id timestamp, val varchar(255)) partition by range (TO_SECONDS(id)) interval (3600) first partition less than (TO_SECONDS('2022-01-01 00:00:00')) last partition less than ('2022-01-02 00:00:00')")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1486]Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed", err.Error())
+	tk.MustExec("set @@time_zone = 'Europe/Amsterdam'")
+	tk.MustExec("create table t (id timestamp, val varchar(255)) partition by range (unix_timestamp(id)) interval (3600) first partition less than (unix_timestamp('2022-01-01 00:00:00')) last partition less than (unix_timestamp('2022-01-02 00:00:00'))")
+	tk.MustExec("set @@time_zone = default")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` timestamp NULL DEFAULT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (UNIX_TIMESTAMP(`id`))\n" +
+			"(PARTITION `P_LT_1640991600` VALUES LESS THAN (1640991600),\n" +
+			" PARTITION `P_LT_1640995200` VALUES LESS THAN (1640995200),\n" +
+			" PARTITION `P_LT_1640998800` VALUES LESS THAN (1640998800),\n" +
+			" PARTITION `P_LT_1641002400` VALUES LESS THAN (1641002400),\n" +
+			" PARTITION `P_LT_1641006000` VALUES LESS THAN (1641006000),\n" +
+			" PARTITION `P_LT_1641009600` VALUES LESS THAN (1641009600),\n" +
+			" PARTITION `P_LT_1641013200` VALUES LESS THAN (1641013200),\n" +
+			" PARTITION `P_LT_1641016800` VALUES LESS THAN (1641016800),\n" +
+			" PARTITION `P_LT_1641020400` VALUES LESS THAN (1641020400),\n" +
+			" PARTITION `P_LT_1641024000` VALUES LESS THAN (1641024000),\n" +
+			" PARTITION `P_LT_1641027600` VALUES LESS THAN (1641027600),\n" +
+			" PARTITION `P_LT_1641031200` VALUES LESS THAN (1641031200),\n" +
+			" PARTITION `P_LT_1641034800` VALUES LESS THAN (1641034800),\n" +
+			" PARTITION `P_LT_1641038400` VALUES LESS THAN (1641038400),\n" +
+			" PARTITION `P_LT_1641042000` VALUES LESS THAN (1641042000),\n" +
+			" PARTITION `P_LT_1641045600` VALUES LESS THAN (1641045600),\n" +
+			" PARTITION `P_LT_1641049200` VALUES LESS THAN (1641049200),\n" +
+			" PARTITION `P_LT_1641052800` VALUES LESS THAN (1641052800),\n" +
+			" PARTITION `P_LT_1641056400` VALUES LESS THAN (1641056400),\n" +
+			" PARTITION `P_LT_1641060000` VALUES LESS THAN (1641060000),\n" +
+			" PARTITION `P_LT_1641063600` VALUES LESS THAN (1641063600),\n" +
+			" PARTITION `P_LT_1641067200` VALUES LESS THAN (1641067200),\n" +
+			" PARTITION `P_LT_1641070800` VALUES LESS THAN (1641070800),\n" +
+			" PARTITION `P_LT_1641074400` VALUES LESS THAN (1641074400),\n" +
+			" PARTITION `P_LT_1641078000` VALUES LESS THAN (1641078000))"))
+	tk.MustExec("alter table t drop partition P_LT_1640995200")
+
+	tk.MustExec("drop table t")
+
+	// OK with out-of-range partitions, see https://github.com/pingcap/tidb/issues/36022
+	tk.MustExec("create table t (id tinyint, val varchar(255)) partition by range (id) interval (50) first partition less than (-300) last partition less than (300)")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` tinyint(4) DEFAULT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`)\n" +
+			"(PARTITION `P_LT_-300` VALUES LESS THAN (-300),\n" +
+			" PARTITION `P_LT_-250` VALUES LESS THAN (-250),\n" +
+			" PARTITION `P_LT_-200` VALUES LESS THAN (-200),\n" +
+			" PARTITION `P_LT_-150` VALUES LESS THAN (-150),\n" +
+			" PARTITION `P_LT_-100` VALUES LESS THAN (-100),\n" +
+			" PARTITION `P_LT_-50` VALUES LESS THAN (-50),\n" +
+			" PARTITION `P_LT_0` VALUES LESS THAN (0),\n" +
+			" PARTITION `P_LT_50` VALUES LESS THAN (50),\n" +
+			" PARTITION `P_LT_100` VALUES LESS THAN (100),\n" +
+			" PARTITION `P_LT_150` VALUES LESS THAN (150),\n" +
+			" PARTITION `P_LT_200` VALUES LESS THAN (200),\n" +
+			" PARTITION `P_LT_250` VALUES LESS THAN (250),\n" +
+			" PARTITION `P_LT_300` VALUES LESS THAN (300))"))
+	tk.MustExec("drop table t")
+
+	err = tk.ExecToErr("create table t (id int unsigned, val float, comment varchar(255))" +
+		" partition by range columns (val) interval (1000 * 1000)" +
+		" first partition less than (0)" +
+		" last partition less than (100 * 1000 * 1000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1659]Field 'val' is of a not allowed type for this type of partitioning", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range columns (val) interval (1000 * 1000)" +
+		" first partition less than ('0')" +
+		" last partition less than ('10000000') NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL partitioning, only supports Date, Datetime and INT types", err.Error())
+
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range columns (id) interval (-1000 * 1000)" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL, should be a positive number", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (0)" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL, should be a positive number", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval ('1000000')" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL, should be a positive number", err.Error())
+	tk.MustExec("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (01000000)" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) MAXVALUE PARTITION")
+	tk.MustExec("drop table t")
+
+	// Null partition and first partition collides
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (01000000)" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition", err.Error())
+
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (NULL)" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL, should be a positive number", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (1000000)" +
+		" first partition less than (NULL)" +
+		" last partition less than (10000000)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL partitioning: Error when generating partition values", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (1000000)" +
+		" first partition less than (0)" +
+		" last partition less than (NULL)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr () not matching FIRST + n INTERVALs (0 + n * 1000000)", err.Error())
+	tk.MustExec("create table t (id int, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (100)" +
+		" first partition less than (-1000)" +
+		" last partition less than (-1000)")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` int(11) DEFAULT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  `comment` varchar(255) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`)\n" +
+			"(PARTITION `P_LT_-1000` VALUES LESS THAN (-1000))"))
+	err = tk.ExecToErr("alter table t last partition less than (0)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported LAST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	tk.MustExec("alter table t add partition (partition `P_LT_0` values less than (-900))")
+	err = tk.ExecToErr("alter table t last partition less than (0)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1517]Duplicate partition name P_LT_0", err.Error())
+	tk.MustExec("drop table t")
+	err = tk.ExecToErr("create table t (id int, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (100)" +
+		" first partition less than (-100)" +
+		" last partition less than (250)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (250) not matching FIRST + n INTERVALs (-100 + n * 100)", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (33)" +
+		" first partition less than (100)" +
+		" last partition less than (67)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (67) not matching FIRST + n INTERVALs (100 + n * 33)", err.Error())
+
+	// Non-partitioned tables does not support ALTER of FIRST/LAST PARTITION
+	tk.MustExec(`create table t (a int, b varchar(255))`)
+	err = tk.ExecToErr(`ALTER TABLE t FIRST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1505]Partition management on a not partitioned table is not possible", err.Error())
+	err = tk.ExecToErr(`ALTER TABLE t LAST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1505]Partition management on a not partitioned table is not possible", err.Error())
+	tk.MustExec(`drop table t`)
+	// HASH/LIST [COLUMNS] does not support ALTER of FIRST/LAST PARTITION
+	tk.MustExec(`create table t (a int, b varchar(255)) partition by hash (a) partitions 4`)
+	err = tk.ExecToErr(`ALTER TABLE t FIRST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	err = tk.ExecToErr(`ALTER TABLE t LAST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported add partitions", err.Error())
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int, b varchar(255)) partition by list (a) (partition p0 values in (1,2,3), partition p1 values in (22,23,24))`)
+	err = tk.ExecToErr(`ALTER TABLE t FIRST PARTITION LESS THAN (0)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	err = tk.ExecToErr(`ALTER TABLE t LAST PARTITION LESS THAN (100)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1492]For LIST partitions each partition must be defined", err.Error())
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int, b varchar(255)) partition by list columns (b) (partition p0 values in ("1","2","3"), partition p1 values in ("22","23","24"))`)
+	err = tk.ExecToErr(`ALTER TABLE t FIRST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	err = tk.ExecToErr(`ALTER TABLE t LAST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1492]For LIST partitions each partition must be defined", err.Error())
+	tk.MustExec(`drop table t`)
+}
+
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3712,9 +4319,11 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	tk.MustExec("drop table t")
 
 	// Test expression with single quotes.
+	tk.MustExec("set @@time_zone = 'Asia/Shanghai'")
 	tk.MustExec(`create table t(created_at timestamp) PARTITION BY RANGE (unix_timestamp(created_at)) (
 		PARTITION p0 VALUES LESS THAN (unix_timestamp('2021-12-01 00:00:00')),
 		PARTITION p1 VALUES LESS THAN (unix_timestamp('2022-01-01 00:00:00')))`)
+	tk.MustExec("set @@time_zone = default")
 	// FIXME: should be "created_at" instead of `created_at`, see #35389.
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"created_at\" timestamp NULL DEFAULT NULL\n" +

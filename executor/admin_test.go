@@ -210,7 +210,7 @@ func TestAdminRecoverIndex(t *testing.T) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), unique key(c2))")
 	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20)")
 	// pk is handle, no additional unique index, no way to recover
-	_, err := tk.Exec("admin recover index admin_test c1")
+	err := tk.ExecToErr("admin recover index admin_test c1")
 	// err:index is not found
 	require.Error(t, err)
 

@@ -373,6 +373,8 @@ func mergeContinuousSelections(p PhysicalPlan) {
 }
 
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+	// some cases from update optimize will require avoiding projection elimination.
+	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
@@ -629,7 +631,10 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	opt := defaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.PhysicalOptimizeTracer{Candidates: make(map[int]*tracing.CandidatePlanTrace)}
+		tracer := &tracing.PhysicalOptimizeTracer{
+			PhysicalPlanCostDetails: make(map[int]*tracing.PhysicalPlanCostDetail),
+			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
+		}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
 			if err == nil {

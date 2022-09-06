@@ -17,17 +17,15 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
-	"math"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,8 +47,8 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.MustQuery("select * from t1;")
 	tkRootProcess := tkRoot.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkRootProcess}
-	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tkUser.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkRoot.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
+	tkUser.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
 		"TableReader_5 10000.00 root  data:TableFullScan_4",
 		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -59,8 +57,8 @@ func TestExplainFor(t *testing.T) {
 	check := func() {
 		tkRootProcess = tkRoot.Session().ShowProcess()
 		ps = []*util.ProcessInfo{tkRootProcess}
-		tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-		tkUser.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tkRoot.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
+		tkUser.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 		rows := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
 		require.Len(t, rows, 2)
 		require.Len(t, rows[0], 9)
@@ -91,7 +89,7 @@ func TestExplainFor(t *testing.T) {
 
 	tkRootProcess.Plan = nil
 	ps = []*util.ProcessInfo{tkRootProcess}
-	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkRoot.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 }
 
@@ -107,8 +105,8 @@ func TestExplainForVerbose(t *testing.T) {
 	tk.MustQuery("select * from t1;")
 	tkRootProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkRootProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
+	tk2.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 
 	rs := tk.MustQuery("explain format = 'verbose' select * from t1").Rows()
 	rs2 := tk2.MustQuery(fmt.Sprintf("explain format = 'verbose' for connection %d", tkRootProcess.ID)).Rows()
@@ -123,8 +121,8 @@ func TestExplainForVerbose(t *testing.T) {
 	tk.MustQuery("select * from t2;")
 	tkRootProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkRootProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
+	tk2.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	rs = tk.MustQuery("explain format = 'verbose' select * from t2").Rows()
 	rs2 = tk2.MustQuery(fmt.Sprintf("explain format = 'verbose' for connection %d", tkRootProcess.ID)).Rows()
 	require.Len(t, rs, len(rs2))
@@ -159,8 +157,8 @@ func TestIssue11124(t *testing.T) {
 	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'")
 	tkRootProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkRootProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
+	tk2.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 
 	rs := tk.MustQuery("explain select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'").Rows()
 	rs2 := tk2.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
@@ -229,20 +227,9 @@ func TestInspectionRuleTable(t *testing.T) {
 func TestExplainForConnPlanCache(t *testing.T) {
 	t.Skip("unstable")
 
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
 	store := testkit.CreateMockStore(t)
-
 	tk1 := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk1.SetSession(se)
+	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
@@ -269,7 +256,7 @@ func TestExplainForConnPlanCache(t *testing.T) {
 
 	// single test
 	tk1.MustExec(executeQuery)
-	tk2.Session().SetSessionManager(&testkit.MockSessionManager{
+	tk2.Session().SetSessionManager(&testutil.MockSessionManager{
 		PS: []*util.ProcessInfo{tk1.Session().ShowProcess()},
 	})
 	tk2.MustQuery(explainQuery).Check(explainResult)
@@ -289,7 +276,7 @@ func TestExplainForConnPlanCache(t *testing.T) {
 
 	wg.Run(func() {
 		for i := 0; i < repeats; i++ {
-			tk2.Session().SetSessionManager(&testkit.MockSessionManager{
+			tk2.Session().SetSessionManager(&testutil.MockSessionManager{
 				PS: []*util.ProcessInfo{tk1.Session().ShowProcess()},
 			})
 			tk2.MustQuery(explainQuery).Check(explainResult)
@@ -300,19 +287,9 @@ func TestExplainForConnPlanCache(t *testing.T) {
 }
 
 func TestSavedPlanPanicPlanCache(t *testing.T) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -327,7 +304,7 @@ func TestSavedPlanPanicPlanCache(t *testing.T) {
 	))
 	tk.MustExec("set @p = 1")
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
-	err = tk.ExecToErr("insert into t(a,b,c) values(3,3,3)")
+	err := tk.ExecToErr("insert into t(a,b,c) values(3,3,3)")
 	require.EqualError(t, err, "[planner:3105]The value specified for generated column 'c' in table 't' is not allowed.")
 }
 
@@ -345,7 +322,7 @@ func TestExplainDotForExplainPlan(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
 }
@@ -361,7 +338,7 @@ func TestExplainDotForQuery(t *testing.T) {
 	tk.MustQuery("select 1")
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 
 	expected := tk2.MustQuery("explain format=\"dot\" select 1").Rows()
 	got := tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Rows()
@@ -462,8 +439,7 @@ func TestExplainTiFlashSystemTables(t *testing.T) {
 func TestPointGetUserVarPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tmp := testkit.NewTestKit(t, store)
-	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
-	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
+	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
@@ -483,7 +459,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	))
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
 		`└─IndexJoin_17 1.00 root  inner join, inner:TableReader_13, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
@@ -499,7 +475,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
 		`└─IndexJoin_17 1.00 root  inner join, inner:TableReader_13, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
@@ -516,18 +492,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 func TestExpressionIndexPreparePlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -539,7 +504,7 @@ func TestExpressionIndexPreparePlanCache(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
 	require.Regexp(t, ".*expression_index.*", res.Rows()[2][3])
@@ -556,18 +521,7 @@ func TestExpressionIndexPreparePlanCache(t *testing.T) {
 func TestIssue28259(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	// test for indexRange
 	tk.MustExec("use test")
@@ -582,7 +536,7 @@ func TestIssue28259(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 3)
 	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
@@ -594,7 +548,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
 	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
@@ -618,7 +572,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -632,7 +586,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -664,7 +618,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 6)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -679,7 +633,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 6)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -708,7 +662,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -723,7 +677,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -754,7 +708,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
 	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
@@ -766,18 +720,7 @@ func TestIssue28259(t *testing.T) {
 func TestIssue28696(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -791,7 +734,7 @@ func TestIssue28696(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 6)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -811,18 +754,7 @@ func TestIssue28696(t *testing.T) {
 func TestIndexMerge4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -848,7 +780,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 7)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -868,7 +800,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 6)
 	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
@@ -889,7 +821,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
 
@@ -898,7 +830,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
 
@@ -981,18 +913,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 func TestSetOperations4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -1059,18 +980,7 @@ func TestSetOperations4PlanCache(t *testing.T) {
 func TestSPM4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -1088,7 +998,7 @@ func TestSPM4PlanCache(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Regexp(t, ".*TableReader.*", res.Rows()[0][0])
 	require.Regexp(t, ".*TableFullScan.*", res.Rows()[1][0])
@@ -1106,7 +1016,7 @@ func TestSPM4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.Session().SetSessionManager(&testutil.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	// We can use the new binding.
 	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
@@ -1123,18 +1033,7 @@ func TestSPM4PlanCache(t *testing.T) {
 func TestHint4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -1208,18 +1107,7 @@ func TestIgnorePlanCacheWithPrepare(t *testing.T) {
 func TestSelectView4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -1252,7 +1140,7 @@ func TestSelectView4PlanCache(t *testing.T) {
 
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(c int,d int)")
-	err = tk.ExecToErr("execute stmt1;")
+	err := tk.ExecToErr("execute stmt1;")
 	require.Equal(t, "[planner:1356]View 'test.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them", err.Error())
 	err = tk.ExecToErr("execute stmt2")
 	require.Equal(t, "[planner:1356]View 'test.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them", err.Error())
@@ -1328,18 +1216,7 @@ func TestSelectView4PlanCache(t *testing.T) {
 func TestInvisibleIndex4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -1352,7 +1229,7 @@ func TestInvisibleIndex4PlanCache(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	tk.MustExec("ALTER TABLE t ALTER INDEX idx_c INVISIBLE;")
-	err = tk.ExecToErr("select * from t use index(idx_c) where c1 > 1;")
+	err := tk.ExecToErr("select * from t use index(idx_c) where c1 > 1;")
 	require.Equal(t, "[planner:1176]Key 'idx_c' doesn't exist in table 't'", err.Error())
 
 	err = tk.ExecToErr("execute stmt;")
@@ -1363,18 +1240,7 @@ func TestCTE4PlanCache(t *testing.T) {
 	// CTE can not be cached, because part of it will be treated as a subquery.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -1438,18 +1304,7 @@ func TestCTE4PlanCache(t *testing.T) {
 func TestValidity4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -1484,18 +1339,7 @@ func TestValidity4PlanCache(t *testing.T) {
 func TestListPartition4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -1515,18 +1359,7 @@ func TestMoreSessions4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("use test;")
@@ -1538,11 +1371,7 @@ func TestMoreSessions4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk2.SetSession(se)
+	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk2.MustExec("use test;")
 	require.EqualError(t, tk2.ExecToErr("execute stmt;"), "[planner:8111]Prepared statement not found")

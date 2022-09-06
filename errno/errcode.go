@@ -840,6 +840,7 @@ const (
 	ErrGeneratedColumnNonPrior                               = 3107
 	ErrDependentByGeneratedColumn                            = 3108
 	ErrGeneratedColumnRefAutoInc                             = 3109
+	ErrAccountHasBeenLocked                                  = 3118
 	ErrWarnConflictingHint                                   = 3126
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140
@@ -912,6 +913,7 @@ const (
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
+	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
@@ -1026,6 +1028,7 @@ const (
 	ErrSettingNoopVariable                 = 8144
 	ErrGettingNoopVariable                 = 8145
 	ErrCannotMigrateSession                = 8146
+	ErrLazyUniquenessCheckFailure          = 8147
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

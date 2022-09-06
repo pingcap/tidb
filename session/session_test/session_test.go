@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
@@ -334,8 +335,8 @@ func TestAutoCommitRespectsReadOnly(t *testing.T) {
 	var wg sync.WaitGroup
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
-	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	tk1.MustExec("create table test.auto_commit_test (a int)")
 	wg.Add(1)
@@ -1401,11 +1402,11 @@ func TestSkipWithGrant(t *testing.T) {
 	save2 := privileges.SkipWithGrant
 
 	privileges.SkipWithGrant = false
-	require.False(t, tk.Session().Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")))
 
 	privileges.SkipWithGrant = true
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: `%`}, []byte("yyy"), []byte("zzz")))
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, []byte(""), []byte("")))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: `%`}, []byte("yyy"), []byte("zzz")))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, []byte(""), []byte("")))
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create role r_1")
@@ -2333,7 +2334,7 @@ func TestUpdatePrivilege(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte("")))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte("")))
 
 	tk1.MustMatchErrMsg("update t2 set id = 666 where id = 1;", "privilege check.*")
 
@@ -2347,7 +2348,7 @@ func TestUpdatePrivilege(t *testing.T) {
 	tk.MustExec("create table tb_wehub_server (id int, active_count int, used_count int)")
 	tk.MustExec("create user 'weperk'")
 	tk.MustExec("grant all privileges on weperk.* to 'weperk'@'%'")
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "weperk", Hostname: "%"}, []byte(""), []byte("")))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "weperk", Hostname: "%"}, []byte(""), []byte("")))
 	tk1.MustExec("use weperk")
 	tk1.MustExec("update tb_wehub_server a set a.active_count=a.active_count+1,a.used_count=a.used_count+1 where id=1")
 
@@ -2383,7 +2384,7 @@ and s.b !='xx';`)
 	tk.MustExec("insert into tp.record (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18)")
 	tk.MustExec("create table ap.record( id int,name varchar(128),age int)")
 	tk.MustExec("insert into ap.record(id) values(1)")
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte("")))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte("")))
 	tk1.MustExec("update ap.record t inner join tp.record tt on t.id=tt.id  set t.name=tt.name")
 }
 
@@ -2629,7 +2630,7 @@ func TestPrepare(t *testing.T) {
 	require.Equal(t, uint32(1), id)
 	require.Equal(t, 1, ps)
 	tk.MustExec(`set @a=1`)
-	rs, err := tk.Session().ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum("1")})
+	rs, err := tk.Session().ExecutePreparedStmt(ctx, id, expression.Args2Expressions4Test("1"))
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
 	err = tk.Session().DropPreparedStmt(id)
@@ -2651,10 +2652,10 @@ func TestPrepare(t *testing.T) {
 	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
 	id, _, _, err = tk.Session().PrepareStmt("select a from multiexec where b = ? order by b")
 	require.NoError(t, err)
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(2)})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, id, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
 }
@@ -3393,8 +3394,7 @@ func TestQueryString(t *testing.T) {
 	tk.MustExec("show create table t")
 	id, _, _, err := tk.Session().PrepareStmt("CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
 	require.NoError(t, err)
-	var params []types.Datum
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, params)
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, expression.Args2Expressions4Test())
 	require.NoError(t, err)
 	qs := tk.Session().Value(sessionctx.QueryString)
 	require.Equal(t, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)", qs.(string))
@@ -3973,7 +3973,7 @@ func TestSessionAuth(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.False(t, tk.Session().Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")))
 }
 
 func TestLastInsertID(t *testing.T) {
@@ -4038,12 +4038,12 @@ func TestBinaryReadOnly(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set autocommit = 0")
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, []types.Datum{types.NewDatum(1)})
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	require.Equal(t, 0, session.GetHistory(tk.Session()).Count())
 	tk.MustExec("insert into t values (1)")
 	require.Equal(t, 1, session.GetHistory(tk.Session()).Count())
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id2, []types.Datum{types.NewDatum(2)})
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id2, expression.Args2Expressions4Test(2))
 	require.NoError(t, err)
 	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
 	tk.MustExec("commit")

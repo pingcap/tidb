@@ -381,6 +381,16 @@ error = '''
 create kv client error
 '''
 
+["Lightning:KV:ErrKVIngestFailed"]
+error = '''
+ingest tikv failed
+'''
+
+["Lightning:KV:ErrKVRaftProposalDropped"]
+error = '''
+raft proposal dropped
+'''
+
 ["Lightning:KV:NotLeader"]
 error = '''
 not leader
@@ -409,6 +419,11 @@ invalid schema file
 ["Lightning:Loader:ErrTableRoute"]
 error = '''
 table route error
+'''
+
+["Lightning:Loader:ErrTooManySourceFiles"]
+error = '''
+too many source files
 '''
 
 ["Lightning:MetaMgr:ErrMetaMgrUnknown"]
@@ -504,6 +519,11 @@ invalid schema statement: '%s'
 ["Lightning:Restore:ErrOpenDuplicateDB"]
 error = '''
 open duplicate db error
+'''
+
+["Lightning:Restore:ErrResolveDuplicateRows"]
+error = '''
+resolve duplicate rows error on table '%s'
 '''
 
 ["Lightning:Restore:ErrRestoreTable"]
@@ -944,6 +964,11 @@ Non matching attribute '%-.64s' between partition and table
 ["ddl:1732"]
 error = '''
 Table to exchange with partition is partitioned: '%-.64s'
+'''
+
+["ddl:1733"]
+error = '''
+Table to exchange with partition is temporary: '%-.64s'
 '''
 
 ["ddl:1736"]
@@ -1491,6 +1516,11 @@ error = '''
 setting %s has no effect in TiDB
 '''
 
+["executor:8147"]
+error = '''
+transaction aborted because lazy uniqueness check is enabled and an error occurred: %s
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -1551,6 +1581,11 @@ error = '''
 Incorrect type for argument %s in function %s.
 '''
 
+["expression:3146"]
+error = '''
+Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.
+'''
+
 ["expression:8128"]
 error = '''
 Invalid TABLESAMPLE: %s
@@ -1568,7 +1603,7 @@ Invalid JSON text: %-.192s
 
 ["json:3143"]
 error = '''
-Invalid JSON path expression %s.
+Invalid JSON path expression. The error is around character position %d.
 '''
 
 ["json:3144"]
@@ -2121,6 +2156,11 @@ error = '''
 '%s' is unsupported on cache tables.
 '''
 
+["privilege:1045"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
@@ -2254,6 +2294,11 @@ User %s does not exist.
 ["schema:3163"]
 error = '''
 User %s already exists.
+'''
+
+["schema:3750"]
+error = '''
+Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.
 '''
 
 ["schema:4139"]

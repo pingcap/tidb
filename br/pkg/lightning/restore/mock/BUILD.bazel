@@ -7,9 +7,12 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/mydump",
+        "//br/pkg/lightning/restore/opts",
         "//br/pkg/storage",
+        "//errno",
         "//parser/model",
         "//store/pdtypes",
+        "//util/dbterror",
         "//util/filter",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/metapb",

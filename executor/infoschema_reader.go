@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -196,9 +195,17 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	return adjustColumns(ret, e.columns, e.table), nil
 }
 
-func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, error) {
+func getRowCountTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
+	var rows []chunk.Row
+	var err error
+	if len(tableIDs) == 0 {
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
+	} else {
+		inTblIDs := buildInTableIDsString(tableIDs)
+		sql := "select table_id, count from mysql.stats_meta where " + inTblIDs
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -212,14 +219,36 @@ func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int6
 	return rowCountMap, nil
 }
 
+func buildInTableIDsString(tableIDs []int64) string {
+	var whereBuilder strings.Builder
+	whereBuilder.WriteString("table_id in (")
+	for i, id := range tableIDs {
+		whereBuilder.WriteString(strconv.FormatInt(id, 10))
+		if i != len(tableIDs)-1 {
+			whereBuilder.WriteString(",")
+		}
+	}
+	whereBuilder.WriteString(")")
+	return whereBuilder.String()
+}
+
 type tableHistID struct {
 	tableID int64
 	histID  int64
 }
 
-func getColLengthAllTables(ctx context.Context, sctx sessionctx.Context) (map[tableHistID]uint64, error) {
+func getColLengthTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+	var rows []chunk.Row
+	var err error
+	if len(tableIDs) == 0 {
+		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0"
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+	} else {
+		inTblIDs := buildInTableIDsString(tableIDs)
+		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0 and " + inTblIDs
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -275,6 +304,7 @@ type statsCache struct {
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
+	dirtyIDs   []int64
 }
 
 var tableStatsCache = &statsCache{}
@@ -282,26 +312,42 @@ var tableStatsCache = &statsCache{}
 // TableStatsCacheExpiry is the expiry time for table stats cache.
 var TableStatsCacheExpiry = 3 * time.Second
 
-func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
-	c.mu.RLock()
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
-		tableRows, colLength := c.tableRows, c.colLength
-		c.mu.RUnlock()
-		return tableRows, colLength, nil
-	}
-	c.mu.RUnlock()
+func invalidInfoSchemaStatCache(tblID int64) {
+	tableStatsCache.mu.Lock()
+	defer tableStatsCache.mu.Unlock()
+	tableStatsCache.dirtyIDs = append(tableStatsCache.dirtyIDs, tblID)
+}
 
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
-		return c.tableRows, c.colLength, nil
+		if len(c.dirtyIDs) > 0 {
+			tableRows, err := getRowCountTables(ctx, sctx, c.dirtyIDs...)
+			if err != nil {
+				return nil, nil, err
+			}
+			for id, tr := range tableRows {
+				c.tableRows[id] = tr
+			}
+			colLength, err := getColLengthTables(ctx, sctx, c.dirtyIDs...)
+			if err != nil {
+				return nil, nil, err
+			}
+			for id, cl := range colLength {
+				c.colLength[id] = cl
+			}
+			c.dirtyIDs = nil
+		}
+		tableRows, colLength := c.tableRows, c.colLength
+		return tableRows, colLength, nil
 	}
-	tableRows, err := getRowCountAllTable(ctx, sctx)
+	tableRows, err := getRowCountTables(ctx, sctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	colLength, err := getColLengthAllTables(ctx, sctx)
+	colLength, err := getColLengthTables(ctx, sctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -309,6 +355,7 @@ func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int6
 	c.tableRows = tableRows
 	c.colLength = colLength
 	c.modifyTime = time.Now()
+	c.dirtyIDs = nil
 	return tableRows, colLength, nil
 }
 
@@ -360,6 +407,9 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, sv := range sysVars {
+		if infoschema.SysVarHiddenForSem(ctx, sv.Name) {
+			continue
+		}
 		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(sv.Name)
 		if err != nil {
 			currentVal = ""
@@ -793,8 +843,9 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			}
 		}
 	}
+	i := 1
 ForColumnsTag:
-	for i, col := range tbl.Columns {
+	for _, col := range tbl.Columns {
 		if col.Hidden {
 			continue
 		}
@@ -891,10 +942,19 @@ ForColumnsTag:
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
-			if ft.GetType() == mysql.TypeBit {
-				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
-				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
-				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+			switch col.GetDefaultValue() {
+			case "CURRENT_TIMESTAMP":
+			default:
+				if ft.GetType() == mysql.TypeTimestamp && columnDefault != types.ZeroDatetimeStr {
+					timeValue, err := table.GetColDefaultValue(sctx, col)
+					if err == nil {
+						columnDefault = timeValue.GetMysqlTime().String()
+					}
+				}
+				if ft.GetType() == mysql.TypeBit && !col.DefaultIsExpr {
+					defaultValBinaryLiteral := types.BinaryLiteral(columnDefault.(string))
+					columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+				}
 			}
 		}
 		record := types.MakeDatums(
@@ -902,7 +962,7 @@ ForColumnsTag:
 			schema.Name.O,         // TABLE_SCHEMA
 			tbl.Name.O,            // TABLE_NAME
 			col.Name.O,            // COLUMN_NAME
-			i+1,                   // ORIGINAL_POSITION
+			i,                     // ORDINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
 			types.TypeToStr(ft.GetType(), ft.GetCharset()), // DATA_TYPE
@@ -921,6 +981,7 @@ ForColumnsTag:
 			col.GeneratedExprString, // GENERATION_EXPRESSION
 		)
 		e.rows = append(e.rows, record)
+		i++
 	}
 }
 
@@ -1225,7 +1286,7 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 		if err != nil {
 			return err
 		}
-		bj := binaryJson.BinaryJSON{}
+		bj := types.BinaryJSON{}
 		if err = bj.UnmarshalJSON(data); err != nil {
 			return err
 		}
@@ -1617,11 +1678,12 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 	}
 	requestByTableRange := false
 	allRegionsInfo := helper.NewRegionsInfo()
+	is := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if e.extractor != nil {
 		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
 		if ok && len(extractor.GetTablesID()) > 0 {
 			for _, tableID := range extractor.GetTablesID() {
-				regionsInfo, err := e.getRegionsInfoForSingleTable(tikvHelper, tableID)
+				regionsInfo, err := e.getRegionsInfoForTable(tikvHelper, is, tableID)
 				if err != nil {
 					return err
 				}
@@ -1636,8 +1698,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 			return err
 		}
 	}
-	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, allSchemas)
+	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is.AllSchemas())
 	for i := range allRegionsInfo.Regions {
 		tableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(tableList) == 0 {
@@ -1648,6 +1709,32 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 		}
 	}
 	return nil
+}
+
+func (e *memtableRetriever) getRegionsInfoForTable(h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*helper.RegionsInfo, error) {
+	tbl, _ := is.TableByID(tableID)
+	if tbl == nil {
+		return nil, infoschema.ErrTableExists.GenWithStackByArgs(tableID)
+	}
+
+	pt := tbl.Meta().GetPartitionInfo()
+	if pt == nil {
+		regionsInfo, err := e.getRegionsInfoForSingleTable(h, tableID)
+		if err != nil {
+			return nil, err
+		}
+		return regionsInfo, nil
+	}
+
+	allRegionsInfo := helper.NewRegionsInfo()
+	for _, def := range pt.Definitions {
+		regionsInfo, err := e.getRegionsInfoForSingleTable(h, def.ID)
+		if err != nil {
+			return nil, err
+		}
+		allRegionsInfo = allRegionsInfo.Merge(regionsInfo)
+	}
+	return allRegionsInfo, nil
 }
 
 func (e *memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, tableID int64) (*helper.RegionsInfo, error) {
@@ -2159,7 +2246,6 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
 				tbl.TiFlashReplica.Available,                         // AVAILABLE
 				progress,                                             // PROGRESS
-				tbl.TiFlashMode.String(),                             // TABLE_MPDE
 			)
 			rows = append(rows, record)
 		}

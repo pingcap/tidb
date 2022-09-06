@@ -32,6 +32,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -111,6 +112,7 @@ type InfoSyncer struct {
 	modifyTime              time.Time
 	labelRuleManager        LabelRuleManager
 	placementManager        PlacementManager
+	scheduleManager         ScheduleManager
 	tiflashPlacementManager TiFlashPlacementManager
 }
 
@@ -192,6 +194,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	}
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
+	is.scheduleManager = initScheduleManager(etcdCli)
 	is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -244,6 +247,13 @@ func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManag
 	}
 	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
 	return &TiFlashPDPlacementManager{etcdCli: etcdCli}
+}
+
+func initScheduleManager(etcdCli *clientv3.Client) ScheduleManager {
+	if etcdCli == nil {
+		return &mockScheduleManager{}
+	}
+	return &PDScheduleManager{etcdCli: etcdCli}
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash
@@ -446,10 +456,21 @@ func removeVAndHash(v string) string {
 func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
 	if store, ok := store.(kv.StorageWithPD); ok {
 		pdClient := store.GetPDClient()
-		stores, err := pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
-		if err != nil {
-			return err
+		var stores []*metapb.Store
+		var err error
+		// Wait at most 3 second to make sure pd has updated the store information.
+		for i := 0; i < 60; i++ {
+			stores, err = pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
+			if err == nil {
+				break
+			}
+			time.Sleep(time.Millisecond * 50)
 		}
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		for _, s := range stores {
 			// empty version means the store is a mock store. Don't require tiflash version either.
 			if s.Version == "" || engine.IsTiFlash(s) {
@@ -1014,6 +1035,16 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
 
+// SetTiFlashGroupConfig is a helper function to set tiflash rule group config
+func SetTiFlashGroupConfig(ctx context.Context) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Info("SetTiFlashGroupConfig")
+	return is.tiflashPlacementManager.SetTiFlashGroupConfig(ctx)
+}
+
 // SetTiFlashPlacementRule is a helper function to set placement rule.
 // It is discouraged to use SetTiFlashPlacementRule directly,
 // use `ConfigureTiFlashPDForTable`/`ConfigureTiFlashPDForPartitions` instead.
@@ -1144,4 +1175,22 @@ func DeleteInternalSession(se interface{}) {
 		return
 	}
 	sm.DeleteInternalSession(se)
+}
+
+// GetPDScheduleConfig gets the schedule information from pd
+func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.scheduleManager.GetPDScheduleConfig(ctx)
+}
+
+// SetPDScheduleConfig sets the schedule information for pd
+func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.scheduleManager.SetPDScheduleConfig(ctx, config)
 }

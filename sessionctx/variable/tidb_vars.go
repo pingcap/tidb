@@ -231,6 +231,12 @@ const (
 
 	// RequireSecureTransport indicates the secure mode for data transport
 	RequireSecureTransport = "require_secure_transport"
+
+	// TiFlashFastScan indicates whether use fast scan in tiflash.
+	TiFlashFastScan = "tiflash_fastscan"
+
+	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
+	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -451,9 +457,6 @@ const (
 	// TiDBEnableAutoIncrementInGenerated disables the mysql compatibility check on using auto-incremented columns in
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
-
-	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
-	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
 
 	// TiDBPlacementMode is used to control the mode for placement
 	TiDBPlacementMode = "tidb_placement_mode"
@@ -720,6 +723,19 @@ const (
 	// When set to (0, 1], Selectivity() will use the value of this variable as the default selectivity of those
 	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
+
+	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
+	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
+	// TiDBPrepPlanCacheSize indicates the number of cached statements.
+	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
+
+	// TiDBEnableGeneralPlanCache indicates whether to enable general plan cache.
+	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
+	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
+	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
+
+	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
+	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
 )
 
 // TiDB vars that have only global scope
@@ -768,10 +784,6 @@ const (
 	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
 	TiDBMemOOMAction = "tidb_mem_oom_action"
-	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
-	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
-	// TiDBPrepPlanCacheSize indicates the number of cached statements.
-	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
 	// TiDBPrepPlanCacheMemoryGuardRatio is used to prevent [performance.max-memory] from being exceeded
 	TiDBPrepPlanCacheMemoryGuardRatio = "tidb_prepared_plan_cache_memory_guard_ratio"
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
@@ -790,6 +802,10 @@ const (
 	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
 	// when a single SQL statement exceeds the memory quota specified by the memory quota.
 	TiDBEnableTmpStorageOnOOM = "tidb_enable_tmp_storage_on_oom"
+	// TiDBDDLEnableFastReorg indicates whether to use lighting backfill process for adding index.
+	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
+	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
+	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 )
 
 // TiDB intentional limits
@@ -874,7 +890,7 @@ const (
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
-	DefTiDBEnableOuterJoinReorder                  = true
+	DefTiDBEnableOuterJoinReorder                  = false
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBHashExchangeWithNewCollation            = true
@@ -888,7 +904,6 @@ const (
 	DefTiDBDDLReorgBatchSize                       = 256
 	DefTiDBDDLErrorCountLimit                      = 512
 	DefTiDBMaxDeltaSchemaCount                     = 1024
-	DefTiDBPointGetCache                           = false
 	DefTiDBPlacementMode                           = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated          = false
 	DefTiDBHashAggPartialConcurrency               = ConcurrencyUnset
@@ -925,7 +940,7 @@ const (
 	DefTiDBFoundInBinding                          = false
 	DefTiDBEnableCollectExecutionInfo              = true
 	DefTiDBAllowAutoRandExplicitInsert             = false
-	DefTiDBEnableClusteredIndex                    = ClusteredIndexDefModeIntOnly
+	DefTiDBEnableClusteredIndex                    = ClusteredIndexDefModeOn
 	DefTiDBRedactLog                               = false
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
@@ -952,6 +967,7 @@ const (
 	DefTiDBRegardNULLAsPoint                       = true
 	DefEnablePlacementCheck                        = true
 	DefTimestamp                                   = "0"
+	DefTimestampFloat                              = 0.0
 	DefTiDBEnableStmtSummary                       = true
 	DefTiDBStmtSummaryInternalQuery                = false
 	DefTiDBStmtSummaryRefreshInterval              = 1800
@@ -965,7 +981,7 @@ const (
 	DefTiDBPersistAnalyzeOptions                   = true
 	DefTiDBEnableColumnTracking                    = false
 	DefTiDBStatsLoadSyncWait                       = 0
-	DefTiDBStatsLoadPseudoTimeout                  = false
+	DefTiDBStatsLoadPseudoTimeout                  = true
 	DefSysdateIsNow                                = false
 	DefTiDBEnableMutationChecker                   = false
 	DefTiDBTxnAssertionLevel                       = AssertionOffStr
@@ -1004,6 +1020,18 @@ const (
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
+	DefTiFlashFastScan                             = false
+	DefTiDBEnableFastReorg                         = false
+	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
+	DefExecutorConcurrency                         = 5
+	DefTiDBEnableGeneralPlanCache                  = false
+	DefTiDBGeneralPlanCacheSize                    = 100
+	DefTiDBEnableTiFlashReadForWriteStmt           = false
+	// MaxDDLReorgBatchSize is exported for testing.
+	MaxDDLReorgBatchSize                     int32  = 10240
+	MinDDLReorgBatchSize                     int32  = 32
+	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
+	DefTiDBConstraintCheckInPlacePessimistic        = true
 )
 
 // Process global variables.
@@ -1017,43 +1045,39 @@ var (
 	EnableTmpStorageOnOOM       = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
-	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
+	ddlErrorCountLimit    int64 = DefTiDBDDLErrorCountLimit
 	ddlReorgRowFormat     int64 = DefTiDBRowFormatV2
 	maxDeltaSchemaCount   int64 = DefTiDBMaxDeltaSchemaCount
-	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize int32 = 10240
-	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold                   = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
-	ForcePriority                         = int32(DefTiDBForcePriority)
-	MaxOfMaxAllowedPacket          uint64 = 1073741824
-	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
-	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	DefExecutorConcurrency                = 5
-	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
-	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
-	EnablePointGetCache                   = atomic.NewBool(DefTiDBPointGetCache)
-	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
-	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
-	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
-	VarTiDBSuperReadOnly                  = atomic.NewBool(DefTiDBSuperReadOnly)
-	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
-	TableCacheLease                       = atomic.NewInt64(DefTiDBTableCacheLease)
-	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
-	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
-	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
-	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
-	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
-	OOMAction                             = atomic.NewString(DefTiDBMemOOMAction)
-	MaxAutoAnalyzeTime                    = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
+	DDLSlowOprThreshold                = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
+	ForcePriority                      = int32(DefTiDBForcePriority)
+	MaxOfMaxAllowedPacket       uint64 = 1073741824
+	ExpensiveQueryTimeThreshold uint64 = DefTiDBExpensiveQueryTimeThreshold
+	MemoryUsageAlarmRatio              = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
+	EnableLocalTxn                     = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval            = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy             = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	RestrictedReadOnly                 = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	VarTiDBSuperReadOnly               = atomic.NewBool(DefTiDBSuperReadOnly)
+	PersistAnalyzeOptions              = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                    = atomic.NewInt64(DefTiDBTableCacheLease)
+	EnableColumnTracking               = atomic.NewBool(DefTiDBEnableColumnTracking)
+	StatsLoadSyncWait                  = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
+	StatsLoadPseudoTimeout             = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	MemQuotaBindingCache               = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
+	GCMaxWaitTime                      = atomic.NewInt64(DefTiDBGCMaxWaitTime)
+	StatsCacheMemQuota                 = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	OOMAction                          = atomic.NewString(DefTiDBMemOOMAction)
+	MaxAutoAnalyzeTime                 = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
-	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
-	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
+	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
+	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
+	// DDLDiskQuota is the temporary variable for set disk quota for lightning
+	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
 )
 
 var (
@@ -1070,13 +1094,3 @@ var (
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
 	DisableDDL func() error = nil
 )
-
-// switchDDL turns on/off DDL in an instance.
-func switchDDL(on bool) error {
-	if on && EnableDDL != nil {
-		return EnableDDL()
-	} else if !on && DisableDDL != nil {
-		return DisableDDL()
-	}
-	return nil
-}

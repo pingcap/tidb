@@ -63,17 +63,12 @@ var (
 
 // DBConfig is database configuration.
 type DBConfig struct {
-	Host string `toml:"host" json:"host"`
-
-	Port int `toml:"port" json:"port"`
-
-	User string `toml:"user" json:"user"`
-
-	Password string `toml:"password" json:"-"` // omit it for privacy
-
-	Schema string `toml:"schema" json:"schema"`
-
+	Host     string `toml:"host" json:"host"`
+	User     string `toml:"user" json:"user"`
+	Password string `toml:"password" json:"-"`
+	Schema   string `toml:"schema" json:"schema"`
 	Snapshot string `toml:"snapshot" json:"snapshot"`
+	Port     int    `toml:"port" json:"port"`
 }
 
 // String returns native format of database configuration
@@ -457,9 +452,9 @@ func GetCRC32Checksum(ctx context.Context, db QueryExecutor, schemaName, tableNa
 
 // Bucket saves the bucket information from TiDB.
 type Bucket struct {
-	Count      int64
 	LowerBound string
 	UpperBound string
+	Count      int64
 }
 
 // GetBucketsInfo SHOW STATS_BUCKETS in TiDB.

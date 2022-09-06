@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testfork"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
@@ -164,7 +164,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	// first ts should use the txn startTS
 	stmt, _, _, err := tk.Session().PrepareStmt("select * from t")
 	require.NoError(t, err)
-	rs, err := tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
+	rs, err := tk.Session().ExecutePreparedStmt(ctx, stmt, expression.Args2Expressions4Test())
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	require.NoError(t, err)
 	ts, err := provider.GetStmtForUpdateTS()
@@ -172,7 +172,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	require.Equal(t, txnStartTS, ts)
 
 	// second ts should reuse the txn startTS
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, expression.Args2Expressions4Test())
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
@@ -181,7 +181,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 
 	tk2.MustExec("update t set v = v + 10 where id = 1")
 	compareTS := getOracleTS(t, se)
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, expression.Args2Expressions4Test())
 	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(ctx, tk.Session(), rs)
 	require.Error(t, err)
@@ -192,7 +192,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	require.Greater(t, compareTS, ts)
 	// retry
 	tk.Session().GetSessionVars().RetryInfo.Retrying = true
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, expression.Args2Expressions4Test())
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
 	ts, err = provider.GetStmtForUpdateTS()
@@ -391,7 +391,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	checkUseSnapshot := func() {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.Equal(t, snapshotTS, readTS)
@@ -403,7 +403,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	checkUseTxn := func(useTxnTs bool) {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, isVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.NotEqual(t, snapshotTS, readTS)
