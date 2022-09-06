@@ -62,6 +62,7 @@ func b64From24bit(b []byte, n int, buf *bytes.Buffer) {
 	}
 }
 
+// Sha256Hash is an util function to calculate sha256 hash.
 func Sha256Hash(input []byte) []byte {
 	res := sha256.Sum256(input)
 	return res[:]
