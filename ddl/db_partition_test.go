@@ -334,6 +334,10 @@ partition by range (a)
     partition p0 values less than (200),
     partition p1 values less than (300),
     partition p2 values less than maxvalue)`)
+
+	// Fix https://github.com/pingcap/tidb/issues/35827
+	tk.MustExec(`create table t37 (id tinyint unsigned, idpart tinyint, i varchar(255)) partition by range (idpart) (partition p1 values less than (-1));`)
+	tk.MustGetErrCode(`create table t38 (id tinyint unsigned, idpart tinyint unsigned, i varchar(255)) partition by range (idpart) (partition p1 values less than (-1));`, errno.ErrPartitionConstDomain)
 }
 
 func TestCreateTableWithHashPartition(t *testing.T) {
@@ -2134,6 +2138,22 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	require.NoError(t, err)
 
 	tk.MustExec("alter table e15 exchange partition p0 with table e16")
+
+	tk.MustExec("create table e17 (a int)")
+	tk.MustExec("alter table e17 set tiflash replica 1")
+	tk.MustExec("insert into e17 values (1)")
+
+	tk.MustExec("create table e18 (a int) partition by range (a) (partition p0 values less than (4), partition p1 values less than (10))")
+	tk.MustExec("alter table e18 set tiflash replica 1")
+	tk.MustExec("insert into e18 values (2)")
+
+	tk.MustExec("alter table e18 exchange partition p0 with table e17")
+	tk.MustQuery("select * /*+ read_from_storage(tiflash[e18]) */ from e18").Check(testkit.Rows("1"))
+	tk.MustQuery("select * /*+ read_from_storage(tiflash[e17]) */ from e17").Check(testkit.Rows("2"))
+
+	tk.MustExec("create table e19 (a int) partition by hash(a) partitions 1")
+	tk.MustExec("create temporary table e20 (a int)")
+	tk.MustGetErrCode("alter table e19 exchange partition p0 with table e20", errno.ErrPartitionExchangeTempTable)
 }
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
@@ -2349,6 +2369,20 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			"alter table pt32 exchange partition p0 with table nt32;",
 			dbterror.ErrTablesDifferentMetadata,
 		},
+		{
+			// global temporary table
+			"create table pt33 (id int) partition by hash(id) partitions 1;",
+			"create global temporary table nt33 (id int) on commit delete rows;",
+			"alter table pt33 exchange partition p0 with table nt33;",
+			dbterror.ErrPartitionExchangeTempTable,
+		},
+		{
+			// local temporary table
+			"create table pt34 (id int) partition by hash(id) partitions 1;",
+			"create temporary table nt34 (id int);",
+			"alter table pt34 exchange partition p0 with table nt34;",
+			dbterror.ErrPartitionExchangeTempTable,
+		},
 	}
 
 	tk := testkit.NewTestKit(t, store)
@@ -2406,6 +2440,35 @@ func TestExchangePartitionHook(t *testing.T) {
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
+}
+
+func TestExchangePartitionAutoID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int primary key auto_increment) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 values less than (9),
+        PARTITION p3 values less than (50000000)
+		);`)
+	tk.MustExec(`create table nt(a int primary key auto_increment);`)
+	tk.MustExec(`insert into pt values (0), (4)`)
+	tk.MustExec("insert into nt values (1)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
+	}()
+
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustExec("insert into nt values (NULL)")
+	tk.MustQuery("select count(*) from nt where a >= 4000000").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from pt where a >= 4000000").Check(testkit.Rows("1"))
 }
 
 func TestExchangePartitionExpressIndex(t *testing.T) {

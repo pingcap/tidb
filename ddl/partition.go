@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -242,10 +243,6 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 	p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
 	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
 	tblInfo.Partition = &p
-
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
-		return nil, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
-	}
 
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
@@ -498,20 +495,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	return nil
 }
 
-func isPartExprUnsigned(ctx sessionctx.Context, tbInfo *model.TableInfo) bool {
-	expr, err := expression.ParseSimpleExprWithTableInfo(ctx, tbInfo.Partition.Expr, tbInfo)
-	if err != nil {
-		return false
-	}
-	pCols := expression.ExtractColumns(expr)
-	for _, col := range pCols {
-		if mysql.HasUnsignedFlag(col.GetType().GetFlag()) {
-			return true
-		}
-	}
-	return false
-}
-
 // getPartitionIntervalFromTable checks if a partitioned table matches a generated INTERVAL partitioned scheme
 // will return nil if error occurs, i.e. not an INTERVAL partitioned table
 func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableInfo) *ast.PartitionInterval {
@@ -548,7 +531,7 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 			return nil
 		}
 	} else {
-		if !isPartExprUnsigned(ctx, tbInfo) {
+		if !isPartExprUnsigned(tbInfo) {
 			minVal = "-9223372036854775808"
 		}
 	}
@@ -822,7 +805,7 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 			if partCol != nil {
 				min = getLowerBoundInt(partCol)
 			} else {
-				if !isPartExprUnsigned(ctx, tbInfo) {
+				if !isPartExprUnsigned(tbInfo) {
 					min = math.MinInt64
 				}
 			}
@@ -1232,7 +1215,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 
 func checkPartitionValuesIsInt(ctx sessionctx.Context, defName interface{}, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
+	if isPartExprUnsigned(tbInfo) {
 		tp.AddFlag(mysql.UnsignedFlag)
 	}
 	for _, exp := range exprs {
@@ -1384,11 +1367,10 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 		return nil
 	}
 
-	cols := tblInfo.Columns
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	isUnsigned := isColUnsigned(cols, pi)
+	isUnsigned := isPartExprUnsigned(tblInfo)
 	var prevRangeValue interface{}
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
@@ -1451,7 +1433,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	cols := make([]*model.ColumnInfo, 0, len(pi.Columns))
 	if len(pi.Columns) == 0 {
 		tp := types.NewFieldType(mysql.TypeLonglong)
-		if isColUnsigned(tblInfo.Columns, tblInfo.Partition) {
+		if isPartExprUnsigned(tblInfo) {
 			tp.AddFlag(mysql.UnsignedFlag)
 		}
 		colTps = []*types.FieldType{tp}
@@ -2055,6 +2037,21 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	failpoint.Inject("exchangePartitionAutoID", func(val failpoint.Value) {
+		if val.(bool) {
+			se, err := w.sessPool.get()
+			defer w.sessPool.put(se)
+			if err != nil {
+				failpoint.Return(ver, err)
+			}
+			sess := newSession(se)
+			_, err = sess.execute(context.Background(), "insert into test.pt values (40000000)", "exchange_partition_test")
+			if err != nil {
+				failpoint.Return(ver, err)
+			}
+		}
+	})
+
 	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -2555,13 +2552,17 @@ func (cns columnNameSlice) At(i int) string {
 	return cns[i].Name.L
 }
 
-// isColUnsigned returns true if the partitioning key column is unsigned.
-func isColUnsigned(cols []*model.ColumnInfo, pi *model.PartitionInfo) bool {
-	for _, col := range cols {
-		isUnsigned := mysql.HasUnsignedFlag(col.GetFlag())
-		if isUnsigned && strings.Contains(strings.ToLower(pi.Expr), col.Name.L) {
-			return true
-		}
+func isPartExprUnsigned(tbInfo *model.TableInfo) bool {
+	// We should not rely on any configuration, system or session variables, so use a mock ctx!
+	// Same as in tables.newPartitionExpr
+	ctx := mock.NewContext()
+	expr, err := expression.ParseSimpleExprWithTableInfo(ctx, tbInfo.Partition.Expr, tbInfo)
+	if err != nil {
+		logutil.BgLogger().Error("isPartExpr failed parsing expression!", zap.Error(err))
+		return false
+	}
+	if mysql.HasUnsignedFlag(expr.GetType().GetFlag()) {
+		return true
 	}
 	return false
 }

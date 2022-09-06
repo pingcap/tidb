@@ -57,7 +57,7 @@ func TestShowOpenTables(t *testing.T) {
 func TestShowCreateViewDefiner(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%", AuthUsername: "root", AuthHostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%", AuthUsername: "root", AuthHostname: "%"}, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("create or replace view v1 as select 1")
@@ -661,7 +661,7 @@ func TestShowVisibility(t *testing.T) {
 	tk.MustExec(`create user 'show'@'%'`)
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil))
 
 	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.
 	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
@@ -699,7 +699,7 @@ func TestShowDatabasesInfoSchemaFirst(t *testing.T) {
 	tk.MustExec(`grant select on BBBB.* to 'show'@'%'`)
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil))
 	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "AAAA", "BBBB"))
 
 	tk.MustExec(`drop user 'show'@'%'`)
@@ -802,12 +802,12 @@ func TestShowGrantsPrivilege(t *testing.T) {
 	tk.MustExec("create user show_grants")
 	tk.MustExec("show grants for show_grants")
 	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "%"}, nil, nil))
 	err := tk1.QueryToErr("show grants for root")
 	require.EqualError(t, executor.ErrDBaccessDenied.GenWithStackByArgs("show_grants", "%", mysql.SystemDB), err.Error())
 	// Test show grants for user with auth host name `%`.
 	tk2 := testkit.NewTestKit(t, store)
-	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil))
 	tk2.MustQuery("show grants")
 }
 
@@ -817,7 +817,7 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk.MustExec("create user show_stats")
 	tk1 := testkit.NewTestKit(t, store)
 
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil))
 	e := "[planner:1142]SHOW command denied to user 'show_stats'@'%' for table"
 	err := tk1.ExecToErr("show stats_meta")
 	require.ErrorContains(t, err, e)
@@ -836,7 +836,7 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk1.MustExec("SHOW STATS_HISTOGRAMS")
 
 	tk.MustExec("create user a@'%' identified by '';")
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "a", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "a", Hostname: "%"}, nil, nil))
 	tk.MustExec("grant select on mysql.stats_meta to a@'%';")
 	tk.MustExec("grant select on mysql.stats_buckets to a@'%';")
 	tk.MustExec("grant select on mysql.stats_histograms to a@'%';")
@@ -848,7 +848,7 @@ func TestShowStatsPrivilege(t *testing.T) {
 func TestIssue18878(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil))
 	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
 	tk.MustQuery("show grants")
 	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
@@ -868,10 +868,10 @@ func TestIssue17794(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER 'root'@'8.8.%'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "9.9.9.9", AuthHostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "9.9.9.9", AuthHostname: "%"}, nil, nil))
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "8.8.8.8", AuthHostname: "8.8.%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "8.8.8.8", AuthHostname: "8.8.%"}, nil, nil))
 	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION"))
 	tk1.MustQuery("show grants").Check(testkit.Rows("GRANT USAGE ON *.* TO 'root'@'8.8.%'"))
 }
@@ -895,7 +895,7 @@ func TestIssue10549(t *testing.T) {
 	tk.MustExec("GRANT 'app_developer' TO 'dev';")
 	tk.MustExec("SET DEFAULT ROLE app_developer TO 'dev';")
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "dev", Hostname: "%", AuthUsername: "dev", AuthHostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "dev", Hostname: "%", AuthUsername: "dev", AuthHostname: "%"}, nil, nil))
 	tk.MustQuery("SHOW DATABASES;").Check(testkit.Rows("INFORMATION_SCHEMA", "newdb"))
 	tk.MustQuery("SHOW GRANTS;").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT ALL PRIVILEGES ON newdb.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT ALL PRIVILEGES ON newdb.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
@@ -909,7 +909,7 @@ func TestIssue11165(t *testing.T) {
 	tk.MustExec("CREATE USER 'manager'@'localhost';")
 	tk.MustExec("GRANT 'r_manager' TO 'manager'@'localhost';")
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "manager", Hostname: "localhost", AuthUsername: "manager", AuthHostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "manager", Hostname: "localhost", AuthUsername: "manager", AuthHostname: "localhost"}, nil, nil))
 	tk.MustExec("SET DEFAULT ROLE ALL TO 'manager'@'localhost';")
 	tk.MustExec("SET DEFAULT ROLE NONE TO 'manager'@'localhost';")
 	tk.MustExec("SET DEFAULT ROLE 'r_manager' TO 'manager'@'localhost';")
@@ -1072,8 +1072,7 @@ func TestShowCreateUser(t *testing.T) {
 	// "show create user" for other user requires the SELECT privilege on mysql database.
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use mysql")
-	succ := tk1.Session().Auth(&auth.UserIdentity{Username: "check_priv", Hostname: "127.0.0.1", AuthUsername: "test_show", AuthHostname: "asdf"}, nil, nil)
-	require.True(t, succ)
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "check_priv", Hostname: "127.0.0.1", AuthUsername: "test_show", AuthHostname: "asdf"}, nil, nil))
 	err = tk1.QueryToErr("show create user 'root'@'%'")
 	require.Error(t, err)
 
@@ -1287,6 +1286,16 @@ func TestShowCreateTableAutoRandom(t *testing.T) {
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */",
+	))
+	// Test auto_random table with range bits can be shown correctly.
+	tk.MustExec("create table auto_random_tbl7 (a bigint primary key auto_random(4, 32), b varchar(255));")
+	tk.MustQuery("show create table auto_random_tbl7").Check(testkit.RowsWithSep("|",
+		""+
+			"auto_random_tbl7 CREATE TABLE `auto_random_tbl7` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(4, 32) */,\n"+
+			"  `b` varchar(255) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 }
 
@@ -1845,7 +1854,7 @@ func TestShowDatabasesLike(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "root", Hostname: "%"}, nil, nil))
 
 	tk.MustExec("DROP DATABASE IF EXISTS `TEST_$1`")
@@ -1882,8 +1891,18 @@ func TestShowCollationsLike(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustQuery("SHOW COLLATION LIKE 'UTF8MB4_BI%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
 	tk.MustQuery("SHOW COLLATION LIKE 'utf8mb4_bi%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+}
+
+func TestShowViewWithWindowFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
+	tk.MustExec("create or replace view test1_v as(select id,row_number() over (partition by num) from test1);")
+	tk.MustQuery("desc test1_v;").Check(testkit.Rows("id int(0) NO  <nil> ", "row_number() over (partition by num) bigint(21) YES  <nil> "))
 }

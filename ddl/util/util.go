@@ -57,8 +57,10 @@ const (
 
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {
-	JobID, ElementID int64
-	StartKey, EndKey kv.Key
+	StartKey  kv.Key
+	EndKey    kv.Key
+	JobID     int64
+	ElementID int64
 }
 
 // Range returns the range [start, end) to delete.

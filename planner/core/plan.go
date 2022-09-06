@@ -141,11 +141,11 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
-	if NDV <= 1 {
+	ndv := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, NDV)
+	concurrency = mathutil.Min(concurrency, ndv)
 
 	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
 	for _, item := range pp.PartitionBy {
@@ -182,11 +182,11 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
-	if NDV <= 1 {
+	ndv := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, NDV)
+	concurrency = mathutil.Min(concurrency, ndv)
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
@@ -445,7 +445,7 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *baseLogicalPlan) ExplainInfo() string {
+func (*baseLogicalPlan) ExplainInfo() string {
 	return ""
 }
 
@@ -505,12 +505,12 @@ func (p *basePhysicalPlan) Clone() (PhysicalPlan, error) {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *basePhysicalPlan) ExplainInfo() string {
+func (*basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
 // ExplainNormalizedInfo implements PhysicalPlan interface.
-func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
+func (*basePhysicalPlan) ExplainNormalizedInfo() string {
 	return ""
 }
 
@@ -519,26 +519,26 @@ func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
 
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
 func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
-	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS += 1
+	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS++
 	return p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS
 }
 
-func (p *baseLogicalPlan) rollBackTaskMap(TS uint64) {
+func (p *baseLogicalPlan) rollBackTaskMap(ts uint64) {
 	if !p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		return
 	}
 	if len(p.taskMapBak) > 0 {
 		// Rollback all the logs with TimeStamp TS.
-		N := len(p.taskMapBak)
-		for i := 0; i < N; i++ {
+		n := len(p.taskMapBak)
+		for i := 0; i < n; i++ {
 			cur := p.taskMapBak[i]
-			if p.taskMapBakTS[i] < TS {
+			if p.taskMapBakTS[i] < ts {
 				continue
 			}
 
@@ -546,14 +546,14 @@ func (p *baseLogicalPlan) rollBackTaskMap(TS uint64) {
 			p.taskMapBak = append(p.taskMapBak[:i], p.taskMapBak[i+1:]...)
 			p.taskMapBakTS = append(p.taskMapBakTS[:i], p.taskMapBakTS[i+1:]...)
 			i--
-			N--
+			n--
 
 			// Roll back taskMap.
 			p.taskMap[cur] = nil
 		}
 	}
 	for _, child := range p.children {
-		child.rollBackTaskMap(TS)
+		child.rollBackTaskMap(ts)
 	}
 }
 
@@ -566,8 +566,8 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	key := prop.HashCode()
 	if p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
-		TS := p.GetLogicalTS4TaskMap()
-		p.taskMapBakTS = append(p.taskMapBakTS, TS)
+		ts := p.GetLogicalTS4TaskMap()
+		p.taskMapBakTS = append(p.taskMapBakTS, ts)
 		p.taskMapBak = append(p.taskMapBak, string(key))
 	}
 	p.taskMap[string(key)] = task
@@ -657,7 +657,7 @@ func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan, o
 	}
 }
 
-func (p *baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
 
@@ -680,15 +680,13 @@ type basePlan struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *basePlan) OutputNames() types.NameSlice {
+func (*basePlan) OutputNames() types.NameSlice {
 	return nil
 }
 
-func (p *basePlan) SetOutputNames(_ types.NameSlice) {
-}
+func (*basePlan) SetOutputNames(_ types.NameSlice) {}
 
-func (p *basePlan) replaceExprColumns(_ map[string]*expression.Column) {
-}
+func (*basePlan) replaceExprColumns(_ map[string]*expression.Column) {}
 
 // ID implements Plan ID interface.
 func (p *basePlan) ID() int {
@@ -701,7 +699,7 @@ func (p *basePlan) statsInfo() *property.StatsInfo {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *basePlan) ExplainInfo() string {
+func (*basePlan) ExplainInfo() string {
 	return "N/A"
 }
 

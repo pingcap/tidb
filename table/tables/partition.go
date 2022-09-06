@@ -1003,14 +1003,15 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 
 func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
 	var err error
+	var isNull bool
 	partitionExprs := t.partitionExpr.UpperBounds
 	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
+	var ret int64
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		evalBuffer.SetDatums(r...)
-		ret, isNull, err2 := partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
-		if err2 != nil {
-			err = err2
+		ret, isNull, err = partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
+		if err != nil {
 			return true // Break the search.
 		}
 		if isNull {

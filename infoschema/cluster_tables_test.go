@@ -192,7 +192,7 @@ func SubTestDataLockWaitsPrivilege(t *testing.T) {
 
 	tk.MustExec("create user 'testuser'@'localhost'")
 	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -203,7 +203,7 @@ func SubTestDataLockWaitsPrivilege(t *testing.T) {
 	tk.MustExec("create user 'testuser2'@'localhost'")
 	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -305,7 +305,7 @@ select * from t3;
 	tk.MustExec("create user user2")
 	user1 := testkit.NewTestKit(t, s.store)
 	user1.MustExec("use information_schema")
-	require.True(t, user1.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, user1.Session().Auth(&auth.UserIdentity{
 		Username: "user1",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -315,7 +315,7 @@ select * from t3;
 
 	user2 := testkit.NewTestKit(t, s.store)
 	user2.MustExec("use information_schema")
-	require.True(t, user2.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, user2.Session().Auth(&auth.UserIdentity{
 		Username: "user2",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -369,7 +369,7 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	defer tk1.MustExec("drop user 'testuser'@'localhost'")
 	defer tk1.MustExec("drop user 'testuser2'@'localhost'")
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -378,7 +378,7 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	// This error is come from cop(TiDB) fetch from rpc server.
 	require.EqualError(t, err, "other error: [planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -405,7 +405,7 @@ func TestStmtSummaryIssue35340(t *testing.T) {
 			tk := s.newTestKitWithRoot(t)
 			for j := 0; j < 100; j++ {
 				user := "user" + strconv.Itoa(j)
-				require.True(t, tk.Session().Auth(&auth.UserIdentity{
+				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 					Username: user,
 					Hostname: "localhost",
 				}, nil, nil))
@@ -718,8 +718,8 @@ func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string) (*grpc.S
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	// Fix issue 9836
-	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1), nil}
-	sm.processInfoMap[1] = &util.ProcessInfo{
+	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 1)}
+	sm.PS[0] = &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
@@ -803,6 +803,6 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
 }

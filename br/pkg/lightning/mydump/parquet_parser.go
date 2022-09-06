@@ -28,6 +28,8 @@ const (
 	smallParquetFileThreshold = 256 * 1024 * 1024
 )
 
+// ParquetParser parses a parquet file for import
+// It implements the Parser interface.
 type ParquetParser struct {
 	Reader      *preader.ParquetReader
 	columns     []string
@@ -49,7 +51,7 @@ type readerWrapper struct {
 	path string
 }
 
-func (r *readerWrapper) Write(p []byte) (n int, err error) {
+func (*readerWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
@@ -69,7 +71,7 @@ func (r *readerWrapper) Open(name string) (source.ParquetFile, error) {
 	}, nil
 }
 
-func (r *readerWrapper) Create(name string) (source.ParquetFile, error) {
+func (*readerWrapper) Create(_ string) (source.ParquetFile, error) {
 	return nil, errors.New("unsupported operation")
 }
 
@@ -81,15 +83,15 @@ type bytesReaderWrapper struct {
 	path string
 }
 
-func (r *bytesReaderWrapper) Close() error {
+func (*bytesReaderWrapper) Close() error {
 	return nil
 }
 
-func (r *bytesReaderWrapper) Create(name string) (source.ParquetFile, error) {
+func (*bytesReaderWrapper) Create(_ string) (source.ParquetFile, error) {
 	return nil, errors.New("unsupported operation")
 }
 
-func (r *bytesReaderWrapper) Write(p []byte) (n int, err error) {
+func (*bytesReaderWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
@@ -104,6 +106,7 @@ func (r *bytesReaderWrapper) Open(name string) (source.ParquetFile, error) {
 	}, nil
 }
 
+// OpenParquetReader opens a parquet file and returns a handle that can at least read the file.
 func OpenParquetReader(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -134,7 +137,8 @@ func OpenParquetReader(
 	}, nil
 }
 
-// a special func to fetch parquet file row count fast.
+// ReadParquetFileRowCount reads the parquet file row count.
+// It is a special func to fetch parquet file row count fast.
 func ReadParquetFileRowCount(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -161,6 +165,7 @@ func ReadParquetFileRowCount(
 	return numRows, nil
 }
 
+// NewParquetParser generates a parquet parser.
 func NewParquetParser(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -186,11 +191,10 @@ func NewParquetParser(
 
 	columns := make([]string, 0, len(reader.Footer.Schema)-1)
 	columnMetas := make([]*parquet.SchemaElement, 0, len(reader.Footer.Schema)-1)
-	for _, c := range reader.SchemaHandler.SchemaElements {
+	for i, c := range reader.SchemaHandler.SchemaElements {
 		if c.GetNumChildren() == 0 {
-			// NOTE: the SchemaElement.Name is capitalized, SchemaHandler.Infos.ExName is the raw column name
-			// though in this context, there is no difference between these two fields
-			columns = append(columns, strings.ToLower(c.Name))
+			// we need to use the raw name, SchemaElement.Name might be prefixed with PARGO_PERFIX_
+			columns = append(columns, strings.ToLower(reader.SchemaHandler.GetExName(i)))
 			// transfer old ConvertedType to LogicalType
 			columnMeta := c
 			if c.ConvertedType != nil && c.LogicalType == nil {
@@ -311,6 +315,8 @@ func (pp *ParquetParser) Pos() (pos int64, rowID int64) {
 	return pp.curStart + int64(pp.curIndex), pp.lastRow.RowID
 }
 
+// SetPos sets the position in a parquet file.
+// It implements the Parser interface.
 func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	if pos < pp.curStart {
 		panic("don't support seek back yet")
@@ -338,11 +344,15 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	return nil
 }
 
+// Close closes the parquet file of the parser.
+// It implements the Parser interface.
 func (pp *ParquetParser) Close() error {
 	pp.Reader.ReadStop()
 	return pp.Reader.PFile.Close()
 }
 
+// ReadRow reads a row in the parquet file by the parser.
+// It implements the Parser interface.
 func (pp *ParquetParser) ReadRow() error {
 	pp.lastRow.RowID++
 	pp.lastRow.Length = 0
@@ -446,7 +456,7 @@ func binaryToDecimalStr(rawBytes []byte, scale int) string {
 			rawBytes[i] = ^rawBytes[i]
 		}
 		for i := len(rawBytes) - 1; i >= 0; i-- {
-			rawBytes[i] += 1
+			rawBytes[i]++
 			if rawBytes[i] != 0 {
 				break
 			}
@@ -530,11 +540,14 @@ func formatTime(v int64, units *parquet.TimeUnit, format, utcFormat string, utc 
 	return t.Format(format)
 }
 
+// LastRow gets the last row parsed by the parser.
+// It implements the Parser interface.
 func (pp *ParquetParser) LastRow() Row {
 	return pp.lastRow
 }
 
-func (pp *ParquetParser) RecycleRow(row Row) {
+// RecycleRow implements the Parser interface.
+func (*ParquetParser) RecycleRow(_ Row) {
 }
 
 // Columns returns the _lower-case_ column names corresponding to values in
@@ -544,10 +557,12 @@ func (pp *ParquetParser) Columns() []string {
 }
 
 // SetColumns set restored column names to parser
-func (pp *ParquetParser) SetColumns(cols []string) {
+func (*ParquetParser) SetColumns(_ []string) {
 	// just do nothing
 }
 
+// SetLogger sets the logger used in the parser.
+// It implements the Parser interface.
 func (pp *ParquetParser) SetLogger(l log.Logger) {
 	pp.logger = l
 }

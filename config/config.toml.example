@@ -28,6 +28,9 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
+# The temporary directory to store the intermediate compute results.
+temp-dir = "/tmp/tidb"
+
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
 # It defaults to a generated directory in `<TMPDIR>/<os/user.Current().Uid>_tidb/` if it is unset.
 # It only takes effect when `tidb_enable_tmp_storage_on_oom` is `true`.

@@ -59,12 +59,12 @@ func GetDDLReorgBatchSize() int32 {
 
 // SetDDLErrorCountLimit sets ddlErrorCountlimit size.
 func SetDDLErrorCountLimit(cnt int64) {
-	atomic.StoreInt64(&ddlErrorCountlimit, cnt)
+	atomic.StoreInt64(&ddlErrorCountLimit, cnt)
 }
 
 // GetDDLErrorCountLimit gets ddlErrorCountlimit size.
 func GetDDLErrorCountLimit() int64 {
-	return atomic.LoadInt64(&ddlErrorCountlimit)
+	return atomic.LoadInt64(&ddlErrorCountLimit)
 }
 
 // SetDDLReorgRowFormat sets ddlReorgRowFormat version.
@@ -318,6 +318,15 @@ func TidbOptInt64(opt string, defaultVal int64) int64 {
 	return val
 }
 
+// TidbOptUint64 converts a string to an uint64.
+func TidbOptUint64(opt string, defaultVal uint64) uint64 {
+	val, err := strconv.ParseUint(opt, 10, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return val
+}
+
 func tidbOptFloat64(opt string, defaultVal float64) float64 {
 	val, err := strconv.ParseFloat(opt, 64)
 	if err != nil {
@@ -423,6 +432,16 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 		return err
 	}
 	s.ReadStaleness = time.Duration(sValue) * time.Second
+	return nil
+}
+
+// switchDDL turns on/off DDL in an instance.
+func switchDDL(on bool) error {
+	if on && EnableDDL != nil {
+		return EnableDDL()
+	} else if !on && DisableDDL != nil {
+		return DisableDDL()
+	}
 	return nil
 }
 
