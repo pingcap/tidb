@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
@@ -472,15 +473,14 @@ var failpoints = []failpointsPath{
 	{"github.com/pingcap/tidb/ddl/mockBackfillRunErr", "1*return"},
 	{"github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"},
 	{"github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure", "return(true)"},
-	{"github.com/pingcap/tidb/ddl/mockHighLoadForMergeIndex", "return"},
-	{"github.com/pingcap/tidb/ddl/mockMergeRunErr", "1*return"},
-	{"github.com/pingcap/tidb/ddl/mockMergeSlow", "return"},
+	{"github.com/pingcap/tidb/ddl/" + ddl.GenFailPointName("mockHighLoadForAddIndex", ddl.FPMrgIdx), "return"},
+	{"github.com/pingcap/tidb/ddl/" + ddl.GenFailPointName("mockBackfillRunErr", ddl.FPMrgIdx), "1*return"},
 }
 
 func useFailpoints(ctx *suiteContext, failpos int) {
 	defer ctx.failSync.Done()
 	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos))
-	failpos %= 8
+	failpos %= 7
 	require.NoError(ctx.t, failpoint.Enable(failpoints[failpos].failpath, failpoints[failpos].interm))
 	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos), zap.Bool("enable failpoints:", true))
 	time.Sleep(10 * time.Second)

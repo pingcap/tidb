@@ -58,6 +58,22 @@ const (
 	typeAddIndexMergeTmpWorker backfillWorkerType = 3
 )
 
+// These constants are only used for the failpoint.
+const (
+	FPAddIdx = typeAddIndexWorker
+	FPUdpCol = typeUpdateColumnWorker
+	FPClnIdx = typeCleanUpIndexWorker
+	FPMrgIdx = typeAddIndexMergeTmpWorker
+)
+
+// GenFailPointName generates a failpoint name for the given backfill worker type.
+func GenFailPointName(name string, tp backfillWorkerType) string {
+	if tp == FPAddIdx {
+		return name
+	}
+	return fmt.Sprintf("%s-%d", name, int(tp))
+}
+
 // By now the DDL jobs that need backfilling include:
 // 1: add-index
 // 2: modify-column-type
@@ -118,6 +134,8 @@ func (bWT backfillWorkerType) String() string {
 		return "update column"
 	case typeCleanUpIndexWorker:
 		return "clean up index"
+	case typeAddIndexMergeTmpWorker:
+		return "merge temporary index"
 	default:
 		return "unknown"
 	}
@@ -181,9 +199,11 @@ type backfillWorker struct {
 	table     table.Table
 	closed    bool
 	priority  int
+	tp        backfillWorkerType
 }
 
-func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo) *backfillWorker {
+func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable,
+	reorgInfo *reorgInfo, tp backfillWorkerType) *backfillWorker {
 	return &backfillWorker{
 		id:        id,
 		table:     t,
@@ -193,6 +213,7 @@ func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		taskCh:    make(chan *reorgBackfillTask, 1),
 		resultCh:  make(chan *backfillResult, 1),
 		priority:  reorgInfo.Job.Priority,
+		tp:        tp,
 	}
 }
 
@@ -269,19 +290,20 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			break
 		}
 	}
-	logutil.BgLogger().Info("[ddl] backfill worker finish task", zap.Int("workerID", w.id),
+	logutil.BgLogger().Info("[ddl] backfill worker finish task",
+		zap.Stringer("type", w.tp),
+		zap.Int("workerID", w.id),
 		zap.String("task", task.String()),
 		zap.Int("addedCount", result.addedCount),
 		zap.Int("scanCount", result.scanCount),
 		zap.String("nextHandle", tryDecodeToHandleString(result.nextKey)),
-		zap.Bool("merging temp index", w.reorgInfo.isMerge),
 		zap.String("takeTime", time.Since(startTime).String()))
 	return result
 }
 
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	logutil.BgLogger().Info("[ddl] backfill worker start",
-		zap.Bool("merging temp index", w.reorgInfo.isMerge),
+		zap.Stringer("type", w.tp),
 		zap.Int("workerID", w.id))
 	defer func() {
 		w.resultCh <- &backfillResult{err: dbterror.ErrReorgPanic}
@@ -296,32 +318,20 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 
 		logutil.BgLogger().Debug("[ddl] backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
 
-		var (
-			mockRunErr   = "mockBackfillRunErr"
-			mockHighLoad = "mockHighLoadForAddIndex"
-			mockSlow     = "mockBackfillSlow"
-			mockRunMsg   = "mock backfill error"
-		)
-		if w.reorgInfo.isMerge {
-			mockRunErr = "mockMergeRunErr"
-			mockHighLoad = "mockHighLoadForMergeIndex"
-			mockSlow = "mockMergeSlow"
-			mockRunMsg = "mock merge index error"
-		}
-		failpoint.Inject(mockRunErr, func() {
+		failpoint.Inject(GenFailPointName("mockBackfillRunErr", w.tp), func() {
 			if w.id == 0 {
-				result := &backfillResult{addedCount: 0, nextKey: nil, err: errors.Errorf(mockRunMsg)}
+				result := &backfillResult{addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
 				w.resultCh <- result
 				failpoint.Continue()
 			}
 		})
 
-		failpoint.Inject(mockHighLoad, func() {
+		failpoint.Inject(GenFailPointName("mockHighLoadForAddIndex", w.tp), func() {
 			sqlPrefixes := []string{"alter"}
 			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
 		})
 
-		failpoint.Inject(mockSlow, func() {
+		failpoint.Inject("mockBackfillSlow", func() {
 			time.Sleep(100 * time.Millisecond)
 		})
 
@@ -331,8 +341,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.resultCh <- result
 	}
 	logutil.BgLogger().Info("[ddl] backfill worker exit",
-		zap.Bool("merging temp index", w.reorgInfo.isMerge),
-		zap.Int("workerID", w.id))
+		zap.Stringer("type", w.tp), zap.Int("workerID", w.id))
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
@@ -416,13 +425,13 @@ func (dc *ddlCtx) sendTasksAndWait(sessPool *sessionPool, reorgInfo *reorgInfo, 
 		err1 := reorgInfo.UpdateReorgMeta(nextKey, sessPool)
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
+			zap.Stringer("type", workers[0].tp),
 			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
 			zap.Int64("elementID", reorgInfo.currElement.ID),
 			zap.Int64("totalAddedCount", *totalAddedCount),
 			zap.String("startHandle", tryDecodeToHandleString(startKey)),
 			zap.String("nextHandle", tryDecodeToHandleString(nextKey)),
 			zap.Int64("batchAddedCount", taskAddedCount),
-			zap.Bool("merging temp index", reorgInfo.isMerge),
 			zap.String("taskFailedError", err.Error()),
 			zap.String("takeTime", elapsedTime.String()),
 			zap.NamedError("updateHandleError", err1))
@@ -433,13 +442,13 @@ func (dc *ddlCtx) sendTasksAndWait(sessPool *sessionPool, reorgInfo *reorgInfo, 
 	dc.getReorgCtx(reorgInfo.Job).setNextKey(nextKey)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
 	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
+		zap.Stringer("type", workers[0].tp),
 		zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
 		zap.Int64("elementID", reorgInfo.currElement.ID),
 		zap.Int64("totalAddedCount", *totalAddedCount),
 		zap.String("startHandle", tryDecodeToHandleString(startKey)),
 		zap.String("nextHandle", tryDecodeToHandleString(nextKey)),
 		zap.Int64("batchAddedCount", taskAddedCount),
-		zap.Bool("merging temp index", reorgInfo.isMerge),
 		zap.String("takeTime", elapsedTime.String()))
 	return nil
 }
@@ -477,7 +486,7 @@ func (dc *ddlCtx) handleRangeTasks(sessPool *sessionPool, t table.Table, workers
 	batchTasks := make([]*reorgBackfillTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
 	var prefix kv.Key
-	if reorgInfo.isMerge {
+	if workers[0].tp == typeAddIndexMergeTmpWorker {
 		prefix = t.IndexPrefix()
 	} else {
 		prefix = t.RecordPrefix()
@@ -669,7 +678,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 				}
 				backfillWorkers = append(backfillWorkers, backfillWorker)
 			case typeAddIndexMergeTmpWorker:
-				tmpIdxWorker := newTempIndexWorker(sessCtx, i, t, reorgInfo, jc)
+				tmpIdxWorker := newMergeTempIndexWorker(sessCtx, i, t, reorgInfo, jc)
 				backfillWorkers = append(backfillWorkers, tmpIdxWorker.backfillWorker)
 				go tmpIdxWorker.backfillWorker.run(reorgInfo.d, tmpIdxWorker, job)
 			case typeUpdateColumnWorker:
@@ -718,11 +727,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		})
 
 		logutil.BgLogger().Info("[ddl] start backfill workers to reorg record",
+			zap.Stringer("type", bfWorkerType),
 			zap.Int("workerCnt", len(backfillWorkers)),
 			zap.Int("regionCnt", len(kvRanges)),
 			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)),
-			zap.Bool("merging temp index", reorgInfo.isMerge))
+			zap.String("endKey", hex.EncodeToString(endKey)))
 		if bfWorkerType == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			// Disk quota checking and import partial data into TiKV if needed.
 			// Do lightning flush data to make checkpoint.
@@ -754,29 +763,12 @@ func spawnAddIndexWorker(sessCtx sessionctx.Context, seq int, job *model.Job, t 
 	if job.Type != model.ActionAddIndex && job.Type != model.ActionAddPrimaryKey {
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	}
-	switch job.ReorgMeta.ReorgTp {
-	case model.ReorgTypeTxn, model.ReorgTypeTxnMerge:
-		idxWorker := newAddIndexWorker(sessCtx, seq, t, decodeColMap, reorgInfo, jc)
-		go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
-		return idxWorker.backfillWorker, nil
-	case model.ReorgTypeLitMerge:
-		bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
-		if !ok {
-			return nil, errors.Trace(errors.New(ingest.LitErrGetBackendFail))
-		}
-		err := bc.EngMgr.Register(bc, job, reorgInfo.currElement.ID)
-		if err != nil {
-			return nil, errors.Trace(errors.New(ingest.LitErrCreateEngineFail))
-		}
-		idxWorker, err := newAddIndexWorkerLit(sessCtx, seq, t, decodeColMap, reorgInfo, jc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
-		return idxWorker.backfillWorker, nil
-	default:
-		return nil, fmt.Errorf("unknown reorg type %v", job.ReorgMeta.ReorgTp)
+	idxWorker, err := newAddIndexWorker(sessCtx, seq, t, decodeColMap, reorgInfo, jc, job)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+	return idxWorker.backfillWorker, nil
 }
 
 // recordIterFunc is used for low-level record iteration.

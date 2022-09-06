@@ -798,7 +798,7 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, j
 func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, BuildElements(changingCol, changingIdxs))
+	reorgInfo, err := getReorgInfoForAddIdx(d.jobContext(job), d, rh, job, tbl, BuildElements(changingCol, changingIdxs))
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -1123,7 +1123,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
-		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
+		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeUpdateColumnWorker),
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
 		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),

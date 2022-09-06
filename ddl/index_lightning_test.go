@@ -146,6 +146,7 @@ func TestAddIndexMergeProcess(t *testing.T) {
 }
 
 func TestAddPrimaryKeyMergeProcess(t *testing.T) {
+	// Disable auto schema reload.
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 0)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

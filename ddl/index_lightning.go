@@ -17,7 +17,6 @@ package ddl
 import (
 	"bytes"
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -32,10 +31,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"go.uber.org/zap"
 )
 
@@ -86,113 +83,7 @@ func importIndexDataToStore(jobID int64, indexID int64, unique bool, tbl table.T
 	return nil
 }
 
-// Below is lightning worker implementation
-type addIndexWorkerLit struct {
-	addIndexWorker
-
-	// Lightning relative variable.
-	writerCtx *ingest.WriterContext
-}
-
-func newAddIndexWorkerLit(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*addIndexWorkerLit, error) {
-	var index table.Index
-	for _, idx := range t.Indices() {
-		if idx.Meta().ID == reorgInfo.currElement.ID {
-			index = idx
-			break
-		}
-	}
-	jobID := reorgInfo.Job.ID
-	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
-	bc, _ := ingest.LitBackCtxMgr.Load(jobID)
-	ei, _ := bc.EngMgr.Load(index.Meta().ID)
-	lwCtx, err := ei.NewWriterCtx(id)
-	if err != nil {
-		return nil, err
-	}
-	// Add build opened engine process.
-	return &addIndexWorkerLit{
-		addIndexWorker: addIndexWorker{
-			baseIndexWorker: baseIndexWorker{
-				backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
-				indexes:        []table.Index{index},
-				rowDecoder:     rowDecoder,
-				defaultVals:    make([]types.Datum, len(t.WritableCols())),
-				rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-				metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_rate"),
-				sqlMode:        reorgInfo.ReorgMeta.SQLMode,
-				jobContext:     jc,
-			},
-			index: index,
-		},
-		writerCtx: lwCtx,
-	}, err
-}
-
-// BackfillDataInTxn will backfill table index by lightning.
-func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
-	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
-		if val.(bool) {
-			panic("panic test")
-		}
-	})
-	fetchTag := "AddIndexLightningFetchData" + strconv.Itoa(w.id)
-	writeTag := "AddIndexLightningWriteData" + strconv.Itoa(w.id)
-	txnTag := "AddIndexLightningBackfillDataInTxn" + strconv.Itoa(w.id)
-	// Set a big batch size to enhance performance.
-	w.batchCnt *= 16
-
-	oprStartTime := time.Now()
-	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-		taskCtx.addedCount = 0
-		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
-		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
-			txn.SetOption(kv.ResourceGroupTagger, tagger)
-		}
-
-		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
-		logSlowOperations(time.Since(oprStartTime), fetchTag, 1000)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		taskCtx.nextKey = nextKey
-		taskCtx.done = taskDone
-
-		err = w.batchCheckUniqueKey(txn, idxRecords)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		for _, idxRecord := range idxRecords {
-			taskCtx.scanCount++
-			// The index is already exists, we skip it, no needs to backfill it.
-			// The following update, delete, insert on these rows, TiDB can handle it correctly.
-			if idxRecord.skip {
-				continue
-			}
-
-			// Create the index.
-			key, idxVal, _, err := w.index.Create4SST(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// Currently, only use one kVCache, later may use multi kvCache to parallel compute/io performance.
-			err = w.writerCtx.WriteRow(key, idxVal)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			taskCtx.addedCount++
-		}
-		logSlowOperations(time.Since(oprStartTime), writeTag, 1000)
-		return nil
-	})
-	logSlowOperations(time.Since(oprStartTime), txnTag, 3000)
-	return
-}
-
-func (w *backFillIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxRecords []*temporaryIndexRecord) error {
+func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxRecords []*temporaryIndexRecord) error {
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
 		// non-unique key need not to check, just overwrite it,
@@ -257,7 +148,7 @@ type temporaryIndexRecord struct {
 	unique bool
 	keyVer []byte
 }
-type backFillIndexWorker struct {
+type mergeIndexWorker struct {
 	*backfillWorker
 
 	index table.Index
@@ -273,21 +164,20 @@ type backFillIndexWorker struct {
 	firstVal           []byte
 }
 
-func newTempIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo, jc *JobContext) *backFillIndexWorker {
+func newMergeTempIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo, jc *JobContext) *mergeIndexWorker {
 	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, reorgInfo.currElement.ID)
 
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 
-	// Add build openengine process.
-	return &backFillIndexWorker{
-		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
+	return &mergeIndexWorker{
+		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeAddIndexMergeTmpWorker),
 		index:          index,
 		jobContext:     jc,
 	}
 }
 
 // BackfillDataInTxn merge temp index data in txn.
-func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
@@ -377,7 +267,7 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 	return
 }
 
-func (w *backFillIndexWorker) AddMetricInfo(cnt float64) {
+func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
 }
 
 // mergeTempIndex handles the merge temp index state for a table.
@@ -390,7 +280,7 @@ func (w *worker) mergeTempIndex(t table.Table, idx *model.IndexInfo, reorgInfo *
 			if p == nil {
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			err = w.addPhysicalTempIndex(p, reorgInfo)
+			err = w.mergePhysicalTempIndex(p, reorgInfo)
 			if err != nil {
 				break
 			}
@@ -400,7 +290,7 @@ func (w *worker) mergeTempIndex(t table.Table, idx *model.IndexInfo, reorgInfo *
 			}
 		}
 	} else {
-		err = w.addPhysicalTempIndex(t.(table.PhysicalTable), reorgInfo)
+		err = w.mergePhysicalTempIndex(t.(table.PhysicalTable), reorgInfo)
 	}
 	return errors.Trace(err)
 }
@@ -437,12 +327,12 @@ func (w *worker) updateMergeInfo(t table.PartitionedTable, idxID int64, reorg *r
 	return false, errors.Trace(err)
 }
 
-func (w *worker) addPhysicalTempIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
+func (w *worker) mergePhysicalTempIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to merge temp index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 }
 
-func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
+func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
 	startTime := time.Now()
 	w.tmpIdxRecords = w.tmpIdxRecords[:0]
 	w.batchCheckTmpKeys = w.batchCheckTmpKeys[:0]
@@ -468,7 +358,6 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 
 			isDelete := false
 			unique := false
-			skip := false
 			var keyVer []byte
 			length := len(rawValue)
 			keyVer = append(keyVer, rawValue[length-1:]...)
@@ -489,7 +378,7 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 			var convertedIndexKey []byte
 			convertedIndexKey = append(convertedIndexKey, indexKey...)
 			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, convertedIndexKey)
-			idxRecord := &temporaryIndexRecord{key: convertedIndexKey, delete: isDelete, unique: unique, keyVer: keyVer, skip: skip}
+			idxRecord := &temporaryIndexRecord{key: convertedIndexKey, delete: isDelete, unique: unique, keyVer: keyVer, skip: false}
 			if !isDelete {
 				idxRecord.vals = rawValue
 			}

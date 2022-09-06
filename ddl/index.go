@@ -819,7 +819,7 @@ func runReorgJobAndHandleAddIndexErr(w *worker, d *ddlCtx, t *meta.Meta, job *mo
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
+	reorgInfo, err := getReorgInfoForAddIdx(d.jobContext(job), d, rh, job, tbl, elements)
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
@@ -856,7 +856,7 @@ func runReorgJobAndHandleMergeIndexErr(w *worker, d *ddlCtx, t *meta.Meta, job *
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	reorgInfo, err := getMergeReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, indexInfo.ID)
+	reorgInfo, err := getReorgInfoForMergeIdx(d.jobContext(job), d, rh, job, tbl, elements)
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
@@ -866,23 +866,26 @@ func runReorgJobAndHandleMergeIndexErr(w *worker, d *ddlCtx, t *meta.Meta, job *
 		return false, ver, nil
 	}
 	logutil.BgLogger().Info("Lightning start merge the increment part of adding index")
-	err = w.runMergeJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onMergeIndex",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("merge table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
 			}, false)
 		return w.mergeTempIndex(tbl, indexInfo, reorgInfo)
 	})
-	if dbterror.ErrWaitReorgTimeout.Equal(err) {
-		// if timeout, we should return, check for the owner and re-wait job done.
-		return false, ver, nil
-	}
-	if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
-		logutil.BgLogger().Warn("[ddl] run merge index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
-		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-			logutil.BgLogger().Warn("[ddl] run merge index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
+	if err != nil {
+		if dbterror.ErrWaitReorgTimeout.Equal(err) {
+			// if timeout, we should return, check for the owner and re-wait job done.
+			return false, ver, nil
 		}
+		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
+			logutil.BgLogger().Warn("[ddl] run merge index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+				logutil.BgLogger().Warn("[ddl] run merge index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
+			}
+		}
+		return false, ver, errors.Trace(err)
 	}
 	logutil.BgLogger().Info("finished merge the incremental part of adding index")
 	return true, ver, nil
@@ -1179,13 +1182,15 @@ type addIndexWorker struct {
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
+	writerCtx          *ingest.WriterContext
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column,
+	reorgInfo *reorgInfo, jc *JobContext, job *model.Job) (*addIndexWorker, error) {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
 		logutil.BgLogger().Error("Element type for addIndexWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
 			zap.String("reorgInfo", reorgInfo.String()))
-		return nil
+		return nil, errors.Errorf("element type is not index, typeKey: %v", reorgInfo.currElement.TypeKey)
 	}
 	var indexInfo *model.IndexInfo
 	for _, idx := range t.Indices() {
@@ -1196,9 +1201,26 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 	}
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
+
+	var lwCtx *ingest.WriterContext
+	if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
+		if !ok {
+			return nil, errors.Trace(errors.New(ingest.LitErrGetBackendFail))
+		}
+		ei, err := bc.EngMgr.Register(bc, job, reorgInfo.currElement.ID)
+		if err != nil {
+			return nil, errors.Trace(errors.New(ingest.LitErrCreateEngineFail))
+		}
+		lwCtx, err = ei.NewWriterCtx(id)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
+			backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeAddIndexWorker),
 			indexes:        []table.Index{index},
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
@@ -1207,8 +1229,9 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
 			jobContext:     jc,
 		},
-		index: index,
-	}
+		index:     index,
+		writerCtx: lwCtx,
+	}, nil
 }
 
 func (w *baseIndexWorker) AddMetricInfo(cnt float64) {
@@ -1457,6 +1480,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			panic("panic test")
 		}
 	})
+	needMerge := w.index.Meta().BackfillState != model.BackfillStateInapplicable
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
@@ -1489,8 +1513,8 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			}
 
 			// When the backfill-merge process is used, the writes from DML are redirected to a temp index.
-			// Thus, the lock is unnecessary.
-			if w.index.Meta().BackfillState == model.BackfillStateInapplicable {
+			// The write-conflict will be handled by the merge worker. Thus, the locks are unnecessary.
+			if !needMerge {
 				// We need to add this lock to make sure pessimistic transaction can realize this operation.
 				// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
 				err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
@@ -1499,16 +1523,23 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 				}
 			}
 
-			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData,
-				table.WithIgnoreAssertion, table.FromBackfill)
-			if err != nil {
-				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
-					// Index already exists, skip it.
-					continue
+			if w.writerCtx == nil { // The lightning environment is not set.
+				handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData,
+					table.WithIgnoreAssertion, table.FromBackfill)
+				if err != nil {
+					if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
+						// Index already exists, skip it.
+						continue
+					}
+					return errors.Trace(err)
 				}
-
-				return errors.Trace(err)
+			} else { // The lightning environment is ready.
+				key, idxVal, _, err := w.index.Create4SST(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				// Currently, only use one kVCache, later may use multi kvCache to parallel compute/io performance.
+				err = w.writerCtx.WriteRow(key, idxVal)
 			}
 			taskCtx.addedCount++
 		}
@@ -1664,7 +1695,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
+			backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeCleanUpIndexWorker),
 			indexes:        indexes,
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
