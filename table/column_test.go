@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -244,7 +243,7 @@ func TestGetZeroValue(t *testing.T) {
 		},
 		{
 			types.NewFieldType(mysql.TypeJSON),
-			types.NewDatum(json.CreateBinary(nil)),
+			types.NewDatum(types.CreateBinaryJSON(nil)),
 		},
 	}
 	sc := new(stmtctx.StatementContext)
