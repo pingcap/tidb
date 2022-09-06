@@ -104,7 +104,6 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		require.NoError(t, err)
 		sm := testkit.MockSessionManager{}
 		dom.InfoSyncer().SetSessionManager(&sm)
-		sm.Dom = dom
 		tk := testkit.NewTestKit(t, store)
 		// set it to default value.
 		tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", variable.DefInnodbLockWaitTimeout))
@@ -120,7 +119,6 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		dom, err = session.BootstrapSession(store)
 		sm := testkit.MockSessionManager{}
 		dom.InfoSyncer().SetSessionManager(&sm)
-		sm.Dom = dom
 		require.NoError(t, err)
 	}
 

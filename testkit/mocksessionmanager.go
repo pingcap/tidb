@@ -18,7 +18,6 @@ import (
 	"crypto/tls"
 	"sync"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/util"
@@ -29,7 +28,6 @@ type MockSessionManager struct {
 	PS      []*util.ProcessInfo
 	SerID   uint64
 	TxnInfo []*txninfo.TxnInfo
-	Dom     *domain.Domain
 	conn    map[uint64]session.Session
 	mu      sync.Mutex
 }

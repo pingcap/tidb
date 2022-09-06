@@ -63,7 +63,6 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	dom := bootstrap(t, store, 500*time.Millisecond)
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
-	sm.Dom = dom
 	return schematracker.UnwrapStorage(store), dom
 }
 
@@ -96,6 +95,5 @@ func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, 
 	dom := bootstrap(t, store, lease)
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
-	sm.Dom = dom
 	return schematracker.UnwrapStorage(store), dom
 }
