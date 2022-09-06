@@ -374,9 +374,9 @@ func waitTaskResults(workers []*backfillWorker, taskCnt int,
 	return nextKey, addedCount, errors.Trace(firstErr)
 }
 
-// deliveryTasksAndResults sends tasks to workers, and waits for all the running workers to return results,
+// sendTasksAndWait sends tasks to workers, and waits for all the running workers to return results,
 // there are taskCnt running workers.
-func (dc *ddlCtx) deliveryTasksAndResults(sessPool *sessionPool, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*backfillWorker, batchTasks []*reorgBackfillTask) error {
+func (dc *ddlCtx) sendTasksAndWait(sessPool *sessionPool, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*backfillWorker, batchTasks []*reorgBackfillTask) error {
 	for i, task := range batchTasks {
 		workers[i].taskCh <- task
 	}
@@ -484,7 +484,7 @@ func (dc *ddlCtx) handleRangeTasks(sessPool *sessionPool, t table.Table, workers
 	}
 
 	// Wait tasks finish.
-	err := dc.deliveryTasksAndResults(sessPool, reorgInfo, totalAddedCount, workers, batchTasks)
+	err := dc.sendTasksAndWait(sessPool, reorgInfo, totalAddedCount, workers, batchTasks)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -509,7 +509,6 @@ var (
 
 func loadDDLReorgVars(ctx context.Context, sessPool *sessionPool) error {
 	// Get sessionctx from context resource pool.
-	var sCtx sessionctx.Context
 	sCtx, err := sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
