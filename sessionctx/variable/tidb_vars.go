@@ -1077,7 +1077,7 @@ var (
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
-	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
+	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 )
 
 var (
