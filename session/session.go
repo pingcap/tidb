@@ -234,8 +234,8 @@ type session struct {
 
 	store kv.Storage
 
-	preparedPlanCache *kvcache.SimpleLRUCache
-	generalPlanCache  *kvcache.SimpleLRUCache
+	preparedPlanCache sessionctx.PlanCache
+	generalPlanCache  sessionctx.PlanCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -434,14 +434,15 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache {
+func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
 	if isGeneralPlanCache { // use the general plan cache
 		if !s.GetSessionVars().EnableGeneralPlanCache {
 			return nil
 		}
 		if s.generalPlanCache == nil { // lazy construction
-			s.generalPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+			s.generalPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
+				plannercore.PickPlanFromBucket)
 		}
 		return s.generalPlanCache
 	}
@@ -451,8 +452,9 @@ func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache 
 		return nil
 	}
 	if s.preparedPlanCache == nil { // lazy construction
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
+			plannercore.PickPlanFromBucket)
 	}
 	return s.preparedPlanCache
 }
@@ -2016,7 +2018,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	})
 
-	stmtLabel := executor.GetStmtLabel(stmtNode)
+	stmtLabel := ast.GetStmtLabel(stmtNode)
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -2545,7 +2547,7 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 
 // Opt describes the option for creating session
 type Opt struct {
-	PreparedPlanCache *kvcache.SimpleLRUCache
+	PreparedPlanCache sessionctx.PlanCache
 }
 
 // CreateSession4TestWithOpt creates a new session environment for test.
@@ -2801,6 +2803,8 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
+	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
+	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
