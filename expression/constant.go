@@ -459,6 +459,6 @@ func (c *Constant) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyConstantSize + c.Value.MemUsage() + int64(cap(c.hashcode))
+	sum = emptyConstantSize + c.RetType.MemoryUsage() + c.Value.MemUsage() + int64(cap(c.hashcode))
 	return
 }

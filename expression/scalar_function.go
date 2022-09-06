@@ -600,8 +600,7 @@ func (sf *ScalarFunction) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyScalarFunctionSize +
-		int64(len(sf.FuncName.L)+len(sf.FuncName.O)) +
+	sum = emptyScalarFunctionSize + int64(len(sf.FuncName.L)+len(sf.FuncName.O)) + sf.RetType.MemoryUsage() +
 		int64(cap(sf.hashcode))
 	if sf.Function == nil {
 		sum += sf.Function.MemoryUsage()
