@@ -710,11 +710,11 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
 			}
 			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()))
-			ranges, reachQuota, err := points2Ranges(d.sctx, points, newTpSlice[0], d.rangeMemQuota)
+			ranges, rangeFallback, err := points2Ranges(d.sctx, points, newTpSlice[0], d.rangeMemQuota)
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)
 			}
-			if reachQuota {
+			if rangeFallback {
 				return FullRange(), nil, nil, true, nil
 			}
 			totalRanges = append(totalRanges, ranges...)

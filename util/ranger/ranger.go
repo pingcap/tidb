@@ -265,11 +265,14 @@ func appendPoints2IndexRange(sctx sessionctx.Context, origin *Range, rangePoints
 	return newRanges, nil
 }
 
-func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges) Ranges {
+// appendRanges2PointRanges appends additional ranges to point ranges.
+// When rangeMemQuota is 0, there is no memory limit for building ranges.
+// If the second return value is true, it means that the memory usage of ranges exceeds rangeMemQuota and it rejects appending additional ranges to point ranges.
+func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMemQuota int64) (Ranges, bool) {
 	if len(ranges) == 0 {
-		return pointRanges
+		return pointRanges, false
 	}
-	newRanges := make(Ranges, 0, len(pointRanges)*len(ranges))
+	newRanges := make(Ranges, 0, len(ranges))
 	for _, pointRange := range pointRanges {
 		for _, r := range ranges {
 			lowVal := append(pointRange.LowVal, r.LowVal...)
@@ -285,7 +288,7 @@ func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges) Ranges {
 			newRanges = append(newRanges, newRange)
 		}
 	}
-	return newRanges
+	return newRanges, false
 }
 
 // points2TableRanges build ranges for table scan from range points.
@@ -359,20 +362,20 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		}
 	}
 	var (
-		ranges     Ranges
-		reachQuota bool
-		err        error
+		ranges        Ranges
+		rangeFallback bool
+		err           error
 	)
 	newTp := newFieldType(tp)
 	if tableRange {
-		ranges, reachQuota, err = points2TableRanges(sctx, rangePoints, newTp, rangeMemQuota)
+		ranges, rangeFallback, err = points2TableRanges(sctx, rangePoints, newTp, rangeMemQuota)
 	} else {
-		ranges, reachQuota, err = points2Ranges(sctx, rangePoints, newTp, rangeMemQuota)
+		ranges, rangeFallback, err = points2Ranges(sctx, rangePoints, newTp, rangeMemQuota)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	if reachQuota {
+	if rangeFallback {
 		return FullRange(), nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
@@ -417,9 +420,9 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	// TODO: handle prefix when building ranges
 	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	var (
-		ranges     Ranges
-		reachQuota bool
-		err        error
+		ranges        Ranges
+		rangeFallback bool
+		err           error
 	)
 	lastRanges := FullRange()
 	for i := 0; i < eqAndInCount; i++ {
@@ -429,15 +432,15 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
 		if i == 0 {
-			ranges, reachQuota, err = points2Ranges(d.sctx, point, newTp[i], d.rangeMemQuota)
+			ranges, rangeFallback, err = points2Ranges(d.sctx, point, newTp[i], d.rangeMemQuota)
 		} else {
-			ranges, reachQuota, err = appendPoints2Ranges(d.sctx, ranges, point, newTp[i], d.rangeMemQuota)
+			ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, point, newTp[i], d.rangeMemQuota)
 		}
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
-		if reachQuota {
-			d.reachRangeMemQuota = true
+		if rangeFallback {
+			d.sctx.GetSessionVars().StmtCtx.RangeFallbackUnderMemQuota = true
 			return ranges, accessConds[:i], accessConds[i:], nil
 		}
 	}
@@ -451,15 +454,15 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		}
 	}
 	if eqAndInCount == 0 {
-		ranges, reachQuota, err = points2Ranges(d.sctx, rangePoints, newTp[0], d.rangeMemQuota)
+		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, newTp[0], d.rangeMemQuota)
 	} else if eqAndInCount < len(accessConds) {
-		ranges, reachQuota, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, newTp[eqAndInCount], d.rangeMemQuota)
+		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, newTp[eqAndInCount], d.rangeMemQuota)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	if reachQuota {
-		d.reachRangeMemQuota = true
+	if rangeFallback {
+		d.sctx.GetSessionVars().StmtCtx.RangeFallbackUnderMemQuota = true
 		return lastRanges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
 	}
 	return ranges, accessConds, nil, nil

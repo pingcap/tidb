@@ -2244,7 +2244,7 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[NULL,+inf]]")
 
 	// test DNF condition
-	sql = "select * from t1 where a = 'aaa' or a = 'bbb' or a = 'ccc'"
+	sql = "select * from t2 where a = 'aaa' or a = 'bbb' or a = 'ccc'"
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
@@ -2252,30 +2252,30 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
-		"[or(eq(test.t1.a, aaa), or(eq(test.t1.a, bbb), eq(test.t1.a, ccc)))]",
-		"[or(eq(test.t1.a, aaa), or(eq(test.t1.a, bbb), eq(test.t1.a, ccc)))]",
+		"[or(eq(test.t2.a, aaa), or(eq(test.t2.a, bbb), eq(test.t2.a, ccc)))]",
+		"[or(or(eq(test.t2.a, aaa), eq(test.t2.a, bbb)), eq(test.t2.a, ccc))]",
 		"[[\"aa\",\"aa\"] [\"bb\",\"bb\"] [\"cc\",\"cc\"]]")
-	//quota = res.Ranges.MemUsage() - 1
-	//res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
-	//checkDetachRangeResult(t, res,
-	//	"[]",
-	//	"[or(or(eq(test.t1.a, 10), eq(test.t1.a, 20)), eq(test.t1.a, 30))]",
-	//	"[[NULL,+inf]]")
-	//sql = "select * from t1 where (a = 10 and b = 40) or (a = 20 and b = 50) or (a = 30 and b = 60)"
-	//selection = getSelectionFromQuery(t, sctx, sql)
-	//conds = selection.Conditions
-	//require.Equal(t, 1, len(conds))
-	//cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	//res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
-	//require.NoError(t, err)
-	//checkDetachRangeResult(t, res,
-	//	"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), or(and(eq(test.t1.a, 20), eq(test.t1.b, 50)), and(eq(test.t1.a, 30), eq(test.t1.b, 60))))]",
-	//	"[]",
-	//	"[[10 40,10 40] [20 50,20 50] [30 60,30 60]]")
-	//quota = res.Ranges.MemUsage() - 1
-	//res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
-	//checkDetachRangeResult(t, res,
-	//	"[]",
-	//	"[or(or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), and(eq(test.t1.a, 20), eq(test.t1.b, 50))), and(eq(test.t1.a, 30), eq(test.t1.b, 60)))]",
-	//	"[[NULL,+inf]]")
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[or(or(eq(test.t2.a, aaa), eq(test.t2.a, bbb)), eq(test.t2.a, ccc))]",
+		"[[NULL,+inf]]")
+	sql = "select * from t2 where (a = 'aaa' and b = 'ddd') or (a = 'bbb' and b = 'eee') or (a = 'ccc' and b = 'fff')"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 1, len(conds))
+	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), or(and(eq(test.t2.a, bbb), eq(test.t2.b, eee)), and(eq(test.t2.a, ccc), eq(test.t2.b, fff))))]",
+		"[or(or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), and(eq(test.t2.a, bbb), eq(test.t2.b, eee))), and(eq(test.t2.a, ccc), eq(test.t2.b, fff)))]",
+		"[[\"aa\" \"dd\",\"aa\" \"dd\"] [\"bb\" \"ee\",\"bb\" \"ee\"] [\"cc\" \"ff\",\"cc\" \"ff\"]]")
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[or(or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), and(eq(test.t2.a, bbb), eq(test.t2.b, eee))), and(eq(test.t2.a, ccc), eq(test.t2.b, fff)))]",
+		"[[NULL,+inf]]")
 }

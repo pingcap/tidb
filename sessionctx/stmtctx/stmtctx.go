@@ -316,6 +316,9 @@ type StatementContext struct {
 	StatsLoadStatus map[model.TableItemID]string
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
+
+	// RangeFallbackUnderMemQuota indicates that building accurate ranges exceeds the memory quota so it falls back to more inaccurate ranges such as full range.
+	RangeFallbackUnderMemQuota bool
 }
 
 // StmtHints are SessionVars related sql hints.
