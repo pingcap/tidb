@@ -409,7 +409,7 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		lockCtx.LockIfExists = lockExistedKey
+		lockCtx.LockOnlyIfExists = lockExistedKey
 		lockCtx.InitReturnValues(1)
 		err = doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
