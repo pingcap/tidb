@@ -217,6 +217,27 @@ func TestTableUnexpectedError(t *testing.T) {
 	}
 }
 
+func TestMissingTableSchema(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
+	s.cfg.Mydumper.CharacterSet = "auto"
+
+	s.touch(t, "db.tbl.csv")
+
+	ctx := context.Background()
+	store, err := storage.NewLocalStorage(s.sourceDir)
+	require.NoError(t, err)
+
+	loader, err := md.NewMyDumpLoader(ctx, s.cfg)
+	require.NoError(t, err)
+	for _, dbMeta := range loader.GetDatabases() {
+		for _, tblMeta := range dbMeta.Tables {
+			_, err := tblMeta.GetSchema(ctx, store)
+			require.ErrorContains(t, err, "schema file is missing for the table")
+		}
+	}
+}
+
 func TestDataNoHostDB(t *testing.T) {
 	/*
 		Path/
