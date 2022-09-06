@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"sync/atomic"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -142,7 +144,13 @@ func (fkc FKCheckExec) doCheck(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return doLockKeys(ctx, fkc.ctx, lockCtx, fkc.toBeLockedKeys...)
+	// WARN: Since tidb current doesn't support `LOCK IN SHARE MODE`, therefore, performance will be very poor in concurrency cases.
+	// TODO(crazycs520):After TiDB support `LOCK IN SHARE MODE`, use `LOCK IN SHARE MODE` here.
+	err = doLockKeys(ctx, fkc.ctx, lockCtx, fkc.toBeLockedKeys...)
+	// doLockKeys may set TxnCtx.ForUpdate to 1, then if the lock meet write conflict, TiDB can't retry for update.
+	// So reset TxnCtx.ForUpdate to 0 then can be retry if meet write conflict.
+	atomic.StoreUint32(&fkc.ctx.GetSessionVars().TxnCtx.ForUpdate, 0)
+	return err
 }
 
 func (fkc FKCheckExec) buildCheckKeyFromFKValue(sc *stmtctx.StatementContext, vals []types.Datum) (key kv.Key, isPrefix bool, err error) {
