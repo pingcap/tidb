@@ -15,14 +15,14 @@
 package core_test
 
 import (
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/mysql"
 	"testing"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -262,59 +262,40 @@ func TestGeneralPlanCacheable(t *testing.T) {
 	charset := mysql.DefaultCharset
 	collation := mysql.DefaultCollationName
 
-	// select statement
-	q := "select * from t1 where a > 1 and b < 2"
-	stmt, err := p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.True(t, core.GeneralPlanCacheable(stmt, is))
+	supported := []string{
+		"select * from t where a<10",
+		"select * from t where a<13 and b<15",
+		"select * from t where b=13",
+		"select * from t where c<8",
+		"select * from t where d>8",
+		"select * from t where c=8 and d>10",
+		"select * from t where a<12 and b<13 and c<12 and d>2",
+	}
 
-	q = "select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2"
-	stmt, err = p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support hint
+	unsupported := []string{
+		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",               // hint
+		"select distinct a from t1 where a > 1 and b < 2",                                  // distinct
+		"select count(*) from t1 where a > 1 and b < 2 group by a",                         // group by
+		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
+		"select * from t1 limit 1",                                                         // limit
+		"select * from t1 order by a",                                                      // order by
+		"select * from t1, t2",                                                             // join
+		"select * from (select * from t1) t",                                               // sub-query
+		"insert into t1 values(1, 1)",                                                      // insert
+		"insert into t1(a, b) select a, b from t1",                                         // insert into select
+		"update t1 set a = 1 where b = 2",                                                  // update
+		"delete from t1 where b = 1",                                                       // delete
+	}
 
-	q = "select distinct a from t1 where a > 1 and b < 2"
-	stmt, err = p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support agg
+	for _, q := range unsupported {
+		stmt, err := p.ParseOneStmt(q, charset, collation)
+		require.NoError(t, err)
+		require.False(t, core.GeneralPlanCacheable(stmt, is))
+	}
 
-	q = "select count(*) from t1 where a > 1 and b < 2 group by a"
-	stmt, err = p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support agg
-
-	q = "select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1"
-	stmt, err = p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support agg
-
-	q = "select * from t1 limit 1"
-	stmt, err = p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support Limit
-
-	q = "select * from t1 order by a"
-	stmt, err = p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support order by
-
-	q = "select * from t1, t2"
-	stmt, err = p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support Join
-
-	q = "select * from (select * from t1) t"
-	stmt, err = p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support subquery
-
-	q = "insert into t1 values(1, 1)"
-	stmt, err = p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support insert
-
-	q = "insert into t1(a, b) select a, b from t1"
-	stmt, err = p.ParseOneStmt(q, charset, collation)
-	require.NoError(t, err)
-	require.False(t, core.GeneralPlanCacheable(stmt, is)) // Not support insert into select
+	for _, q := range supported {
+		stmt, err := p.ParseOneStmt(q, charset, collation)
+		require.NoError(t, err)
+		require.True(t, core.GeneralPlanCacheable(stmt, is))
+	}
 }
