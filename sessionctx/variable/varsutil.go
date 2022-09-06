@@ -318,6 +318,15 @@ func TidbOptInt64(opt string, defaultVal int64) int64 {
 	return val
 }
 
+// TidbOptUint64 converts a string to an uint64.
+func TidbOptUint64(opt string, defaultVal uint64) uint64 {
+	val, err := strconv.ParseUint(opt, 10, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return val
+}
+
 func tidbOptFloat64(opt string, defaultVal float64) float64 {
 	val, err := strconv.ParseFloat(opt, 64)
 	if err != nil {

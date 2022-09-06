@@ -155,6 +155,12 @@ func TestRestriction(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, err.Error(), PriviledgedErrMsg)
 
+	// can do some Admin stmts
+	_, err = s.udb.Exec("admin show ddl jobs")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("admin show slow recent 1")
+	require.NoError(t, err)
+
 	// turn off tidb_restricted_read_only does not affect tidb_super_read_only
 	setVariableNoError(t, s.db, TiDBRestrictedReadOnly, 0)
 
