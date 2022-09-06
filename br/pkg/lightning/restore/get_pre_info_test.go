@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
@@ -223,7 +224,7 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, WithIgnoreDBNotExist(true))
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 	tblStructMap, err := ig.GetAllTableStructures(ctx)
 	require.Nil(t, err)
@@ -396,7 +397,7 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 	mockTarget := mock.NewMockTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, WithIgnoreDBNotExist(true))
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 
 	mdDBMeta := mockSrc.GetAllDBFileMetas()[0]
@@ -486,7 +487,7 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 	mockTarget := mock.NewMockTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, WithIgnoreDBNotExist(true))
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 
 	sizeResult, err := ig.EstimateSourceDataSize(ctx)

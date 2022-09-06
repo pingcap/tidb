@@ -71,7 +71,6 @@ go_test(
         "//sessionctx/variable",
         "//testkit",
         "//testkit/testsetup",
-        "//testkit/testutil",
         "//util",
         "//util/hack",
         "//util/parser",

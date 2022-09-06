@@ -1023,6 +1023,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrSettingNoopVariable:           mysql.Message("setting %s has no effect in TiDB", nil),
 	ErrGettingNoopVariable:           mysql.Message("variable %s has no effect in TiDB", nil),
 	ErrCannotMigrateSession:          mysql.Message("cannot migrate the current session: %s", nil),
+	ErrLazyUniquenessCheckFailure:    mysql.Message("transaction aborted because lazy uniqueness check is enabled and an error occurred: %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
