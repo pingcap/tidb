@@ -28,6 +28,13 @@ jobs:
     steps:
       - name: 'checkout repository'
         uses: actions/checkout@v3
+        with:
+          # FIXME: the version of dumpling is getting from git
+          # if it doesn't contain a meaningful git history,
+          # the release version will be empty and the program will panic.
+          #
+          # See the `DUMPLING_LDFLAGS` in `Makefile.common` for more information
+          fetch-depth: 0
       - name: 'set up golang'
         uses: actions/setup-go@v3
         with:
