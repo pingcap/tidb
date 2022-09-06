@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package json
+package types
 
 import (
 	"bytes"
@@ -109,7 +109,7 @@ import (
 // BinaryJSON represents a binary encoded JSON object.
 // It can be randomly accessed without deserialization.
 type BinaryJSON struct {
-	TypeCode TypeCode
+	TypeCode JSONTypeCode
 	Value    []byte
 }
 
@@ -135,21 +135,21 @@ func (bj BinaryJSON) MarshalJSON() ([]byte, error) {
 
 func (bj BinaryJSON) marshalTo(buf []byte) ([]byte, error) {
 	switch bj.TypeCode {
-	case TypeCodeOpaque:
-		return marshalOpaqueTo(buf, bj.GetOpaque()), nil
-	case TypeCodeString:
-		return marshalStringTo(buf, bj.GetString()), nil
-	case TypeCodeLiteral:
-		return marshalLiteralTo(buf, bj.Value[0]), nil
-	case TypeCodeInt64:
+	case JSONTypeCodeOpaque:
+		return jsonMarshalOpaqueTo(buf, bj.GetOpaque()), nil
+	case JSONTypeCodeString:
+		return jsonMarshalStringTo(buf, bj.GetString()), nil
+	case JSONTypeCodeLiteral:
+		return jsonMarshalLiteralTo(buf, bj.Value[0]), nil
+	case JSONTypeCodeInt64:
 		return strconv.AppendInt(buf, bj.GetInt64(), 10), nil
-	case TypeCodeUint64:
+	case JSONTypeCodeUint64:
 		return strconv.AppendUint(buf, bj.GetUint64(), 10), nil
-	case TypeCodeFloat64:
+	case JSONTypeCodeFloat64:
 		return bj.marshalFloat64To(buf)
-	case TypeCodeArray:
+	case JSONTypeCodeArray:
 		return bj.marshalArrayTo(buf)
-	case TypeCodeObject:
+	case JSONTypeCodeObject:
 		return bj.marshalObjTo(buf)
 	}
 	return buf, nil
@@ -159,22 +159,22 @@ func (bj BinaryJSON) marshalTo(buf []byte) ([]byte, error) {
 func (bj BinaryJSON) IsZero() bool {
 	isZero := false
 	switch bj.TypeCode {
-	case TypeCodeString:
+	case JSONTypeCodeString:
 		isZero = false
-	case TypeCodeLiteral:
+	case JSONTypeCodeLiteral:
 		isZero = false
-	case TypeCodeInt64:
+	case JSONTypeCodeInt64:
 		isZero = bj.GetInt64() == 0
-	case TypeCodeUint64:
+	case JSONTypeCodeUint64:
 		isZero = bj.GetUint64() == 0
-	case TypeCodeFloat64:
+	case JSONTypeCodeFloat64:
 		isZero = bj.GetFloat64() == 0
-	case TypeCodeArray:
+	case JSONTypeCodeArray:
 		isZero = false
-	case TypeCodeObject:
+	case JSONTypeCodeObject:
 		isZero = false
 	// FIXME: TiDB always casts the json to double BINARY so this function will never be called.
-	case TypeCodeOpaque:
+	case JSONTypeCodeOpaque:
 		isZero = false
 	}
 	return isZero
@@ -182,12 +182,12 @@ func (bj BinaryJSON) IsZero() bool {
 
 // GetInt64 gets the int64 value.
 func (bj BinaryJSON) GetInt64() int64 {
-	return int64(endian.Uint64(bj.Value))
+	return int64(jsonEndian.Uint64(bj.Value))
 }
 
 // GetUint64 gets the uint64 value.
 func (bj BinaryJSON) GetUint64() uint64 {
-	return endian.Uint64(bj.Value)
+	return jsonEndian.Uint64(bj.Value)
 }
 
 // GetFloat64 gets the float64 value.
@@ -231,14 +231,14 @@ func (bj BinaryJSON) GetKeys() BinaryJSON {
 	count := bj.GetElemCount()
 	ret := make([]BinaryJSON, 0, count)
 	for i := 0; i < count; i++ {
-		ret = append(ret, CreateBinary(string(bj.objectGetKey(i))))
+		ret = append(ret, CreateBinaryJSON(string(bj.objectGetKey(i))))
 	}
-	return buildBinaryArray(ret)
+	return buildBinaryJSONArray(ret)
 }
 
 // GetElemCount gets the count of Object or Array.
 func (bj BinaryJSON) GetElemCount() int {
-	return int(endian.Uint32(bj.Value))
+	return int(jsonEndian.Uint32(bj.Value))
 }
 
 func (bj BinaryJSON) arrayGetElem(idx int) BinaryJSON {
@@ -246,8 +246,8 @@ func (bj BinaryJSON) arrayGetElem(idx int) BinaryJSON {
 }
 
 func (bj BinaryJSON) objectGetKey(i int) []byte {
-	keyOff := int(endian.Uint32(bj.Value[headerSize+i*keyEntrySize:]))
-	keyLen := int(endian.Uint16(bj.Value[headerSize+i*keyEntrySize+keyLenOff:]))
+	keyOff := int(jsonEndian.Uint32(bj.Value[headerSize+i*keyEntrySize:]))
+	keyLen := int(jsonEndian.Uint16(bj.Value[headerSize+i*keyEntrySize+keyLenOff:]))
 	return bj.Value[keyOff : keyOff+keyLen]
 }
 
@@ -258,22 +258,22 @@ func (bj BinaryJSON) objectGetVal(i int) BinaryJSON {
 
 func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 	tpCode := bj.Value[valEntryOff]
-	valOff := endian.Uint32(bj.Value[valEntryOff+valTypeSize:])
+	valOff := jsonEndian.Uint32(bj.Value[valEntryOff+valTypeSize:])
 	switch tpCode {
-	case TypeCodeLiteral:
-		return BinaryJSON{TypeCode: TypeCodeLiteral, Value: bj.Value[valEntryOff+valTypeSize : valEntryOff+valTypeSize+1]}
-	case TypeCodeUint64, TypeCodeInt64, TypeCodeFloat64:
+	case JSONTypeCodeLiteral:
+		return BinaryJSON{TypeCode: JSONTypeCodeLiteral, Value: bj.Value[valEntryOff+valTypeSize : valEntryOff+valTypeSize+1]}
+	case JSONTypeCodeUint64, JSONTypeCodeInt64, JSONTypeCodeFloat64:
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+8]}
-	case TypeCodeString:
+	case JSONTypeCodeString:
 		strLen, lenLen := binary.Uvarint(bj.Value[valOff:])
 		totalLen := uint32(lenLen) + uint32(strLen)
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
-	case TypeCodeOpaque:
+	case JSONTypeCodeOpaque:
 		strLen, lenLen := binary.Uvarint(bj.Value[valOff+1:])
 		totalLen := 1 + uint32(lenLen) + uint32(strLen)
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
 	}
-	dataSize := endian.Uint32(bj.Value[valOff+dataSizeOff:])
+	dataSize := jsonEndian.Uint32(bj.Value[valOff+dataSizeOff:])
 	return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+dataSize]}
 }
 
@@ -310,7 +310,7 @@ func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 }
 
 func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
-	elemCount := int(endian.Uint32(bj.Value))
+	elemCount := int(jsonEndian.Uint32(bj.Value))
 	buf = append(buf, '[')
 	for i := 0; i < elemCount; i++ {
 		if i != 0 {
@@ -326,13 +326,13 @@ func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 }
 
 func (bj BinaryJSON) marshalObjTo(buf []byte) ([]byte, error) {
-	elemCount := int(endian.Uint32(bj.Value))
+	elemCount := int(jsonEndian.Uint32(bj.Value))
 	buf = append(buf, '{')
 	for i := 0; i < elemCount; i++ {
 		if i != 0 {
 			buf = append(buf, ", "...)
 		}
-		buf = marshalStringTo(buf, bj.objectGetKey(i))
+		buf = jsonMarshalStringTo(buf, bj.objectGetKey(i))
 		buf = append(buf, ": "...)
 		var err error
 		buf, err = bj.objectGetVal(i).marshalTo(buf)
@@ -343,14 +343,14 @@ func (bj BinaryJSON) marshalObjTo(buf []byte) ([]byte, error) {
 	return append(buf, '}'), nil
 }
 
-func marshalStringTo(buf, s []byte) []byte {
+func jsonMarshalStringTo(buf, s []byte) []byte {
 	// NOTE: copied from Go standard library.
 	// NOTE: keep in sync with string above.
 	buf = append(buf, '"')
 	start := 0
 	for i := 0; i < len(s); {
 		if b := s[i]; b < utf8.RuneSelf {
-			if safeSet[b] {
+			if jsonSafeSet[b] {
 				i++
 				continue
 			}
@@ -373,7 +373,7 @@ func marshalStringTo(buf, s []byte) []byte {
 				// user-controlled strings are rendered into JSON
 				// and served to some browsers.
 				buf = append(buf, `\u00`...)
-				buf = append(buf, hexChars[b>>4], hexChars[b&0xF])
+				buf = append(buf, jsonHexChars[b>>4], jsonHexChars[b&0xF])
 			}
 			i++
 			start = i
@@ -401,7 +401,7 @@ func marshalStringTo(buf, s []byte) []byte {
 				buf = append(buf, s[start:i]...)
 			}
 			buf = append(buf, `\u202`...)
-			buf = append(buf, hexChars[c&0xF])
+			buf = append(buf, jsonHexChars[c&0xF])
 			i += size
 			start = i
 			continue
@@ -416,7 +416,7 @@ func marshalStringTo(buf, s []byte) []byte {
 }
 
 // opaque value will yield "base64:typeXX:<base64 encoded string>"
-func marshalOpaqueTo(buf []byte, opaque Opaque) []byte {
+func jsonMarshalOpaqueTo(buf []byte, opaque Opaque) []byte {
 	b64 := base64.StdEncoding.EncodeToString(opaque.Buf)
 	output := fmt.Sprintf(`"base64:type%d:%s"`, opaque.TypeCode, b64)
 
@@ -426,20 +426,20 @@ func marshalOpaqueTo(buf []byte, opaque Opaque) []byte {
 	return buf
 }
 
-func marshalLiteralTo(b []byte, litType byte) []byte {
+func jsonMarshalLiteralTo(b []byte, litType byte) []byte {
 	switch litType {
-	case LiteralFalse:
+	case JSONLiteralFalse:
 		return append(b, "false"...)
-	case LiteralTrue:
+	case JSONLiteralTrue:
 		return append(b, "true"...)
-	case LiteralNil:
+	case JSONLiteralNil:
 		return append(b, "null"...)
 	}
 	return b
 }
 
-// ParseBinaryFromString parses a json from string.
-func ParseBinaryFromString(s string) (bj BinaryJSON, err error) {
+// ParseBinaryJSONFromString parses a json from string.
+func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
 	if len(s) == 0 {
 		err = ErrInvalidJSONText.GenWithStackByArgs("The document is empty")
 		return
@@ -465,8 +465,8 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 		return errors.Trace(err)
 	}
 	buf := make([]byte, 0, len(data))
-	var typeCode TypeCode
-	typeCode, buf, err = appendBinary(buf, in)
+	var typeCode JSONTypeCode
+	typeCode, buf, err = appendBinaryJSON(buf, in)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -479,7 +479,7 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 // For example int64(3) == float64(3.0)
 func (bj BinaryJSON) HashValue(buf []byte) []byte {
 	switch bj.TypeCode {
-	case TypeCodeInt64:
+	case JSONTypeCodeInt64:
 		// Convert to a FLOAT if no precision is lost.
 		// In the future, it will be better to convert to a DECIMAL value instead
 		// See: https://github.com/pingcap/tidb/issues/9988
@@ -488,13 +488,13 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 		} else {
 			buf = append(buf, bj.Value...)
 		}
-	case TypeCodeArray:
-		elemCount := int(endian.Uint32(bj.Value))
+	case JSONTypeCodeArray:
+		elemCount := int(jsonEndian.Uint32(bj.Value))
 		for i := 0; i < elemCount; i++ {
 			buf = bj.arrayGetElem(i).HashValue(buf)
 		}
-	case TypeCodeObject:
-		elemCount := int(endian.Uint32(bj.Value))
+	case JSONTypeCodeObject:
+		elemCount := int(jsonEndian.Uint32(bj.Value))
 		for i := 0; i < elemCount; i++ {
 			buf = append(buf, bj.objectGetKey(i)...)
 			buf = bj.objectGetVal(i).HashValue(buf)
@@ -505,37 +505,37 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 	return buf
 }
 
-// CreateBinary creates a BinaryJSON from interface.
-func CreateBinary(in interface{}) BinaryJSON {
-	typeCode, buf, err := appendBinary(nil, in)
+// CreateBinaryJSON creates a BinaryJSON from interface.
+func CreateBinaryJSON(in interface{}) BinaryJSON {
+	typeCode, buf, err := appendBinaryJSON(nil, in)
 	if err != nil {
 		panic(err)
 	}
 	return BinaryJSON{TypeCode: typeCode, Value: buf}
 }
 
-func appendBinary(buf []byte, in interface{}) (TypeCode, []byte, error) {
+func appendBinaryJSON(buf []byte, in interface{}) (JSONTypeCode, []byte, error) {
 	var typeCode byte
 	var err error
 	switch x := in.(type) {
 	case nil:
-		typeCode = TypeCodeLiteral
-		buf = append(buf, LiteralNil)
+		typeCode = JSONTypeCodeLiteral
+		buf = append(buf, JSONLiteralNil)
 	case bool:
-		typeCode = TypeCodeLiteral
+		typeCode = JSONTypeCodeLiteral
 		if x {
-			buf = append(buf, LiteralTrue)
+			buf = append(buf, JSONLiteralTrue)
 		} else {
-			buf = append(buf, LiteralFalse)
+			buf = append(buf, JSONLiteralFalse)
 		}
 	case int64:
-		typeCode = TypeCodeInt64
+		typeCode = JSONTypeCodeInt64
 		buf = appendBinaryUint64(buf, uint64(x))
 	case uint64:
-		typeCode = TypeCodeUint64
+		typeCode = JSONTypeCodeUint64
 		buf = appendBinaryUint64(buf, x)
 	case float64:
-		typeCode = TypeCodeFloat64
+		typeCode = JSONTypeCodeFloat64
 		buf = appendBinaryFloat64(buf, x)
 	case json.Number:
 		typeCode, buf, err = appendBinaryNumber(buf, x)
@@ -543,25 +543,25 @@ func appendBinary(buf []byte, in interface{}) (TypeCode, []byte, error) {
 			return typeCode, nil, errors.Trace(err)
 		}
 	case string:
-		typeCode = TypeCodeString
+		typeCode = JSONTypeCodeString
 		buf = appendBinaryString(buf, x)
 	case BinaryJSON:
 		typeCode = x.TypeCode
 		buf = append(buf, x.Value...)
 	case []interface{}:
-		typeCode = TypeCodeArray
+		typeCode = JSONTypeCodeArray
 		buf, err = appendBinaryArray(buf, x)
 		if err != nil {
 			return typeCode, nil, errors.Trace(err)
 		}
 	case map[string]interface{}:
-		typeCode = TypeCodeObject
+		typeCode = JSONTypeCodeObject
 		buf, err = appendBinaryObject(buf, x)
 		if err != nil {
 			return typeCode, nil, errors.Trace(err)
 		}
 	case Opaque:
-		typeCode = TypeCodeOpaque
+		typeCode = JSONTypeCodeOpaque
 		buf = appendBinaryOpaque(buf, x)
 	default:
 		msg := fmt.Sprintf(unknownTypeErrorMsg, reflect.TypeOf(in))
@@ -585,11 +585,11 @@ func appendZero(buf []byte, length int) []byte {
 
 func appendUint32(buf []byte, v uint32) []byte {
 	var tmp [4]byte
-	endian.PutUint32(tmp[:], v)
+	jsonEndian.PutUint32(tmp[:], v)
 	return append(buf, tmp[:]...)
 }
 
-func appendBinaryNumber(buf []byte, x json.Number) (TypeCode, []byte, error) {
+func appendBinaryNumber(buf []byte, x json.Number) (JSONTypeCode, []byte, error) {
 	// The type interpretation process is as follows:
 	// - Attempt float64 if it contains Ee.
 	// - Next attempt int64
@@ -599,19 +599,19 @@ func appendBinaryNumber(buf []byte, x json.Number) (TypeCode, []byte, error) {
 	if strings.ContainsAny(string(x), "Ee.") {
 		f64, err := x.Float64()
 		if err != nil {
-			return TypeCodeFloat64, nil, errors.Trace(err)
+			return JSONTypeCodeFloat64, nil, errors.Trace(err)
 		}
-		return TypeCodeFloat64, appendBinaryFloat64(buf, f64), nil
+		return JSONTypeCodeFloat64, appendBinaryFloat64(buf, f64), nil
 	} else if val, err := x.Int64(); err == nil {
-		return TypeCodeInt64, appendBinaryUint64(buf, uint64(val)), nil
+		return JSONTypeCodeInt64, appendBinaryUint64(buf, uint64(val)), nil
 	} else if val, err := strconv.ParseUint(string(x), 10, 64); err == nil {
-		return TypeCodeUint64, appendBinaryUint64(buf, val), nil
+		return JSONTypeCodeUint64, appendBinaryUint64(buf, val), nil
 	}
 	val, err := x.Float64()
 	if err == nil {
-		return TypeCodeFloat64, appendBinaryFloat64(buf, val), nil
+		return JSONTypeCodeFloat64, appendBinaryFloat64(buf, val), nil
 	}
-	var typeCode TypeCode
+	var typeCode JSONTypeCode
 	return typeCode, nil, errors.Trace(err)
 }
 
@@ -639,14 +639,14 @@ func appendBinaryOpaque(buf []byte, v Opaque) []byte {
 func appendBinaryFloat64(buf []byte, v float64) []byte {
 	off := len(buf)
 	buf = appendZero(buf, 8)
-	endian.PutUint64(buf[off:], math.Float64bits(v))
+	jsonEndian.PutUint64(buf[off:], math.Float64bits(v))
 	return buf
 }
 
 func appendBinaryUint64(buf []byte, v uint64) []byte {
 	off := len(buf)
 	buf = appendZero(buf, 8)
-	endian.PutUint64(buf[off:], v)
+	jsonEndian.PutUint64(buf[off:], v)
 	return buf
 }
 
@@ -664,28 +664,28 @@ func appendBinaryArray(buf []byte, array []interface{}) ([]byte, error) {
 		}
 	}
 	docSize := len(buf) - docOff
-	endian.PutUint32(buf[docOff+dataSizeOff:], uint32(docSize))
+	jsonEndian.PutUint32(buf[docOff+dataSizeOff:], uint32(docSize))
 	return buf, nil
 }
 
 func appendBinaryValElem(buf []byte, docOff, valEntryOff int, val interface{}) ([]byte, error) {
-	var typeCode TypeCode
+	var typeCode JSONTypeCode
 	var err error
 	elemDocOff := len(buf)
-	typeCode, buf, err = appendBinary(buf, val)
+	typeCode, buf, err = appendBinaryJSON(buf, val)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if typeCode == TypeCodeLiteral {
+	if typeCode == JSONTypeCodeLiteral {
 		litCode := buf[elemDocOff]
 		buf = buf[:elemDocOff]
-		buf[valEntryOff] = TypeCodeLiteral
+		buf[valEntryOff] = JSONTypeCodeLiteral
 		buf[valEntryOff+1] = litCode
 		return buf, nil
 	}
 	buf[valEntryOff] = typeCode
 	valOff := elemDocOff - docOff
-	endian.PutUint32(buf[valEntryOff+1:], uint32(valOff))
+	jsonEndian.PutUint32(buf[valEntryOff+1:], uint32(valOff))
 	return buf, nil
 }
 
@@ -717,8 +717,8 @@ func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
 		if keyLen > math.MaxUint16 {
 			return nil, ErrJSONObjectKeyTooLong
 		}
-		endian.PutUint32(buf[keyEntryOff:], uint32(keyOff))
-		endian.PutUint16(buf[keyEntryOff+keyLenOff:], uint16(keyLen))
+		jsonEndian.PutUint32(buf[keyEntryOff:], uint32(keyOff))
+		jsonEndian.PutUint16(buf[keyEntryOff+keyLenOff:], uint16(keyLen))
 		buf = append(buf, field.key...)
 	}
 	for i, field := range fields {
@@ -729,6 +729,6 @@ func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
 		}
 	}
 	docSize := len(buf) - docOff
-	endian.PutUint32(buf[docOff+dataSizeOff:], uint32(docSize))
+	jsonEndian.PutUint32(buf[docOff+dataSizeOff:], uint32(docSize))
 	return buf, nil
 }
