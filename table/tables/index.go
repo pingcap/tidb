@@ -221,7 +221,11 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
 		idxVal = append(idxVal, keyVer...)
 		if lazyCheck {
-			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+			flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
+			if !vars.ConstraintCheckInPlacePessimistic && vars.TxnCtx.IsPessimistic && vars.InTxn() {
+				flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
+			}
+			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, flags...)
 		} else {
 			err = txn.GetMemBuffer().Set(key, idxVal)
 		}

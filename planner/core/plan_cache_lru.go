@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
@@ -29,7 +31,7 @@ type planCacheEntry struct {
 	PlanValue kvcache.Value
 }
 
-// LRUPlanCache is a dedicated least recently used cache, JUST use for plan cache.
+// LRUPlanCache is a dedicated least recently used cache, Only used for plan cache.
 type LRUPlanCache struct {
 	capacity uint
 	size     uint
@@ -43,14 +45,19 @@ type LRUPlanCache struct {
 	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)
 	// onEvict will be called if any eviction happened, only for test use now
 	onEvict func(kvcache.Key, kvcache.Value)
+
+	// 0 indicates no quota
+	quota uint64
+	guard float64
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(capacity uint,
-	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)) (*LRUPlanCache, error) {
+func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
+	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)) *LRUPlanCache {
 	if capacity < 1 {
-		return nil, errors.New("capacity of LRU Cache should be at least 1")
+		capacity = 100
+		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
 	return &LRUPlanCache{
 		capacity:       capacity,
@@ -58,7 +65,9 @@ func NewLRUPlanCache(capacity uint,
 		buckets:        make(map[string]map[*list.Element]struct{}, 1), //Generally one query has one plan
 		lruList:        list.New(),
 		pickFromBucket: pickFromBucket,
-	}, nil
+		quota:          quota,
+		guard:          guard,
+	}
 }
 
 // Get tries to find the corresponding value according to the given key.
@@ -103,6 +112,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	if l.size > l.capacity {
 		l.removeOldest()
 	}
+	l.memoryControl()
 }
 
 // Delete deletes the multi-values from the LRU Cache.
@@ -147,7 +157,7 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	defer l.lock.Unlock()
 
 	if capacity < 1 {
-		return errors.New("capacity of lru cache should be at least 1")
+		return errors.New("capacity of LRU cache should be at least 1")
 	}
 	l.capacity = capacity
 	for l.size > l.capacity {
@@ -172,4 +182,28 @@ func (l *LRUPlanCache) removeOldest() {
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
 	bucket := l.buckets[string(hack.String(element.Value.(*planCacheEntry).PlanKey.Hash()))]
 	delete(bucket, element)
+}
+
+// memoryControl control the memory by quota and guard
+func (l *LRUPlanCache) memoryControl() {
+	if l.quota == 0 || l.guard == 0 {
+		return
+	}
+
+	memUsed, _ := memory.InstanceMemUsed()
+	for memUsed > uint64(float64(l.quota)*(1.0-l.guard)) {
+		l.removeOldest()
+		memUsed, _ = memory.InstanceMemUsed()
+	}
+}
+
+// PickPlanFromBucket pick one plan from bucket
+func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.FieldType) (*list.Element, bool) {
+	for k := range bucket {
+		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
+		if plan.ParamTypes.CheckTypesCompatibility4PC(paramTypes) {
+			return k, true
+		}
+	}
+	return nil, false
 }

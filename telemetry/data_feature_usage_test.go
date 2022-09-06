@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	lit "github.com/pingcap/tidb/ddl/lightning"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
@@ -364,9 +363,24 @@ func TestTxnSavepointUsageInfo(t *testing.T) {
 	require.Equal(t, int64(1), txnUsage.SavepointCounter)
 }
 
+func TestLazyPessimisticUniqueCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage := telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(0), usage.LazyUniqueCheckSetCounter)
+
+	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
+	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
+	usage = telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(2), usage.LazyUniqueCheckSetCounter)
+}
+
 func TestAddIndexLightning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	lit.GlobalEnv.SetMinQuota()
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)

@@ -225,6 +225,11 @@ func GetSavepointStmtCounter() int64 {
 	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint"}))
 }
 
+// GetLazyPessimisticUniqueCheckSetCounter returns the counter of setting tidb_constraint_check_in_place_pessimistic to false.
+func GetLazyPessimisticUniqueCheckSetCounter() int64 {
+	return readCounter(LazyPessimisticUniqueCheckSetCount)
+}
+
 // AddIndexLightningUsageCounter records the usages of Add Index with Lightning solution.
 type AddIndexLightningUsageCounter struct {
 	AddIndexLightningUsed int64 `json:"add_index_lightning_used"`

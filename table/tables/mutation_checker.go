@@ -106,10 +106,6 @@ func CheckDataConsistency(
 	// 	}
 	// }
 
-	if err != nil {
-		return err
-	}
-
 	if rowInsertion.key != nil {
 		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo, t.Meta().Name.O); err != nil {
 			return errors.Trace(err)

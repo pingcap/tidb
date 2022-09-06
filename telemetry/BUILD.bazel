@@ -61,11 +61,9 @@ go_test(
     flaky = True,
     deps = [
         "//config",
-        "//ddl",
-        "//ddl/lightning",
         "//domain",
-        "//domain/infosync",
         "//kv",
+        "//parser/model",
         "//session",
         "//sessionctx",
         "//sessionctx/variable",

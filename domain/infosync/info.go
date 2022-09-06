@@ -112,6 +112,7 @@ type InfoSyncer struct {
 	modifyTime              time.Time
 	labelRuleManager        LabelRuleManager
 	placementManager        PlacementManager
+	scheduleManager         ScheduleManager
 	tiflashPlacementManager TiFlashPlacementManager
 }
 
@@ -193,6 +194,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	}
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
+	is.scheduleManager = initScheduleManager(etcdCli)
 	is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -245,6 +247,13 @@ func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManag
 	}
 	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
 	return &TiFlashPDPlacementManager{etcdCli: etcdCli}
+}
+
+func initScheduleManager(etcdCli *clientv3.Client) ScheduleManager {
+	if etcdCli == nil {
+		return &mockScheduleManager{}
+	}
+	return &PDScheduleManager{etcdCli: etcdCli}
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash
@@ -1167,4 +1176,22 @@ func DeleteInternalSession(se interface{}) {
 		return
 	}
 	sm.DeleteInternalSession(se)
+}
+
+// GetPDScheduleConfig gets the schedule information from pd
+func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.scheduleManager.GetPDScheduleConfig(ctx)
+}
+
+// SetPDScheduleConfig sets the schedule information for pd
+func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.scheduleManager.SetPDScheduleConfig(ctx, config)
 }

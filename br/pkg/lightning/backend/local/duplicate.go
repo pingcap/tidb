@@ -401,6 +401,7 @@ type DuplicateManager struct {
 	logger      log.Logger
 	concurrency int
 	hasDupe     *atomic.Bool
+	indexID     int64
 }
 
 // NewDuplicateManager creates a new DuplicateManager.
@@ -430,6 +431,7 @@ func NewDuplicateManager(
 		logger:      logger,
 		concurrency: concurrency,
 		hasDupe:     hasDupe,
+		indexID:     sessOpts.IndexID,
 	}, nil
 }
 
@@ -540,14 +542,21 @@ func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream 
 	return nil
 }
 
+// BuildDuplicateTaskForTest is only used for test.
+var BuildDuplicateTaskForTest = func(m *DuplicateManager) ([]dupTask, error) {
+	return m.buildDupTasks()
+}
+
 type dupTask struct {
 	tidbkv.KeyRange
 	tableID   int64
 	indexInfo *model.IndexInfo
-	indexID   int64 // This is only used by add index by lightning.
 }
 
 func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
+	if m.indexID != 0 {
+		return m.buildIndexDupTasks()
+	}
 	keyRanges, err := tableHandleKeyRanges(m.tbl.Meta())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -580,27 +589,27 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 	return tasks, nil
 }
 
-func (m *DuplicateManager) buildIDupTasks(indexID int64) ([]dupTask, error) {
-	var tasks []dupTask
+func (m *DuplicateManager) buildIndexDupTasks() ([]dupTask, error) {
 	for _, indexInfo := range m.tbl.Meta().Indices {
-		if indexInfo.ID != indexID {
+		if m.indexID != indexInfo.ID {
 			continue
 		}
 		keyRanges, err := tableIndexKeyRanges(m.tbl.Meta(), indexInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		tasks := make([]dupTask, 0, len(keyRanges))
 		for _, kr := range keyRanges {
 			tableID := tablecodec.DecodeTableID(kr.StartKey)
 			tasks = append(tasks, dupTask{
 				KeyRange:  kr,
 				tableID:   tableID,
 				indexInfo: indexInfo,
-				indexID:   indexID,
 			})
 		}
+		return tasks, nil
 	}
-	return tasks, nil
+	return nil, nil
 }
 
 func (m *DuplicateManager) splitLocalDupTaskByKeys(
@@ -857,40 +866,6 @@ func (m *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, imp
 				logutil.Key("startKey", task.StartKey),
 				logutil.Key("endKey", task.EndKey),
 				zap.Int64("tableID", task.tableID),
-			)
-			if task.indexInfo != nil {
-				taskLogger = taskLogger.With(
-					zap.String("indexName", task.indexInfo.Name.O),
-					zap.Int64("indexID", task.indexInfo.ID),
-				)
-			}
-			err := m.processRemoteDupTask(gCtx, task, taskLogger, importClientFactory, regionPool)
-			return errors.Trace(err)
-		})
-	}
-	return errors.Trace(g.Wait())
-}
-
-// CollectDuplicateIndexFromTiKV collects duplicates from the remote TiKV and records all duplicate row info into errorMgr.
-func (m *DuplicateManager) CollectDuplicateIndexFromTiKV(ctx context.Context, importClientFactory ImportClientFactory, indexID int64) error {
-	tasks, err := m.buildIDupTasks(indexID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	logger := m.logger
-	logger.Info("[detect-dupe] collect duplicate rows from tikv", zap.Int("tasks", len(tasks)))
-
-	taskPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv")
-	regionPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv by region")
-	g, gCtx := errgroup.WithContext(ctx)
-	for _, task := range tasks {
-		task := task
-		taskPool.ApplyOnErrorGroup(g, func() error {
-			taskLogger := logger.With(
-				logutil.Key("startKey", task.StartKey),
-				logutil.Key("endKey", task.EndKey),
-				zap.Int64("tableID", task.tableID),
-				zap.Int64("IndexID", task.indexID),
 			)
 			if task.indexInfo != nil {
 				taskLogger = taskLogger.With(
