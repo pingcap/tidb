@@ -99,7 +99,6 @@ go_test(
         "//testkit/testmain",
         "//testkit/testsetup",
         "//types",
-        "//types/json",
         "//util/chunk",
         "//util/codec",
         "//util/collate",

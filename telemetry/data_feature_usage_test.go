@@ -388,3 +388,19 @@ func TestTxnSavepointUsageInfo(t *testing.T) {
 	txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 	require.Equal(t, int64(1), txnUsage.SavepointCounter)
 }
+
+func TestLazyPessimisticUniqueCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage := telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(0), usage.LazyUniqueCheckSetCounter)
+
+	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
+	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
+	usage = telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(2), usage.LazyUniqueCheckSetCounter)
+}

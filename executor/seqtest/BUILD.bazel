@@ -36,7 +36,6 @@ go_test(
         "//testkit/testsetup",
         "//testkit/testutil",
         "//util/gcutil",
-        "//util/kvcache",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
