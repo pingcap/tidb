@@ -1,0 +1,7 @@
+FROM busybox
+
+COPY tidb-lightning /
+
+CMD []
+
+ENTRYPOINT ["/tidb-lightning"]
