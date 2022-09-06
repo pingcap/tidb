@@ -386,6 +386,7 @@ type reorgInfo struct {
 	EndKey   kv.Key
 	d        *ddlCtx
 	first    bool
+	isMerge  bool
 	// PhysicalTableID is used for partitioned table.
 	// DDL reorganize for a partitioned table will handle partitions one by one,
 	// PhysicalTableID is used to trace the current partition we are handling.
@@ -1011,5 +1012,6 @@ func getMergeReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.
 	info.PhysicalTableID = pid
 	info.currElement = element
 	info.elements = elements
+	info.isMerge = true
 	return &info, nil
 }

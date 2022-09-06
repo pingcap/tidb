@@ -146,7 +146,7 @@ func TestAddIndexMergeProcess(t *testing.T) {
 }
 
 func TestAddPrimaryKeyMergeProcess(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 0)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
@@ -154,7 +154,7 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert into t values (1, 2, 3), (4, 5, 6);")
 	// Force onCreateIndex use the backfill-merge process.
-	lightning.GlobalEnv.IsInited = false
+	ingest.LitInitialized = false
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErr error

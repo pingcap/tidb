@@ -273,7 +273,9 @@ type backFillIndexWorker struct {
 	firstVal           []byte
 }
 
-func newTempIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, jc *JobContext) *backFillIndexWorker {
+func newTempIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo, jc *JobContext) *backFillIndexWorker {
+	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, reorgInfo.currElement.ID)
+
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 
 	// Add build openengine process.
@@ -388,7 +390,7 @@ func (w *worker) mergeTempIndex(t table.Table, idx *model.IndexInfo, reorgInfo *
 			if p == nil {
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			err = w.addPhysicalTempIndex(p, idx, reorgInfo)
+			err = w.addPhysicalTempIndex(p, reorgInfo)
 			if err != nil {
 				break
 			}
@@ -398,7 +400,7 @@ func (w *worker) mergeTempIndex(t table.Table, idx *model.IndexInfo, reorgInfo *
 			}
 		}
 	} else {
-		err = w.addPhysicalTempIndex(t.(table.PhysicalTable), idx, reorgInfo)
+		err = w.addPhysicalTempIndex(t.(table.PhysicalTable), reorgInfo)
 	}
 	return errors.Trace(err)
 }
@@ -435,9 +437,9 @@ func (w *worker) updateMergeInfo(t table.PartitionedTable, idxID int64, reorg *r
 	return false, errors.Trace(err)
 }
 
-func (w *worker) addPhysicalTempIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) addPhysicalTempIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to merge temp index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writeTempIndexRecord(t, indexInfo, reorgInfo)
+	return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 }
 
 func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
