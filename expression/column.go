@@ -198,7 +198,7 @@ func (col *CorrelatedColumn) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = col.Column.MemoryUsage() + int64(unsafe.Sizeof(col.Data))
+	sum = col.Column.MemoryUsage() + col.Data.MemUsage()
 	return sum
 }
 

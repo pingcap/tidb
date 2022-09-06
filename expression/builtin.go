@@ -966,6 +966,7 @@ func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
 }
 
 const emptyBaseBuiltinFunc = int64(unsafe.Sizeof(baseBuiltinFunc{}))
+const onceSize = int64(unsafe.Sizeof(sync.Once{}))
 
 // MemoryUsage return the memory usage of baseBuiltinFunc
 func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
@@ -974,8 +975,13 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyBaseBuiltinFunc + b.bufAllocator.MemoryUsage() +
-		b.tp.MemoryUsage() + int64(unsafe.Sizeof(*b.childrenVectorizedOnce)) +
-		int64(unsafe.Sizeof(*b.childrenReversedOnce)) + int64(len(b.charset)+len(b.collation))
+		b.tp.MemoryUsage() + int64(len(b.charset)+len(b.collation))
+	if b.childrenVectorizedOnce != nil {
+		sum += onceSize
+	}
+	if b.childrenReversedOnce != nil {
+		sum += onceSize
+	}
 	for _, e := range b.args {
 		sum += e.MemoryUsage()
 	}
