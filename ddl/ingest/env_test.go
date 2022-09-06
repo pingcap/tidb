@@ -12,11 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package channel
+package ingest_test
 
-// Clear is to clear the channel
-func Clear[T any, V chan T | <-chan T](ch V) {
-	//nolint:revive,all_revive
-	for range ch {
-	}
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/ingest"
+	"github.com/stretchr/testify/require"
+)
+
+func TestGenLightningDataDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	port, iPort := "5678", uint(5678)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempDir = tmpDir
+		conf.Port = iPort
+	})
+	sPath, err := ingest.GenLightningDataDirForTest()
+	require.NoError(t, err)
+	require.Equal(t, tmpDir+"/tmp_ddl-"+port, sPath)
 }
