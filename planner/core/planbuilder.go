@@ -457,8 +457,11 @@ const (
 	rewritingScalarSubquery
 )
 
+// Hint flags listed here are used by PlanBuilder.subQueryHintFlags.
 const (
+	// HintFlagSemiJoinRewrite corresponds to HintSemiJoinRewrite.
 	HintFlagSemiJoinRewrite uint64 = 1 << iota
+	// HintFlagNoDecorrelate corresponds to HintNoDecorrelate.
 	HintFlagNoDecorrelate
 )
 
