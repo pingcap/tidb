@@ -3139,7 +3139,7 @@ func TestPessimisticLockOnPartition(t *testing.T) {
 	<-ch // wait for goroutine to quit.
 }
 
-func TestInsertNotLock(t *testing.T) {
+func TestLazyUniquenessCheckForSimpleInserts(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -3174,7 +3174,7 @@ func TestInsertNotLock(t *testing.T) {
 	tk.MustExec("admin check table t2")
 }
 
-func TestDeferConstraintCheck(t *testing.T) {
+func TestLazyUniquenessCheck(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -3218,6 +3218,24 @@ func TestDeferConstraintCheck(t *testing.T) {
 	require.Contains(t, err.Error(), "Duplicate entry '1' for key 'i1'")
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
+
+	// case: a modification of a lazy-checked key will compensate the lock
+	tk.MustExec("truncate table t2")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t2 values (1, 1)") // skip lock
+	tk.MustExec("update t2 set uk = uk + 1")    // compensate the lock
+	ch := make(chan error, 1)
+	tk2.MustExec("begin pessimistic")
+	go func() {
+		tk2.MustExec("update t2 set uk = uk + 10 where id = 1") // should block, and read (1, 2), write (1, 12)
+		ch <- tk2.ExecToErr("commit")
+	}()
+	time.Sleep(500 * time.Millisecond)
+	tk.MustExec("commit")
+	err = <-ch
+	require.NoError(t, err)
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
+	tk.MustExec("admin check table t")
 
 	// case: conflict check failure
 	tk.MustExec("create table t3 (id int primary key, sk int, key i1(sk))")
@@ -3325,7 +3343,7 @@ func TestLazyUniquenessCheckForInsertIgnore(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
 
-func TestLazyUpdateWithConcurrentInsert(t *testing.T) {
+func TestLazyUniquenessCheckWithStatementRetry(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -3340,20 +3358,26 @@ func TestLazyUpdateWithConcurrentInsert(t *testing.T) {
 		tk.MustExec("set @@tidb_txn_assertion_level=off")
 	}
 
-	// case: update unique key, but conflict with concurrent write, in DML
-	tk.MustExec("truncate table t5")
+	// case: update unique key using point-get, but conflict with concurrent write, return error in DML
 	tk.MustExec("insert into t5 values (1, 1)")
 	tk.MustExec("begin pessimistic")
-	println("after begin")
-	// tk.MustExec("update t5 set uk = 3 where id = 1") // should skip lock uk=3
 	tk.MustExec("insert into t5 values (3, 3)") // skip handle=3, uk=3
-	println("after first update")
 	tk2.MustExec("insert into t5 values (2, 3)")
-	println("after insert")
-	err := tk.ExecToErr("update t5 set id = 10 where uk = 3") // write conflict -> unset PresumeKNE -> retry -> lock without PresumeKNE
+	err := tk.ExecToErr("update t5 set id = 10 where uk = 3") // write conflict -> unset PresumeKNE -> retry
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Duplicate entry '3' for key 'i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
-	println("after second update")
+	tk.MustExec("admin check table t5")
+
+	// case: update, but conflict with concurrent write, return error in DML
+	tk.MustExec("truncate table t5")
+	tk.MustExec("insert into t5 values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t5 values (3, 3)") // skip handle=3, uk=3
+	tk2.MustExec("insert into t5 values (2, 3)")
+	err = tk.ExecToErr("update t5 set id = id + 10") // write conflict -> unset PresumeKNE -> retry
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Duplicate entry '3' for key 'i1'")
+	require.False(t, tk.Session().GetSessionVars().InTxn())
 	tk.MustExec("admin check table t5")
 }
