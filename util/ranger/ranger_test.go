@@ -2121,6 +2121,11 @@ func checkDetachRangeResult(t *testing.T, res *ranger.DetachRangeResult, expecte
 
 }
 
+func checkRangeFallbackAndReset(t *testing.T, sctx sessionctx.Context, expectedRangeFallback bool) {
+	require.Equal(t, expectedRangeFallback, sctx.GetSessionVars().StmtCtx.RangeFallbackUnderMemQuota)
+	sctx.GetSessionVars().StmtCtx.RangeFallbackUnderMemQuota = false
+}
+
 func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2144,6 +2149,7 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[in(test.t1.a, 10, 20, 30) in(test.t1.b, 40, 50, 60) ge(test.t1.c, 70) le(test.t1.c, 80)]",
 		"[]",
 		"[[10 40 70,10 40 80] [10 50 70,10 50 80] [10 60 70,10 60 80] [20 40 70,20 40 80] [20 50 70,20 50 80] [20 60 70,20 60 80] [30 40 70,30 40 80] [30 50 70,30 50 80] [30 60 70,30 60 80]]")
+	checkRangeFallbackAndReset(t, sctx, false)
 	quota := res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
@@ -2151,6 +2157,7 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[in(test.t1.a, 10, 20, 30) in(test.t1.b, 40, 50, 60)]",
 		"[ge(test.t1.c, 70) le(test.t1.c, 80)]",
 		"[[10 40,10 40] [10 50,10 50] [10 60,10 60] [20 40,20 40] [20 50,20 50] [20 60,20 60] [30 40,30 40] [30 50,30 50] [30 60,30 60]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
@@ -2158,6 +2165,7 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[in(test.t1.a, 10, 20, 30)]",
 		"[in(test.t1.b, 40, 50, 60) ge(test.t1.c, 70) le(test.t1.c, 80)]",
 		"[[10,10] [20,20] [30,30]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
@@ -2165,6 +2173,7 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[]",
 		"[ge(test.t1.c, 70) le(test.t1.c, 80) in(test.t1.b, 40, 50, 60) in(test.t1.a, 10, 20, 30)]",
 		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 
 	// test DNF condition
 	sql = "select * from t1 where a = 10 or a = 20 or a = 30"
@@ -2178,12 +2187,14 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[or(eq(test.t1.a, 10), or(eq(test.t1.a, 20), eq(test.t1.a, 30)))]",
 		"[]",
 		"[[10,10] [20,20] [30,30]]")
+	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
 	checkDetachRangeResult(t, res,
 		"[]",
 		"[or(or(eq(test.t1.a, 10), eq(test.t1.a, 20)), eq(test.t1.a, 30))]",
 		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 	sql = "select * from t1 where (a = 10 and b = 40) or (a = 20 and b = 50) or (a = 30 and b = 60)"
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
@@ -2195,12 +2206,14 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), or(and(eq(test.t1.a, 20), eq(test.t1.b, 50)), and(eq(test.t1.a, 30), eq(test.t1.b, 60))))]",
 		"[]",
 		"[[10 40,10 40] [20 50,20 50] [30 60,30 60]]")
+	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
 	checkDetachRangeResult(t, res,
 		"[]",
 		"[or(or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), and(eq(test.t1.a, 20), eq(test.t1.b, 50))), and(eq(test.t1.a, 30), eq(test.t1.b, 60)))]",
 		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 
 	// test prefix index
 	tk.MustExec("drop table if exists t2")
@@ -2221,6 +2234,7 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff) ge(test.t2.c, ggg) le(test.t2.c, iii)]",
 		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff) ge(test.t2.c, ggg) le(test.t2.c, iii)]",
 		"[[\"aa\" \"dd\" \"gg\",\"aa\" \"dd\" \"ii\"] [\"aa\" \"ee\" \"gg\",\"aa\" \"ee\" \"ii\"] [\"aa\" \"ff\" \"gg\",\"aa\" \"ff\" \"ii\"] [\"bb\" \"dd\" \"gg\",\"bb\" \"dd\" \"ii\"] [\"bb\" \"ee\" \"gg\",\"bb\" \"ee\" \"ii\"] [\"bb\" \"ff\" \"gg\",\"bb\" \"ff\" \"ii\"] [\"cc\" \"dd\" \"gg\",\"cc\" \"dd\" \"ii\"] [\"cc\" \"ee\" \"gg\",\"cc\" \"ee\" \"ii\"] [\"cc\" \"ff\" \"gg\",\"cc\" \"ff\" \"ii\"]]")
+	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
@@ -2228,6 +2242,7 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff)]",
 		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff) ge(test.t2.c, ggg) le(test.t2.c, iii)]",
 		"[[\"aa\" \"dd\",\"aa\" \"dd\"] [\"aa\" \"ee\",\"aa\" \"ee\"] [\"aa\" \"ff\",\"aa\" \"ff\"] [\"bb\" \"dd\",\"bb\" \"dd\"] [\"bb\" \"ee\",\"bb\" \"ee\"] [\"bb\" \"ff\",\"bb\" \"ff\"] [\"cc\" \"dd\",\"cc\" \"dd\"] [\"cc\" \"ee\",\"cc\" \"ee\"] [\"cc\" \"ff\",\"cc\" \"ff\"]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
@@ -2235,6 +2250,7 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[in(test.t2.a, aaa, bbb, ccc)]",
 		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff) ge(test.t2.c, ggg) le(test.t2.c, iii)]",
 		"[[\"aa\",\"aa\"] [\"bb\",\"bb\"] [\"cc\",\"cc\"]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
@@ -2242,6 +2258,7 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[]",
 		"[ge(test.t2.c, ggg) le(test.t2.c, iii) in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff)]",
 		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 
 	// test DNF condition
 	sql = "select * from t2 where a = 'aaa' or a = 'bbb' or a = 'ccc'"
@@ -2255,12 +2272,14 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[or(eq(test.t2.a, aaa), or(eq(test.t2.a, bbb), eq(test.t2.a, ccc)))]",
 		"[or(or(eq(test.t2.a, aaa), eq(test.t2.a, bbb)), eq(test.t2.a, ccc))]",
 		"[[\"aa\",\"aa\"] [\"bb\",\"bb\"] [\"cc\",\"cc\"]]")
+	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
 	checkDetachRangeResult(t, res,
 		"[]",
 		"[or(or(eq(test.t2.a, aaa), eq(test.t2.a, bbb)), eq(test.t2.a, ccc))]",
 		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 	sql = "select * from t2 where (a = 'aaa' and b = 'ddd') or (a = 'bbb' and b = 'eee') or (a = 'ccc' and b = 'fff')"
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
@@ -2272,10 +2291,12 @@ func TestRangeMemQuotaForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), or(and(eq(test.t2.a, bbb), eq(test.t2.b, eee)), and(eq(test.t2.a, ccc), eq(test.t2.b, fff))))]",
 		"[or(or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), and(eq(test.t2.a, bbb), eq(test.t2.b, eee))), and(eq(test.t2.a, ccc), eq(test.t2.b, fff)))]",
 		"[[\"aa\" \"dd\",\"aa\" \"dd\"] [\"bb\" \"ee\",\"bb\" \"ee\"] [\"cc\" \"ff\",\"cc\" \"ff\"]]")
+	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
 	checkDetachRangeResult(t, res,
 		"[]",
 		"[or(or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), and(eq(test.t2.a, bbb), eq(test.t2.b, eee))), and(eq(test.t2.a, ccc), eq(test.t2.b, fff)))]",
 		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 }

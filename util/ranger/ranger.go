@@ -275,15 +275,27 @@ func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMemQuota i
 	newRanges := make(Ranges, 0, len(ranges))
 	for _, pointRange := range pointRanges {
 		for _, r := range ranges {
-			lowVal := append(pointRange.LowVal, r.LowVal...)
-			highVal := append(pointRange.HighVal, r.HighVal...)
-			collators := append(pointRange.Collators, r.Collators...)
+			lowVal := make([]types.Datum, 0, len(pointRange.LowVal)+len(r.LowVal))
+			lowVal = append(lowVal, pointRange.LowVal...)
+			lowVal = append(lowVal, r.LowVal...)
+
+			highVal := make([]types.Datum, 0, len(pointRange.HighVal)+len(r.HighVal))
+			highVal = append(highVal, pointRange.HighVal...)
+			highVal = append(highVal, r.HighVal...)
+
+			collators := make([]collate.Collator, 0, len(pointRange.Collators)+len(r.Collators))
+			collators = append(collators, pointRange.Collators...)
+			collators = append(collators, r.Collators...)
+
 			newRange := &Range{
 				LowVal:      lowVal,
 				LowExclude:  r.LowExclude,
 				HighVal:     highVal,
 				HighExclude: r.HighExclude,
 				Collators:   collators,
+			}
+			if len(newRanges) == 0 && rangeMemQuota > 0 && newRange.MemUsage()*int64(len(pointRanges))*int64(len(ranges)) > rangeMemQuota {
+				return ranges, true
 			}
 			newRanges = append(newRanges, newRange)
 		}
