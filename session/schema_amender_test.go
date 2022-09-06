@@ -143,7 +143,7 @@ func prepareTestData(
 			oldData.ops = append(oldData.ops, keyOp)
 			oldData.rowValue = append(oldData.rowValue, thisRowValue)
 			if keyOp == kvrpcpb.Op_Del {
-				mutations.Push(keyOp, rowKey, []byte{}, true, false, false)
+				mutations.Push(keyOp, rowKey, []byte{}, true, false, false, false)
 			}
 		}
 		oldRowValues[i] = thisRowValue
@@ -171,9 +171,9 @@ func prepareTestData(
 		}
 		require.NoError(t, err)
 		if keyOp == kvrpcpb.Op_Put || keyOp == kvrpcpb.Op_Insert {
-			mutations.Push(keyOp, rowKey, rowValue, true, false, false)
+			mutations.Push(keyOp, rowKey, rowValue, true, false, false, false)
 		} else if keyOp == kvrpcpb.Op_Lock {
-			mutations.Push(keyOp, rowKey, []byte{}, true, false, false)
+			mutations.Push(keyOp, rowKey, []byte{}, true, false, false, false)
 		}
 		newRowValues[i] = thisRowValue
 		newRowKvMap[string(rowKey)] = thisRowValue
@@ -212,7 +212,7 @@ func prepareTestData(
 					if info.indexInfoAtCommit.Meta().Unique {
 						isPessimisticLock = true
 					}
-					oldIdxKeyMutation.Push(kvrpcpb.Op_Del, idxKey, []byte{}, isPessimisticLock, false, false)
+					oldIdxKeyMutation.Push(kvrpcpb.Op_Del, idxKey, []byte{}, isPessimisticLock, false, false, false)
 				}
 			}
 			if addIndexNeedAddOp(info.AmendOpType) && mayGenPutIndexRowKeyOp(keyOp) {
@@ -224,7 +224,7 @@ func prepareTestData(
 					mutOp = kvrpcpb.Op_Insert
 					isPessimisticLock = true
 				}
-				newIdxKeyMutation.Push(mutOp, idxKey, idxVal, isPessimisticLock, false, false)
+				newIdxKeyMutation.Push(mutOp, idxKey, idxVal, isPessimisticLock, false, false, false)
 			}
 			skipMerge := false
 			if info.AmendOpType == AmendNeedAddDeleteAndInsert {
@@ -440,7 +440,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 				idxKey := tablecodec.EncodeIndexSeekKey(oldTbInfo.Meta().ID, oldTbInfo.Indices()[i].Meta().ID, idxValue)
 				err = txn.Set(idxKey, idxValue)
 				require.NoError(t, err)
-				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false, false, false)
+				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false, false, false, false)
 			}
 
 			res, err := schemaAmender.genAllAmendMutations(ctx, &mutations, collector)

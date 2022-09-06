@@ -828,5 +828,139 @@
       "select exists(select /*+ SEMI_JOIN_REWRITE() */ * from t t1 where t1.a=t.a) from t",
       "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a > t.a)"
     ]
+  },
+  {
+    "name": "TestHJBuildAndProbeHint",
+    "cases": [
+      // Test for different join type
+      // inner join
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      "select /*+ hash_join_build(t2), hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2), hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      // outer join
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 right join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 right join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 right join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 right join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      // straight_join
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 straight_join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 straight_join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 straight_join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 straight_join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      // cross join
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 cross join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 cross join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 cross join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 cross join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      // semi join
+      "select /*+ hash_join_build(t1) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b)",
+      "select /*+ hash_join_probe(t1) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b)",
+      "select /*+ hash_join_build(t2@sel_2) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b)",
+      "select /*+ hash_join_probe(t2@sel_2) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b)",
+
+      // anti semi join
+      "select /*+ hash_join_build(t1) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b)",
+      "select /*+ hash_join_probe(t1) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b)",
+      "select /*+ hash_join_build(t2@sel_2) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b)",
+      "select /*+ hash_join_probe(t2@sel_2) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b)",
+
+      // left outer semi join
+      "select /*+ hash_join_build(t1) */ sum(t1.a in (select a from t2)) from t1",
+      "select /*+ hash_join_probe(t1) */ sum(t1.a in (select a from t2)) from t1",
+      "select /*+ hash_join_build(t2@sel_2) */ sum(t1.a in (select a from t2)) from t1",
+      "select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a in (select a from t2)) from t1",
+
+      // anti left outer semi join
+      "select /*+ hash_join_build(t1) */ sum(t1.a not in (select a from t2)) from t1",
+      "select /*+ hash_join_probe(t1) */ sum(t1.a not in (select a from t2)) from t1",
+      "select /*+ hash_join_build(t2@sel_2) */ sum(t1.a not in (select a from t2)) from t1",
+      "select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a not in (select a from t2)) from t1",
+
+      // Hint scope
+      // The same table name appear in the hint
+      "select /*+ hash_join_probe(t2, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      // The undefined table name appear in the hint
+      "select /*+ hash_join_probe(tt) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(tt) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      // The alias appear in the hint
+      "select /*+ hash_join_probe(tt) */ tt.a, t2.a from t1 as tt join t2 on tt.a=t2.a and tt.b=t2.b",
+      "select /*+ hash_join_build(tt) */ tt.a, t2.a from t1 as tt join t2 on tt.a=t2.a and tt.b=t2.b",
+
+      // The hints are conflict
+      "select /*+ hash_join_probe(t2, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t2) hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      // Combine with other hints
+      "select /*+ hash_join_build(t1) leading(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+      "select /*+ hash_join_build(t1) leading(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+      "select /*+ hash_join_probe(t1) leading(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+      "select /*+ hash_join_probe(t1) leading(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+
+      "select /*+ hash_join_build(t1) straight_join() */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+      "select /*+ hash_join_build(t1) straight_join() */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+      "select /*+ hash_join_probe(t1) straight_join() */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+      "select /*+ hash_join_probe(t1) straight_join() */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+
+      "select /*+ hash_join_build(t2) hash_join(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) hash_join(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t2) hash_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) hash_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t2) hash_join(t2, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) hash_join(t2, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      "select /*+ hash_join_build(t2) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      "select /*+ hash_join_build(t2) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
+    ]
+  },
+  {
+    "name": "TestHJBuildAndProbeHint4StaticPartitionTable",
+    "cases": [
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
+    ]
+  },
+  {
+    "name": "TestHJBuildAndProbeHint4DynamicPartitionTable",
+    "cases": [
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
+    ]
+  },
+  {
+    "name": "TestHJBuildAndProbeHint4TiFlash",
+    "cases": [
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
+    ]
   }
 ]
