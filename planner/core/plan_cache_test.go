@@ -69,36 +69,6 @@ func (mp *mockParameterizer) Parameterize(originSQL string) (paramSQL string, pa
 	return string(buf), params, true, nil
 }
 
-func TestGeneralPlanCacheParameterizer(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKitWithGeneralPlanCache(t, store)
-
-	mp := new(mockParameterizer)
-	tk.Session().SetValue(plannercore.ParameterizerKey, mp)
-
-	tk.MustExec("set tidb_enable_general_plan_cache=1")
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
-	tk.MustExec("insert into t values (0), (1), (2), (3), (4), (5)")
-	tk.MustQuery("select * from t where a > 1").Sort().Check(testkit.Rows("2", "3", "4", "5"))
-	tk.MustQuery("select * from t where a > 3").Sort().Check(testkit.Rows("4", "5"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from t where a > 1 and a < 5").Sort().Check(testkit.Rows("2", "3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	mp.action = "error"
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	mp.action = "not_support"
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	mp.action = ""
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-}
-
 func TestInitLRUWithSystemVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
