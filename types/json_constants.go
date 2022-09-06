@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package json
+package types
 
 import (
 	"encoding/binary"
@@ -22,47 +22,47 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
-// TypeCode indicates JSON type.
-type TypeCode = byte
+// JSONTypeCode indicates JSON type.
+type JSONTypeCode = byte
 
 const (
-	// TypeCodeObject indicates the JSON is an object.
-	TypeCodeObject TypeCode = 0x01
-	// TypeCodeArray indicates the JSON is an array.
-	TypeCodeArray TypeCode = 0x03
-	// TypeCodeLiteral indicates the JSON is a literal.
-	TypeCodeLiteral TypeCode = 0x04
-	// TypeCodeInt64 indicates the JSON is a signed integer.
-	TypeCodeInt64 TypeCode = 0x09
-	// TypeCodeUint64 indicates the JSON is a unsigned integer.
-	TypeCodeUint64 TypeCode = 0x0a
-	// TypeCodeFloat64 indicates the JSON is a double float number.
-	TypeCodeFloat64 TypeCode = 0x0b
-	// TypeCodeString indicates the JSON is a string.
-	TypeCodeString TypeCode = 0x0c
-	// TypeCodeOpaque indicates the JSON is a opaque
-	TypeCodeOpaque TypeCode = 0x0d
+	// JSONTypeCodeObject indicates the JSON is an object.
+	JSONTypeCodeObject JSONTypeCode = 0x01
+	// JSONTypeCodeArray indicates the JSON is an array.
+	JSONTypeCodeArray JSONTypeCode = 0x03
+	// JSONTypeCodeLiteral indicates the JSON is a literal.
+	JSONTypeCodeLiteral JSONTypeCode = 0x04
+	// JSONTypeCodeInt64 indicates the JSON is a signed integer.
+	JSONTypeCodeInt64 JSONTypeCode = 0x09
+	// JSONTypeCodeUint64 indicates the JSON is a unsigned integer.
+	JSONTypeCodeUint64 JSONTypeCode = 0x0a
+	// JSONTypeCodeFloat64 indicates the JSON is a double float number.
+	JSONTypeCodeFloat64 JSONTypeCode = 0x0b
+	// JSONTypeCodeString indicates the JSON is a string.
+	JSONTypeCodeString JSONTypeCode = 0x0c
+	// JSONTypeCodeOpaque indicates the JSON is a opaque
+	JSONTypeCodeOpaque JSONTypeCode = 0x0d
 )
 
 const (
-	// LiteralNil represents JSON null.
-	LiteralNil byte = 0x00
-	// LiteralTrue represents JSON true.
-	LiteralTrue byte = 0x01
-	// LiteralFalse represents JSON false.
-	LiteralFalse byte = 0x02
+	// JSONLiteralNil represents JSON null.
+	JSONLiteralNil byte = 0x00
+	// JSONLiteralTrue represents JSON true.
+	JSONLiteralTrue byte = 0x01
+	// JSONLiteralFalse represents JSON false.
+	JSONLiteralFalse byte = 0x02
 )
 
 const unknownTypeCodeErrorMsg = "unknown type code: %d"
 const unknownTypeErrorMsg = "unknown type: %s"
 
-// safeSet holds the value true if the ASCII character with the given array
+// jsonSafeSet holds the value true if the ASCII character with the given array
 // position can be represented inside a JSON string without any further
 // escaping.
 //
 // All values are true except for the ASCII control characters (0-31), the
 // double quote ("), and the backslash character ("\").
-var safeSet = [utf8.RuneSelf]bool{
+var jsonSafeSet = [utf8.RuneSelf]bool{
 	' ':      true,
 	'!':      true,
 	'"':      false,
@@ -162,8 +162,8 @@ var safeSet = [utf8.RuneSelf]bool{
 }
 
 var (
-	hexChars = "0123456789abcdef"
-	endian   = binary.LittleEndian
+	jsonHexChars = "0123456789abcdef"
+	jsonEndian   = binary.LittleEndian
 )
 
 const (
@@ -194,17 +194,17 @@ var jsonTypePrecedences = map[string]int{
 	"NULL":             -12,
 }
 
-// ModifyType is for modify a JSON. There are three valid values:
-// ModifyInsert, ModifyReplace and ModifySet.
-type ModifyType byte
+// JSONModifyType is for modify a JSON. There are three valid values:
+// JSONModifyInsert, JSONModifyReplace and JSONModifySet.
+type JSONModifyType byte
 
 const (
-	// ModifyInsert is for insert a new element into a JSON.
-	ModifyInsert ModifyType = 0x01
-	// ModifyReplace is for replace an old elemList from a JSON.
-	ModifyReplace ModifyType = 0x02
-	// ModifySet = ModifyInsert | ModifyReplace
-	ModifySet ModifyType = 0x03
+	// JSONModifyInsert is for insert a new element into a JSON.
+	JSONModifyInsert JSONModifyType = 0x01
+	// JSONModifyReplace is for replace an old elemList from a JSON.
+	JSONModifyReplace JSONModifyType = 0x02
+	// JSONModifySet = JSONModifyInsert | JSONModifyReplace
+	JSONModifySet JSONModifyType = 0x03
 )
 
 var (
@@ -234,7 +234,7 @@ var (
 // See: https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-contains-path
 const (
 	// 'all': 1 if all paths exist within the document, 0 otherwise.
-	ContainsPathAll = "all"
+	JSONContainsPathAll = "all"
 	// 'one': 1 if at least one path exists within the document, 0 otherwise.
-	ContainsPathOne = "one"
+	JSONContainsPathOne = "one"
 )

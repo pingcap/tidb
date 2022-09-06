@@ -94,6 +94,7 @@ go_library(
         "//util/collate",
         "//util/dbterror",
         "//util/domainutil",
+        "//util/filter",
         "//util/gcutil",
         "//util/hack",
         "//util/logutil",
