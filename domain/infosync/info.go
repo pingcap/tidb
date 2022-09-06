@@ -72,8 +72,6 @@ const (
 	keyOpDefaultRetryCnt = 5
 	// keyOpDefaultTimeout is the default time out for etcd store.
 	keyOpDefaultTimeout = 1 * time.Second
-	// InfoSessionTTL is the ETCD session's TTL in seconds.
-	InfoSessionTTL = 10 * 60
 	// ReportInterval is interval of infoSyncerKeeper reporting min startTS.
 	ReportInterval = 30 * time.Second
 	// TopologyInformationPath means etcd path for storing topology info.
@@ -773,7 +771,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return nil
 	}
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", is.serverInfoPath)
-	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
+	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, util.SessionTTL)
 	if err != nil {
 		return err
 	}
