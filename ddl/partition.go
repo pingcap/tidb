@@ -2780,8 +2780,8 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		// PartitionTypeHash does not have any VALUES definition
 		if partitionInfo.Type == model.PartitionTypeRange {
 			lessThans := make([]string, len(def.LessThan))
-			for _, v := range def.LessThan {
-				lessThans[i] = hexIfNonPrint(v)
+			for idx, v := range def.LessThan {
+				lessThans[idx] = hexIfNonPrint(v)
 			}
 			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", strings.Join(lessThans, ","))
 		} else if partitionInfo.Type == model.PartitionTypeList {
