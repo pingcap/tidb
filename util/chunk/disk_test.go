@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,7 +54,7 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 			chk.AppendNull(2)
 			chk.AppendInt64(3, data)
 			if chkIdx%2 == 0 {
-				chk.AppendJSON(4, json.CreateBinary(fmt.Sprint(data)))
+				chk.AppendJSON(4, types.CreateBinaryJSON(fmt.Sprint(data)))
 			} else {
 				chk.AppendNull(4)
 			}

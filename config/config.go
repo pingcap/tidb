@@ -34,7 +34,6 @@ import (
 	zaplog "github.com/pingcap/log"
 	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
-	typejson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/logutil"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/tikvutil"
@@ -1361,12 +1360,6 @@ var hideConfig = []string{
 	"performance.index-usage-sync-lease",
 }
 
-// jsonifyPath converts the item to json path, so it can be extracted.
-func jsonifyPath(str string) string {
-	s := strings.Split(str, ".")
-	return fmt.Sprintf("$.\"%s\"", strings.Join(s, "\".\""))
-}
-
 // GetJSONConfig returns the config as JSON with hidden items removed
 // It replaces the earlier HideConfig() which used strings.Split() in
 // an way that didn't work for similarly named items (like enable).
@@ -1375,46 +1368,45 @@ func GetJSONConfig() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	jsonValue, err := typejson.ParseBinaryFromString(string(j))
-	if err != nil {
-		return "", err
-	}
-	// Approximately length of removed items + hidden items.
-	pathExprs := make([]typejson.PathExpression, 0, len(removedConfig)+len(hideConfig))
-	var pathExpr typejson.PathExpression
 
-	// Patch out removed items.
+	jsonValue := make(map[string]interface{})
+	err = json.Unmarshal(j, &jsonValue)
+	if err != nil {
+		return "", err
+	}
+
+	removedPaths := make([]string, 0, len(removedConfig)+len(hideConfig))
 	for removedItem := range removedConfig {
-		s := jsonifyPath(removedItem)
-		pathExpr, err = typejson.ParseJSONPathExpr(s)
-		if err != nil {
-			// Should not be reachable, but not worth bailing for.
-			// It just means we can't patch out this line.
-			continue
-		}
-		pathExprs = append(pathExprs, pathExpr)
+		removedPaths = append(removedPaths, removedItem)
 	}
-	// Patch out hidden items
-	for _, hiddenItem := range hideConfig {
-		s := jsonifyPath(hiddenItem)
-		pathExpr, err = typejson.ParseJSONPathExpr(s)
-		if err != nil {
-			// Should not be reachable, but not worth bailing for.
-			// It just means we can't patch out this line.
-			continue
+	removedPaths = append(removedPaths, hideConfig...)
+
+	for _, path := range removedPaths {
+		s := strings.Split(path, ".")
+		curValue := jsonValue
+		for i, key := range s {
+			if i == len(s)-1 {
+				delete(curValue, key)
+			}
+
+			if curValue[key] != nil {
+				mapValue, ok := curValue[key].(map[string]interface{})
+				if !ok {
+					break
+				}
+
+				curValue = mapValue
+			} else {
+				break
+			}
 		}
-		pathExprs = append(pathExprs, pathExpr)
 	}
-	newJSONValue, err := jsonValue.Remove(pathExprs)
+
+	buf, err := json.Marshal(jsonValue)
 	if err != nil {
 		return "", err
 	}
-	// Convert back to GoJSON so it can be pretty formatted.
-	// This is expected for compatibility with previous versions.
-	buf, err := newJSONValue.MarshalJSON()
-	if err != nil {
-		return "", err
-	}
+
 	var resBuf bytes.Buffer
 	if err = json.Indent(&resBuf, buf, "", "\t"); err != nil {
 		return "", err

@@ -542,7 +542,7 @@ func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
-	tk.MustExec("alter table t set tiflash mode fast")
+	tk.MustExec("set @@session.tiflash_fastscan=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -6346,8 +6346,9 @@ func TestIssue31202(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	tk.MustQuery("explain format = 'brief' select * from t31202;").Check(testkit.Rows(
-		"TableReader 10000.00 root  data:TableFullScan",
-		"└─TableFullScan 10000.00 cop[tiflash] table:t31202 keep order:false, stats:pseudo"))
+		"TableReader 10000.00 root  data:ExchangeSender",
+		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"  └─TableFullScan 10000.00 mpp[tiflash] table:t31202 keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain format = 'brief' select * from t31202 use index (primary);").Check(testkit.Rows(
 		"TableReader 10000.00 root  data:TableFullScan",
@@ -7128,4 +7129,55 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 2)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = ON")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tbl2, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t2", L: "t2"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	checkMpp := func(r [][]interface{}) {
+		check := false
+		for i := range r {
+			if r[i][2] == "mpp[tiflash]" {
+				check = true
+				break
+			}
+		}
+		require.Equal(t, check, true)
+	}
+
+	// Insert into ... select
+	rs := tk.MustQuery("explain insert into t2 select a+b from t").Rows()
+	checkMpp(rs)
+
+	rs = tk.MustQuery("explain insert into t2 select t.a from t2 join t on t2.a = t.a").Rows()
+	checkMpp(rs)
+
+	// Replace into ... select
+	rs = tk.MustQuery("explain replace into t2 select a+b from t").Rows()
+	checkMpp(rs)
+
+	// CTE
+	rs = tk.MustQuery("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)").Rows()
+	checkMpp(rs)
 }

@@ -49,7 +49,6 @@ type featureUsage struct {
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
 	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
-	TiFlashModeStatistics TiFlashModeStatistics            `json:"TiFlashModeStatistics"`
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
 	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
@@ -88,8 +87,6 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.NonTransactionalUsage = getNonTransactionalUsage()
 
 	usage.GlobalKill = getGlobalKillUsageInfo()
-
-	usage.TiFlashModeStatistics = getTiFlashModeStatistics(sctx)
 
 	usage.LogBackup = getLogBackupUsageInfo(sctx)
 
@@ -209,13 +206,14 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 // TxnUsage records the usage info of transaction related features, including
 // async-commit, 1PC and counters of transactions committed with different protocols.
 type TxnUsage struct {
-	AsyncCommitUsed     bool                     `json:"asyncCommitUsed"`
-	OnePCUsed           bool                     `json:"onePCUsed"`
-	TxnCommitCounter    metrics.TxnCommitCounter `json:"txnCommitCounter"`
-	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
-	AssertionLevel      string                   `json:"assertionLevel"`
-	RcCheckTS           bool                     `json:"rcCheckTS"`
-	SavepointCounter    int64                    `json:"SavepointCounter"`
+	AsyncCommitUsed           bool                     `json:"asyncCommitUsed"`
+	OnePCUsed                 bool                     `json:"onePCUsed"`
+	TxnCommitCounter          metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	MutationCheckerUsed       bool                     `json:"mutationCheckerUsed"`
+	AssertionLevel            string                   `json:"assertionLevel"`
+	RcCheckTS                 bool                     `json:"rcCheckTS"`
+	SavepointCounter          int64                    `json:"SavepointCounter"`
+	LazyUniqueCheckSetCounter int64                    `json:"lazyUniqueCheckSetCounter"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
@@ -224,6 +222,7 @@ var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
+var initialLazyPessimisticUniqueCheckSetCount int64
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -251,7 +250,12 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	}
 	currSavepointCount := m.GetSavepointStmtCounter()
 	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
-	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed, diffSavepointCount}
+	currLazyUniqueCheckSetCount := m.GetLazyPessimisticUniqueCheckSetCounter()
+	diffLazyUniqueCheckSetCount := currLazyUniqueCheckSetCount - initialLazyPessimisticUniqueCheckSetCount
+	return &TxnUsage{asyncCommitUsed, onePCUsed, diff,
+		mutationCheckerUsed, assertionUsed, rcCheckTSUsed,
+		diffSavepointCount, diffLazyUniqueCheckSetCount,
+	}
 }
 
 func postReportTxnUsage() {
@@ -265,6 +269,10 @@ func postReportCTEUsage() {
 // PostSavepointCount exports for testing.
 func PostSavepointCount() {
 	initialSavepointStmtCounter = m.GetSavepointStmtCounter()
+}
+
+func postReportLazyPessimisticUniqueCheckSetCount() {
+	initialLazyPessimisticUniqueCheckSetCount = m.GetLazyPessimisticUniqueCheckSetCounter()
 }
 
 // getCTEUsageInfo gets the CTE usages.
@@ -314,34 +322,6 @@ func postReportNonTransactionalCounter() {
 
 func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
-}
-
-// TiFlashModeStatistics records the usage info of Fast Mode
-type TiFlashModeStatistics struct {
-	FastModeTableCount   int64 `json:"fast_mode_table_count"`
-	NormalModeTableCount int64 `json:"normal_mode_table_count"`
-	AllTableCount        int64 `json:"all_table_count"`
-}
-
-func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
-	is := GetDomainInfoSchema(ctx)
-	var fastModeTableCount int64 = 0
-	var normalModeTableCount int64 = 0
-	var allTableCount int64 = 0
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
-			allTableCount++
-			if tbInfo.Meta().TiFlashReplica != nil {
-				if tbInfo.Meta().TiFlashMode == model.TiFlashModeFast {
-					fastModeTableCount++
-				} else {
-					normalModeTableCount++
-				}
-			}
-		}
-	}
-
-	return TiFlashModeStatistics{FastModeTableCount: fastModeTableCount, NormalModeTableCount: normalModeTableCount, AllTableCount: allTableCount}
 }
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {

@@ -96,7 +96,7 @@ const (
 	ActionAlterNoCacheTable             ActionType = 59
 	ActionCreateTables                  ActionType = 60
 	ActionMultiSchemaChange             ActionType = 61
-	ActionSetTiFlashMode                ActionType = 62
+	ActionFlashbackCluster              ActionType = 62
 )
 
 var actionMap = map[ActionType]string{
@@ -157,7 +157,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 	ActionMultiSchemaChange:             "alter table multi-schema change",
-	ActionSetTiFlashMode:                "set tiflash mode",
+	ActionFlashbackCluster:              "flashback cluster",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -777,6 +777,10 @@ func (job *Job) IsRollbackable() bool {
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
+	case ActionFlashbackCluster:
+		if job.SchemaState == StateWriteReorganization {
+			return false
+		}
 	}
 	return true
 }
