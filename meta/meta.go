@@ -99,6 +99,11 @@ const (
 	MaxInt48 = 0x0000FFFFFFFFFFFF
 	// MaxGlobalID reserves 1000 IDs. Use MaxInt48 to reserves the high 2 bytes to compatible with Multi-tenancy.
 	MaxGlobalID = MaxInt48 - 1000
+
+	// DDLTableVersion1 is for support concurrent DDL, it added tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+	DDLTableVersion1 = "1"
+	// DDLTableVersion2 is for support distributed reorg stage, it added tidb_ddl_backfill.
+	DDLTableVersion2 = "2"
 )
 
 var (
@@ -540,8 +545,8 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // SetDDLTables write a key into storage.
-func (m *Meta) SetDDLTables() error {
-	err := m.txn.Set(mDDLTableVersion, []byte("1"))
+func (m *Meta) SetDDLTables(ddlTableVersion string) error {
+	err := m.txn.Set(mDDLTableVersion, []byte(ddlTableVersion))
 	return errors.Trace(err)
 }
 
@@ -581,13 +586,13 @@ func (m *Meta) GetSystemDBID() (int64, error) {
 	return 0, nil
 }
 
-// CheckDDLTableExists check if the tables related to concurrent DDL exists.
-func (m *Meta) CheckDDLTableExists() (bool, error) {
+// CheckDDLTableVersion check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckDDLTableVersion() (string, error) {
 	v, err := m.txn.Get(mDDLTableVersion)
 	if err != nil {
-		return false, errors.Trace(err)
+		return "", errors.Trace(err)
 	}
-	return len(v) != 0, nil
+	return string(v), nil
 }
 
 // SetFlashbackClusterJobID set flashback cluster jobID

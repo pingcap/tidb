@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -37,23 +38,29 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
-type backfillWorkerType byte
-
 const (
-	typeAddIndexWorker     backfillWorkerType = 0
-	typeUpdateColumnWorker backfillWorkerType = 1
-	typeCleanUpIndexWorker backfillWorkerType = 2
+	typeAddIndexBackfill     model.BackfillType = 0
+	typeUpdateColumnBackfill model.BackfillType = 1
+	typeCleanUpIndexBackfill model.BackfillType = 2
 )
+
+var backfillWorkerID int64
+
+func genBackfillWorkerID() int64 {
+	return atomic.AddInt64(&backfillWorkerID, 1)
+}
 
 // By now the DDL jobs that need backfilling include:
 // 1: add-index
@@ -123,6 +130,8 @@ func (bWT backfillWorkerType) String() string {
 type backfiller interface {
 	BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
 	AddMetricInfo(float64)
+	GetTask() (*model.BackfillJob, error)
+	UpdateTask(job *model.BackfillJob) error
 }
 
 type backfillResult struct {
@@ -169,15 +178,16 @@ func mergeBackfillCtxToResult(taskCtx *backfillTaskContext, result *backfillResu
 }
 
 type backfillWorker struct {
-	id        int
-	reorgInfo *reorgInfo
-	batchCnt  int
-	sessCtx   sessionctx.Context
-	taskCh    chan *reorgBackfillTask
-	resultCh  chan *backfillResult
-	table     table.Table
-	closed    bool
-	priority  int
+	id          int
+	reorgInfo   *reorgInfo
+	backfillJob *model.BackfillJob
+	batchCnt    int
+	sessCtx     sessionctx.Context
+	taskCh      chan *reorgBackfillTask
+	resultCh    chan *backfillResult
+	table       table.Table
+	closed      bool
+	priority    int
 }
 
 func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo) *backfillWorker {
@@ -193,6 +203,17 @@ func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 	}
 }
 
+func (w *backfillWorker) String() string {
+	return fmt.Sprintf("worker %d, tp backfill", w.id)
+}
+
+func (w *backfillWorker) initInfo(t table.PhysicalTable) {
+	w.table = t
+}
+
+func (w *backfillWorker) closeAndClean() {
+}
+
 func (w *backfillWorker) Close() {
 	if !w.closed {
 		w.closed = true
@@ -204,6 +225,28 @@ func closeBackfillWorkers(workers []*backfillWorker) {
 	for _, worker := range workers {
 		worker.Close()
 	}
+}
+
+func getOracleTime(store kv.Storage) (time.Time, error) {
+	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return time.Time{}, errors.Trace(err)
+	}
+	return oracle.GetTimeFromTS(currentVer.Ver), nil
+}
+
+func (w *backfillWorker) updateLease(bf backfiller) error {
+	lease, err := getOracleTime(w.sessCtx.GetStore())
+	if err != nil {
+		return err
+	}
+	w.backfillJob.Instance_Lease = types.NewTime(types.FromGoTime(lease), mysql.TypeTimestamp, types.DefaultFsp)
+	return bf.UpdateTask(w.backfillJob)
+}
+
+func (w *backfillWorker) releaseJob(bf backfiller) error {
+	w.backfillJob.Instance_ID = []byte("")
+	return bf.UpdateTask(w.backfillJob)
 }
 
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
@@ -275,7 +318,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	return result
 }
 
-func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
+func (w *backfillWorker) run(d *ddlCtx, bf backfiller, jobID int64, jobQuery string) {
 	logutil.BgLogger().Info("[ddl] backfill worker start", zap.Int("workerID", w.id))
 	defer func() {
 		w.resultCh <- &backfillResult{err: dbterror.ErrReorgPanic}
@@ -286,7 +329,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		if !more {
 			break
 		}
-		d.setDDLLabelForTopSQL(job)
+		d.setDDLLabelForTopSQL(jobID, jobQuery)
 
 		logutil.BgLogger().Debug("[ddl] backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
 		failpoint.Inject("mockBackfillRunErr", func() {
@@ -296,12 +339,10 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 				failpoint.Continue()
 			}
 		})
-
 		failpoint.Inject("mockHighLoadForAddIndex", func() {
 			sqlPrefixes := []string{"alter"}
-			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
+			topsql.MockHighCPULoad(jobQuery, sqlPrefixes, 5)
 		})
-
 		failpoint.Inject("mockBackfillSlow", func() {
 			time.Sleep(100 * time.Millisecond)
 		})
@@ -457,7 +498,7 @@ func (dc *ddlCtx) handleRangeTasks(sessPool *sessionPool, t table.Table, workers
 	// Build reorg tasks.
 	for i, keyRange := range kvRanges {
 		endKey := keyRange.EndKey
-		endK, err := getRangeEndKey(reorgInfo.d.jobContext(reorgInfo.Job), workers[0].sessCtx.GetStore(), workers[0].priority, t, keyRange.StartKey, endKey)
+		endK, err := getRangeEndKey(reorgInfo.djobContext(reorgInfo.Job.ID), workers[0].sessCtx.GetStore(), workers[0].priority, t, keyRange.StartKey, endKey)
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] send range task to workers, get reverse key failed", zap.Error(err))
 		} else {
@@ -593,7 +634,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	defer func() {
 		closeBackfillWorkers(backfillWorkers)
 	}()
-	jc := dc.jobContext(job)
+	jc := dc.jobContext(job.ID)
 
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey)
@@ -633,20 +674,20 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
 
 			switch bfWorkerType {
-			case typeAddIndexWorker:
+			case typeAddIndexBackfill:
 				idxWorker := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
-				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
-			case typeUpdateColumnWorker:
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job.ID, job.Query)
+			case typeUpdateColumnBackfill:
 				// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 				sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
 				updateWorker := newUpdateColumnWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
 				backfillWorkers = append(backfillWorkers, updateWorker.backfillWorker)
-				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker, job)
-			case typeCleanUpIndexWorker:
+				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker, job.ID, job.Query)
+			case typeCleanUpIndexBackfill:
 				idxWorker := newCleanUpIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
-				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job.ID, job.Query)
 			default:
 				return errors.New("unknow backfill type")
 			}

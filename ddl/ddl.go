@@ -82,8 +82,9 @@ const (
 
 	batchAddingJobs = 10
 
-	reorgWorkerCnt   = 10
-	generalWorkerCnt = 1
+	reorgWorkerCnt    = 10
+	generalWorkerCnt  = 1
+	backfillWorkerCnt = 40 // TODO:
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -224,8 +225,11 @@ type ddl struct {
 	// used in the concurrency ddl.
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
+	backfillWorkerPool   *backfilWorkerPool
 	// get notification if any DDL coming.
 	ddlJobCh chan struct{}
+	// get notification if any backfill jobs coming.
+	backfillJobCh chan struct{}
 }
 
 // waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
@@ -369,15 +373,15 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-func (dc *ddlCtx) setDDLLabelForTopSQL(job *model.Job) {
+func (dc *ddlCtx) setDDLLabelForTopSQL(jobID int64, jobQuery string) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
-	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
 		ctx = NewJobContext()
-		dc.jobCtx.jobCtxMap[job.ID] = ctx
+		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
-	ctx.setDDLLabelForTopSQL(job)
+	ctx.setDDLLabelForTopSQL(jobQuery)
 }
 
 func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
@@ -407,10 +411,10 @@ func (dc *ddlCtx) removeJobCtx(job *model.Job) {
 	delete(dc.jobCtx.jobCtxMap, job.ID)
 }
 
-func (dc *ddlCtx) jobContext(job *model.Job) *JobContext {
+func (dc *ddlCtx) jobContext(jobID int64) *JobContext {
 	dc.jobCtx.RLock()
 	defer dc.jobCtx.RUnlock()
-	if jobContext, exists := dc.jobCtx.jobCtxMap[job.ID]; exists {
+	if jobContext, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
 		return jobContext
 	}
 	return NewJobContext()
@@ -625,6 +629,23 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	d.wg.Run(d.startDispatchLoop)
 }
 
+func (d *ddl) prepareBackfillWorkers() {
+	workerFactory := func() func() (pools.Resource, error) {
+		return func() (pools.Resource, error) {
+			sessForJob, err := d.sessPool.get()
+			if err != nil {
+				return nil, err
+			}
+			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			bk := newBackfillWorker(sessForJob, int(genBackfillWorkerID()), nil, nil)
+			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, bk.String())).Inc()
+			return bk, nil
+		}
+	}
+	d.backfillWorkerPool = newBackfillWorkerPool(pools.NewResourcePool(workerFactory(), backfillWorkerCnt, backfillWorkerCnt, 0))
+	d.wg.Run(d.startDispatchLoop)
+}
+
 func (d *ddl) prepareWorkers4legacyDDL() {
 	d.workers = make(map[workerType]*worker, 2)
 	d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx, false)
@@ -660,6 +681,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.prepareWorkers4ConcurrencyDDL()
 	d.prepareWorkers4legacyDDL()
+	d.prepareBackfillWorkers()
 
 	if config.TableLockEnabled() {
 		d.wg.Add(1)

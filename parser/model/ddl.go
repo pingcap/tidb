@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/types"
 )
 
 // ActionType is the type for DDL action.
@@ -355,6 +356,43 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
+}
+
+type BackfillType byte
+
+type BackfillJob struct {
+	ID             int64
+	JobID          int64
+	EleID          int64
+	PhysicalID     int64
+	Tp             BackfillType
+	State          JobState
+	Instance_ID    []byte
+	Instance_Lease types.Time
+	Mate           *BackfillMeta
+}
+
+func (bj *BackfillJob) IsFinished() bool {
+	return bj.State == JobStateDone
+}
+
+func (bj *BackfillJob) IsRunning() bool {
+	return bj.State == JobStateRunning
+}
+
+type BackfillMeta struct {
+	CurrKey  []byte `json:"curr_key"`
+	StartKey []byte `json:"start_key"`
+	EndKey   []byte `json:"end_key"`
+	StartTS  uint64 `json:"start_ts"`
+	FinishTS uint64 `json:"finish_ts"`
+	RowCount int64  `json:"row_count"`
+	ErrMsg   string `json:"err_msg"`
+
+	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
+	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
+	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
+	Location      *TimeZoneLocation                `json:"location"`
 }
 
 // Job is for a DDL operation.

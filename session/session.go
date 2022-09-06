@@ -2626,6 +2626,8 @@ var (
 		{ddl.JobTableSQL, ddl.JobTableID},
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
+		{ddl.BackfillTable, ddl.BackfillTableID},
+		{ddl.BackfillHistoryTable, ddl.BackfillHistoryID},
 	}
 )
 
@@ -2633,8 +2635,8 @@ var (
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		exists, err := t.CheckDDLTableExists()
-		if err != nil || exists {
+		tableVer, err := t.CheckDDLTableVersion()
+		if err != nil || tableVer >= meta.DDLTableVersion2 {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
@@ -2643,6 +2645,9 @@ func InitDDLJobTables(store kv.Storage) error {
 		}
 		p := parser.New()
 		for _, tbl := range DDLJobTables {
+			if tableVer == meta.DDLTableVersion1 && tbl.id < ddl.BackfillTableID {
+				continue
+			}
 			id, err := t.GetGlobalID()
 			if err != nil {
 				return errors.Trace(err)
@@ -2666,7 +2671,7 @@ func InitDDLJobTables(store kv.Storage) error {
 				return errors.Trace(err)
 			}
 		}
-		return t.SetDDLTables()
+		return t.SetDDLTables(meta.DDLTableVersion2)
 	})
 }
 

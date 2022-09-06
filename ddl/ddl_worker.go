@@ -638,14 +638,14 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 	return meta.NewMeta(txn)
 }
 
-func (w *JobContext) setDDLLabelForTopSQL(job *model.Job) {
-	if !topsqlstate.TopSQLEnabled() || job == nil {
+func (w *JobContext) setDDLLabelForTopSQL(jobQuery string) {
+	if !topsqlstate.TopSQLEnabled() || jobQuery == "" {
 		return
 	}
 
-	if job.Query != w.cacheSQL || w.cacheDigest == nil {
-		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
-		w.cacheSQL = job.Query
+	if jobQuery != w.cacheSQL || w.cacheDigest == nil {
+		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(jobQuery)
+		w.cacheSQL = jobQuery
 		w.ddlJobCtx = topsql.AttachAndRegisterSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, false)
 	} else {
 		topsql.AttachAndRegisterSQLInfo(w.ddlJobCtx, w.cacheNormalizedSQL, w.cacheDigest, false)
@@ -730,9 +730,9 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 	if w.tp == addIdxWorker && job.IsRunning() {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
-	w.setDDLLabelForTopSQL(job)
+	w.setDDLLabelForTopSQL(job.ID, job.Query)
 	w.setDDLSourceForDiagnosis(job)
-	jobContext := w.jobContext(job)
+	jobContext := w.jobContext(job.ID)
 	if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
@@ -891,9 +891,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 			}
 
-			w.setDDLLabelForTopSQL(job)
+			w.setDDLLabelForTopSQL(job.ID, job.Query)
 			w.setDDLSourceForDiagnosis(job)
-			jobContext := w.jobContext(job)
+			jobContext := w.jobContext(job.ID)
 			if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
