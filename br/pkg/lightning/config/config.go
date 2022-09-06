@@ -157,9 +157,6 @@ func (cfg *Config) String() string {
 
 func (cfg *Config) ToTLS() (*common.TLS, error) {
 	hostPort := net.JoinHostPort(cfg.TiDB.Host, strconv.Itoa(cfg.TiDB.StatusPort))
-	if err := cfg.Security.LoadTLSContent(); err != nil {
-		return nil, err
-	}
 	return common.NewTLS(
 		cfg.Security.CAPath,
 		cfg.Security.CertPath,

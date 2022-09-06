@@ -96,9 +96,6 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		os.Exit(1)
 	}
 
-	if err := globalCfg.Security.LoadTLSContent(); err != nil {
-		log.L().Fatal("failed to load TLS certificates", zap.Error(err))
-	}
 	tls, err := common.NewTLS(
 		globalCfg.Security.CAPath,
 		globalCfg.Security.CertPath,

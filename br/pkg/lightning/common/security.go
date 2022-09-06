@@ -17,7 +17,6 @@ package common
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -44,78 +43,30 @@ type TLS struct {
 	url       string
 }
 
-// ToTLSConfig constructs a `*tls.Config` from the CA, certification and key
-// paths.
-//
-// If the CA path is empty, returns nil.
-func ToTLSConfig(caPath, certPath, keyPath string) (*tls.Config, error) {
-	if len(caPath) == 0 {
-		return nil, nil
-	}
-
-	// Create a certificate pool from CA
-	certPool := x509.NewCertPool()
-	ca, err := os.ReadFile(caPath)
-	if err != nil {
-		return nil, errors.Annotate(err, "could not read ca certificate")
-	}
-
-	// Append the certificates from the CA
-	if !certPool.AppendCertsFromPEM(ca) {
-		return nil, errors.New("failed to append ca certs")
-	}
-
-	tlsConfig := &tls.Config{
-		RootCAs:    certPool,
-		NextProtos: []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
-		MinVersion: tls.VersionTLS12,
-	}
-
-	if len(certPath) != 0 && len(keyPath) != 0 {
-		loadCert := func() (*tls.Certificate, error) {
-			cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-			if err != nil {
-				return nil, errors.Annotate(err, "could not load client key pair")
-			}
-			return &cert, nil
-		}
-		tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-			return loadCert()
-		}
-		tlsConfig.GetCertificate = func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			return loadCert()
-		}
-	}
-	return tlsConfig, nil
-}
-
 // NewTLS constructs a new HTTP client with TLS configured with the CA,
 // certificate and key paths.
 //
 // If the CA path is empty, returns an instance where TLS is disabled.
 func NewTLS(caPath, certPath, keyPath, host string, caBytes, certBytes, keyBytes []byte) (*TLS, error) {
-	if len(caBytes) == 0 && len(certBytes) == 0 && len(keyBytes) == 0 {
-		return &TLS{
-			inner:  nil,
-			client: &http.Client{},
-			url:    "http://" + host,
-		}, nil
-	}
-	inner, err := util.NewTLSConfigWithVerifyCN(caBytes, certBytes, keyBytes, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &TLS{
+	ret := &TLS{
 		caPath:    caPath,
 		certPath:  certPath,
 		keyPath:   keyPath,
 		caBytes:   caBytes,
 		certBytes: certBytes,
 		keyBytes:  keyBytes,
-		inner:     inner,
-		client:    httputil.NewClient(inner),
-		url:       "https://" + host,
-	}, nil
+		client:    &http.Client{},
+	}
+	if err := ret.buildInnerTLSFields(); err != nil {
+		return nil, err
+	}
+
+	if ret.inner != nil {
+		ret.url = "https://" + host
+	} else {
+		ret.url = "http://" + host
+	}
+	return ret, nil
 }
 
 // NewTLSFromMockServer constructs a new TLS instance from the certificates of
@@ -128,6 +79,40 @@ func NewTLSFromMockServer(server *httptest.Server) *TLS {
 	}
 }
 
+func (tc *TLS) loadFileContent() error {
+	var err error
+	load := func(path string, target *[]byte) {
+		if err != nil {
+			return
+		}
+		if path != "" {
+			*target, err = os.ReadFile(path)
+		}
+	}
+
+	load(tc.caPath, &tc.caBytes)
+	load(tc.certPath, &tc.certBytes)
+	load(tc.keyPath, &tc.keyBytes)
+	return err
+}
+
+func (tc *TLS) buildInnerTLSFields() error {
+	if err := tc.loadFileContent(); err != nil {
+		return errors.Trace(err)
+	}
+	if len(tc.caBytes) == 0 && len(tc.certBytes) == 0 && len(tc.keyBytes) == 0 {
+		return nil
+	}
+
+	inner, err := util.NewTLSConfigWithVerifyCN(tc.caBytes, tc.certBytes, tc.keyBytes, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tc.inner = inner
+	tc.client = httputil.NewClient(inner)
+	return nil
+}
+
 // WithHost creates a new TLS instance with the host replaced.
 func (tc *TLS) WithHost(host string) *TLS {
 	var url string
@@ -136,15 +121,14 @@ func (tc *TLS) WithHost(host string) *TLS {
 	} else {
 		url = "http://" + host
 	}
-	return &TLS{
-		inner:  tc.inner,
-		client: tc.client,
-		url:    url,
-	}
+	shallowClone := *tc
+	shallowClone.url = url
+	return &shallowClone
 }
 
 // ToGRPCDialOption constructs a gRPC dial option.
 func (tc *TLS) ToGRPCDialOption() grpc.DialOption {
+	_ = tc.buildInnerTLSFields()
 	if tc.inner != nil {
 		return grpc.WithTransportCredentials(credentials.NewTLS(tc.inner))
 	}
@@ -153,6 +137,7 @@ func (tc *TLS) ToGRPCDialOption() grpc.DialOption {
 
 // WrapListener places a TLS layer on top of the existing listener.
 func (tc *TLS) WrapListener(l net.Listener) net.Listener {
+	_ = tc.buildInnerTLSFields()
 	if tc.inner == nil {
 		return l
 	}
@@ -160,10 +145,13 @@ func (tc *TLS) WrapListener(l net.Listener) net.Listener {
 }
 
 func (tc *TLS) GetJSON(ctx context.Context, path string, v interface{}) error {
+	_ = tc.buildInnerTLSFields()
 	return GetJSON(ctx, tc.client, tc.url+path, v)
 }
 
+// ToPDSecurityOption converts the TLS configuration to a PD security option.
 func (tc *TLS) ToPDSecurityOption() pd.SecurityOption {
+	_ = tc.loadFileContent()
 	return pd.SecurityOption{
 		CAPath:       tc.caPath,
 		CertPath:     tc.certPath,
@@ -174,7 +162,8 @@ func (tc *TLS) ToPDSecurityOption() pd.SecurityOption {
 	}
 }
 
-// TODO: TiKV does not support pass in content
+// ToTiKVSecurityConfig converts the TLS configuration to a TiKV security config.
+// TODO: TiKV does not support pass in content.
 func (tc *TLS) ToTiKVSecurityConfig() config.Security {
 	return config.Security{
 		ClusterSSLCA:    tc.caPath,
@@ -185,5 +174,6 @@ func (tc *TLS) ToTiKVSecurityConfig() config.Security {
 }
 
 func (tc *TLS) TLSConfig() *tls.Config {
+	_ = tc.buildInnerTLSFields()
 	return tc.inner
 }
