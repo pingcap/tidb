@@ -333,7 +333,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica, model.ActionSetTiFlashMode:
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
 		return true
 	}
 	return false

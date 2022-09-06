@@ -1400,7 +1400,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 func (cc *clientConn) writeStats(ctx context.Context) error {
 	var err error
-	var uptime int64 = 0
+	var uptime int64
 	info := serverInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {

@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sem"
@@ -2401,6 +2400,10 @@ func TestJSONBuiltin(t *testing.T) {
 
 	r = tk.MustQuery(`select json_valid('"2019-8-19"');`)
 	r.Check(testkit.Rows("1"))
+
+	tk.MustGetErrCode(`select json_merge(1, 2);`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_merge_preserve(1, 2);`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_merge_patch(1, 2);`, mysql.ErrInvalidTypeForJSON)
 }
 
 func TestTimeLiteral(t *testing.T) {
@@ -6122,6 +6125,19 @@ func TestRedundantColumnResolve(t *testing.T) {
 	tk.MustQuery("select t1.a, t2.a from t1 natural join t2").Check(testkit.Rows("1 1"))
 }
 
+func TestIssue37414(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("drop table if exists bar")
+	tk.MustExec("create table foo(a decimal(65,0));")
+	tk.MustExec("create table bar(a decimal(65,0), b decimal(65,0));")
+	tk.MustExec("insert into bar values(0,0),(1,1),(2,2);")
+	tk.MustExec("insert into foo select if(b>0, if(a/b>1, 1, 2), null) from bar;")
+}
+
 func TestControlFunctionWithEnumOrSet(t *testing.T) {
 	// issue 23114
 	store := testkit.CreateMockStore(t)
@@ -6296,7 +6312,7 @@ func TestBuiltinFuncJSONMergePatch_InColumn(t *testing.T) {
 			if tt.expected == nil {
 				result.Check(testkit.Rows("<nil>"))
 			} else {
-				j, e := json.ParseBinaryFromString(tt.expected.(string))
+				j, e := types.ParseBinaryJSONFromString(tt.expected.(string))
 				require.NoError(t, e)
 				result.Check(testkit.Rows(j.String()))
 			}
@@ -6416,7 +6432,7 @@ func TestBuiltinFuncJSONMergePatch_InExpression(t *testing.T) {
 			if tt.expected == nil {
 				result.Check(testkit.Rows("<nil>"))
 			} else {
-				j, e := json.ParseBinaryFromString(tt.expected.(string))
+				j, e := types.ParseBinaryJSONFromString(tt.expected.(string))
 				require.NoError(t, e)
 				result.Check(testkit.Rows(j.String()))
 			}
@@ -7452,6 +7468,20 @@ func TestIssue36358(t *testing.T) {
 	tk.MustQuery("select extract(day_microsecond from c) from t").Check(testkit.Rows("1020304050607"))
 }
 
+func TestJSONObjectWithBinaryCharset(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a char(20), b blob);")
+	tk.MustExec("insert into t values ('a string', 'a binary string');")
+	tk.MustExec("select json_object(a, b) from t;")
+	tk.MustExec("select json_objectagg(a, b) from t;")
+	tk.MustGetErrCode("select json_object(b, a) from t;", errno.ErrInvalidJSONCharset)
+	err := tk.QueryToErr("select json_objectagg(b, a) from t;")
+	require.Error(t, err)
+	require.Equal(t, "[json:3144]Cannot create a JSON value from a string with CHARACTER SET 'binary'.", err.Error())
+}
+
 func TestCastJSONOpaqueValueToNumeric(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -7462,4 +7492,50 @@ func TestCastJSONOpaqueValueToNumeric(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect INTEGER value: '\"base64:type253:FQ==\"'"))
 	tk.MustQuery("select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as double);").Check(testkit.Rows("0"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '\"base64:type253:FQ==\"'"))
+}
+
+func TestCompareJSONWithOtherType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a JSON)")
+	tk.MustExec("insert into t values ('{}'), ('true'), ('5')")
+	tk.MustQuery("select * from t where a = TRUE;").Check(testkit.Rows("true"))
+	tk.MustQuery("select * from t where a < 6;").Check(testkit.Rows("5"))
+	tk.MustQuery("select * from t where a > 5;").Check(testkit.Rows("{}", "true"))
+}
+
+func TestCastRealAsTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(d1 double, f float, d2 decimal(24,8))")
+
+	// zero input
+	tk.MustExec("insert into t values(0, 0, 0)")
+
+	// const
+	tk.MustQuery("select cast(111.1 as datetime) from t").Check(testkit.Rows("2000-01-11 00:00:00"))
+	tk.MustQuery("select cast(1311.1 as datetime) from t").Check(testkit.Rows("<nil>"))
+
+	// vec
+	// valid input
+	tk.MustExec("insert into t values(111.1, 1122.1, 31212.111)")
+	tk.MustExec("insert into t values(121212.1111, 1121212.111111, 11121212.111111)")
+	tk.MustExec("insert into t values(99991111.1111111, 101.1111111, 20121212121212.1111111)")
+	// null input
+	tk.MustExec("insert into t values(NULL, NULL, NULL)")
+	// invalid input
+	tk.MustExec("insert into t values(1.1, 48.1, 100.1)")
+	tk.MustExec("insert into t values(1301.11, 1131.111, 100001111.111)")
+	tk.MustExec("insert into t values(20121212121260.1111111, 20121212126012.1111111, 20121212241212.1111111)")
+	tk.MustQuery("select cast(d1 as datetime), cast(f as datetime), cast(d2 as datetime) from t").Check(testkit.Rows(
+		"0000-00-00 00:00:00 0000-00-00 00:00:00 0000-00-00 00:00:00",
+		"2000-01-11 00:00:00 2000-11-22 00:00:00 2003-12-12 00:00:00",
+		"2012-12-12 00:00:00 0112-12-12 00:00:00 1112-12-12 00:00:00",
+		"9999-11-11 00:00:00 2000-01-01 00:00:00 2012-12-12 12:12:12",
+		"<nil> <nil> <nil>",
+		"<nil> <nil> <nil>",
+		"<nil> <nil> <nil>",
+		"<nil> <nil> <nil>"))
 }

@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -408,6 +407,9 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, sv := range sysVars {
+		if infoschema.SysVarHiddenForSem(ctx, sv.Name) {
+			continue
+		}
 		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(sv.Name)
 		if err != nil {
 			currentVal = ""
@@ -841,8 +843,9 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			}
 		}
 	}
+	i := 1
 ForColumnsTag:
-	for i, col := range tbl.Columns {
+	for _, col := range tbl.Columns {
 		if col.Hidden {
 			continue
 		}
@@ -959,7 +962,7 @@ ForColumnsTag:
 			schema.Name.O,         // TABLE_SCHEMA
 			tbl.Name.O,            // TABLE_NAME
 			col.Name.O,            // COLUMN_NAME
-			i+1,                   // ORIGINAL_POSITION
+			i,                     // ORDINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
 			types.TypeToStr(ft.GetType(), ft.GetCharset()), // DATA_TYPE
@@ -978,6 +981,7 @@ ForColumnsTag:
 			col.GeneratedExprString, // GENERATION_EXPRESSION
 		)
 		e.rows = append(e.rows, record)
+		i++
 	}
 }
 
@@ -1282,7 +1286,7 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 		if err != nil {
 			return err
 		}
-		bj := binaryJson.BinaryJSON{}
+		bj := types.BinaryJSON{}
 		if err = bj.UnmarshalJSON(data); err != nil {
 			return err
 		}
@@ -1674,11 +1678,12 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 	}
 	requestByTableRange := false
 	allRegionsInfo := helper.NewRegionsInfo()
+	is := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if e.extractor != nil {
 		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
 		if ok && len(extractor.GetTablesID()) > 0 {
 			for _, tableID := range extractor.GetTablesID() {
-				regionsInfo, err := e.getRegionsInfoForSingleTable(tikvHelper, tableID)
+				regionsInfo, err := e.getRegionsInfoForTable(tikvHelper, is, tableID)
 				if err != nil {
 					return err
 				}
@@ -1693,8 +1698,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 			return err
 		}
 	}
-	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, allSchemas)
+	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is.AllSchemas())
 	for i := range allRegionsInfo.Regions {
 		tableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(tableList) == 0 {
@@ -1705,6 +1709,32 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 		}
 	}
 	return nil
+}
+
+func (e *memtableRetriever) getRegionsInfoForTable(h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*helper.RegionsInfo, error) {
+	tbl, _ := is.TableByID(tableID)
+	if tbl == nil {
+		return nil, infoschema.ErrTableExists.GenWithStackByArgs(tableID)
+	}
+
+	pt := tbl.Meta().GetPartitionInfo()
+	if pt == nil {
+		regionsInfo, err := e.getRegionsInfoForSingleTable(h, tableID)
+		if err != nil {
+			return nil, err
+		}
+		return regionsInfo, nil
+	}
+
+	allRegionsInfo := helper.NewRegionsInfo()
+	for _, def := range pt.Definitions {
+		regionsInfo, err := e.getRegionsInfoForSingleTable(h, def.ID)
+		if err != nil {
+			return nil, err
+		}
+		allRegionsInfo = allRegionsInfo.Merge(regionsInfo)
+	}
+	return allRegionsInfo, nil
 }
 
 func (e *memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, tableID int64) (*helper.RegionsInfo, error) {
@@ -2216,7 +2246,6 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
 				tbl.TiFlashReplica.Available,                         // AVAILABLE
 				progress,                                             // PROGRESS
-				tbl.TiFlashMode.String(),                             // TABLE_MPDE
 			)
 			rows = append(rows, record)
 		}

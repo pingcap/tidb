@@ -122,6 +122,7 @@ const (
 	backslashEscapeFlavorMySQLWithNull
 )
 
+// Parser provides some methods to parse a source data file.
 type Parser interface {
 	Pos() (pos int64, rowID int64)
 	SetPos(pos int64, rowID int64) error
@@ -173,7 +174,7 @@ func (parser *blockParser) SetPos(pos int64, rowID int64) error {
 }
 
 // Pos returns the current file offset.
-func (parser *blockParser) Pos() (int64, int64) {
+func (parser *blockParser) Pos() (pos int64, lastRowID int64) {
 	return parser.pos, parser.lastRow.RowID
 }
 
@@ -550,7 +551,11 @@ func (parser *blockParser) RecycleRow(row Row) {
 
 // acquireDatumSlice allocates an empty []types.Datum
 func (parser *blockParser) acquireDatumSlice() []types.Datum {
-	return parser.rowPool.Get().([]types.Datum)
+	datum, ok := parser.rowPool.Get().([]types.Datum)
+	if !ok {
+		return []types.Datum{}
+	}
+	return datum
 }
 
 // ReadChunks parses the entire file and splits it into continuous chunks of
