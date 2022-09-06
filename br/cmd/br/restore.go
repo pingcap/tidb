@@ -231,7 +231,7 @@ func newStreamRestoreCommand() *cobra.Command {
 func newEBSMetaRestoreCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "ebs",
-		Short: "phase 1 of EBS-based restore to restore volumes and other info",
+		Short: "restore volumes and other info during snapshot-based restore",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return runEBSMetaRestoreCommand(command, task.EBSMetaRestoreCmd)
