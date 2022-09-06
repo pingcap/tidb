@@ -29,6 +29,7 @@ on:
       - 'br/pkg/storage/**'
       - 'br/pkg/utils/**'
       - 'br/pkg/summary/**'
+      - 'br/pkg/version/**'
       - 'store/helper/**'
       - 'tablecodec/**'
       - 'util/codec/**'

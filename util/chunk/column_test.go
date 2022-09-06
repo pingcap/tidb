@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/stretchr/testify/require"
 )
 
@@ -332,7 +331,7 @@ func TestJSONColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
-		j := new(json.BinaryJSON)
+		j := new(types.BinaryJSON)
 		err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, i, i)))
 		require.NoError(t, err)
 		col.AppendJSON(*j)
