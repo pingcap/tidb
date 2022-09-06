@@ -3355,7 +3355,5 @@ func TestLazyUpdateWithConcurrentInsert(t *testing.T) {
 	require.Contains(t, err.Error(), "Duplicate entry '3' for key 'i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 	println("after second update")
-	// tk.MustExec("commit")
 	tk.MustExec("admin check table t5")
 }
-
