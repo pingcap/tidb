@@ -464,7 +464,7 @@ func addIndexMultiCols(ctx *suiteContext, tableID int, tableName string, indexID
 
 type failpointsPath struct {
 	failpath string
-	interm   string
+	inTerms  string
 }
 
 var failpoints = []failpointsPath{
@@ -481,10 +481,9 @@ func useFailpoints(ctx *suiteContext, failpos int) {
 	defer ctx.failSync.Done()
 	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos))
 	failpos %= 7
-	require.NoError(ctx.t, failpoint.Enable(failpoints[failpos].failpath, failpoints[failpos].interm))
+	require.NoError(ctx.t, failpoint.Enable(failpoints[failpos].failpath, failpoints[failpos].inTerms))
 	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos), zap.Bool("enable failpoints:", true))
 	time.Sleep(10 * time.Second)
 	require.NoError(ctx.t, failpoint.Disable(failpoints[failpos].failpath))
 	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos), zap.Bool("disable failpoints:", true))
-
 }
