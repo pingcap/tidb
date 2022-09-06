@@ -118,6 +118,7 @@ func TestDDLHistogram(t *testing.T) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	require.True(t, statsTbl.Columns[tableInfo.Columns[2].ID].IsStatsInitialized())
 	require.Equal(t, int64(2), statsTbl.Columns[tableInfo.Columns[2].ID].NullCount)
 	require.Equal(t, int64(0), statsTbl.Columns[tableInfo.Columns[2].ID].Histogram.NDV)
 
@@ -131,6 +132,7 @@ func TestDDLHistogram(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	require.True(t, statsTbl.Columns[tableInfo.Columns[3].ID].IsStatsInitialized())
 	sctx := mock.NewContext()
 	count, err := statsTbl.ColumnEqualRowCount(sctx, types.NewIntDatum(0), tableInfo.Columns[3].ID)
 	require.NoError(t, err)
@@ -161,6 +163,7 @@ func TestDDLHistogram(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	require.True(t, statsTbl.Columns[tableInfo.Columns[5].ID].IsStatsInitialized())
 	require.Equal(t, 3.0, statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.Count, false))
 
 	testKit.MustExec("alter table t add column c6 varchar(15) DEFAULT '123', add column c7 varchar(15) DEFAULT '123'")
