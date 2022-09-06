@@ -30,7 +30,6 @@ const (
 
 // DefineRestoreDataFlags defines common flags for the restore command.
 func DefineRestoreDataFlags(command *cobra.Command) {
-	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
 	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
@@ -39,7 +38,6 @@ func DefineRestoreDataFlags(command *cobra.Command) {
 type RestoreDataConfig struct {
 	Config
 	DumpRegionInfo bool `json:"region-info"`
-	DryRun         bool `json:"dry-run"`
 	// TODO: reserved those parameter for performance optimization
 	VolumeType       config.EBSVolumeType `json:"volume-type"`
 	VolumeIOPS       int64                `json:"volume-iops"`
@@ -49,10 +47,6 @@ type RestoreDataConfig struct {
 // ParseFromFlags parses the restore-related flags from the flag set.
 func (cfg *RestoreDataConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
-	cfg.DryRun, err = flags.GetBool(flagDryRun)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	volumeType, err := flags.GetString(flagVolumeType)
 	if err != nil {
@@ -170,13 +164,9 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 
 	// restore tikv data from a snapshot volume
 	var totalRegions int
-	if cfg.DryRun {
-		totalRegions = 1024
-	} else {
-		totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr, progress)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr, progress)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	summary.CollectInt("total regions", totalRegions)
 	log.Info("unmark recovering to pd")
