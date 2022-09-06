@@ -3613,6 +3613,34 @@
         "Warning": null
       },
       {
+        "SQL": "select /*+ hash_join_build(t2), hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2), hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
           "HashJoin 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
@@ -3941,7 +3969,7 @@
         ]
       },
       {
-        "SQL": "select * from t1 where t1.a not in (select /*+ hash_join_build(t2) */ t2.a from t2 where t1.b = t2.b)",
+        "SQL": "select /*+ hash_join_build(t2) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b)",
         "Plan": [
           "HashJoin 8000.00 root  anti semi join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
@@ -3957,7 +3985,7 @@
         ]
       },
       {
-        "SQL": "select * from t1 where t1.a not in (select /*+ hash_join_probe(t2) */ t2.a from t2 where t1.b = t2.b)",
+        "SQL": "select /*+ hash_join_probe(t2) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b)",
         "Plan": [
           "HashJoin 8000.00 root  anti semi join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
@@ -4011,7 +4039,7 @@
         ]
       },
       {
-        "SQL": "select sum(t1.a in (select /*+ hash_join_build(t2) */ a from t2)) from t1",
+        "SQL": "select /*+ hash_join_build(t2) */ sum(t1.a in (select a from t2)) from t1",
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
           "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
@@ -4029,7 +4057,7 @@
         ]
       },
       {
-        "SQL": "select sum(t1.a in (select /*+ hash_join_probe(t2) */ a from t2)) from t1",
+        "SQL": "select /*+ hash_join_probe(t2) */ sum(t1.a in (select a from t2)) from t1",
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
           "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
@@ -4085,7 +4113,7 @@
         ]
       },
       {
-        "SQL": "select sum(t1.a not in (select /*+ hash_join_build(t2) */ a from t2)) from t1",
+        "SQL": "select /*+ hash_join_build(t2) */ sum(t1.a not in (select a from t2)) from t1",
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
           "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
@@ -4103,7 +4131,7 @@
         ]
       },
       {
-        "SQL": "select sum(t1.a not in (select /*+ hash_join_probe(t2) */ a from t2)) from t1",
+        "SQL": "select /*+ hash_join_probe(t2) */ sum(t1.a not in (select a from t2)) from t1",
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
           "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
