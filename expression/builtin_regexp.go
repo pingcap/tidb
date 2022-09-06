@@ -246,7 +246,6 @@ func (re *builtinRegexpLikeFuncSig) needMemorization() bool {
 	return !re.isMemorizedRegexpInitialized() && (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 2 || re.args[2].ConstItem(re.ctx.GetSessionVars().StmtCtx)))
 }
 
-// Call this function when at least one of the args is vector
 // REGEXP_LIKE(expr, pat[, match_type])
 func (re *builtinRegexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -494,7 +493,6 @@ func (re *builtinRegexpSubstrFuncSig) needMemorization() bool {
 	return !re.isMemorizedRegexpInitialized() && (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 4 || re.args[4].ConstItem(re.ctx.GetSessionVars().StmtCtx)))
 }
 
-// Call this function when at least one of the args is vector
 // REGEXP_SUBSTR(expr, pat[, pos[, occurrence[, match_type]]])
 func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -847,7 +845,6 @@ func (re *builtinRegexpInStrFuncSig) needMemorization() bool {
 	return !re.isMemorizedRegexpInitialized() && (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 || re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx)))
 }
 
-// Call this function when at least one of the args is vector
 // REGEXP_INSTR(expr, pat[, pos[, occurrence[, return_option[, match_type]]]])
 func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -1241,7 +1238,6 @@ func (re *builtinRegexpReplaceFuncSig) needMemorization() bool {
 	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 || re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
-// Call this function when at least one of the args is vector
 // REGEXP_REPLACE(expr, pat, repl[, pos[, occurrence[, match_type]]])
 func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
