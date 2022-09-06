@@ -682,6 +682,11 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 	d.SetAutoID(id, col.Flag)
 	var err error
 	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
+	if err == nil && d.GetInt64() < id {
+		// Auto ID is out of range, the truncated ID is possible to duplicate with an existing ID.
+		// To prevent updating unrelated rows in the REPLACE statement, it is better to throw an error.
+		return autoid.ErrAutoincReadFailed
+	}
 	return err
 }
 

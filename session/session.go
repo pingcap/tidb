@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
@@ -654,14 +655,15 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
 
-func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
+func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
 	tid := tablecodec.DecodeTableID(key)
 	if _, ok := m[tid]; ok {
-		return true
+		return true, nil
 	}
 
 	// This is the default filter for all tables.
-	return tablecodec.IsUntouchedIndexKValue(key, value)
+	defaultFilter := txn.TiDBKVFilter{}
+	return defaultFilter.IsUnnecessaryKeyValue(key, value, flags)
 }
 
 // errIsNoisy is used to filter DUPLCATE KEY errors.
@@ -1014,6 +1016,9 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
+		// Chunk RPC protocol may have memory leak issue not solved.
+		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
 }
@@ -1034,6 +1039,9 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
+		// Chunk RPC protocol may have memory leak issue not solved.
+		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
 }
@@ -1916,6 +1924,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		is := s.GetInfoSchema().(infoschema.InfoSchema)
 		if prepared.SchemaVersion != is.SchemaMetaVersion() {
 			prepared.CachedPlan = nil
+			preparedStmt.ColumnInfos = nil
 			return false, nil
 		}
 	}
@@ -1964,8 +1973,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	defer s.txn.onStmtEnd()
 	var is infoschema.InfoSchema
 	var snapshotTS uint64
-	if preparedStmt.ForUpdateRead {
+	if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
+		is = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 	} else if preparedStmt.SnapshotTSEvaluator != nil {
 		snapshotTS, err = preparedStmt.SnapshotTSEvaluator(s)
 		if err != nil {

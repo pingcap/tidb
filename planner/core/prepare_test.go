@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -2372,4 +2373,53 @@ func (s *testPlanSerialSuite) TestPartitionWithVariedDatasources(c *C) {
 			}
 		}
 	}
+}
+
+func (s *testPlanSerialSuite) TestPlanCacheWithRCWhenInfoSchemaChange(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	ctx := context.Background()
+
+	tk1 := testkit.NewTestKit(c, store)
+	tk2 := testkit.NewTestKit(c, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int primary key, c int, index ic (c))")
+	// prepare text protocol
+	tk1.MustExec("prepare s from 'select /*+use_index(t1, ic)*/ * from t1 where 1'")
+	// prepare binary protocol
+	stmtID, _, _, err := tk2.Se.PrepareStmt("select /*+use_index(t1, ic)*/ * from t1 where 1")
+	c.Assert(err, IsNil)
+	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk2.MustExec("begin pessimistic")
+	tk1.MustQuery("execute s").Check(testkit.Rows())
+	rs, err := tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	c.Assert(err, IsNil)
+	tk2.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
+
+	tk3 := testkit.NewTestKit(c, store)
+	tk3.MustExec("use test")
+	tk3.MustExec("alter table t1 drop index ic")
+	tk3.MustExec("insert into t1 values(1, 0)")
+
+	// The execution after schema changed should not hit plan cache.
+	// execute text protocol
+	tk1.MustQuery("execute s").Check(testkit.Rows("1 0"))
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// execute binary protocol
+	rs, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	c.Assert(err, IsNil)
+	tk2.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 0"))
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }

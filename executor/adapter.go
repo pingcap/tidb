@@ -755,7 +755,7 @@ type pessimisticTxn interface {
 	KeysNeedToLock() ([]kv.Key, error)
 }
 
-// buildExecutor build a executor from plan, prepared statement may need additional procedure.
+// buildExecutor build an executor from plan, prepared statement may need additional procedure.
 func (a *ExecStmt) buildExecutor() (Executor, error) {
 	ctx := a.Ctx
 	stmtCtx := ctx.GetSessionVars().StmtCtx

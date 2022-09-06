@@ -7214,9 +7214,16 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select locate('S', 'a' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
 	// MySQL return 0 here, I believe it is a bug in MySQL since 'ß' == 's' under utf8mb4_general_ci collation.
 	tk.MustQuery("select locate('ß', 's' collate utf8mb4_general_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('world', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("7"))
+	tk.MustQuery("select locate(' ', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("6"))
+	tk.MustQuery("select locate('  ', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
+
 	tk.MustQuery("select locate('S', 's' collate utf8mb4_unicode_ci);").Check(testkit.Rows("1"))
 	tk.MustQuery("select locate('S', 'a' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
 	tk.MustQuery("select locate('ß', 'ss' collate utf8mb4_unicode_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('world', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("7"))
+	tk.MustQuery("select locate(' ', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("6"))
+	tk.MustQuery("select locate('  ', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
 
 	tk.MustExec("truncate table t1;")
 	tk.MustExec("insert into t1 (a) values (1);")
@@ -10559,4 +10566,14 @@ func (s *testIntegrationSuite) TestIssue30326(c *C) {
 	err := tk.QueryToErr("select (FIRST_VALUE(1) over (partition by v.a)) as c3 from (select a from t where t.a = (select a from t t2 where t.a = t2.a)) as v;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[executor:1242]Subquery returns more than 1 row")
+}
+
+func (s *testIntegrationSuite) TestIssue33397(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(32));")
+	tk.MustExec("insert into t values(''), ('');")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
+	tk.MustQuery("select compress(a) from t").Check(testkit.Rows("", ""))
 }

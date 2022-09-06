@@ -543,15 +543,15 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
+	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds...)
 	return candidate
 }
 
 func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
-	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
+	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds...)
+	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters...)
 	return candidate
 }
 
