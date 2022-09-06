@@ -716,6 +716,14 @@ var MetricsTypes = map[int][]string{
 
 // below constants are the size of commonly used types, for memory trace
 
-const SizeOfSlice = int64(unsafe.Sizeof(*new([]int))) // It is the memory every slice itself used, excludes the elements' memory
+// SizeOfSlice is the memory itself used, excludes the elements' memory
+const SizeOfSlice = int64(unsafe.Sizeof(*new([]int)))
 
+// SizeOfByte is the memory each byte occupied
 const SizeOfByte = int64(unsafe.Sizeof(*new(byte)))
+
+// SizeOfString is the memory itself occupied
+const SizeOfString = int64(unsafe.Sizeof(*new(string)))
+
+// SizeOfBool is the memory each bool occupied
+const SizeOfBool = int64(unsafe.Sizeof(*new(bool)))

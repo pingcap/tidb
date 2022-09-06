@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -610,13 +611,12 @@ func (ft *FieldType) MemoryUsage() (sum int64) {
 	if ft == nil {
 		return
 	}
-	sum = emptyFieldTypeSize +
-		int64(len(ft.charset)+len(ft.collate))
+	sum = emptyFieldTypeSize + int64(len(ft.charset)+len(ft.collate))
 
 	for _, s := range ft.elems {
 		sum += int64(len(s))
 	}
-	sum += int64(cap(ft.elems)) * int64(unsafe.Sizeof(*new(string)))
-	sum += int64(cap(ft.elemsIsBinaryLit)) * int64(unsafe.Sizeof(unsafe.Sizeof(*new(bool))))
+	sum += int64(cap(ft.elems)) * memory.SizeOfString
+	sum += int64(cap(ft.elemsIsBinaryLit)) * memory.SizeOfBool
 	return
 }
