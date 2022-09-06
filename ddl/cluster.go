@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -58,7 +59,7 @@ func savePDSchedule(job *model.Job) error {
 	for _, key := range pdScheduleKey {
 		saveValue[key] = retValue[key]
 	}
-	job.Args = append(job.Args, saveValue)
+	job.Args[1] = &saveValue
 	return nil
 }
 
@@ -84,6 +85,9 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	if oracle.GetTimeFromTS(flashBackTS).After(oracle.GetTimeFromTS(currentTS)) {
 		return errors.Errorf("cannot set flashback timestamp to future time")
 	}
+	if oracle.GetTimeFromTS(flashBackTS).After(expression.GetMinSafeTime(sctx)) {
+		return errors.Errorf("cannot set flashback timestamp to too close to present time")
+	}
 	gcSafePoint, err := gcutil.GetGCSafePoint(sctx)
 	if err != nil {
 		return err
@@ -92,13 +96,7 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
-func checkAndSetFlashbackClusterInfo(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
-	sess, err := w.sessPool.get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer w.sessPool.put(sess)
-
+func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
 		return err
 	}
@@ -119,7 +117,6 @@ func checkAndSetFlashbackClusterInfo(w *worker, d *ddlCtx, t *meta.Meta, job *mo
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	// If flashbackSchemaVersion not same as nowSchemaVersion, we've done ddl during [flashbackTs, now).
 	if flashbackSchemaVersion != nowSchemaVersion {
 		return errors.Errorf("schema version not same, have done ddl during [flashbackTS, now)")
@@ -238,52 +235,63 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Trace(err)
 	}
 
-	flashbackJobID, err := t.GetFlashbackClusterJobID()
-	if err != nil {
-		return ver, err
-	}
-
+	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and save the PD schedule.
-	if flashbackJobID == 0 {
-		err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			return meta.NewMeta(txn).SetFlashbackClusterJobID(job.ID)
-		})
+	case model.StateNone:
+		flashbackJobID, err := t.GetFlashbackClusterJobID()
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, err
 		}
-		if err = savePDSchedule(job); err != nil {
+		if flashbackJobID == 0 || flashbackJobID == job.ID {
+			err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
+				return meta.NewMeta(txn).SetFlashbackClusterJobID(job.ID)
+			})
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			if err = savePDSchedule(job); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		} else {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
 		}
+		job.SchemaState = model.StateWriteOnly
 		return ver, nil
-	} else if flashbackJobID != job.ID {
-		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
-	}
-
 	// Stage 2, check flashbackTS, close GC and PD schedule.
-	if job.SnapshotVer == 0 {
-		if err = checkAndSetFlashbackClusterInfo(w, d, t, job, flashbackTS); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		snapVer, err := getValidCurrentVersion(d.store)
+	case model.StateWriteOnly:
+		sess, err := w.sessPool.get()
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		job.SnapshotVer = snapVer.Ver
+		defer w.sessPool.put(sess)
+		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteReorganization
+		return ver, nil
+	// Stage 3, get key ranges.
+	case model.StateWriteReorganization:
+		sess, err := w.sessPool.get()
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		defer w.sessPool.put(sess)
+		_, err = GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		job.State = model.JobStateDone
+		job.SchemaState = model.StatePublic
 		return ver, nil
 	}
-
-	// Stage 3, get key ranges.
-	_, err = GetFlashbackKeyRanges(w.sess, tablecodec.EncodeTablePrefix(0))
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	job.State = model.JobStateDone
 	return ver, nil
 }
 
