@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -128,7 +127,7 @@ func (g *randJSONDuration) gen() interface{} {
 	d := types.Duration{
 		Duration: time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond,
 		Fsp:      3}
-	return json.CreateBinary(d.String())
+	return types.CreateBinaryJSON(d.String())
 }
 
 type datetimeJSONGener struct{}
@@ -146,7 +145,7 @@ func (g *datetimeJSONGener) gen() interface{} {
 		0,
 		3,
 	)
-	return json.CreateBinary(d.String())
+	return types.CreateBinaryJSON(d.String())
 }
 
 func TestVectorizedBuiltinCastEvalOneVec(t *testing.T) {
