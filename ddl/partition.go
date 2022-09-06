@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -2749,6 +2750,24 @@ func checkNoTimestampArgs(tbInfo *model.TableInfo, exprs ...ast.ExprNode) error 
 	return nil
 }
 
+// hexIfNonPrint checks if printable UTF-8 characters,
+// if so, just returns the string
+// else returns a hex string of the binary string (i.e. actual encoding, not unicode code points!)
+func hexIfNonPrint(s string) string {
+	isPrint := true
+	// https://go.dev/blog/strings `for range` of string converts to runes!
+	for _, runeVal := range s {
+		if !strconv.IsPrint(runeVal) {
+			isPrint = false
+			break
+		}
+	}
+	if isPrint {
+		return s
+	}
+	return "0x" + hex.EncodeToString([]byte(s))
+}
+
 // AppendPartitionDefs generates a list of partition definitions needed for SHOW CREATE TABLE (in executor/show.go)
 // as well as needed for generating the ADD PARTITION query for INTERVAL partitioning of ALTER TABLE t LAST PARTITION
 // and generating the CREATE TABLE query from CREATE TABLE ... INTERVAL
@@ -2760,8 +2779,11 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
 		// PartitionTypeHash does not have any VALUES definition
 		if partitionInfo.Type == model.PartitionTypeRange {
-			lessThans := strings.Join(def.LessThan, ",")
-			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", lessThans)
+			lessThans := make([]string, len(def.LessThan))
+			for _, v := range def.LessThan {
+				lessThans[i] = hexIfNonPrint(v)
+			}
+			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", strings.Join(lessThans, ","))
 		} else if partitionInfo.Type == model.PartitionTypeList {
 			values := bytes.NewBuffer(nil)
 			for j, inValues := range def.InValues {
@@ -2770,10 +2792,14 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 				}
 				if len(inValues) > 1 {
 					values.WriteString("(")
-					values.WriteString(strings.Join(inValues, ","))
+					tmpVals := make([]string, len(inValues))
+					for idx, v := range inValues {
+						tmpVals[idx] = hexIfNonPrint(v)
+					}
+					values.WriteString(strings.Join(tmpVals, ","))
 					values.WriteString(")")
-				} else {
-					values.WriteString(strings.Join(inValues, ","))
+				} else if len(inValues) == 1 {
+					values.WriteString(hexIfNonPrint(inValues[0]))
 				}
 			}
 			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())

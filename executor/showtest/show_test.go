@@ -472,6 +472,17 @@ func TestShowCreateTable(t *testing.T) {
 		"t CREATE TABLE `t` (\n"+
 		"  `a` bit(1) DEFAULT rand()\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec(`drop table if exists t`)
+	err := tk.ExecToErr(`create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0xff))`)
+	require.ErrorContains(t, err, "[ddl:1654]Partition column values of incorrect type")
+	tk.MustExec(`create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0x7f))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`)\n" +
+			"(PARTITION `p` VALUES LESS THAN (0x7f))"))
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {
