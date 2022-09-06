@@ -61,6 +61,16 @@ error = '''
 version mismatch
 '''
 
+["BR:EBS:ErrRestoreInvalidPeer"]
+error = '''
+restore met a invalid peer
+'''
+
+["BR:EBS:ErrRestoreTotalKVMismatch"]
+error = '''
+restore total tikvs mismatch
+'''
+
 ["BR:ExternalStorage:ErrStorageInvalidConfig"]
 error = '''
 invalid external storage config
