@@ -209,7 +209,6 @@ go_test(
         "//util/codec",
         "//util/collate",
         "//util/hack",
-        "//util/kvcache",
         "//util/mathutil",
         "//util/mock",
         "//util/printer",
