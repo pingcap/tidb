@@ -16,6 +16,8 @@ package core_test
 
 import (
 	"errors"
+	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"testing"
@@ -67,36 +69,6 @@ func (mp *mockParameterizer) Parameterize(originSQL string) (paramSQL string, pa
 	return string(buf), params, true, nil
 }
 
-func TestGeneralPlanCacheParameterizer(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKitWithGeneralPlanCache(t, store)
-
-	mp := new(mockParameterizer)
-	tk.Session().SetValue(plannercore.ParameterizerKey, mp)
-
-	tk.MustExec("set tidb_enable_general_plan_cache=1")
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
-	tk.MustExec("insert into t values (0), (1), (2), (3), (4), (5)")
-	tk.MustQuery("select * from t where a > 1").Sort().Check(testkit.Rows("2", "3", "4", "5"))
-	tk.MustQuery("select * from t where a > 3").Sort().Check(testkit.Rows("4", "5"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from t where a > 1 and a < 5").Sort().Check(testkit.Rows("2", "3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	mp.action = "error"
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	mp.action = "not_support"
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	mp.action = ""
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-}
-
 func TestInitLRUWithSystemVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -106,4 +78,35 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 
 	lru := plannercore.NewLRUPlanCache(uint(sessionVar.PreparedPlanCacheSize), 0, 0, plannercore.PickPlanFromBucket)
 	require.NotNil(t, lru)
+}
+
+func TestGeneralPlanCacheBasically(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), key(c, d))`)
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v, %v)", i, rand.Intn(20), rand.Intn(20), rand.Intn(20)))
+	}
+
+	queries := []string{
+		"select * from t where a<10",
+		"select * from t where a<13 and b<15",
+		"select * from t where b=13",
+		"select * from t where c<8",
+		"select * from t where d>8",
+		"select * from t where c=8 and d>10",
+		"select * from t where a<12 and b<13 and c<12 and d>2",
+	}
+
+	for _, query := range queries {
+		tk.MustExec(`set tidb_enable_general_plan_cache=0`)
+		resultNormal := tk.MustQuery(query).Sort()
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+		tk.MustExec(`set tidb_enable_general_plan_cache=1`)
+		tk.MustQuery(query)                                                    // first process
+		tk.MustQuery(query).Sort().Check(resultNormal.Rows())                  // equal to the result without plan-cache
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // this plan is from plan-cache
+	}
 }
