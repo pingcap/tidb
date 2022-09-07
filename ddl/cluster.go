@@ -119,7 +119,7 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 
 func setTiDBRestrictedReadOnly(sess sessionctx.Context, value bool) error {
 	var setValue string
-	if value == true {
+	if value {
 		setValue = variable.On
 	} else {
 		setValue = variable.Off
@@ -490,7 +490,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 			if err = setTiDBRestrictedReadOnly(sess, readOnlyValue); err != nil {
 				return err
 			}
-			if gcEnabled == true {
+			if gcEnabled {
 				if err = gcutil.EnableGC(sess); err != nil {
 					return err
 				}
