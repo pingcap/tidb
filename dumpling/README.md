@@ -44,11 +44,14 @@ Building
     * `mysql` (the CLI client)
   - There must be a local mysql server listening on `127.0.0.1:3306`, and an active user with no password that can be connected through this TCP address.
 
-
 License
 -------
 
 Dumpling is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
 
+<<<<<<< HEAD
 
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling?ref=badge_large)
+=======
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling?ref=badge_large)
+>>>>>>> 5f0c58002... *: refine github actions and makefile (#37235)

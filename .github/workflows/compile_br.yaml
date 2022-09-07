@@ -1,8 +1,9 @@
-name: BR & Lightning 
+name: BR & Lightning
 on:
   push:
     branches:
       - master
+<<<<<<< HEAD:.github/workflows/compile_br.yaml
     paths:
       - 'br/**'
       - '!**.html'
@@ -15,15 +16,34 @@ on:
   pull_request:
     branches:
       - master
+=======
+      - "release-[0-9].[0-9]*"
     paths:
-      - 'br/**'
-      - '!**.html'
-      - '!**.md'
-      - '!CNAME'
-      - '!LICENSE'
-      - '!br/docs/**'
-      - '!br/tests/**'
-      - '!br/docker/**'
+      - "br/**"
+      - "!**.html"
+      - "!**.md"
+      - "!CNAME"
+      - "!LICENSE"
+      - "!br/docs/**"
+      - "!br/tests/**"
+      - "!br/docker/**"
+  #change trigger policy
+  pull_request:
+    types:
+      - labeled # <--
+    branches:
+      - master
+      - "release-[0-9].[0-9]*"
+>>>>>>> 5f0c58002... *: refine github actions and makefile (#37235):.github/workflows/integration-test-compile-br.yml
+    paths:
+      - "br/**"
+      - "!**.html"
+      - "!**.md"
+      - "!CNAME"
+      - "!LICENSE"
+      - "!br/docs/**"
+      - "!br/tests/**"
+      - "!br/docker/**"
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -33,6 +53,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+<<<<<<< HEAD:.github/workflows/compile_br.yaml
+=======
+  compile-windows:
+    if: github.event_name == 'push' || github.event_name == 'pull_request' && github.event.label.name == 'action/run-br-cross-platform-build'
+    name: Compile for Windows job
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v2.1.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run build
+        run: make build_tools
+
+>>>>>>> 5f0c58002... *: refine github actions and makefile (#37235):.github/workflows/integration-test-compile-br.yml
   compile:
     name: Compile for ${{ matrix.os }} / ${{ matrix.target}}
     runs-on: ${{ matrix.os }}
