@@ -759,7 +759,9 @@ func gcsObjectNotFound(err error) bool {
 // todo: maybe change to http api later
 func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, total int64) {
 	// remove tmp file
-	defer os.Remove(ebsProgressFilename)
+	defer func() {
+		_ = os.Remove(ebsProgressFilename)
+	}()
 
 	for progress.GetCurrent() < total {
 		select {

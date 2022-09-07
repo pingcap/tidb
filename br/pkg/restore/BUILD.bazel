@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "batcher.go",
         "client.go",
+        "data.go",
         "db.go",
         "import.go",
         "import_retry.go",
@@ -54,6 +55,7 @@ go_library(
         "//util/hack",
         "//util/mathutil",
         "//util/table-filter",
+        "@com_github_emirpasic_gods//maps/treemap",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_google_uuid//:uuid",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
@@ -65,6 +67,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/pdpb",
+        "@com_github_pingcap_kvproto//pkg/recoverdatapb",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//kv",

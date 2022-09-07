@@ -11,6 +11,7 @@ import (
 	recovpb "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -37,7 +38,6 @@ const (
 func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress) (int, error) {
 
 	var recovery = NewRecovery(allStores, mgr, progress)
-
 	if err := recovery.ReadRegionMeta(ctx); err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -109,7 +109,7 @@ func (recovery *Recovery) newRecoveryClient(ctx context.Context, storeAddr strin
 	if recovery.mgr.GetTLSConfig() != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(recovery.mgr.GetTLSConfig()))
 	}
-	//TODO: conneciton may need some adjust
+	//TODO: connection may need some adjust
 	//keepaliveConf keepalive.ClientParameters
 	conn, err := grpc.DialContext(
 		ctx,
@@ -213,6 +213,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 }
 
 // TODO: map may be more suitable for this function
+
 func (recovery *Recovery) GetTotalRegions() int {
 	// Group region peer info by region id.
 	var regions = make(map[uint64]struct{}, 0)
@@ -356,9 +357,55 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 			return nil
 		})
 	}
+	// Wait for all TiKV instances force leader and wait apply to last log.
+	return eg.Wait()
+}
+
+// ResolveData a worker pool to all tikv for execute delete all data whose has ts > resolvedTs
+func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (err error) {
+	eg, ectx := errgroup.WithContext(ctx)
+	totalStores := len(recovery.allStores)
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, maxStoreConcurrency)), "resolve data from tikv")
+
+	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at least some retry may necessary
+	// TODO: what if the network disturbing, a retry machanism may need here
+	for _, store := range recovery.allStores {
+		if err := ectx.Err(); err != nil {
+			break
+		}
+		storeAddr := getStoreAddress(recovery.allStores, store.Id)
+		storeId := store.Id
+		workers.ApplyOnErrorGroup(eg, func() error {
+			recoveryClient, conn, err := recovery.newRecoveryClient(ectx, storeAddr)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer conn.Close()
+			log.Info("resolved data to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
+			req := &recovpb.ResolveKvDataRequest{ResolvedTs: resolvedTs}
+			stream, err := recoveryClient.ResolveKvData(ectx, req)
+			if err != nil {
+				log.Error("send the resolve kv data failed", zap.Uint64("store id", storeId))
+				return errors.Trace(err)
+			}
+			// for a TiKV, received the stream
+			for {
+				var resp *recovpb.ResolveKvDataResponse
+				if resp, err = stream.Recv(); err == nil {
+					log.Info("current delete key", zap.Uint64("resolved key num", resp.ResolvedKeyCount), zap.Uint64("store id", resp.StoreId))
+				} else if err == io.EOF {
+					break
+				} else {
+					return errors.Trace(err)
+				}
+			}
+			recovery.progress.Inc()
+			log.Info("resolved kv data done", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
+			return nil
+		})
+	}
 	// Wait for all TiKV instances finished
 	return eg.Wait()
-
 }
 
 type RecoverRegion struct {

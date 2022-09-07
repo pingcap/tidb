@@ -211,6 +211,22 @@ func (h *restoreEBSMetaHelper) restore() error {
 		return errors.Trace(err)
 	}
 
+	// stop scheduler before recover data
+	log.Info("starting to remove some PD schedulers")
+	restoreFunc, e := h.pdc.RemoveAllPDSchedulers(ctx)
+	if e != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if ctx.Err() != nil {
+			log.Warn("context canceled, doing clean work with background context")
+			ctx = context.Background()
+		}
+		if restoreE := restoreFunc(ctx); restoreE != nil {
+			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+		}
+	}()
+
 	storeCount := h.metaInfo.GetStoreCount()
 	progress := h.g.StartProgress(ctx, h.cmdName, int64(storeCount), !h.cfg.LogProgress)
 	defer progress.Close()

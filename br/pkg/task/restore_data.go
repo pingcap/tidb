@@ -73,7 +73,7 @@ func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64,
 	return metaInfo.GetResolvedTS(), metaInfo.TiKVComponent.Replicas, nil
 }
 
-// RunRestore starts a restore task inside the current goroutine.
+// RunResolveKvData starts a restore task inside the current goroutine.
 func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *RestoreDataConfig) error {
 	startAll := time.Now()
 	defer summary.Summary(cmdName)
@@ -145,6 +145,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}()
 
 	var allStores []*metapb.Store
+
 	var numOnlineStore int
 	err = utils.WithRetry(
 		ctx,
@@ -168,6 +169,10 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	if err != nil {
 		return errors.Trace(err)
 	}
+	numOnlineStore := len(allStores)
+	// progress = read meta + send recovery + resolve kv data.
+	progress := g.StartProgress(ctx, cmdName, int64(numOnlineStore*3), !cfg.LogProgress)
+	go progressFileWriterRoutine(ctx, progress, int64(numOnlineStore*3))
 
 	// progress = read meta + send recovery + resolve kv data.
 	progress := g.StartProgress(ctx, cmdName, int64(numOnlineStore*3), !cfg.LogProgress)
@@ -194,5 +199,4 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	summary.CollectDuration("restore duration", time.Since(startAll))
 	summary.SetSuccessStatus(true)
 	return nil
-
 }

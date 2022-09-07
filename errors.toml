@@ -61,6 +61,16 @@ error = '''
 version mismatch
 '''
 
+["BR:EBS:ErrRestoreInvalidPeer"]
+error = '''
+restore met a invalid peer
+'''
+
+["BR:EBS:ErrRestoreTotalKVMismatch"]
+error = '''
+restore total tikvs mismatch
+'''
+
 ["BR:ExternalStorage:ErrStorageInvalidConfig"]
 error = '''
 invalid external storage config
@@ -419,6 +429,11 @@ invalid schema file
 ["Lightning:Loader:ErrTableRoute"]
 error = '''
 table route error
+'''
+
+["Lightning:Loader:ErrTooManySourceFiles"]
+error = '''
+too many source files
 '''
 
 ["Lightning:MetaMgr:ErrMetaMgrUnknown"]
@@ -1574,6 +1589,11 @@ Invalid argument for logarithm
 ["expression:3064"]
 error = '''
 Incorrect type for argument %s in function %s.
+'''
+
+["expression:3146"]
+error = '''
+Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.
 '''
 
 ["expression:8128"]

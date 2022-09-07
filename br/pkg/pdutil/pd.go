@@ -198,6 +198,7 @@ func pdRequestRetryInterval() time.Duration {
 	return time.Second
 }
 
+// DefaultExpectPDCfgGenerators returns default pd config generators
 func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
 	clone := make(map[string]pauseConfigGenerator, len(expectPDCfgGenerators))
 	for k := range expectPDCfgGenerators {
@@ -256,7 +257,9 @@ func NewPdController(
 	pdClient, err := pd.NewClientWithContext(
 		ctx, addrs, securityOption,
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
-		pd.WithCustomTimeoutOption(10*time.Second),
+		// If the time too short, we may scatter a region many times, because
+		// the interface `ScatterRegions` may time out.
+		pd.WithCustomTimeoutOption(60*time.Second),
 		pd.WithMaxErrorRetry(3),
 	)
 	if err != nil {
@@ -625,6 +628,7 @@ func (p *PdController) MakeUndoFunctionByConfig(config ClusterConfig) UndoFunc {
 	return p.GenRestoreSchedulerFunc(config, expectPDCfgGenerators)
 }
 
+// GenRestoreSchedulerFunc gen restore func
 func (p *PdController) GenRestoreSchedulerFunc(config ClusterConfig, configsNeedRestore map[string]pauseConfigGenerator) UndoFunc {
 	// todo: we only need config names, not a map[string]pauseConfigGenerator
 	restore := func(ctx context.Context) error {
@@ -647,7 +651,7 @@ func (p *PdController) RemoveSchedulers(ctx context.Context) (undo UndoFunc, err
 	return undo, errors.Trace(err)
 }
 
-// removeAllPDSchedulers pause pd scheduler during the snapshot backup and restore
+// RemoveAllPDSchedulers pause pd scheduler during the snapshot backup and restore
 func (p *PdController) RemoveAllPDSchedulers(ctx context.Context) (undo UndoFunc, err error) {
 	undo = Nop
 
@@ -683,6 +687,7 @@ func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin C
 	return p.RemoveSchedulersWithConfigGenerator(ctx, expectPDCfgGenerators)
 }
 
+// RemoveSchedulersWithConfigGenerator pause scheduler with custom config generator
 func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context, pdConfigGenerators map[string]pauseConfigGenerator) (
 	origin ClusterConfig, modified ClusterConfig, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -768,6 +773,7 @@ func (p *PdController) doRemoveSchedulersWith(
 	return removedSchedulers, err
 }
 
+// GetMinResolvedTS get min-resolved-ts from pd
 func (p *PdController) GetMinResolvedTS(ctx context.Context) (uint64, error) {
 	var err error
 	for _, addr := range p.addrs {
@@ -796,33 +802,12 @@ func (p *PdController) GetMinResolvedTS(ctx context.Context) (uint64, error) {
 	return 0, errors.Trace(err)
 }
 
-func (p *PdController) GetBaseAllocID(ctx context.Context) (uint64, error) {
-	var err error
-	for _, addr := range p.addrs {
-		v, e := pdRequest(ctx, addr, baseAllocIDPrefix, p.cli, http.MethodGet, nil)
-		if e != nil {
-			log.Warn("failed to get base alloc id", zap.String("addr", addr), zap.Error(e))
-			err = e
-			continue
-		}
-		log.Info("base alloc id", zap.String("resp", string(v)))
-		d := struct {
-			Id uint64 `json:"id"`
-		}{}
-		err = json.Unmarshal(v, &d)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		return d.Id, nil
-	}
-	return 0, errors.Trace(err)
-}
-
+// RecoverBaseAllocID recover base alloc id
 func (p *PdController) RecoverBaseAllocID(ctx context.Context, id uint64) error {
 	reqData, _ := json.Marshal(&struct {
-		Id string `json:"id"`
+		ID string `json:"id"`
 	}{
-		Id: fmt.Sprintf("%d", id),
+		ID: fmt.Sprintf("%d", id),
 	})
 	var err error
 	for _, addr := range p.addrs {
@@ -837,6 +822,7 @@ func (p *PdController) RecoverBaseAllocID(ctx context.Context, id uint64) error 
 	return errors.Trace(err)
 }
 
+// ResetTS reset current ts of pd
 func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
 	// reset-ts of PD will never set ts < current pd ts
 	// we set force-use-larger=true to allow ts > current pd ts + 24h(on default)
@@ -860,10 +846,12 @@ func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
 	return errors.Trace(err)
 }
 
+// MarkRecovering mark pd into recovering
 func (p *PdController) MarkRecovering(ctx context.Context) error {
 	return p.operateRecoveringMark(ctx, http.MethodPost)
 }
 
+// UnmarkRecovering unmark pd recovering
 func (p *PdController) UnmarkRecovering(ctx context.Context) error {
 	return p.operateRecoveringMark(ctx, http.MethodDelete)
 }
