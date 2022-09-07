@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -530,8 +531,8 @@ func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.basePlan.MemoryUsage() +
-		int64(unsafe.Sizeof(p.childrenReqProps)) + int64(cap(p.childrenReqProps))*SizeOfPointer +
-		int64(unsafe.Sizeof(p.children)) + int64(cap(p.children)+1)*SizeOfInterface +
+		int64(unsafe.Sizeof(p.childrenReqProps)) + int64(cap(p.childrenReqProps))*memory.SizeOfPointer +
+		int64(unsafe.Sizeof(p.children)) + int64(cap(p.children)+1)*memory.SizeOfInterface +
 		4*int64(unsafe.Sizeof(p.cost))
 	for _, prop := range p.childrenReqProps {
 		sum += prop.MemoryUsage()
@@ -688,9 +689,6 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt 
 	}
 	return p.children[0].PruneColumns(parentUsedCols, opt)
 }
-
-const SizeOfPointer = int64(unsafe.Sizeof(new(int)))
-const SizeOfInterface = int64(unsafe.Sizeof(*new(interface{})))
 
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.

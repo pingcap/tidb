@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
@@ -1322,7 +1323,7 @@ func (ls *PhysicalSort) MemoryUsage() (sum int64) {
 	}
 
 	sum = ls.basePhysicalPlan.MemoryUsage() +
-		int64(unsafe.Sizeof(ls.ByItems)) + int64(cap(ls.ByItems))*SizeOfPointer +
+		int64(unsafe.Sizeof(ls.ByItems)) + int64(cap(ls.ByItems))*memory.SizeOfPointer +
 		// todo: add the expression memory usage
 		// todo: replace sizeof
 		int64(unsafe.Sizeof(ls.IsPartialSort))

@@ -727,3 +727,9 @@ const SizeOfString = int64(unsafe.Sizeof(*new(string)))
 
 // SizeOfBool is the memory each bool occupied
 const SizeOfBool = int64(unsafe.Sizeof(*new(bool)))
+
+// SizeOfPointer is the memory each pointer occupied
+const SizeOfPointer = int64(unsafe.Sizeof(new(int)))
+
+// SizeOfInterface is the memory each interface occupied, exclude the real type memory usage
+const SizeOfInterface = int64(unsafe.Sizeof(*new(interface{})))
