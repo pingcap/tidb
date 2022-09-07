@@ -118,7 +118,6 @@ type TLSConfigOption func(*tlsConfigBuilder)
 // WithCAPath sets the CA path to build a tls.Config, and the peer should use the certificate which can be verified by
 // this CA. It has higher priority than WithCAContent.
 // empty `caPath` is no-op.
-// WithCAPath also support rotation, which means if the CA file is changed, the new content will be used.
 func WithCAPath(caPath string) TLSConfigOption {
 	return func(builder *tlsConfigBuilder) {
 		builder.caPath = caPath
