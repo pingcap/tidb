@@ -580,6 +580,7 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 					ConflictTS:       userMeta.StartTS(),
 					ConflictCommitTS: userMeta.CommitTS(),
 					Key:              item.KeyCopy(nil),
+					Reason:           kvrpcpb.WriteConflict_LockWakeUp,
 				}
 			}
 		}
@@ -668,6 +669,7 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 					ConflictTS:       userMeta.StartTS(),
 					ConflictCommitTS: userMeta.CommitTS(),
 					Key:              item.KeyCopy(nil),
+					Reason:           kvrpcpb.WriteConflict_Optimistic,
 				}
 			}
 		}
@@ -729,6 +731,7 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 						ConflictTS:       userMeta.StartTS(),
 						ConflictCommitTS: userMeta.CommitTS(),
 						Key:              item.KeyCopy(nil),
+						Reason:           kvrpcpb.WriteConflict_LazyUniquenessCheck,
 					}
 				}
 			}
@@ -1200,6 +1203,7 @@ func checkLockForRcCheckTS(lock mvcc.Lock, key []byte, startTS uint64, resolved 
 		StartTS:    startTS,
 		ConflictTS: lock.StartTS,
 		Key:        safeCopy(key),
+		Reason:     kvrpcpb.WriteConflict_RcCheckTs,
 	}
 }
 

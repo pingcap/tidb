@@ -3226,6 +3226,7 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk2.MustExec("insert into t3 values (1, 2)")
 	err = tk.ExecToErr("commit")
 	require.Error(t, err)
+	println("err:", err.Error())
 	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
 
 	// case: DML returns error => abort txn
