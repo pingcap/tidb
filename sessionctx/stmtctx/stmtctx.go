@@ -145,6 +145,7 @@ type StatementContext struct {
 	// in stmtCtx
 	IsStaleness     bool
 	InRestrictedSQL bool
+	ViewDepth       int32
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -312,8 +313,12 @@ type StatementContext struct {
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
 
+	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
+	StatsLoadStatus map[model.TableItemID]string
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
 }
 
 // StmtHints are SessionVars related sql hints.

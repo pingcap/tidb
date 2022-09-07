@@ -962,14 +962,14 @@ func TestPreparedStatements(t *testing.T) {
 		//		rootTk := testkit.NewTestKit(t, store)
 		//		rootTk.MustExec(`CREATE USER 'u1'@'localhost'`)
 		//		rootTk.MustExec("create table test.t1(id int)")
-		//		require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+		//		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 		//		rootTk.MustExec(`GRANT SELECT ON test.t1 TO 'u1'@'localhost'`)
 		//		tk.MustExec("prepare stmt from 'select * from test.t1'")
 		//		rootTk.MustExec(`REVOKE SELECT ON test.t1 FROM 'u1'@'localhost'`)
 		//		return nil
 		//	},
 		//	prepareFunc: func(tk *testkit.TestKit, conn server.MockConn) {
-		//		require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+		//		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 		//	},
 		//	restoreErr: errno.ErrNoSuchTable,
 		//	cleanFunc: func(tk *testkit.TestKit) {
@@ -983,6 +983,7 @@ func TestPreparedStatements(t *testing.T) {
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+		conn1.Context().Session.GetSessionVars().User = nil
 		var param any
 		if tt.setFunc != nil {
 			param = tt.setFunc(tk1, conn1)
@@ -1366,6 +1367,7 @@ func TestShowStateFail(t *testing.T) {
 	})
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
+		conn1.Context().Session.GetSessionVars().User = nil
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 		tt.setFunc(tk1, conn1)
 		if tt.showErr == 0 {

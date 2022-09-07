@@ -16,7 +16,6 @@ package executor_test
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"math"
 	"testing"
@@ -28,11 +27,9 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
@@ -346,7 +343,7 @@ func TestPrepareWithAggregation(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+			PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
 		})
 		require.NoError(t, err)
 		tk.SetSession(se)
@@ -611,7 +608,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=true`)
 
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(3, 0.1, math.MaxUint64),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
@@ -743,68 +740,29 @@ func TestPreparedIssue8644(t *testing.T) {
 	}
 }
 
-// mockSessionManager is a mocked session manager which is used for test.
-type mockSessionManager1 struct {
-	Se session.Session
-}
-
-func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-// ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager1) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
-	return ret
-}
-
-func (msm *mockSessionManager1) GetProcessInfo(_ uint64) (*util.ProcessInfo, bool) {
-	pi := msm.Se.ShowProcess()
-	return pi, true
-}
-
-// Kill implements the SessionManager.Kill interface.
-func (msm *mockSessionManager1) Kill(_ uint64, _ bool) {}
-
-func (msm *mockSessionManager1) KillAllConnections() {}
-
-func (msm *mockSessionManager1) ServerID() uint64 {
-	return 1
-}
-
-func (msm *mockSessionManager1) UpdateTLSConfig(_ *tls.Config) {}
-
-func (msm *mockSessionManager1) StoreInternalSession(se interface{}) {
-}
-
-func (msm *mockSessionManager1) DeleteInternalSession(se interface{}) {
-}
-
-func (msm *mockSessionManager1) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
-
 func TestPreparedIssue17419(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 	ctx := context.Background()
-	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t (a) values (1), (2), (3)")
 
-	tk1 := testkit.NewTestKit(t, store)
+	conn2 := server.CreateMockConn(t, sv)
+	tk1 := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 
 	query := "select * from test.t"
 	stmtID, _, _, err := tk1.Session().PrepareStmt(query)
 	require.NoError(t, err)
 
-	sm := &mockSessionManager1{
-		Se: tk1.Session(),
-	}
-	tk1.Session().SetSessionManager(sm)
-	dom.ExpensiveQueryHandle().SetSessionManager(sm)
+	dom.ExpensiveQueryHandle().SetSessionManager(sv)
 
 	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
 	require.NoError(t, err)

@@ -247,6 +247,8 @@ func TestPreCheckFailed(t *testing.T) {
 	require.Regexp(t, ".*mock init meta failure", err.Error())
 	require.NoError(t, mock.ExpectationsWereMet())
 
+	// clear the sys variable cache
+	preInfoGetter.sysVarsCache = nil
 	mock.ExpectBegin()
 	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).

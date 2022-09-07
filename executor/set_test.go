@@ -785,6 +785,22 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set session tidb_general_plan_cache_size = -1") // underflow
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_general_plan_cache_size value: '-1'"))
 	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("1"))
+
+	// test variable 'foreign_key_checks'
+	// global scope
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global foreign_key_checks = 1")
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("1"))
+	// session scope
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set session foreign_key_checks = 1")
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("1"))
+
+	// test variable 'foreign_key_checks'
+	// global scope
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global tidb_enable_foreign_key = 1")
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
@@ -1921,4 +1937,23 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	// Test set global.
 	tk.MustExec("set global tiflash_fine_grained_shuffle_stream_count = -1")
 	tk.MustExec("set global tiflash_fine_grained_shuffle_batch_size = 8192")
+}
+
+func TestSetTiFlashFastScanVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+
+	// check the default tiflash read mode
+	tk.MustQuery("select @@session.tiflash_fastscan").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tiflash_fastscan=ON;")
+	tk.MustQuery("select @@session.tiflash_fastscan").Check(testkit.Rows("1"))
+
+	tk.MustExec("set GLOBAL tiflash_fastscan=OFF;")
+	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
 }

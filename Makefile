@@ -460,3 +460,7 @@ bazel_statisticstest: failpoint-enable bazel_ci_prepare
 bazel_txntest: failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
 		-- //tests/realtikvtest/txntest/...
+
+bazel_addindextest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/addindextest/...

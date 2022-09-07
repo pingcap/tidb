@@ -32,10 +32,10 @@ func (r *mockPubSubDataSinkRegisterer) Register(dataSink DataSink) error { retur
 func (r *mockPubSubDataSinkRegisterer) Deregister(dataSink DataSink) {}
 
 type mockPubSubDataSinkStream struct {
-	sync.Mutex
 	records   []*tipb.TopSQLRecord
 	sqlMetas  []*tipb.SQLMeta
 	planMetas []*tipb.PlanMeta
+	sync.Mutex
 }
 
 func (s *mockPubSubDataSinkStream) Send(resp *tipb.TopSQLSubResponse) error {

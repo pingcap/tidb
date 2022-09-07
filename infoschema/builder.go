@@ -367,7 +367,19 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
 	var oldTableID, newTableID int64
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
+	case model.ActionCreateSequence, model.ActionRecoverTable:
+		newTableID = diff.TableID
+	case model.ActionCreateTable:
+		// WARN: when support create table with foreign key in https://github.com/pingcap/tidb/pull/37148,
+		// create table with foreign key requires a multi-step state change(none -> write-only -> public),
+		// when the table's state changes from write-only to public, infoSchema need to drop the old table
+		// which state is write-only, otherwise, infoSchema.sortedTablesBuckets will contain 2 table both
+		// have the same ID, but one state is write-only, another table's state is public, it's unexpected.
+		//
+		// WARN: this change will break the compatibility if execute create table with foreign key DDL when upgrading TiDB,
+		// since old-version TiDB doesn't know to delete the old table.
+		// Since the cluster-index feature also has similar problem, we chose to prevent DDL execution during the upgrade process to avoid this issue.
+		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
@@ -687,6 +699,9 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
+
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
 	bucketIdx := tableBucketIdx(tableID)
@@ -767,6 +782,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 			} else {
 				dbInfo.Tables = append(dbInfo.Tables[:i], dbInfo.Tables[i+1:]...)
 			}
+			b.is.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 			break
 		}
 	}
@@ -786,6 +802,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
 	b.copyPoliciesMap(oldIS)
+	b.copyTemporaryTableIDsMap(oldIS)
+	b.copyReferredForeignKeyMap(oldIS)
 
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
@@ -808,6 +826,25 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
+	}
+}
+
+func (b *Builder) copyTemporaryTableIDsMap(oldIS *infoSchema) {
+	is := b.is
+	if len(oldIS.temporaryTableIDs) == 0 {
+		is.temporaryTableIDs = nil
+		return
+	}
+
+	is.temporaryTableIDs = make(map[int64]struct{})
+	for tblID := range oldIS.temporaryTableIDs {
+		is.temporaryTableIDs[tblID] = struct{}{}
+	}
+}
+
+func (b *Builder) copyReferredForeignKeyMap(oldIS *infoSchema) {
+	for k, v := range oldIS.referredForeignKeyMap {
+		b.is.referredForeignKeyMap[k] = v
 	}
 }
 
@@ -839,6 +876,13 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	// build the policies.
 	for _, policy := range policies {
 		info.setPolicy(policy)
+	}
+
+	// Maintain foreign key reference information.
+	for _, di := range dbInfos {
+		for _, t := range di.Tables {
+			b.is.addReferredForeignKeys(di.Name, t)
+		}
 	}
 
 	for _, di := range dbInfos {
@@ -935,10 +979,11 @@ func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Build
 	return &Builder{
 		store: store,
 		is: &infoSchema{
-			schemaMap:           map[string]*schemaTables{},
-			policyMap:           map[string]*model.PolicyInfo{},
-			ruleBundleMap:       map[int64]*placement.Bundle{},
-			sortedTablesBuckets: make([]sortedTables, bucketCount),
+			schemaMap:             map[string]*schemaTables{},
+			policyMap:             map[string]*model.PolicyInfo{},
+			ruleBundleMap:         map[int64]*placement.Bundle{},
+			sortedTablesBuckets:   make([]sortedTables, bucketCount),
+			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 		},
 		dirtyDB: make(map[string]bool),
 		factory: factory,

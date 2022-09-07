@@ -142,6 +142,49 @@
       ".*_/testmain\\.go$": "ignore code"
     }
   },
+  "fieldalignment": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_/testmain\\.go$": "ignore code",
+      ".*_test\\.go$": "ignore test code"
+    },
+    "only_files": {
+      "util/checksum": "util/checksum code",
+      "util/processinfo.go": "util/processinfo.go code",
+      "util/cpuprofile/": "util/cpuprofile/ code",
+      "util/cteutil/": "util/cteutil/ code",
+      "util/dbutil/": "util/dbutil/ code",
+      "util/deadlockhistory/": "util/deadlockhistory/ code",
+      "util/domainutil/": "util/domainutil/ code",
+      "util/encrypt/": "util/encrypt/ code",
+      "util/etcd/": "util/etcd/ code",
+      "util/expensivequery/": "util/expensivequery/ code",
+      "util/filter/": "util/filter/ code",
+      "util/importer/": "util/importer/ code",
+      "util/keydecoder/": "util/keydecoder/ code",
+      "util/kvcache/": "util/kvcache/ code",
+      "util/localpool/": "util/localpool/ code",
+      "util/mathutil/": "util/mathutil/ code",
+      "util/memory/": "util/memory/ code",
+      "util/mock/": "util/mock/ code",
+      "util/mvmap/": "util/mvmap/ code",
+      "util/profile/": "util/profile/ code",
+      "util/ranger/": "util/ranger/ code",
+      "util/regexpr-router/": "util/regexpr-router/ code",
+      "util/schemacmp/": "util/schemacmp/ code",
+      "util/sqlexec/": "util/sqlexec/ code",
+      "util/stringutil/": "util/stringutil/ code",
+      "util/table-router/": "util/table-router/ code",
+      "util/timeutil/": "util/timeutil/ code",
+      "util/topsql/": "util/topsql/ code",
+      "util/tracing/": "util/tracing/ code",
+      "util/trxevents/": "util/trxevents/ code",
+      "util/watcher/": "util/watcher/ code",
+      "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
+      "ddl/util/": "ddl/util code"
+    }
+  },
   "findcall": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -154,8 +197,11 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
-      "types/json/binary_functions.go": "types/json/binary_functions.go",
-      "types/json/binary_test.go": "types/json/binary_test.go",
+      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
+      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "executor/aggregate.go": "executor/aggregate.go",
+      "types/json_binary_functions.go": "types/json_binary_functions.go",
+      "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/backfilling.go": "ddl/backfilling.go",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
@@ -267,7 +313,23 @@
   "nilness": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
+      "planner/core/physical_plan_test.go": "please fix it",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo"
+    }
+  },
+  "noloopclosure": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
+      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "kv/": "kv code",
+      "util/memory": "util/memory",
+      "ddl/": "ddl",
+      "planner/": "planner"
     }
   },
   "pkgfact": {
@@ -285,12 +347,16 @@
       "parser/goyacc/": "ignore goyacc code",
       "parser/ast/": "ignore parser/ast code",
       "parser/test_driver/": "ignore parser/test_driver code",
+      "dumpling/export/sql_type.go": "please fix it",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
-      "types/json/binary_functions.go": "types/json/binary_functions.go",
-      "types/json/binary_test.go": "types/json/binary_test.go",
+      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
+      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "executor/aggregate.go": "executor/aggregate.go",
+      "types/json_binary_functions.go": "types/json_binary_functions.go",
+      "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/backfilling.go": "ddl/backfilling.go",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
@@ -649,8 +715,11 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
-      "types/json/binary_functions.go": "types/json/binary_functions.go",
-      "types/json/binary_test.go": "types/json/binary_test.go",
+      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
+      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "executor/aggregate.go": "executor/aggregate.go",
+      "types/json_binary_functions.go": "types/json_binary_functions.go",
+      "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "enable to ddl",
       "expression/builtin_cast.go": "enable expression/builtin_cast.go",
       "planner/core/plan.go": "planner/core/plan.go",
@@ -800,6 +869,12 @@
       "parser/yy_parser.go": "ignore generated code",
       "parser/parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
+    }
+  },
+  "U1000": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
     }
   }
 }
