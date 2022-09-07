@@ -1620,6 +1620,10 @@ func (cis *CIStr) UnmarshalJSON(b []byte) error {
 
 // MemoryUsage return the memory usage of CIStr
 func (cis *CIStr) MemoryUsage() (sum int64) {
+	if cis == nil {
+		return
+	}
+
 	return int64(unsafe.Sizeof(cis.O))*2 + int64(len(cis.O)+len(cis.L))
 }
 
