@@ -17,11 +17,11 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
