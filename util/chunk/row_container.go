@@ -48,9 +48,9 @@ type mutexForRowContainer struct {
 	// underlying data, which can reduce the contention on m.rLock remarkably and
 	// get better performance.
 	rLock   sync.RWMutex
-	_       cpu.CacheLinePad
 	wLocks  []*sync.RWMutex
 	records *rowContainerRecord
+	_       cpu.CacheLinePad
 }
 
 // Lock locks rw for writing.
@@ -109,7 +109,11 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 // holds an individual rLock.
 func (c *RowContainer) ShallowCopyWithNewMutex() *RowContainer {
 	newRC := *c
-	newRC.m.rLock = sync.RWMutex{}
+	newRC.m = &mutexForRowContainer{
+		records: c.m.records,
+		rLock:   sync.RWMutex{},
+		wLocks:  []*sync.RWMutex{},
+	}
 	c.m.wLocks = append(c.m.wLocks, &newRC.m.rLock)
 	return &newRC
 }
