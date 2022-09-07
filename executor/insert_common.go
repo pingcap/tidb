@@ -97,7 +97,7 @@ type InsertValues struct {
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
 	txnInUse   sync.Mutex
-
+	// fkChecks contains the foreign key checkers.
 	fkChecks []*FKCheckExec
 }
 

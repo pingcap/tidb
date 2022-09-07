@@ -44,7 +44,7 @@ type DeleteExec struct {
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos plannercore.TblColPosInfoSlice
 	memTracker     *memory.Tracker
-
+	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
 }
 

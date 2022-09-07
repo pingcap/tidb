@@ -22,6 +22,22 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
+// FKCheck indicates the foreign key constraint checker.
+type FKCheck struct {
+	FK         *model.FKInfo
+	ReferredFK *model.ReferredFKInfo
+	Tbl        table.Table
+	Idx        table.Index
+	Cols       []model.CIStr
+	HandleCols []*table.Column
+
+	IdxIsPrimaryKey bool
+	IdxIsExclusive  bool
+
+	CheckExist bool
+	FailedErr  error
+}
+
 func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil, nil
@@ -30,18 +46,12 @@ func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.Inf
 	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
 	updateCols := p.buildOnDuplicateUpdateColumns()
 	if len(updateCols) > 0 {
-		referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
-		for _, referredFK := range referredFKs {
-			if !isMapContainAnyCols(updateCols, referredFK.Cols...) {
-				continue
-			}
-			fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
-			if err != nil {
-				return nil, err
-			}
-			if fkCheck != nil {
-				fkChecks = append(fkChecks, fkCheck)
-			}
+		referredFKChecks, err := buildOnUpdateReferredFKChecks(is, dbName, tblInfo, updateCols)
+		if err != nil {
+			return nil, err
+		}
+		if len(referredFKChecks) > 0 {
+			fkChecks = append(fkChecks, referredFKChecks...)
 		}
 	}
 	for _, fk := range tblInfo.ForeignKeys {
@@ -84,18 +94,12 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 		if len(updateCols) == 0 {
 			continue
 		}
-		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
-		for _, referredFK := range referredFKs {
-			if !isMapContainAnyCols(updateCols, referredFK.Cols...) {
-				continue
-			}
-			fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
-			if err != nil {
-				return nil, err
-			}
-			if fkCheck != nil {
-				fkChecks[tid] = append(fkChecks[tid], fkCheck)
-			}
+		referredFKChecks, err := buildOnUpdateReferredFKChecks(is, dbInfo.Name.L, tblInfo, updateCols)
+		if err != nil {
+			return nil, err
+		}
+		if len(referredFKChecks) > 0 {
+			fkChecks[tid] = append(fkChecks[tid], referredFKChecks...)
 		}
 		for _, fk := range tblInfo.ForeignKeys {
 			if fk.Version < 1 {
@@ -112,6 +116,24 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 			if fkCheck != nil {
 				fkChecks[tid] = append(fkChecks[tid], fkCheck)
 			}
+		}
+	}
+	return fkChecks, nil
+}
+
+func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
+	fkChecks := make([]*FKCheck, 0, len(referredFKs))
+	for _, referredFK := range referredFKs {
+		if !isMapContainAnyCols(updateCols, referredFK.Cols...) {
+			continue
+		}
+		fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
+		if err != nil {
+			return nil, err
+		}
+		if fkCheck != nil {
+			fkChecks = append(fkChecks, fkCheck)
 		}
 	}
 	return fkChecks, nil
@@ -270,20 +292,4 @@ func buildOnDeleteFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tbl
 		}
 	}
 	return fkChecks, nil
-}
-
-// FKCheck indicates the foreign key constraint checker.
-type FKCheck struct {
-	FK         *model.FKInfo
-	ReferredFK *model.ReferredFKInfo
-	Tbl        table.Table
-	Idx        table.Index
-	Cols       []model.CIStr
-	HandleCols []*table.Column
-
-	IdxIsPrimaryKey bool
-	IdxIsExclusive  bool
-
-	CheckExist bool
-	FailedErr  error
 }

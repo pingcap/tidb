@@ -66,7 +66,7 @@ type UpdateExec struct {
 	tableUpdatable []bool
 	changed        []bool
 	matches        []bool
-
+	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
 }
 

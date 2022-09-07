@@ -16,6 +16,8 @@ package executor
 
 import (
 	"context"
+	"sync/atomic"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/set"
-	"sync/atomic"
 )
 
 // WithForeignKeyTrigger indicates the executor has foreign key check or cascade.
@@ -47,11 +48,6 @@ type FKCheckExec struct {
 	toBeLockedKeys        []kv.Key
 
 	checkRowsCache map[string]bool
-}
-
-type fkValueHelper struct {
-	colsOffsets []int
-	fkValuesSet set.StringSet
 }
 
 func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
@@ -136,7 +132,7 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 	return nil
 }
 
-func (fkc FKCheckExec) doCheck(ctx context.Context) error {
+func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	txn, err := fkc.ctx.Txn(false)
 	if err != nil {
 		return err
@@ -167,7 +163,7 @@ func (fkc FKCheckExec) doCheck(ctx context.Context) error {
 	return err
 }
 
-func (fkc FKCheckExec) buildCheckKeyFromFKValue(sc *stmtctx.StatementContext, vals []types.Datum) (key kv.Key, isPrefix bool, err error) {
+func (fkc *FKCheckExec) buildCheckKeyFromFKValue(sc *stmtctx.StatementContext, vals []types.Datum) (key kv.Key, isPrefix bool, err error) {
 	if fkc.IdxIsPrimaryKey {
 		handleKey, err := fkc.buildHandleFromFKValues(sc, vals)
 		if err != nil {
@@ -207,40 +203,28 @@ func (fkc *FKCheckExec) buildHandleFromFKValues(sc *stmtctx.StatementContext, va
 	return kv.NewCommonHandle(handleBytes)
 }
 
-func (fkc *FKCheckExec) prefetchCheckedKeys(ctx context.Context, txn kv.Transaction, keys []kv.Key) error {
-	if len(keys) == 0 {
-		return nil
-	}
-	// Fill cache using BatchGet
-	_, err := txn.BatchGet(ctx, keys)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction) error {
 	if len(fkc.toBeCheckedKeys) == 0 {
 		return nil
 	}
-	err := fkc.prefetchCheckedKeys(ctx, txn, fkc.toBeCheckedKeys)
+	err := fkc.prefetchKeys(ctx, txn, fkc.toBeCheckedKeys)
 	if err != nil {
 		return err
 	}
-	if fkc.CheckExist {
-		for _, k := range fkc.toBeCheckedKeys {
-			err = fkc.checkKeyExist(ctx, txn, k)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 	for _, k := range fkc.toBeCheckedKeys {
-		err = fkc.checkKeyNotExist(ctx, txn, k)
+		err = fkc.checkKey(ctx, txn, k)
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (fkc *FKCheckExec) prefetchKeys(ctx context.Context, txn kv.Transaction, keys []kv.Key) error {
+	// Fill cache using BatchGet
+	_, err := txn.BatchGet(ctx, keys)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -285,17 +269,8 @@ func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) 
 	defer func() {
 		snap.SetOption(kv.ScanBatchSize, 256)
 	}()
-	if fkc.CheckExist {
-		for _, key := range fkc.toBeCheckedPrefixKeys {
-			err := fkc.checkPrefixKeyExist(ctx, memBuffer, snap, key)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 	for _, key := range fkc.toBeCheckedPrefixKeys {
-		err := fkc.checkPrefixKeyNotExist(ctx, memBuffer, snap, key)
+		err := fkc.checkPrefixKey(ctx, memBuffer, snap, key)
 		if err != nil {
 			return err
 		}
@@ -304,17 +279,21 @@ func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) 
 }
 
 func (fkc *FKCheckExec) checkPrefixKey(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) error {
-	if fkc.CheckExist {
-		return fkc.checkPrefixKeyExist(ctx, memBuffer, snap, key)
-	}
-	return fkc.checkPrefixKeyNotExist(ctx, memBuffer, snap, key)
-}
-
-func (fkc *FKCheckExec) checkPrefixKeyExist(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) error {
 	key, value, err := fkc.getIndexKeyValueInTable(ctx, memBuffer, snap, key)
 	if err != nil {
 		return err
 	}
+	if fkc.CheckExist {
+		return fkc.checkPrefixKeyExist(key, value)
+	}
+	if len(value) > 0 {
+		// If check not exist, by the key is exist, return failedErr.
+		return fkc.FailedErr
+	}
+	return nil
+}
+
+func (fkc *FKCheckExec) checkPrefixKeyExist(key kv.Key, value []byte) error {
 	exist := len(value) > 0
 	if !exist {
 		return fkc.FailedErr
@@ -328,18 +307,6 @@ func (fkc *FKCheckExec) checkPrefixKeyExist(ctx context.Context, memBuffer kv.Me
 		}
 		handleKey := tablecodec.EncodeRecordKey(fkc.Tbl.RecordPrefix(), handle)
 		fkc.toBeLockedKeys = append(fkc.toBeLockedKeys, handleKey)
-	}
-	return nil
-}
-
-func (fkc *FKCheckExec) checkPrefixKeyNotExist(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) error {
-	key, value, err := fkc.getIndexKeyValueInTable(ctx, memBuffer, snap, key)
-	if err != nil {
-		return err
-	}
-	exist := len(value) > 0
-	if exist {
-		return fkc.FailedErr
 	}
 	return nil
 }
@@ -389,6 +356,11 @@ func (fkc *FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer k
 		}
 	}
 	return nil, nil, nil
+}
+
+type fkValueHelper struct {
+	colsOffsets []int
+	fkValuesSet set.StringSet
 }
 
 func (h *fkValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row []types.Datum) ([]types.Datum, error) {
@@ -499,7 +471,7 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 		}
 	}
 	if len(prefetchKeys) > 0 {
-		err := fkc.prefetchCheckedKeys(ctx, txn, prefetchKeys)
+		err := fkc.prefetchKeys(ctx, txn, prefetchKeys)
 		if err != nil {
 			return err
 		}

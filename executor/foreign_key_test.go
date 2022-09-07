@@ -25,6 +25,76 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var foreignKeyTestCase1 = []struct {
+	prepareSQLs []string
+	notNull     bool
+}{
+	// Case-1: test unique index only contain foreign key columns.
+	{
+		prepareSQLs: []string{
+			"create table t1 (id int, a int, b int,  unique index(id), unique index(a, b));",
+			"create table t2 (b int, name varchar(10), a int, id int, unique index(id), unique index (a,b), foreign key fk(a, b) references t1(a, b));",
+		},
+	},
+	// Case-2: test unique index contain foreign key columns and other columns.
+	{
+		prepareSQLs: []string{
+			"create table t1 (id int key, a int, b int, unique index(id), unique index(a, b, id));",
+			"create table t2 (b int, a int, id int key, name varchar(10), unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
+		},
+	},
+	// Case-3: test non-unique index only contain foreign key columns.
+	{
+		prepareSQLs: []string{
+			"create table t1 (id int key,a int, b int, unique index(id), index(a, b));",
+			"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
+		},
+	},
+	// Case-4: test non-unique index contain foreign key columns and other columns.
+	{
+		prepareSQLs: []string{
+			"create table t1 (id int key,a int, b int,  unique index(id), index(a, b, id));",
+			"create table t2 (name varchar(10), b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
+		},
+	},
+	//Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+	{
+		prepareSQLs: []string{
+			"set @@tidb_enable_clustered_index=0;",
+			"create table t1 (id int, a int, b int,  unique index(id), primary key (a, b));",
+			"create table t2 (b int, name varchar(10), a int, id int, unique index(id), primary key (a, b), foreign key fk(a, b) references t1(a, b));",
+		},
+		notNull: true,
+	},
+	// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+	{
+		prepareSQLs: []string{
+			"set @@tidb_enable_clustered_index=1;",
+			"create table t1 (id int, a int, b int,  unique index(id), primary key (a, b));",
+			"create table t2 (b int,  a int, name varchar(10), id int, unique index(id), primary key (a, b), foreign key fk(a, b) references t1(a, b));",
+		},
+		notNull: true,
+	},
+	// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+	{
+		prepareSQLs: []string{
+			"set @@tidb_enable_clustered_index=0;",
+			"create table t1 (id int, a int, b int,  unique index(id), primary key (a, b, id));",
+			"create table t2 (b int,  a int, id int, name varchar(10), unique index(id), primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
+		},
+		notNull: true,
+	},
+	// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+	{
+		prepareSQLs: []string{
+			"set @@tidb_enable_clustered_index=1;",
+			"create table t1 (id int, a int, b int,  unique index(id), primary key (a, b, id));",
+			"create table t2 (name varchar(10), b int,  a int, id int, unique index(id), primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
+		},
+		notNull: true,
+	},
+}
+
 func TestForeignKeyOnInsertChildTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -32,112 +102,7 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
-	cases := []struct {
-		prepareSQLs []string
-	}{
-		// Case-1: test unique index only contain foreign key columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-2: test unique index contain foreign key columns and other columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, a int, id int key, name varchar(10), unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-3: test non-unique index only contain foreign key columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-4: test non-unique index contain foreign key columns and other columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (name varchar(10), b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-	}
-
-	for _, ca := range cases {
-		tk.MustExec("drop table if exists t2;")
-		tk.MustExec("drop table if exists t1;")
-		for _, sql := range ca.prepareSQLs {
-			tk.MustExec(sql)
-		}
-		tk.MustExec("insert into t1 (id, a, b) values (-1, 1, 1);")
-		tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1)")
-		tk.MustExec("insert into t2 (id, a, b) values (2, null, 1)")
-		tk.MustExec("insert into t2 (id, a, b) values (3, 1, null)")
-		tk.MustExec("insert into t2 (id, a, b) values (4, null, null)")
-		execToErr(t, tk, "insert into t2 (id, a, b) values (5, 1, 2);", plannercore.ErrNoReferencedRow2)
-		execToErr(t, tk, "insert into t2 (id, a, b) values (6, 0, 2);", plannercore.ErrNoReferencedRow2)
-		execToErr(t, tk, "insert into t2 (id, a, b) values (7, 2, 2);", plannercore.ErrNoReferencedRow2)
-
-		// Test in txn
-		tk.MustExec("delete from t2")
-		tk.MustExec("begin")
-		tk.MustExec("delete from t1 where a=1")
-		err := tk.ExecToErr("insert into t2 (id, a, b) values (1, 1, 1)")
-		require.NotNil(t, err)
-		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
-		tk.MustExec("insert into t1 (id, a, b) values (2, 2, 2)")
-		tk.MustExec("insert into t2 (id, a, b) values (2, 2, 2)")
-		tk.MustExec("rollback")
-		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("-1 1 1"))
-		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows())
-	}
-
-	cases = []struct {
-		prepareSQLs []string
-	}{ // Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=1;",
-				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=1;",
-				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-9: test primary key is handle and contain foreign key column.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int,  primary key (id));",
-				"create table t2 (b int,  a int, id int, primary key (a), foreign key fk(a) references t1(id));",
-			},
-		},
-	}
-	for _, ca := range cases {
+	for _, ca := range foreignKeyTestCase1 {
 		tk.MustExec("drop table if exists t2;")
 		tk.MustExec("drop table if exists t1;")
 		for _, sql := range ca.prepareSQLs {
@@ -145,8 +110,14 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 		}
 		tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1);")
 		tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1)")
-		execToErr(t, tk, "insert into t2 (id, a, b) values (2, 0, 2);", plannercore.ErrNoReferencedRow2)
-		execToErr(t, tk, "insert into t2 (id, a, b) values (3, 2, 3);", plannercore.ErrNoReferencedRow2)
+		if !ca.notNull {
+			tk.MustExec("insert into t2 (id, a, b) values (2, null, 1)")
+			tk.MustExec("insert into t2 (id, a, b) values (3, 1, null)")
+			tk.MustExec("insert into t2 (id, a, b) values (4, null, null)")
+		}
+		execToErr(t, tk, "insert into t2 (id, a, b) values (5, 1, 0);", plannercore.ErrNoReferencedRow2)
+		execToErr(t, tk, "insert into t2 (id, a, b) values (6, 0, 1);", plannercore.ErrNoReferencedRow2)
+		execToErr(t, tk, "insert into t2 (id, a, b) values (7, 2, 2);", plannercore.ErrNoReferencedRow2)
 
 		// Test in txn
 		tk.MustExec("delete from t2")
@@ -196,40 +167,7 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
-	cases := []struct {
-		prepareSQLs []string
-	}{
-		// Case-1: test unique index only contain foreign key columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-2: test unique index contain foreign key columns and other columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-3: test non-unique index only contain foreign key columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-4: test non-unique index contain foreign key columns and other columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-	}
-
-	for _, ca := range cases {
+	for _, ca := range foreignKeyTestCase1 {
 		tk.MustExec("drop table if exists t2;")
 		tk.MustExec("drop table if exists t1;")
 		for _, sql := range ca.prepareSQLs {
@@ -251,96 +189,13 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 		}
 		tk.MustExec("update t2 set a=12, b = 22 where id = 1")
 		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 12 22 a"))
-		tk.MustExec("update t2 set a=null, b = 22 where a = 12 ")
-		tk.MustExec("update t2 set b = null where b = 22 ")
-		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 <nil> <nil> a"))
+		if !ca.notNull {
+			tk.MustExec("update t2 set a=null, b = 22 where a = 12 ")
+			tk.MustExec("update t2 set b = null where b = 22 ")
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 <nil> <nil> a"))
+		}
 		tk.MustExec("update t2 set a=13, b=23 where id = 1")
 		tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 13 23 a"))
-
-		// Test In txn.
-		tk.MustExec("delete from t2")
-		tk.MustExec("delete from t1")
-		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
-		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a')")
-		tk.MustExec("begin")
-		tk.MustExec("update t2 set a=12, b=22 where id=1")
-		tk.MustExec("rollback")
-
-		tk.MustExec("begin")
-		tk.MustExec("delete from t1 where id=2")
-		err := tk.ExecToErr("update t2 set a=12, b=22 where id=1")
-		require.NotNil(t, err)
-		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
-		tk.MustExec("update t2 set a=13, b=23 where id=1")
-		tk.MustExec("insert into t1 (id, a, b) values (5, 15, 25)")
-		tk.MustExec("update t2 set a=15, b=25 where id=1")
-		tk.MustExec("delete from t1 where id=1")
-		err = tk.ExecToErr("update t2 set a=11, b=21 where id=1")
-		require.NotNil(t, err)
-		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
-		tk.MustExec("commit")
-		tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 15 25 a"))
-	}
-
-	cases = []struct {
-		prepareSQLs []string
-	}{
-		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=1;",
-				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=1;",
-				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-	}
-	for _, ca := range cases {
-		tk.MustExec("drop table if exists t2;")
-		tk.MustExec("drop table if exists t1;")
-		for _, sql := range ca.prepareSQLs {
-			tk.MustExec(sql)
-		}
-
-		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
-		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a')")
-
-		sqls := []string{
-			"update t2 set a=100, b = 200 where id = 1",
-			"update t2 set a=a+10, b = b+20 where a = 11",
-			"update t2 set a=a+100, b = b+200",
-			"update t2 set a=12, b = 23 where id = 1",
-		}
-		for _, sqlStr := range sqls {
-			err := tk.ExecToErr(sqlStr)
-			require.NotNil(t, err)
-			require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
-		}
-		tk.MustExec("update t2 set a=12, b = 22 where id = 1")
-		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 12 22 a"))
 
 		// Test In txn.
 		tk.MustExec("delete from t2")
@@ -420,77 +275,7 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
-	cases := []struct {
-		prepareSQLs []string
-		notNull     bool
-	}{
-		// Case-1: test unique index only contain foreign key columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-2: test unique index contain foreign key columns and other columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-3: test non-unique index only contain foreign key columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-4: test non-unique index contain foreign key columns and other columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (b int,  a int, name varchar(10), id int, unique index (id), primary key (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-			notNull: true,
-		},
-		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=1;",
-				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (name varchar(10), b int,  a int, id int, unique index (id),primary key (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-			notNull: true,
-		},
-		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int, name varchar(10),  a int, id int, unique index (id),primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-			notNull: true,
-		},
-		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=1;",
-				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, name varchar(10), unique index (id), primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-			notNull: true,
-		},
-	}
-
-	for _, ca := range cases {
+	for _, ca := range foreignKeyTestCase1 {
 		tk.MustExec("drop table if exists t2;")
 		tk.MustExec("drop table if exists t1;")
 		for _, sql := range ca.prepareSQLs {
@@ -507,7 +292,7 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 		}
 		for _, sqlStr := range sqls {
 			err := tk.ExecToErr(sqlStr)
-			require.NotNil(t, err)
+			require.NotNil(t, err, sqlStr)
 			require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
 		}
 		tk.MustExec("insert into t2 (id, a, b, name) values (1, 14, 26, 'b') on duplicate key update a = 12, b = 22, name = 'x'")
@@ -758,180 +543,43 @@ func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
-	// Case-1: test unique index only contain foreign key columns.
-	cases := []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "create table t1 (id int key,a int, b int, unique index(a, b));"},
-		{sql: "create table t2 (id int key,a int, b int, unique index (a,b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
-		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
-		{sql: "delete from t1 where id = 2"},
-		{sql: "delete from t1 where a = 3 or b = 4"},
-		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
-	}
-	checkCaseFn := func() {
-		for _, ca := range cases {
-			if ca.err == nil {
-				tk.MustExec(ca.sql)
-			} else {
-				err := tk.ExecToErr(ca.sql)
-				msg := fmt.Sprintf("sql: %v, err: %v, expected_err: %v", ca.sql, err, ca.err)
-				require.NotNil(t, err, msg)
-				require.True(t, ca.err.Equal(err), msg)
-			}
+	for _, ca := range foreignKeyTestCase1 {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		if !ca.notNull {
+			tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);")
+			tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);;")
+
+			tk.MustExec("delete from t1 where id = 2")
+			tk.MustExec("delete from t1 where a = 3 or b = 4")
+			tk.MustExec("delete from t1 where a = 5 or b = 6 or a is null or b is null;")
+			execToErr(t, tk, "delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
+		} else {
+			tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4);")
+			tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1);")
+
+			tk.MustExec("delete from t1 where id = 2")
+			tk.MustExec("delete from t1 where a = 3 or b = 4")
+			execToErr(t, tk, "delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
 		}
 	}
-	checkCaseFn()
-
-	// Case-2: test unique index contain foreign key columns and other columns.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int, a int, b int, unique index (a, b, id));"},
-		{sql: "create table t2 (id int, a int, b int, unique index (a, b, id), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
-		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
-		{sql: "delete from t1 where id = 2"},
-		{sql: "delete from t1 where a = 3 or b = 4"},
-		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
-	}
-	checkCaseFn()
-
-	// Case-3: test non-unique index only contain foreign key columns.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int key,a int, b int, index(a, b));"},
-		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
-		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
-		{sql: "delete from t1 where id = 2"},
-		{sql: "delete from t1 where a = 3 or b = 4"},
-		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
-	}
-	checkCaseFn()
-
-	// Case-4: test non-unique index contain foreign key columns and other columns.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int key,a int, b int, index(a, b, id));"},
-		{sql: "create table t2 (id int key,a int, b int, index (a,b,id), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
-		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
-		{sql: "delete from t1 where id = 2"},
-		{sql: "delete from t1 where a = 3 or b = 4"},
-		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
-	}
-	checkCaseFn()
-
-	// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=0;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
-		{sql: "create table t2 (id int,a int, b int, primary key(a, b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4)"},
-		{sql: "insert into t2 values (1, 1, 1)"},
-		{sql: "delete from t1 where id = 2"},
-		{sql: "delete from t1 where a = 3 or b = 4"},
-		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
-	}
-	checkCaseFn()
-
-	// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=1;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
-		{sql: "create table t2 (id int,a int, b int, primary key(a, b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "delete from t1 where id = 2"},
-		{sql: "delete from t1 where a = 3 or b = 4"},
-		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
-	}
-	checkCaseFn()
-
-	// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=0;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, b int, primary key(a, b, id));"},
-		{sql: "create table t2 (id int,a int, b int, primary key(a, b, id), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4)"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "delete from t1 where id = 2"},
-		{sql: "delete from t1 where a = 3 or b = 4"},
-		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
-	}
-	checkCaseFn()
-
-	// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=1;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, b int, primary key(a, b, id));"},
-		{sql: "create table t2 (id int,a int, b int, primary key(a, b, id), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4)"},
-		{sql: "insert into t2 values (1, 1, 1);"},
-		{sql: "delete from t1 where id = 2"},
-		{sql: "delete from t1 where a = 3 or b = 4"},
-		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
-	}
-	checkCaseFn()
 
 	// Case-9: test primary key is handle and contain foreign key column.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=0;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, primary key(id));"},
-		{sql: "create table t2 (id int,a int, primary key(a), foreign key fk(a) references t1(id));"},
-		{sql: "insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4);"},
-		{sql: "insert into t2 values (1, 1);"},
-		{sql: "delete from t1 where id = 2;"},
-		{sql: "delete from t1 where a = 3 or a = 4;"},
-		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
-	}
-	checkCaseFn()
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (id int,a int, primary key(id));")
+	tk.MustExec("create table t2 (id int,a int, primary key(a), foreign key fk(a) references t1(id));")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4);")
+	tk.MustExec("insert into t2 values (1, 1);")
+	tk.MustExec("delete from t1 where id = 2;")
+	tk.MustExec("delete from t1 where a = 3 or a = 4;")
+	execToErr(t, tk, "delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+	tk.MustQuery("select id, a from t1 order by id").Check(testkit.Rows("1 1"))
 }
 
 func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
@@ -941,116 +589,43 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
-	cases := []struct {
-		prepareSQLs []string
-	}{
-		// Case-1: test unique index only contain foreign key columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-2: test unique index contain foreign key columns and other columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-3: test non-unique index only contain foreign key columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-4: test non-unique index contain foreign key columns and other columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-	}
-
-	for _, ca := range cases {
+	for _, ca := range foreignKeyTestCase1 {
 		tk.MustExec("drop table if exists t2;")
 		tk.MustExec("drop table if exists t1;")
 		for _, sql := range ca.prepareSQLs {
 			tk.MustExec(sql)
 		}
-		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24), (5, 15, null), (6, null, 26), (7, null, null);")
-		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'), (5, 15, null, 'e'), (6, null, 26, 'f'), (7, null, null, 'g');")
+		if !ca.notNull {
+			tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24), (5, 15, null), (6, null, 26), (7, null, null);")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'), (5, 15, null, 'e'), (6, null, 26, 'f'), (7, null, null, 'g');")
 
-		tk.MustExec("update t1 set a=a+100, b = b+200 where id = 2")
-		tk.MustExec("update t1 set a=a+1000, b = b+2000 where a = 13 or b=222")
-		tk.MustExec("update t1 set a=a+10000, b = b+20000 where id = 5 or a is null or b is null")
-		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
-		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
+			tk.MustExec("update t1 set a=a+100, b = b+200 where id = 2")
+			tk.MustExec("update t1 set a=a+1000, b = b+2000 where a = 13 or b=222")
+			tk.MustExec("update t1 set a=a+10000, b = b+20000 where id = 5 or a is null or b is null")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
 
-		err := tk.ExecToErr("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24")
-		require.NotNil(t, err)
-		require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
-		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
-		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
-	}
+			err := tk.ExecToErr("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24")
+			require.NotNil(t, err)
+			require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
+		} else {
+			tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a');")
 
-	cases = []struct {
-		prepareSQLs []string
-	}{
-		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=1;",
-				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=1;",
-				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-	}
-	for _, ca := range cases {
-		tk.MustExec("drop table if exists t2;")
-		tk.MustExec("drop table if exists t1;")
-		for _, sql := range ca.prepareSQLs {
-			tk.MustExec(sql)
+			tk.MustExec("update t1 set a=a+100, b = b+200 where id = 2")
+			tk.MustExec("update t1 set a=a+1000, b = b+2000 where a = 13 or b=222")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
+
+			err := tk.ExecToErr("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24")
+			require.NotNil(t, err)
+			require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 		}
-		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
-		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a');")
 
-		tk.MustExec("update t1 set a=a+100, b = b+200 where id = 2")
-		tk.MustExec("update t1 set a=a+1000, b = b+2000 where a = 13 or b=222")
-		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
-		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
-
-		err := tk.ExecToErr("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24")
-		require.NotNil(t, err)
-		require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
-		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
-		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 	}
 
 	// Case-9: test primary key is handle and contain foreign key column.
@@ -1078,117 +653,43 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
-	cases := []struct {
-		prepareSQLs []string
-	}{
-		// Case-1: test unique index only contain foreign key columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-2: test unique index contain foreign key columns and other columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-3: test non-unique index only contain foreign key columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-4: test non-unique index contain foreign key columns and other columns.
-		{
-			prepareSQLs: []string{
-				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-	}
-
-	for _, ca := range cases {
+	for _, ca := range foreignKeyTestCase1 {
 		tk.MustExec("drop table if exists t2;")
 		tk.MustExec("drop table if exists t1;")
 		for _, sql := range ca.prepareSQLs {
 			tk.MustExec(sql)
 		}
-		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24), (5, 15, null), (6, null, 26), (7, null, null);")
-		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'), (5, 15, null, 'e'), (6, null, 26, 'f'), (7, null, null, 'g');")
+		if !ca.notNull {
+			tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24), (5, 15, null), (6, null, 26), (7, null, null);")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'), (5, 15, null, 'e'), (6, null, 26, 'f'), (7, null, null, 'g');")
 
-		tk.MustExec("insert into t1 (id, a) values (2, 12) on duplicate key update a=a+100, b=b+200")
-		tk.MustExec("insert into t1 (id, a) values (3, 13), (2, 12) on duplicate key update a=a+1000, b=b+2000")
-		tk.MustExec("insert into t1 (id) values (5), (6), (7) on duplicate key update a=a+10000, b=b+20000")
-		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
-		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
+			tk.MustExec("insert into t1 (id, a) values (2, 12) on duplicate key update a=a+100, b=b+200")
+			tk.MustExec("insert into t1 (id, a) values (3, 13), (2, 12) on duplicate key update a=a+1000, b=b+2000")
+			tk.MustExec("insert into t1 (id) values (5), (6), (7) on duplicate key update a=a+10000, b=b+20000")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
 
-		err := tk.ExecToErr("insert into t1 (id, a) values (1, 11) on duplicate key update a=a+10, b=b+20")
-		require.NotNil(t, err)
-		require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
-		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
-		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
-	}
+			err := tk.ExecToErr("insert into t1 (id, a) values (1, 11) on duplicate key update a=a+10, b=b+20")
+			require.NotNil(t, err)
+			require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
+		} else {
+			tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a');")
 
-	cases = []struct {
-		prepareSQLs []string
-	}{
-		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int, unique index(id), primary key (a, b));",
-				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=1;",
-				"create table t1 (id int, a int, b int, unique index(id),  primary key (a, b));",
-				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=0;",
-				"create table t1 (id int, a int, b int, unique index(id), primary key (a, b, id));",
-				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
-		{
-			prepareSQLs: []string{
-				"set @@tidb_enable_clustered_index=1;",
-				"create table t1 (id int, a int, b int, unique index(id), primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
-			},
-		},
-	}
-	for _, ca := range cases {
-		tk.MustExec("drop table if exists t2;")
-		tk.MustExec("drop table if exists t1;")
-		for _, sql := range ca.prepareSQLs {
-			tk.MustExec(sql)
+			tk.MustExec("insert into t1 (id, a, b) values (2, 12, 22) on duplicate key update a=a+100, b=b+200")
+			tk.MustExec("insert into t1 (id, a, b) values (3, 13, 23), (2, 12, 22) on duplicate key update a=a+1000, b=b+2000")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
+
+			tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update id=11")
+			err := tk.ExecToErr("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update a=a+10, b=b+20")
+			require.NotNil(t, err)
+			require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 1112 2222", "3 1013 2023", "4 14 24", "11 11 21"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 		}
-		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
-		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a');")
-
-		tk.MustExec("insert into t1 (id, a, b) values (2, 12, 22) on duplicate key update a=a+100, b=b+200")
-		tk.MustExec("insert into t1 (id, a, b) values (3, 13, 23), (2, 12, 22) on duplicate key update a=a+1000, b=b+2000")
-		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
-		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
-
-		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update id=11")
-		err := tk.ExecToErr("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update a=a+10, b=b+20")
-		require.NotNil(t, err)
-		require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
-		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 1112 2222", "3 1013 2023", "4 14 24", "11 11 21"))
-		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 	}
 
 	// Case-9: test primary key is handle and contain foreign key column.

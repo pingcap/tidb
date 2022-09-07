@@ -91,7 +91,7 @@ const (
 	RequestSourceType
 	// ReplicaReadAdjuster set the adjust function of cop requsts.
 	ReplicaReadAdjuster
-
+	// ScanBatchSize set the iter scan batch size.
 	ScanBatchSize
 )
 
