@@ -239,9 +239,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
-		if job.RowCount == 0 {
-			job.SetRowCount(rowCount)
-		}
+		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
@@ -270,9 +268,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
 		rowCount, doneKey, currentElement := rc.getRowCountAndKey()
-		if job.RowCount == 0 {
-			job.SetRowCount(rowCount)
-		}
+		job.SetRowCount(rowCount)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
