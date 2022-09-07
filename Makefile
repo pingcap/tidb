@@ -13,7 +13,11 @@
 
 include Makefile.common
 
+<<<<<<< HEAD
 .PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
+=======
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm
+>>>>>>> 5f0c58002... *: refine github actions and makefile (#37235)
 
 default: server buildsucc
 
@@ -24,18 +28,27 @@ buildsucc:
 
 all: dev server benchkv
 
+<<<<<<< HEAD
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
 dev: checklist check test
+=======
+dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut check-file-perm
+	@>&2 echo "Great, all tests passed."
+>>>>>>> 5f0c58002... *: refine github actions and makefile (#37235)
 
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
+<<<<<<< HEAD
 check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck errdoc
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
+=======
+check: check-parallel lint tidy testSuite errdoc bazel_golangcilinter bazel_all_build
+>>>>>>> 5f0c58002... *: refine github actions and makefile (#37235)
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -80,6 +93,7 @@ lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES)
 
+<<<<<<< HEAD
 vet:
 	@echo "vet"
 	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
@@ -88,6 +102,8 @@ staticcheck:
 	$(GO) get honnef.co/go/tools/cmd/staticcheck@v0.1.3
 	$(STATICCHECK) ./...
 
+=======
+>>>>>>> 5f0c58002... *: refine github actions and makefile (#37235)
 tidy:
 	@echo "go mod tidy"
 	./tools/check/check-tidy.sh
