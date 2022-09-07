@@ -830,7 +830,95 @@ func PutLabelRule(ctx context.Context, rule *label.Rule) error {
 
 	r, err := json.Marshal(rule)
 	if err != nil {
+<<<<<<< HEAD
 		return err
+=======
+		return errors.Trace(err)
+	}
+	ctx := context.Background()
+	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
+	ruleNew := MakeNewRule(id, count, *locationLabels)
+	if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+		return errors.Trace(e)
+	}
+	return nil
+}
+
+// ConfigureTiFlashPDForPartitions configures pd rule for all partition in partitioned tables.
+func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string, tableID int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx := context.Background()
+	for _, p := range *definitions {
+		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
+		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
+		if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+			return errors.Trace(e)
+		}
+		if accel {
+			e := is.tiflashPlacementManager.PostAccelerateSchedule(ctx, p.ID)
+			if e != nil {
+				return errors.Trace(e)
+			}
+		}
+	}
+	return nil
+}
+
+// StoreInternalSession is the entry function for store an internal session to SessionManager.
+func StoreInternalSession(se interface{}) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return
+	}
+	sm.StoreInternalSession(se)
+}
+
+// DeleteInternalSession is the entry function for delete an internal session from SessionManager.
+func DeleteInternalSession(se interface{}) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return
+	}
+	sm.DeleteInternalSession(se)
+}
+
+// SetEtcdClient is only used for test.
+func SetEtcdClient(etcdCli *clientv3.Client) {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return
+	}
+	is.etcdCli = etcdCli
+}
+
+// GetEtcdClient is only used for test.
+func GetEtcdClient() *clientv3.Client {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return nil
+	}
+	return is.etcdCli
+}
+
+// GetPDScheduleConfig gets the schedule information from pd
+func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+>>>>>>> 4cb0d1f7a... ddl: Delete TiFlash sync status from etcd when table is truncated or dropped (#37184)
 	}
 
 	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rule"), "POST", bytes.NewReader(r))
