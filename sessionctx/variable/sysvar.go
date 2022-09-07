@@ -457,26 +457,26 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), nil
 		},
 	},
-	{Scope: ScopeInstance, Name: TiDBTmpStoragePath, Value: config.GetGlobalConfig().TempStoragePath, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().TempStoragePath, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
 		// FIXME: check if temp dir is being used; if used, reject
 		disk.TempDirMutex.Lock()
 		defer disk.TempDirMutex.Unlock()
-		oldVal := config.GetGlobalConfig().Instance.TmpStoragePath
-		config.GetGlobalConfig().Instance.TmpStoragePath = val
+		oldVal := config.GetGlobalConfig().Instance.TmpDir
+		config.GetGlobalConfig().Instance.TmpDir = val
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		if err := disk.InitializeTempDir(); err != nil {
-			config.GetGlobalConfig().Instance.TmpStoragePath = oldVal
+			config.GetGlobalConfig().Instance.TmpDir = oldVal
 			return err
 		}
 		config.CheckTempStorageQuota()
 		UpdateMemoryUsageAlarmRecord()
 		if err := UpdateTLSConfig(oldVal); err != nil {
-			config.GetGlobalConfig().Instance.TmpStoragePath = oldVal
+			config.GetGlobalConfig().Instance.TmpDir = oldVal
 			return err
 		}
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return config.GetGlobalConfig().Instance.TmpStoragePath, nil
+		return config.GetGlobalConfig().Instance.TmpDir, nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBTmpStorageQuota, Value: strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), Type: TypeInt, MinValue: -1, AllowAutoValue: true, SetGlobal: func(s *SessionVars, val string) error {
 		newVal, err := strconv.ParseInt(val, 10, 64)

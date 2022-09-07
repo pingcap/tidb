@@ -275,7 +275,7 @@ func TestMergeJoinInDisk(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Instance.TmpStoragePath = t.TempDir()
+		conf.Instance.TmpDir = t.TempDir()
 	})
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"))

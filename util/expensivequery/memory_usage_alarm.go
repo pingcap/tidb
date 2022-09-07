@@ -46,7 +46,7 @@ type memoryUsageAlarm struct {
 }
 
 func (record *memoryUsageAlarm) updateMemoryUsageAlarmRecord() {
-	record.tmpDir = filepath.Join(config.GetGlobalConfig().Instance.TmpStoragePath, "record")
+	record.tmpDir = filepath.Join(config.GetGlobalConfig().Instance.TmpDir, "record")
 	if record.err = disk.CheckAndCreateDir(record.tmpDir); record.err != nil {
 		return
 	}

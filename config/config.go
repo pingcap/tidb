@@ -122,7 +122,7 @@ var (
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
 				"max-server-connections":        "max_connections",
 				"run-ddl":                       "tidb_enable_ddl",
-				"tmp-storage-path":              "tidb_tmp_storage_path",
+				"tmp-storage-path":              "tmpdir",
 				"tmp-storage-quota":             "tidb_tmp_storage_quota",
 			},
 		},
@@ -280,12 +280,12 @@ type Config struct {
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
-// and the `tidb_tmp_storage_path` was not specified in the conf.toml or was specified the same as the default value.
+// and the `tmpdir` was not specified in the conf.toml or was specified the same as the default value.
 func (c *Config) UpdateTempStoragePath() {
-	if c.Instance.TmpStoragePath == TempStorageDirName {
-		c.Instance.TmpStoragePath = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+	if c.Instance.TmpDir == TempStorageDirName {
+		c.Instance.TmpDir = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	} else {
-		c.Instance.TmpStoragePath = encodeDefTempStorageDir(c.Instance.TmpStoragePath, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+		c.Instance.TmpDir = encodeDefTempStorageDir(c.Instance.TmpDir, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	}
 }
 
@@ -492,8 +492,8 @@ type Instance struct {
 	MaxConnections uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL  AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 
-	// TmpStoragePath describes the path of temporary storage.
-	TmpStoragePath string `toml:"tidb_tmp_storage_path" json:"tidb_tmp_storage_path"`
+	// TmpDir describes the path of temporary storage.
+	TmpDir string `toml:"tmpdir" json:"tmpdir"`
 	// TmpStorageQuota describe the temporary storage Quota during query executor when TiDBEnableTmpStorageOnOOM is enabled.
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error.
 	TmpStorageQuota int64 `toml:"tidb_tmp_storage_quota" json:"tidb_tmp_storage_quota"` // Bytes
@@ -875,7 +875,7 @@ var defaultConf = Config{
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TmpStorageQuota:             -1,
-		TmpStoragePath:              TempStorageDirName,
+		TmpDir:                      TempStorageDirName,
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -1046,7 +1046,7 @@ var removedConfig = map[string]struct{}{
 	"oom-use-tmp-storage":                    {}, // use tidb_enable_tmp_storage_on_oom
 	"max-server-connections":                 {}, // use sysvar max_connections
 	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
-	"tmp-storage-path":                       {}, // use sysvar tidb_tmp_storage_path
+	"tmp-storage-path":                       {}, // use sysvar tmpdir
 	"tmp-storage-quota":                      {}, // use sysvar tidb_tmp_storage_quota
 }
 
@@ -1437,11 +1437,11 @@ func CheckTempStorageQuota() {
 	if c.Instance.TmpStorageQuota < 0 {
 		// means unlimited, do nothing
 	} else {
-		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.Instance.TmpStoragePath)
+		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.Instance.TmpDir)
 		if err != nil {
 			zaplog.Fatal(err.Error())
 		} else if capacityByte < uint64(c.Instance.TmpStorageQuota) {
-			zaplog.Fatal(fmt.Sprintf("value of [tidb_tmp_storage_quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.Instance.TmpStorageQuota, capacityByte, c.Instance.TmpStoragePath))
+			zaplog.Fatal(fmt.Sprintf("value of [tidb_tmp_storage_quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.Instance.TmpStorageQuota, capacityByte, c.Instance.TmpDir))
 		}
 	}
 }

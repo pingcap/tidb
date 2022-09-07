@@ -31,7 +31,7 @@ import (
 var (
 	tempDirLock fslock.Handle
 	sf          singleflight.Group
-	// TempDirMutex is used for changing tidb_tmp_storage_path
+	// TempDirMutex is used for changing sysvar TmpDir
 	TempDirMutex sync.RWMutex
 )
 
@@ -54,7 +54,7 @@ func CheckAndInitTempDir() (err error) {
 }
 
 func checkTempDirExist() bool {
-	tempDir := config.GetGlobalConfig().Instance.TmpStoragePath
+	tempDir := config.GetGlobalConfig().Instance.TmpDir
 	_, err := os.Stat(tempDir)
 	if err != nil && !os.IsExist(err) {
 		return false
@@ -64,7 +64,7 @@ func checkTempDirExist() bool {
 
 // InitializeTempDir initializes the temp directory.
 func InitializeTempDir() error {
-	tempDir := config.GetGlobalConfig().Instance.TmpStoragePath
+	tempDir := config.GetGlobalConfig().Instance.TmpDir
 	_, err := os.Stat(tempDir)
 	if err != nil && !os.IsExist(err) {
 		err = os.MkdirAll(tempDir, 0750)
@@ -77,7 +77,7 @@ func InitializeTempDir() error {
 		switch err {
 		case fslock.ErrLockHeld:
 			log.Error("The current temporary storage dir has been occupied by another instance, "+
-				"check [instance].tidb_tmp_storage_path config and make sure they are different.", zap.String("TempStoragePath", tempDir), zap.Error(err))
+				"check [instance].tmpdir config and make sure they are different.", zap.String("TempStoragePath", tempDir), zap.Error(err))
 		default:
 			log.Error("Failed to acquire exclusive lock on the temporary storage dir.", zap.String("TempStoragePath", tempDir), zap.Error(err))
 		}

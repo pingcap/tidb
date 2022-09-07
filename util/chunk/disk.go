@@ -56,7 +56,7 @@ type diskFileReaderWriter struct {
 }
 
 func (l *diskFileReaderWriter) initWithFileName(fileName string) (err error) {
-	l.disk, err = os.CreateTemp(config.GetGlobalConfig().Instance.TmpStoragePath, fileName)
+	l.disk, err = os.CreateTemp(config.GetGlobalConfig().Instance.TmpDir, fileName)
 	if err != nil {
 		return errors2.Trace(err)
 	}

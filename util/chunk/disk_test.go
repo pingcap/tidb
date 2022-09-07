@@ -160,14 +160,14 @@ func (l *diskFileReaderWriter) flushForTest() (err error) {
 
 func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk, error) {
 	l := listInDiskWriteDisk{*NewListInDisk(fieldTypes)}
-	disk, err := os.CreateTemp(config.GetGlobalConfig().Instance.TmpStoragePath, strconv.Itoa(l.diskTracker.Label()))
+	disk, err := os.CreateTemp(config.GetGlobalConfig().Instance.TmpDir, strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return nil, err
 	}
 	l.dataFile.disk = disk
 	l.dataFile.w = disk
 
-	disk2, err := os.CreateTemp(config.GetGlobalConfig().Instance.TmpStoragePath, "offset"+strconv.Itoa(l.diskTracker.Label()))
+	disk2, err := os.CreateTemp(config.GetGlobalConfig().Instance.TmpDir, "offset"+strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return nil, err
 	}

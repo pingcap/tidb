@@ -562,8 +562,8 @@ const (
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 
-	// TiDBTmpStoragePath describes the path of temporary storage.
-	TiDBTmpStoragePath = "tidb_tmp_storage_path"
+	// TmpDir describes the path of temporary storage.
+	TmpDir = "tmpdir"
 
 	// TiDBTmpStorageQuota describes the temporary storage Quota during query executor when TiDBEnableTmpStorageOnOOM is enabled.
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error.

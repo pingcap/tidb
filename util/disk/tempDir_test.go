@@ -27,7 +27,7 @@ func TestRemoveDir(t *testing.T) {
 	path := t.TempDir()
 	defer config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Instance.TmpStoragePath = path
+		conf.Instance.TmpDir = path
 	})
 	err := os.RemoveAll(path) // clean the uncleared temp file during the last run.
 	require.NoError(t, err)
@@ -37,7 +37,7 @@ func TestRemoveDir(t *testing.T) {
 	err = CheckAndInitTempDir()
 	require.NoError(t, err)
 	require.Equal(t, checkTempDirExist(), true)
-	require.NoError(t, os.RemoveAll(config.GetGlobalConfig().Instance.TmpStoragePath))
+	require.NoError(t, os.RemoveAll(config.GetGlobalConfig().Instance.TmpDir))
 	require.Equal(t, checkTempDirExist(), false)
 	wg := sync.WaitGroup{}
 	for i := 0; i < 10; i++ {

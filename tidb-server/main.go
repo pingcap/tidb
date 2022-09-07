@@ -557,7 +557,7 @@ func setGlobalVars() {
 				case "run-ddl":
 					cfg.Instance.TiDBEnableDDL.Store(cfg.RunDDL)
 				case "tmp-storage-path":
-					cfg.Instance.TmpStoragePath = cfg.TempStoragePath
+					cfg.Instance.TmpDir = cfg.TempStoragePath
 				case "tmp-storage-quota":
 					cfg.Instance.TmpStorageQuota = cfg.TempStorageQuota
 				}

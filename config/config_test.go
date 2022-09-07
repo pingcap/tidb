@@ -300,7 +300,7 @@ tidb_enable_ddl = true
 
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 # <snip>
-# tidb_tmp_storage_path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
+# tmpdir = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
 
 # Specifies the maximum use of temporary storage (bytes) for all active queries when oom-use-tmp-storage is enabled.
 # If the tidb_tmp_storage_quota exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
