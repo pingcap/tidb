@@ -1398,7 +1398,6 @@ def go_deps():
         sum = "h1:DIPQnGy2Gv2FSA4B/hh8Q7xx3B7AIDk3DAMeHclH1vQ=",
         version = "v0.0.0-20220804021717-745bb2f7c2e6",
     )
-
     go_repository(
         name = "com_github_golangci_unconvert",
         build_file_proto_mode = "disable",
