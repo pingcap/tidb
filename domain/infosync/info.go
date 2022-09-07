@@ -110,6 +110,7 @@ type InfoSyncer struct {
 	modifyTime              time.Time
 	labelRuleManager        LabelRuleManager
 	placementManager        PlacementManager
+	scheduleManager         ScheduleManager
 	tiflashPlacementManager TiFlashPlacementManager
 }
 
@@ -191,6 +192,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	}
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
+	is.scheduleManager = initScheduleManager(etcdCli)
 	is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -243,6 +245,13 @@ func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManag
 	}
 	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
 	return &TiFlashPDPlacementManager{etcdCli: etcdCli}
+}
+
+func initScheduleManager(etcdCli *clientv3.Client) ScheduleManager {
+	if etcdCli == nil {
+		return &mockScheduleManager{}
+	}
+	return &PDScheduleManager{etcdCli: etcdCli}
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash
@@ -308,6 +317,21 @@ func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*Server
 
 // GetAllServerInfo gets all servers static information from etcd.
 func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+	failpoint.Inject("mockGetAllServerInfo", func() {
+		res := map[string]*ServerInfo{
+			"fa598405-a08e-4e74-83ff-75c30b1daedc": {
+				Labels: map[string]string{
+					"zone": "zone1",
+				},
+			},
+			"ad84dbbd-5a50-4742-a73c-4f674d41d4bd": {
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
+			},
+		}
+		failpoint.Return(res, nil)
+	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
@@ -1164,4 +1188,22 @@ func DeleteInternalSession(se interface{}) {
 		return
 	}
 	sm.DeleteInternalSession(se)
+}
+
+// GetPDScheduleConfig gets the schedule information from pd
+func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.scheduleManager.GetPDScheduleConfig(ctx)
+}
+
+// SetPDScheduleConfig sets the schedule information for pd
+func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.scheduleManager.SetPDScheduleConfig(ctx, config)
 }

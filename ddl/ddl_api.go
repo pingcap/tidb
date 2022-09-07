@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -1638,7 +1639,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	return nil
 }
 
-func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, foreign bool) {
+func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 	if constr.Name == "" && len(constr.Keys) > 0 {
 		var colName string
 		for _, keyPart := range constr.Keys {
@@ -1657,11 +1658,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, fo
 		}
 		for namesMap[constrName] {
 			// We loop forever until we find constrName that haven't been used.
-			if foreign {
-				constrName = fmt.Sprintf("fk_%s_%d", colName, i)
-			} else {
-				constrName = fmt.Sprintf("%s_%d", colName, i)
-			}
+			constrName = fmt.Sprintf("%s_%d", colName, i)
 			i++
 		}
 		constr.Name = constrName
@@ -1690,10 +1687,8 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 
 	// Set empty constraint names.
 	for _, constr := range constraints {
-		if constr.Tp == ast.ConstraintForeignKey {
-			setEmptyConstraintName(fkNames, constr, true)
-		} else {
-			setEmptyConstraintName(constrNames, constr, false)
+		if constr.Tp != ast.ConstraintForeignKey {
+			setEmptyConstraintName(constrNames, constr)
 		}
 	}
 
@@ -1790,6 +1785,7 @@ func BuildTableInfo(
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 		tblColumns = append(tblColumns, table.ToColumn(v.ToInfo()))
 	}
+	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
 		// Build hidden columns if necessary.
 		hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
@@ -1809,12 +1805,17 @@ func BuildTableInfo(
 			return nil, dbterror.ErrUnsupportedClusteredSecondaryKey
 		}
 		if constr.Tp == ast.ConstraintForeignKey {
-			for _, fk := range tbInfo.ForeignKeys {
-				if fk.Name.L == strings.ToLower(constr.Name) {
-					return nil, infoschema.ErrCannotAddForeign
-				}
+			var fkName model.CIStr
+			foreignKeyID++
+			if constr.Name != "" {
+				fkName = model.NewCIStr(constr.Name)
+			} else {
+				fkName = model.NewCIStr(fmt.Sprintf("fk_%d", foreignKeyID))
 			}
-			fk, err := buildFKInfo(model.NewCIStr(constr.Name), constr.Keys, constr.Refer, cols, tbInfo)
+			if model.FindFKInfoByName(tbInfo.ForeignKeys, fkName.L) != nil {
+				return nil, infoschema.ErrCannotAddForeign
+			}
+			fk, err := buildFKInfo(ctx, fkName, constr.Keys, constr.Refer, cols)
 			if err != nil {
 				return nil, err
 			}
@@ -1899,7 +1900,49 @@ func BuildTableInfo(
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 
-	return
+	err = addIndexForForeignKey(ctx, tbInfo)
+	return tbInfo, err
+}
+
+// addIndexForForeignKey uses to auto create an index for the foreign key if the table doesn't have any index cover the
+// foreign key columns.
+func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	if len(tbInfo.ForeignKeys) == 0 {
+		return nil
+	}
+	var handleCol *model.ColumnInfo
+	if tbInfo.PKIsHandle {
+		handleCol = tbInfo.GetPkColInfo()
+	}
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+		if handleCol != nil && len(fk.Cols) == 1 && handleCol.Name.L == fk.Cols[0].L {
+			continue
+		}
+		if model.FindIndexByColumns(tbInfo, fk.Cols...) != nil {
+			continue
+		}
+		idxName := fk.Name
+		if tbInfo.FindIndexByName(idxName.L) != nil {
+			return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", fk.Name.O)
+		}
+		keys := make([]*ast.IndexPartSpecification, 0, len(fk.Cols))
+		for _, col := range fk.Cols {
+			keys = append(keys, &ast.IndexPartSpecification{
+				Column: &ast.ColumnName{Name: col},
+				Length: types.UnspecifiedLength,
+			})
+		}
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, idxName, false, false, false, keys, nil, model.StatePublic)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		idxInfo.ID = AllocateIndexID(tbInfo)
+		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
+	}
+	return nil
 }
 
 func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
@@ -2258,6 +2301,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return err
 	}
+	if err = checkTableForeignKeysValid(ctx, is, schema.Name.L, tbInfo); err != nil {
+		return err
+	}
 
 	onExist := OnExistError
 	if s.IfNotExists {
@@ -2353,6 +2399,7 @@ func (d *ddl) createTableWithInfoJob(
 		actionType = model.ActionCreateSequence
 	default:
 		actionType = model.ActionCreateTable
+		args = append(args, ctx.GetSessionVars().ForeignKeyChecks)
 	}
 
 	job = &model.Job{
@@ -2497,6 +2544,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return nil
 	}
 	jobs.Args = append(jobs.Args, args)
+	jobs.Args = append(jobs.Args, ctx.GetSessionVars().ForeignKeyChecks)
 
 	err = d.DoDDLJob(ctx, jobs)
 	if err != nil {
@@ -2591,6 +2639,18 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	} else {
 		go preSplit()
 	}
+}
+
+func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
+	logutil.BgLogger().Info("[ddl] get flashback cluster job", zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
+	job := &model.Job{
+		Type:       model.ActionFlashbackCluster,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{flashbackTS, map[string]interface{}{}},
+	}
+	err := d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
 }
 
 func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
@@ -5413,12 +5473,12 @@ func (d *ddl) dropTableObject(
 		}
 	}
 	if len(notExistTables) > 0 && !ifExists {
-		return dropExistErr.GenWithStackByArgs(strings.Join(notExistTables, ","))
+		return dropExistErr.FastGenByArgs(strings.Join(notExistTables, ","))
 	}
 	// We need add warning when use if exists.
 	if len(notExistTables) > 0 && ifExists {
 		for _, table := range notExistTables {
-			sessVars.StmtCtx.AppendNote(dropExistErr.GenWithStackByArgs(table))
+			sessVars.StmtCtx.AppendNote(dropExistErr.FastGenByArgs(table))
 		}
 	}
 	return nil
@@ -6016,9 +6076,9 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column, tbInfo *model.TableInfo) (*model.FKInfo, error) {
+func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	if len(keys) != len(refer.IndexPartSpecifications) {
-		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs("foreign key without name")
+		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(fkName, "Key reference and table reference don't match")
 	}
 
 	// all base columns of stored generated columns
@@ -6032,9 +6092,13 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 	}
 
 	fkInfo := &model.FKInfo{
-		Name:     fkName,
-		RefTable: refer.Table.Name,
-		Cols:     make([]model.CIStr, len(keys)),
+		Name:      fkName,
+		RefSchema: refer.Table.Schema,
+		RefTable:  refer.Table.Name,
+		Cols:      make([]model.CIStr, len(keys)),
+	}
+	if variable.EnableForeignKey.Load() {
+		fkInfo.Version = model.FKVersion1
 	}
 
 	for i, key := range keys {
@@ -6047,17 +6111,17 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 			if col.IsGenerated() {
 				// Check foreign key on virtual generated columns
 				if !col.GeneratedStored {
-					return nil, infoschema.ErrCannotAddForeign
+					return nil, infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name.O, col.Name.O)
 				}
 
 				// Check wrong reference options of foreign key on stored generated columns
 				switch refer.OnUpdate.ReferOpt {
-				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+				case model.ReferOptionCascade, model.ReferOptionSetNull, model.ReferOptionSetDefault:
 					//nolint: gosec
 					return nil, dbterror.ErrWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE " + refer.OnUpdate.ReferOpt.String())
 				}
 				switch refer.OnDelete.ReferOpt {
-				case ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+				case model.ReferOptionSetNull, model.ReferOptionSetDefault:
 					//nolint: gosec
 					return nil, dbterror.ErrWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON DELETE " + refer.OnDelete.ReferOpt.String())
 				}
@@ -6066,17 +6130,21 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 			// Check wrong reference options of foreign key on base columns of stored generated columns
 			if _, ok := baseCols[col.Name.L]; ok {
 				switch refer.OnUpdate.ReferOpt {
-				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+				case model.ReferOptionCascade, model.ReferOptionSetNull, model.ReferOptionSetDefault:
 					return nil, infoschema.ErrCannotAddForeign
 				}
 				switch refer.OnDelete.ReferOpt {
-				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+				case model.ReferOptionCascade, model.ReferOptionSetNull, model.ReferOptionSetDefault:
 					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
 		}
-		if table.FindCol(cols, key.Column.Name.O) == nil {
+		col := table.FindCol(cols, key.Column.Name.O)
+		if col == nil {
 			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
+		}
+		if mysql.HasNotNullFlag(col.GetFlag()) && (refer.OnDelete.ReferOpt == model.ReferOptionSetNull || refer.OnUpdate.ReferOpt == model.ReferOptionSetNull) {
+			return nil, infoschema.ErrForeignKeyColumnNotNull.GenWithStackByArgs(col.Name.O, fkName)
 		}
 		fkInfo.Cols[i] = key.Column.Name
 	}
@@ -6114,7 +6182,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		}
 	}
 
-	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
+	fkInfo, err := buildFKInfo(ctx, fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
 	}

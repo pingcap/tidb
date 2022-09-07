@@ -319,6 +319,13 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
+		jobID, err := t.GetFlashbackClusterJobID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if jobID != 0 {
+			return errors.Errorf("Can't add to ddl table, cluster is flashing back now")
+		}
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
@@ -383,6 +390,13 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
+		jobID, err := t.GetFlashbackClusterJobID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if jobID != 0 {
+			return errors.Errorf("Can't add to ddl table, cluster is flashing back now")
+		}
 		ids, err = t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
@@ -541,6 +555,8 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	switch job.Type {
 	case model.ActionRecoverTable:
 		err = finishRecoverTable(w, job)
+	case model.ActionFlashbackCluster:
+		err = finishFlashbackCluster(w, job)
 	case model.ActionCreateTables:
 		if job.IsCancelled() {
 			// it may be too large that it can not be added to the history queue, too
@@ -1065,6 +1081,19 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if job.Type != model.ActionMultiSchemaChange {
 		logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	}
+
+	// Should check flashbackClusterJobID.
+	// Some ddl jobs maybe added between check and insert into ddl job table.
+	flashbackJobID, err := t.GetFlashbackClusterJobID()
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, err
+	}
+	if flashbackJobID != 0 && flashbackJobID != job.ID {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("Can't do ddl job, cluster is flashing back now")
+	}
+
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
 		job.RealStartTS = t.StartTS
@@ -1190,6 +1219,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAlterCacheTable(d, t, job)
 	case model.ActionAlterNoCacheTable:
 		ver, err = onAlterNoCacheTable(d, t, job)
+	case model.ActionFlashbackCluster:
+		ver, err = w.onFlashbackCluster(d, t, job)
 	case model.ActionMultiSchemaChange:
 		ver, err = onMultiSchemaChange(w, d, t, job)
 	default:
@@ -1440,6 +1471,19 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
+			}
+		}
+	case model.ActionCreateTable:
+		diff.TableID = job.TableID
+		if len(job.Args) > 0 {
+			tbInfo, _ := job.Args[0].(*model.TableInfo)
+			// When create table with foreign key, we actually has two schema status change:
+			// 1. none -> write-only
+			// 2. write-only -> public
+			// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
+			// apply create new table. So need to set diff.OldTableID here to make sure it.
+			if tbInfo != nil && tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
+				diff.OldTableID = job.TableID
 			}
 		}
 	default:

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/assert"
@@ -78,22 +77,22 @@ func TestToBool(t *testing.T) {
 	testDatumToBool(t, NewBinaryLiteralFromUint(0, -1), 0)
 	testDatumToBool(t, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(t, Set{Name: "a", Value: 1}, 1)
-	testDatumToBool(t, json.CreateBinary(int64(1)), 1)
-	testDatumToBool(t, json.CreateBinary(int64(0)), 0)
-	testDatumToBool(t, json.CreateBinary("0"), 1)
-	testDatumToBool(t, json.CreateBinary("aaabbb"), 1)
-	testDatumToBool(t, json.CreateBinary(float64(0.0)), 0)
-	testDatumToBool(t, json.CreateBinary(float64(3.1415)), 1)
-	testDatumToBool(t, json.CreateBinary([]interface{}{int64(1), int64(2)}), 1)
-	testDatumToBool(t, json.CreateBinary(map[string]interface{}{"ke": "val"}), 1)
-	testDatumToBool(t, json.CreateBinary("0000-00-00 00:00:00"), 1)
-	testDatumToBool(t, json.CreateBinary("0778"), 1)
-	testDatumToBool(t, json.CreateBinary("0000"), 1)
-	testDatumToBool(t, json.CreateBinary(nil), 1)
-	testDatumToBool(t, json.CreateBinary([]interface{}{nil}), 1)
-	testDatumToBool(t, json.CreateBinary(true), 1)
-	testDatumToBool(t, json.CreateBinary(false), 1)
-	testDatumToBool(t, json.CreateBinary(""), 1)
+	testDatumToBool(t, CreateBinaryJSON(int64(1)), 1)
+	testDatumToBool(t, CreateBinaryJSON(int64(0)), 0)
+	testDatumToBool(t, CreateBinaryJSON("0"), 1)
+	testDatumToBool(t, CreateBinaryJSON("aaabbb"), 1)
+	testDatumToBool(t, CreateBinaryJSON(float64(0.0)), 0)
+	testDatumToBool(t, CreateBinaryJSON(float64(3.1415)), 1)
+	testDatumToBool(t, CreateBinaryJSON([]interface{}{int64(1), int64(2)}), 1)
+	testDatumToBool(t, CreateBinaryJSON(map[string]interface{}{"ke": "val"}), 1)
+	testDatumToBool(t, CreateBinaryJSON("0000-00-00 00:00:00"), 1)
+	testDatumToBool(t, CreateBinaryJSON("0778"), 1)
+	testDatumToBool(t, CreateBinaryJSON("0000"), 1)
+	testDatumToBool(t, CreateBinaryJSON(nil), 1)
+	testDatumToBool(t, CreateBinaryJSON([]interface{}{nil}), 1)
+	testDatumToBool(t, CreateBinaryJSON(true), 1)
+	testDatumToBool(t, CreateBinaryJSON(false), 1)
+	testDatumToBool(t, CreateBinaryJSON(""), 1)
 	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	require.NoError(t, err)
 	testDatumToBool(t, t1, 1)
@@ -133,7 +132,7 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, NewBinaryLiteralFromUint(100, -1), int64(100))
 	testDatumToInt64(t, Enum{Name: "a", Value: 1}, int64(1))
 	testDatumToInt64(t, Set{Name: "a", Value: 1}, int64(1))
-	testDatumToInt64(t, json.CreateBinary(int64(3)), int64(3))
+	testDatumToInt64(t, CreateBinaryJSON(int64(3)), int64(3))
 
 	t1, err := ParseTime(&stmtctx.StatementContext{
 		TimeZone: time.UTC,
@@ -568,7 +567,7 @@ func TestMarshalDatum(t *testing.T) {
 		NewMysqlEnumDatum(Enum{Name: "a", Value: 1}),
 		NewCollateMysqlEnumDatum(Enum{Name: "a", Value: 1}, charset.CollationASCII),
 		NewMysqlSetDatum(e, charset.CollationGBKBin),
-		NewJSONDatum(json.CreateBinary(int64(1))),
+		NewJSONDatum(CreateBinaryJSON(int64(1))),
 		MinNotNullDatum(),
 		MaxValueDatum(),
 	}
