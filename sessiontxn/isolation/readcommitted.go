@@ -320,9 +320,6 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		} else {
 			if sessionVars.ConnectionID > 0 && sessionVars.InTxn() {
 				useLastOracleTS = planSkipGetTsoFromPD(p.sctx, plan, false)
-				if useLastOracleTS {
-					p.checkTSInWriteStmt = true
-				}
 			}
 		}
 	}
@@ -331,6 +328,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		failpoint.Inject("tsoUseConstantFuture", func() {
 			sessiontxn.TsoUseConstantCountInc(p.sctx)
 		})
+		p.checkTSInWriteStmt = true
 		p.stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	}
 
