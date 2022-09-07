@@ -3238,6 +3238,8 @@ func TestWriteListPartitionTable1(t *testing.T) {
 
 // TestWriteListPartitionTable2 test for write list partition when the partition expression is complicated and contain generated column.
 func TestWriteListPartitionTable2(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
