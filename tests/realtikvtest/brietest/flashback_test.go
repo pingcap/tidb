@@ -21,17 +21,48 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+// MockGC is used to make GC work in the test environment.
+func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
+	originGC := ddlutil.IsEmulatorGCEnable()
+	resetGC := func() {
+		if originGC {
+			ddlutil.EmulatorGCEnable()
+		} else {
+			ddlutil.EmulatorGCDisable()
+		}
+	}
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddlutil.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// clear GC variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
+}
+
 func TestFlashback(t *testing.T) {
 	if *realtikvtest.WithRealTiKV {
 		store := realtikvtest.CreateMockStoreAndSetup(t)
 
 		tk := testkit.NewTestKit(t, store)
+
+		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+		defer resetGC()
+
+		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, index i(a))")

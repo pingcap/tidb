@@ -337,7 +337,7 @@ func TestRecoverClusterMeetError(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
 }
 
 func TestRecoverClusterWithTiFlash(t *testing.T) {
@@ -366,6 +366,8 @@ func TestRecoverClusterWithTiFlash(t *testing.T) {
 func TestFlashbackWithSafeTs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
@@ -416,6 +418,7 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	}
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
 }
 
 // MockGC is used to make GC work in the test environment.
