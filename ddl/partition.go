@@ -2766,6 +2766,38 @@ func hexIfNonPrint(s string) string {
 	if isPrint {
 		return s
 	}
+	// To avoid 'simple' MySQL accepted escape characters, to be showed as hex, just escape them
+	// \0 \b \n \r \t \Z, see https://dev.mysql.com/doc/refman/8.0/en/string-literals.html
+	isPrint = true
+	res := ""
+	for _, runeVal := range s {
+		switch runeVal {
+		case 0: // Null
+			res += `\0`
+		case 7: // Bell
+			res += `\b`
+		case '\t': // 9
+			res += `\t`
+		case '\n': // 10
+			res += `\n`
+		case '\r': // 13
+			res += `\r`
+		case 26: // ctrl-z / Substitute
+			res += `\Z`
+		default:
+			if strconv.IsPrint(runeVal) {
+				res += string(runeVal)
+			} else {
+				isPrint = false
+				break
+			}
+		}
+	}
+	if isPrint {
+		return res
+	}
+	// Not possible to create an easy interpreted MySQL string, return as hex string
+	// Can be converted to string in MySQL like: CAST(UNHEX('<hex string>') AS CHAR(255))
 	return "0x" + hex.EncodeToString([]byte(driver.UnwrapFromSingleQuotes(s)))
 }
 

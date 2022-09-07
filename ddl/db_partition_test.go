@@ -4380,12 +4380,34 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	// Test escaped characters in single quotes.
 	tk.MustExec(`CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
 		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
- 		PARTITION p1 VALUES IN ('""','\\','\\\'\t\n'))`)
+		PARTITION p1 VALUES IN ('""','\\','\\\'\t\n'))`)
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"a\" varchar(255) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY LIST COLUMNS(\"a\")\n" +
-		"(PARTITION \"p0\" VALUES IN ('''','''''',''''''''),\n" +
-		" PARTITION \"p1\" VALUES IN ('\"\"','\\\\','\\\\''\t\n'))"))
+		`(PARTITION "p0" VALUES IN ('''','''''',''''''''),` + "\n" +
+		` PARTITION "p1" VALUES IN ('""','\\','\\''\t\n'))`))
+	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
 	tk.MustExec("drop table t")
+	tk.MustExec(`CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
+		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
+		PARTITION p1 VALUES IN ('\"\"','\\',0x5c27090a))`)
+	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(\"a\")\n" +
+		`(PARTITION "p0" VALUES IN ('''','''''',''''''''),` + "\n" +
+		` PARTITION "p1" VALUES IN ('""','\\',x'5c27090a'))`))
+	tk.MustExec("drop table t")
+	tk.MustExec(`CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
+		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
+		PARTITION p1 VALUES IN ('""','\\',x'5c27090a'))`)
+	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(\"a\")\n" +
+		`(PARTITION "p0" VALUES IN ('''','''''',''''''''),` + "\n" +
+		` PARTITION "p1" VALUES IN ('""','\\',x'5c27090a'))`))
 }
