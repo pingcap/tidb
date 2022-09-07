@@ -35,6 +35,10 @@ var Analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
+func init() {
+	util.SkipAnalyzer(Analyzer)
+}
+
 // Adapted from https://github.com/mdempsky/unconvert/blob/beb68d938016d2dec1d1b078054f4d3db25f97be/unconvert.go#L371-L414.
 func run(pass *analysis.Pass) (interface{}, error) {
 	inspect := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
@@ -164,8 +168,4 @@ func asBuiltin(n ast.Expr, info *types.Info) (*types.Builtin, bool) {
 
 	b, ok := obj.(*types.Builtin)
 	return b, ok
-}
-
-func init() {
-	util.SkipAnalyzer(Analyzer)
 }
