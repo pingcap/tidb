@@ -91,11 +91,6 @@ func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version
 	return nil
 }
 
-// MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
-func (s *MockSchemaSyncer) MustGetGlobalVersion(ctx context.Context) (int64, error) {
-	return 0, nil
-}
-
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
 func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer int64) error {
 	ticker := time.NewTicker(mockCheckVersInterval)
@@ -158,6 +153,10 @@ func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID in
 		return nil, errors.Trace(err)
 	}
 	tbl.ID = tableID
+
+	if err = setTableAutoRandomBits(ctx, tbl, stmt.Cols); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// The specified charset will be handled in handleTableOptions
 	if err = handleTableOptions(stmt.Options, tbl); err != nil {

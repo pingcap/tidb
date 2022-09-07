@@ -241,6 +241,9 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar(TiDBOptimizerEnableOuterJoinReorder, "OFF")
 	require.NoError(t, err)
 	require.Equal(t, false, v.EnableOuterJoinReorder)
+	err = v.SetSystemVar(TiDBOptimizerEnableOuterJoinReorder, "ON")
+	require.NoError(t, err)
+	require.Equal(t, true, v.EnableOuterJoinReorder)
 
 	require.Equal(t, DefTiDBOptimizerEnableNewOFGB, v.OptimizerEnableNewOnlyFullGroupByCheck)
 	err = v.SetSystemVar(TiDBOptimizerEnableNewOnlyFullGroupByCheck, "off")
@@ -709,4 +712,28 @@ func TestSessionStatesSystemVar(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "1024", val)
 	require.Equal(t, true, keep)
+}
+
+func TestOnOffHelpers(t *testing.T) {
+	require.Equal(t, "ON", trueFalseToOnOff("TRUE"))
+	require.Equal(t, "ON", trueFalseToOnOff("TRue"))
+	require.Equal(t, "ON", trueFalseToOnOff("true"))
+	require.Equal(t, "OFF", trueFalseToOnOff("FALSE"))
+	require.Equal(t, "OFF", trueFalseToOnOff("False"))
+	require.Equal(t, "OFF", trueFalseToOnOff("false"))
+	require.Equal(t, "other", trueFalseToOnOff("other"))
+	require.Equal(t, "true", OnOffToTrueFalse("ON"))
+	require.Equal(t, "true", OnOffToTrueFalse("on"))
+	require.Equal(t, "true", OnOffToTrueFalse("On"))
+	require.Equal(t, "false", OnOffToTrueFalse("OFF"))
+	require.Equal(t, "false", OnOffToTrueFalse("Off"))
+	require.Equal(t, "false", OnOffToTrueFalse("off"))
+	require.Equal(t, "other", OnOffToTrueFalse("other"))
+}
+
+func TestAssertionLevel(t *testing.T) {
+	require.Equal(t, AssertionLevelStrict, tidbOptAssertionLevel(AssertionStrictStr))
+	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel(AssertionOffStr))
+	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(AssertionFastStr))
+	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel("bogus"))
 }

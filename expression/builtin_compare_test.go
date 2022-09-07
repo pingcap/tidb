@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
@@ -88,7 +87,7 @@ func TestCompare(t *testing.T) {
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
 	durationVal := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second}
-	jsonVal := json.CreateBinary("123")
+	jsonVal := types.CreateBinaryJSON("123")
 	// test cases for generating function signatures.
 	tests := []struct {
 		arg0     interface{}
@@ -165,6 +164,14 @@ func TestCompare(t *testing.T) {
 	args = bf.getArgs()
 	require.Equal(t, mysql.TypeDatetime, args[0].GetType().GetType())
 	require.Equal(t, mysql.TypeDatetime, args[1].GetType().GetType())
+
+	// test <json column> <cmp> <const int expression>
+	jsonCol, intCon := &Column{RetType: types.NewFieldType(mysql.TypeJSON)}, &Constant{RetType: types.NewFieldType(mysql.TypeLong)}
+	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{jsonCol, intCon})
+	require.NoError(t, err)
+	args = bf.getArgs()
+	require.Equal(t, mysql.TypeJSON, args[0].GetType().GetType())
+	require.Equal(t, mysql.TypeJSON, args[1].GetType().GetType())
 }
 
 func TestCoalesce(t *testing.T) {

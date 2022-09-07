@@ -180,7 +180,7 @@ func sha256crypt(plaintext string, salt []byte, iterations int) string {
 	return buf.String()
 }
 
-// CheckShaPassword is to checks if a MySQL style caching_sha2 authentication string matches a password
+// CheckShaPassword is to check if a MySQL style caching_sha2 authentication string matches a password
 func CheckShaPassword(pwhash []byte, password string) (bool, error) {
 	pwhashParts := bytes.Split(pwhash, []byte("$"))
 	if len(pwhashParts) != 4 {
