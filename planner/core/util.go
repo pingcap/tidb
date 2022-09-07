@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"golang.org/x/exp/slices"
@@ -174,6 +175,16 @@ func (s *physicalSchemaProducer) Schema() *expression.Schema {
 // SetSchema implements the Plan.SetSchema interface.
 func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
 	s.schema = schema
+}
+
+// MemoryUsage return the memory usage of physicalSchemaProducer
+func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = s.basePhysicalPlan.MemoryUsage() + memory.SizeOfPointer
+	return
 }
 
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
