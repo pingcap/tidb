@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1560,6 +1561,12 @@ func BenchmarkPartitionRangeColumns(b *testing.B) {
 		//tk.MustExec("insert ignore into t values (" + val + ",'" + val + "')")
 	}
 	b.StopTimer()
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkPartitionRangeColumns,
+	)
 }
 
 func TestPartitionRangeColumnPruning(t *testing.T) {
