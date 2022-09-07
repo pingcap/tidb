@@ -154,23 +154,14 @@ func (re *regexpBaseFuncSig) canMemorize(matchTypeIdx int) bool {
 }
 
 func (reg *regexpBaseFuncSig) initMemoizedRegexp(params []*regexpParam, matchTypeIdx int, n int) error {
-	patterns := params[patternIdx].getCol()
-
-	for i := 0; i < n; i++ {
-		if patterns.IsNull(i) {
-			continue
-		}
-
-		// Generate compile
-		compile, err := reg.genCompile(params[matchTypeIdx].getStringVal(0))
-		if err != nil {
-			return ErrRegexp.GenWithStackByArgs(err)
-		}
-
-		// Compile this constant pattern, so that we can avoid this repeatable work
-		reg.memorize(compile, patterns.GetString(i))
-		break
+	// Generate compile
+	compile, err := reg.genCompile(params[matchTypeIdx].getStringVal(0))
+	if err != nil {
+		return ErrRegexp.GenWithStackByArgs(err)
 	}
+
+	// Compile this constant pattern, so that we can avoid this repeatable work
+	reg.memorize(compile, params[patternIdx].getStringVal(0))
 
 	return reg.memorizedErr
 }
