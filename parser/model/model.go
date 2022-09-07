@@ -14,6 +14,7 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -327,6 +328,44 @@ func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 	return nil
 }
 
+// FindFKInfoByName finds FKInfo in fks by lowercase name.
+func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
+	for _, fk := range fks {
+		if fk.Name.L == name {
+			return fk
+		}
+	}
+	return nil
+}
+
+// FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
+func FindIndexByColumns(tbInfo *TableInfo, cols ...CIStr) *IndexInfo {
+	for _, index := range tbInfo.Indices {
+		if IsIndexPrefixCovered(tbInfo, index, cols...) {
+			return index
+		}
+	}
+	return nil
+}
+
+// IsIndexPrefixCovered checks the index's columns beginning with the cols.
+func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...CIStr) bool {
+	if len(index.Columns) < len(cols) {
+		return false
+	}
+	for i := range cols {
+		if cols[i].L != index.Columns[i].Name.L ||
+			index.Columns[i].Offset >= len(tbInfo.Columns) {
+			return false
+		}
+		colInfo := tbInfo.Columns[index.Columns[i].Offset]
+		if index.Columns[i].Length != types.UnspecifiedLength && index.Columns[i].Length < colInfo.GetFlen() {
+			return false
+		}
+	}
+	return true
+}
+
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
 // for use of execution phase.
 const ExtraHandleID = -1
@@ -412,6 +451,7 @@ type TableInfo struct {
 	AutoRandID      int64  `json:"auto_rand_id"`
 	MaxColumnID     int64  `json:"max_col_id"`
 	MaxIndexID      int64  `json:"max_idx_id"`
+	MaxForeignKeyID int64  `json:"max_fk_id"`
 	MaxConstraintID int64  `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
 	// These changing schema operations don't include 'truncate table' and 'rename table'.
@@ -1399,14 +1439,99 @@ func (t *TableInfo) FindColumnNameByID(id int64) string {
 
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
-	ID       int64       `json:"id"`
-	Name     CIStr       `json:"fk_name"`
-	RefTable CIStr       `json:"ref_table"`
-	RefCols  []CIStr     `json:"ref_cols"`
-	Cols     []CIStr     `json:"cols"`
-	OnDelete int         `json:"on_delete"`
-	OnUpdate int         `json:"on_update"`
-	State    SchemaState `json:"state"`
+	ID        int64       `json:"id"`
+	Name      CIStr       `json:"fk_name"`
+	RefSchema CIStr       `json:"ref_schema"`
+	RefTable  CIStr       `json:"ref_table"`
+	RefCols   []CIStr     `json:"ref_cols"`
+	Cols      []CIStr     `json:"cols"`
+	OnDelete  int         `json:"on_delete"`
+	OnUpdate  int         `json:"on_update"`
+	State     SchemaState `json:"state"`
+	Version   int         `json:"version"`
+}
+
+const (
+	// FKVersion0 indicate the FKInfo version is 0.
+	// In FKVersion0, TiDB only supported syntax of foreign key, but the foreign key constraint doesn't take effect.
+	FKVersion0 = 0
+	// FKVersion1 indicate the FKInfo version is 1.
+	// In FKVersion1, TiDB supports the foreign key constraint.
+	FKVersion1 = 1
+)
+
+// ReferredFKInfo provides the cited foreign key in the child table.
+type ReferredFKInfo struct {
+	Cols        []CIStr `json:"cols"`
+	ChildSchema CIStr   `json:"child_schema"`
+	ChildTable  CIStr   `json:"child_table"`
+	ChildFKName CIStr   `json:"child_fk_name"`
+}
+
+// ReferOptionType is the type for refer options.
+type ReferOptionType int
+
+// Refer option types.
+const (
+	ReferOptionNoOption ReferOptionType = iota
+	ReferOptionRestrict
+	ReferOptionCascade
+	ReferOptionSetNull
+	ReferOptionNoAction
+	ReferOptionSetDefault
+)
+
+// String implements fmt.Stringer interface.
+func (r ReferOptionType) String() string {
+	switch r {
+	case ReferOptionRestrict:
+		return "RESTRICT"
+	case ReferOptionCascade:
+		return "CASCADE"
+	case ReferOptionSetNull:
+		return "SET NULL"
+	case ReferOptionNoAction:
+		return "NO ACTION"
+	case ReferOptionSetDefault:
+		return "SET DEFAULT"
+	}
+	return ""
+}
+
+func (fk *FKInfo) String(db, tb string) string {
+	buf := bytes.Buffer{}
+	buf.WriteString("`" + db + "`.`")
+	buf.WriteString(tb + "`, CONSTRAINT `")
+	buf.WriteString(fk.Name.O + "` FOREIGN KEY (")
+	for i, col := range fk.Cols {
+		if i > 0 {
+			buf.WriteByte(byte(','))
+		}
+		buf.WriteString("`" + col.O + "`")
+	}
+	buf.WriteString(") REFERENCES `")
+	if fk.RefSchema.L != db {
+		buf.WriteString(fk.RefSchema.L)
+		buf.WriteString("`.`")
+	}
+	buf.WriteString(fk.RefTable.L)
+	buf.WriteString("` (")
+	for i, col := range fk.RefCols {
+		if i > 0 {
+			buf.WriteByte(byte(','))
+		}
+		buf.WriteString("`" + col.O + "`")
+	}
+	buf.WriteString(")")
+	if onDelete := ReferOptionType(fk.OnDelete); onDelete != ReferOptionNoOption {
+		buf.WriteString(" ON DELETE ")
+		buf.WriteString(onDelete.String())
+	}
+	if onUpdate := ReferOptionType(fk.OnUpdate); onUpdate != ReferOptionNoOption {
+		buf.WriteString(" ON UPDATE ")
+		buf.WriteString(onUpdate.String())
+	}
+	return buf.String()
 }
 
 // Clone clones FKInfo.
@@ -1541,51 +1666,57 @@ func writeSettingItemToBuilder(sb *strings.Builder, item string) {
 	}
 	sb.WriteString(item)
 }
+func writeSettingStringToBuilder(sb *strings.Builder, item string, value string) {
+	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=\"%s\"", item, strings.ReplaceAll(value, "\"", "\\\"")))
+}
+func writeSettingIntegerToBuilder(sb *strings.Builder, item string, value uint64) {
+	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=%d", item, value))
+}
 
 func (p *PlacementSettings) String() string {
 	sb := new(strings.Builder)
 	if len(p.PrimaryRegion) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("PRIMARY_REGION=\"%s\"", p.PrimaryRegion))
+		writeSettingStringToBuilder(sb, "PRIMARY_REGION", p.PrimaryRegion)
 	}
 
 	if len(p.Regions) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("REGIONS=\"%s\"", p.Regions))
+		writeSettingStringToBuilder(sb, "REGIONS", p.Regions)
 	}
 
 	if len(p.Schedule) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("SCHEDULE=\"%s\"", p.Schedule))
+		writeSettingStringToBuilder(sb, "SCHEDULE", p.Schedule)
 	}
 
 	if len(p.Constraints) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("CONSTRAINTS=\"%s\"", p.Constraints))
+		writeSettingStringToBuilder(sb, "CONSTRAINTS", p.Constraints)
 	}
 
 	if len(p.LeaderConstraints) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("LEADER_CONSTRAINTS=\"%s\"", p.LeaderConstraints))
+		writeSettingStringToBuilder(sb, "LEADER_CONSTRAINTS", p.LeaderConstraints)
 	}
 
 	if p.Voters > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("VOTERS=%d", p.Voters))
+		writeSettingIntegerToBuilder(sb, "VOTERS", p.Voters)
 	}
 
 	if len(p.VoterConstraints) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("VOTER_CONSTRAINTS=\"%s\"", p.VoterConstraints))
+		writeSettingStringToBuilder(sb, "VOTER_CONSTRAINTS", p.VoterConstraints)
 	}
 
 	if p.Followers > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("FOLLOWERS=%d", p.Followers))
+		writeSettingIntegerToBuilder(sb, "FOLLOWERS", p.Followers)
 	}
 
 	if len(p.FollowerConstraints) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("FOLLOWER_CONSTRAINTS=\"%s\"", p.FollowerConstraints))
+		writeSettingStringToBuilder(sb, "FOLLOWER_CONSTRAINTS", p.FollowerConstraints)
 	}
 
 	if p.Learners > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("LEARNERS=%d", p.Learners))
+		writeSettingIntegerToBuilder(sb, "LEARNERS", p.Learners)
 	}
 
 	if len(p.LearnerConstraints) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("LEARNER_CONSTRAINTS=\"%s\"", p.LearnerConstraints))
+		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
 	}
 
 	return sb.String()

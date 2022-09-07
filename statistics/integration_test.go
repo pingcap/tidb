@@ -502,6 +502,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	}()
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+	tk.MustExec("set session tidb_enable_pseudo_for_outdated_stats=1")
 
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
