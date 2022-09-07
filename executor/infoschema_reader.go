@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -589,11 +588,11 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 			}
 			for _, fk := range table.ForeignKeys {
 				updateRule, deleteRule := "NO ACTION", "NO ACTION"
-				if ast.ReferOptionType(fk.OnUpdate) != 0 {
-					updateRule = ast.ReferOptionType(fk.OnUpdate).String()
+				if model.ReferOptionType(fk.OnUpdate) != 0 {
+					updateRule = model.ReferOptionType(fk.OnUpdate).String()
 				}
-				if ast.ReferOptionType(fk.OnDelete) != 0 {
-					deleteRule = ast.ReferOptionType(fk.OnDelete).String()
+				if model.ReferOptionType(fk.OnDelete) != 0 {
+					deleteRule = model.ReferOptionType(fk.OnDelete).String()
 				}
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // CONSTRAINT_CATALOG
