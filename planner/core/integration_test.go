@@ -7142,13 +7142,13 @@ func TestPartitionTableFallBackStatic(t *testing.T) {
 
 	// use static plan in static mode
 	rows := [][]interface{}{
-		{"PartitionUnion_8", "", ""},
-		{"├─TableReader_10", "", "data:TableFullScan_9"},
-		{"│ └─TableFullScan_9", "table:t, partition:p0", "keep order:false"},
-		{"└─TableReader_12", "", "data:TableFullScan_11"},
-		{"  └─TableFullScan_11", "table:t, partition:p1", "keep order:false"},
+		{"PartitionUnion", "", ""},
+		{"├─TableReader", "", "data:TableFullScan"},
+		{"│ └─TableFullScan", "table:t, partition:p0", "keep order:false"},
+		{"└─TableReader", "", "data:TableFullScan"},
+		{"  └─TableFullScan", "table:t, partition:p1", "keep order:false"},
 	}
-	tk.MustQuery("explain select * from t").CheckAt([]int{0, 3, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t").CheckAt([]int{0, 3, 4}, rows)
 
 	tk.MustExec("CREATE TABLE t2 (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));")
 	tk.MustExec("insert into t2 values (1),(2),(3),(4),(7),(8),(9),(10)")
@@ -7156,31 +7156,31 @@ func TestPartitionTableFallBackStatic(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 
 	// use static plan in dynamic mode due to having not global stats
-	tk.MustQuery("explain select * from t").CheckAt([]int{0, 3, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t").CheckAt([]int{0, 3, 4}, rows)
 	tk.MustExec("analyze table t")
 
 	// use dynamic plan in dynamic mode with global stats
 	rows = [][]interface{}{
-		{"TableReader_5", "partition:all", "data:TableFullScan_4"},
-		{"└─TableFullScan_4", "table:t", "keep order:false"},
+		{"TableReader", "partition:all", "data:TableFullScan"},
+		{"└─TableFullScan", "table:t", "keep order:false"},
 	}
-	tk.MustQuery("explain select * from t").CheckAt([]int{0, 3, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t").CheckAt([]int{0, 3, 4}, rows)
 
 	rows = [][]interface{}{
-		{"Union_16", "", ""},
-		{"├─PartitionUnion_18", "", ""},
-		{"│ ├─TableReader_20", "", "data:TableFullScan_19"},
-		{"│ │ └─TableFullScan_19", "table:t, partition:p0", "keep order:false"},
-		{"│ └─TableReader_22", "", "data:TableFullScan_21"},
-		{"│   └─TableFullScan_21", "table:t, partition:p1", "keep order:false"},
-		{"└─PartitionUnion_24", "", ""},
-		{"  ├─TableReader_26", "", "data:TableFullScan_25"},
-		{"  │ └─TableFullScan_25", "table:t2, partition:p0", "keep order:false"},
-		{"  └─TableReader_28", "", "data:TableFullScan_27"},
-		{"    └─TableFullScan_27", "table:t2, partition:p1", "keep order:false"},
+		{"Union", "", ""},
+		{"├─PartitionUnion", "", ""},
+		{"│ ├─TableReader", "", "data:TableFullScan"},
+		{"│ │ └─TableFullScan", "table:t, partition:p0", "keep order:false"},
+		{"│ └─TableReader", "", "data:TableFullScan"},
+		{"│   └─TableFullScan", "table:t, partition:p1", "keep order:false"},
+		{"└─PartitionUnion", "", ""},
+		{"  ├─TableReader", "", "data:TableFullScan"},
+		{"  │ └─TableFullScan", "table:t2, partition:p0", "keep order:false"},
+		{"  └─TableReader", "", "data:TableFullScan"},
+		{"    └─TableFullScan", "table:t2, partition:p1", "keep order:false"},
 	}
 	// use static plan in dynamic mode due to t2 has no global stats
-	tk.MustQuery("explain select  * from t union all select * from t2;").CheckAt([]int{0, 3, 4}, rows)
+	tk.MustQuery("explain format='brief' select  * from t union all select * from t2;").CheckAt([]int{0, 3, 4}, rows)
 }
 
 func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
