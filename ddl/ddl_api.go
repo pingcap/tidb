@@ -1693,7 +1693,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
 			setEmptyConstraintName(fkNames, constr, true)
-		} else {
+		} else if constr.Tp != ast.ConstraintPrimaryKey {
 			setEmptyConstraintName(constrNames, constr, false)
 		}
 	}
@@ -1868,6 +1868,9 @@ func BuildTableInfo(
 		case ast.ConstraintPrimaryKey:
 			primary = true
 			unique = true
+			if constr.Name != "" && !strings.EqualFold(constr.Name, mysql.PrimaryKeyName) {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrPrimaryKeyNameIsIgnored.FastGenByArgs(constr.Name))
+			}
 			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
@@ -5728,6 +5731,9 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(mysql.PrimaryKeyName)
 	}
 
+	if indexName.L != "" && !strings.EqualFold(indexName.L, mysql.PrimaryKeyName) {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrPrimaryKeyNameIsIgnored.FastGenByArgs(indexName))
+	}
 	indexName = model.NewCIStr(mysql.PrimaryKeyName)
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil ||
 		// If the table's PKIsHandle is true, it also means that this table has a primary key.

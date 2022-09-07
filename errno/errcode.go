@@ -1077,7 +1077,7 @@ const (
 	ErrPartitionColumnStatsMissing        = 8244
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
-
+	ErrPrimaryKeyNameIsIgnored            = 8247
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002
