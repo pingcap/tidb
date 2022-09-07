@@ -12,17 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package lightning
+package ingest
 
 import (
 	"sync"
+	"unsafe"
 )
 
 // MemRoot is used to track the memory usage for the lightning backfill process.
 type MemRoot interface {
 	Consume(size int64)
 	Release(size int64)
-	TestConsume(size int64) bool
+	CheckConsume(size int64) bool
 	ConsumeWithTag(tag string, size int64)
 	ReleaseWithTag(tag string)
 
@@ -30,22 +31,40 @@ type MemRoot interface {
 	MaxMemoryQuota() int64
 	CurrentUsage() int64
 	CurrentUsageWithTag(tag string) int64
+	RefreshConsumption()
+}
+
+var (
+	// StructSizeBackendCtx is the size of BackendContext.
+	StructSizeBackendCtx int64
+	// StructSizeEngineInfo is the size of EngineInfo.
+	StructSizeEngineInfo int64
+	// StructSizeWriterCtx is the size of WriterContext.
+	StructSizeWriterCtx int64
+)
+
+func init() {
+	StructSizeBackendCtx = int64(unsafe.Sizeof(BackendContext{}))
+	StructSizeEngineInfo = int64(unsafe.Sizeof(engineInfo{}))
+	StructSizeWriterCtx = int64(unsafe.Sizeof(WriterContext{}))
 }
 
 // memRootImpl is an implementation of MemRoot.
 type memRootImpl struct {
-	maxLimit   int64
-	currUsage  int64
-	structSize map[string]int64
-	mu         sync.RWMutex
+	maxLimit      int64
+	currUsage     int64
+	structSize    map[string]int64
+	backendCtxMgr *backendCtxManager
+	mu            sync.RWMutex
 }
 
 // NewMemRootImpl creates a new memRootImpl.
-func NewMemRootImpl(maxQuota int64) *memRootImpl {
+func NewMemRootImpl(maxQuota int64, bcCtxMgr *backendCtxManager) *memRootImpl {
 	return &memRootImpl{
-		maxLimit:   maxQuota,
-		currUsage:  0,
-		structSize: make(map[string]int64, 10),
+		maxLimit:      maxQuota,
+		currUsage:     0,
+		structSize:    make(map[string]int64, 10),
+		backendCtxMgr: bcCtxMgr,
 	}
 }
 
@@ -96,11 +115,15 @@ func (m *memRootImpl) ConsumeWithTag(tag string, size int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.currUsage += size
+	if s, ok := m.structSize[tag]; ok {
+		m.structSize[tag] = s + size
+		return
+	}
 	m.structSize[tag] = size
 }
 
 // TestConsume implements MemRoot.
-func (m *memRootImpl) TestConsume(size int64) bool {
+func (m *memRootImpl) CheckConsume(size int64) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.currUsage+size <= m.maxLimit
@@ -112,4 +135,9 @@ func (m *memRootImpl) ReleaseWithTag(tag string) {
 	defer m.mu.Unlock()
 	m.currUsage -= m.structSize[tag]
 	delete(m.structSize, tag)
+}
+
+// RefreshConsumption implements MemRoot.
+func (m *memRootImpl) RefreshConsumption() {
+	m.backendCtxMgr.UpdateMemoryUsage()
 }

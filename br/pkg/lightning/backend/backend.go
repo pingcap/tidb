@@ -513,6 +513,6 @@ type EngineWriter interface {
 	Close(ctx context.Context) (ChunkFlushStatus, error)
 }
 
-func (engine *OpenedEngine) GetEngineUuid() uuid.UUID {
+func (engine *OpenedEngine) GetEngineUUID() uuid.UUID {
 	return engine.uuid
 }
