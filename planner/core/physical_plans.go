@@ -1342,6 +1342,20 @@ type NominalSort struct {
 	OnlyColumn bool
 }
 
+// MemoryUsage return the memory usage of NominalSort
+func (ns *NominalSort) MemoryUsage() (sum int64) {
+	if ns == nil {
+		return
+	}
+
+	sum = ns.basePhysicalPlan.MemoryUsage() + memory.SizeOfSlice + int64(cap(ns.ByItems))*memory.SizeOfPointer +
+		memory.SizeOfBool
+	for _, byItem := range ns.ByItems {
+		sum += byItem.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalUnionScan represents a union scan operator.
 type PhysicalUnionScan struct {
 	basePhysicalPlan
