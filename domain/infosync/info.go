@@ -1192,6 +1192,26 @@ func DeleteInternalSession(se interface{}) {
 	sm.DeleteInternalSession(se)
 }
 
+// SetEtcdClient is only used for test.
+func SetEtcdClient(etcdCli *clientv3.Client) {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return
+	}
+	is.etcdCli = etcdCli
+}
+
+// GetEtcdClient is only used for test.
+func GetEtcdClient() *clientv3.Client {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return nil
+	}
+	return is.etcdCli
+}
+
 // GetPDScheduleConfig gets the schedule information from pd
 func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
 	is, err := getGlobalInfoSyncer()

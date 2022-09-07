@@ -194,6 +194,7 @@ type TelemetryInfo struct {
 	UseRecursive         bool
 	UseMultiSchemaChange bool
 	PartitionTelemetry   *PartitionTelemetryInfo
+	AccountLockTelemetry *AccountLockTelemetryInfo
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
@@ -205,6 +206,16 @@ type PartitionTelemetryInfo struct {
 	UseTablePartitionRangeColumns  bool
 	UseTablePartitionListColumns   bool
 	TablePartitionMaxPartitionsNum uint64
+}
+
+// AccountLockTelemetryInfo records account lock/unlock information during execution
+type AccountLockTelemetryInfo struct {
+	// The number of CREATE/ALTER USER statements that lock the user
+	LockUser int64
+	// The number of CREATE/ALTER USER statements that unlock the user
+	UnlockUser int64
+	// The number of CREATE/ALTER USER statements
+	CreateOrAlterUser int64
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
