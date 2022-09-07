@@ -298,6 +298,12 @@ When TiDB add pessimistic locks, if relate row exist in reference table, also ne
 
 Just like `SELECT FOR UPDATE` statement, need to use `doLockKeys` to lock the related row in the reference table.
 
+##### Issue
+
+TiDB current only support `lock for update`(aka write-lock, such as `select for update`), doesn't support `lock for share`(aka read-lock, such as `select for share`).
+
+So far we have to add `lock for update` in reference table when insert/update child table, then the performance will be poor. After TiDB support `lock for share`, we should use `lock for share` instead.
+
 #### DML Load data
 
 Load data should also do foreign key check, but report warning instead error:
