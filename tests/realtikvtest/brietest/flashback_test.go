@@ -17,10 +17,10 @@ package brietest
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
