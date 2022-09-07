@@ -129,7 +129,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
-			if checker.isPartitionTable(node) {
+			if isPartitionTable(checker.schema, node) {
 				// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
 				// is fixed and additional tests with dynamic partition prune mode has been added.
 				/*
@@ -140,11 +140,11 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				checker.cacheable = false
 				return in, true
 			}
-			if checker.hasGeneratedCol(node) {
+			if hasGeneratedCol(checker.schema, node) {
 				checker.cacheable = false
 				return in, true
 			}
-			if checker.isTempTable(node) {
+			if isTempTable(checker.schema, node) {
 				checker.cacheable = false
 				return in, true
 			}
@@ -153,8 +153,107 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 	return in, false
 }
 
-func (checker *cacheableChecker) hasGeneratedCol(tn *ast.TableName) bool {
-	tb, err := checker.schema.TableByName(tn.Schema, tn.Name)
+// Leave implements Visitor interface.
+func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.cacheable
+}
+
+// GeneralPlanCacheable checks whether the input ast is cacheable for general plan cache with empty session context, which is mainly for testing.
+func GeneralPlanCacheable(node ast.Node, is infoschema.InfoSchema) bool {
+	return GeneralPlanCacheableWithCtx(nil, node, is)
+}
+
+// GeneralPlanCacheableWithCtx checks whether the input ast is cacheable for general plan cache.
+// Only support: select {field} from {single-table} where {cond} and {cond} ...
+// {cond}: {col} {op} {val}
+// {op}: >, <, =
+func GeneralPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) bool {
+	selectStmt, isSelect := node.(*ast.SelectStmt)
+	if !isSelect { // only support select statement now
+		return false
+	}
+	if selectStmt.Kind != ast.SelectStmtKindSelect {
+		return false
+	}
+	if len(selectStmt.TableHints) > 0 || // hints
+		selectStmt.Distinct || selectStmt.GroupBy != nil || selectStmt.Having != nil || // agg
+		selectStmt.WindowSpecs != nil || // window function
+		selectStmt.OrderBy != nil || // order
+		selectStmt.Limit != nil || // limit
+		selectStmt.LockInfo != nil || selectStmt.SelectIntoOpt != nil { // lock info
+		return false
+	}
+	from := selectStmt.From
+	if from == nil || selectStmt.From.TableRefs == nil {
+		return false
+	}
+	tableRefs := from.TableRefs
+	if tableRefs.Right != nil {
+		// We don't support the join for the general plan cache now.
+		return false
+	}
+	switch x := tableRefs.Left.(type) {
+	case *ast.TableSource:
+		_, isTableName := x.Source.(*ast.TableName)
+		if !isTableName {
+			return false
+		}
+	}
+
+	checker := generalPlanCacheableChecker{
+		sctx:      sctx,
+		cacheable: true,
+		schema:    is,
+	}
+	node.Accept(&checker)
+	return checker.cacheable
+}
+
+// generalPlanCacheableChecker checks whether a query's plan can be cached for general plan cache.
+// NOTE: we can add more rules in the future.
+type generalPlanCacheableChecker struct {
+	sctx      sessionctx.Context
+	cacheable bool
+	schema    infoschema.InfoSchema
+}
+
+// Enter implements Visitor interface.
+func (checker *generalPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.UnaryOperationExpr:
+		if _, found := expression.GeneralPlanCacheableOp[node.Op.String()]; !found {
+			checker.cacheable = false
+			return in, true
+		}
+	case *ast.FuncCallExpr:
+		checker.cacheable = false
+		return in, true
+	case *ast.TableName:
+		if checker.schema != nil {
+			if isPartitionTable(checker.schema, node) {
+				checker.cacheable = false
+				return in, true
+			}
+			if hasGeneratedCol(checker.schema, node) {
+				checker.cacheable = false
+				return in, true
+			}
+			if isTempTable(checker.schema, node) {
+				checker.cacheable = false
+				return in, true
+			}
+		}
+	}
+	return in, false
+}
+
+// Leave implements Visitor interface.
+func (checker *generalPlanCacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.cacheable
+}
+
+func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) bool {
+	tb, err := schema.TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
 		return false
@@ -167,8 +266,8 @@ func (checker *cacheableChecker) hasGeneratedCol(tn *ast.TableName) bool {
 	return false
 }
 
-func (checker *cacheableChecker) isTempTable(tn *ast.TableName) bool {
-	tb, err := checker.schema.TableByName(tn.Schema, tn.Name)
+func isTempTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
+	tb, err := schema.TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
 		return false
@@ -179,8 +278,8 @@ func (checker *cacheableChecker) isTempTable(tn *ast.TableName) bool {
 	return false
 }
 
-func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {
-	tb, err := checker.schema.TableByName(tn.Schema, tn.Name)
+func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
+	tb, err := schema.TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
 		return false
@@ -189,9 +288,4 @@ func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {
 		return true
 	}
 	return false
-}
-
-// Leave implements Visitor interface.
-func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, checker.cacheable
 }
