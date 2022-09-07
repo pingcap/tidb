@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"math"
 	"math/bits"
 	"sort"
@@ -4379,7 +4380,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 		globalStatsReady := tblStats.IsInitialized()
 		// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
-		if !isDynamicEnabled || !globalStatsReady {
+		usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
+
+		failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
+			if val.(bool) {
+				if isDynamicEnabled {
+					usePartitionProcessor = false
+				}
+			}
+		})
+
+		if usePartitionProcessor {
 			b.optFlag = b.optFlag | flagPartitionProcessor
 			b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
 		}

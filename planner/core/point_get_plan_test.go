@@ -17,6 +17,7 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"strings"
 	"testing"
 	"time"
@@ -653,6 +654,8 @@ func TestBatchPointGetPartition(t *testing.T) {
 }
 
 func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
