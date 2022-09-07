@@ -341,7 +341,8 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.resultCh <- result
 	}
 	logutil.BgLogger().Info("[ddl] backfill worker exit",
-		zap.Stringer("type", w.tp), zap.Int("workerID", w.id))
+		zap.Stringer("type", w.tp),
+		zap.Int("workerID", w.id))
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
@@ -757,18 +758,18 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, prefixKey kv.Key, version uint64,
+func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, version uint64,
 	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
-	isRecord := tablecodec.IsRecordKey(prefixKey.Next())
+	isRecord := tablecodec.IsRecordKey(keyPrefix.Next())
 	var firstKey kv.Key
 	if startKey == nil {
-		firstKey = prefixKey
+		firstKey = keyPrefix
 	} else {
 		firstKey = startKey
 	}
 	var upperBound kv.Key
 	if endKey == nil {
-		upperBound = prefixKey.PrefixNext()
+		upperBound = keyPrefix.PrefixNext()
 	} else {
 		upperBound = endKey.PrefixNext()
 	}
@@ -788,7 +789,7 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, prefix
 	defer it.Close()
 
 	for it.Valid() {
-		if !it.Key().HasPrefix(prefixKey) {
+		if !it.Key().HasPrefix(keyPrefix) {
 			break
 		}
 		var handle kv.Handle
@@ -816,7 +817,7 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, prefix
 }
 
 // getRegionEndKey gets the actual end key for the range of [startKey, endKey].
-func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, prefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
+func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
 	snap := store.GetSnapshot(kv.MaxVersion)
 	snap.SetOption(kv.Priority, priority)
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
@@ -830,7 +831,7 @@ func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, prefix kv.K
 	}
 	defer it.Close()
 
-	if !it.Valid() || !it.Key().HasPrefix(prefix) {
+	if !it.Valid() || !it.Key().HasPrefix(keyPrefix) {
 		return startKey, nil
 	}
 	if it.Key().Cmp(startKey) < 0 {

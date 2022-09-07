@@ -785,6 +785,22 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set session tidb_general_plan_cache_size = -1") // underflow
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_general_plan_cache_size value: '-1'"))
 	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("1"))
+
+	// test variable 'foreign_key_checks'
+	// global scope
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global foreign_key_checks = 1")
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("1"))
+	// session scope
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set session foreign_key_checks = 1")
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("1"))
+
+	// test variable 'foreign_key_checks'
+	// global scope
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global tidb_enable_foreign_key = 1")
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {

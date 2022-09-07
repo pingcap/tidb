@@ -178,7 +178,7 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 			[]*ast.IndexPartSpecification{{
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
 				Length: types.UnspecifiedLength}}},
-		ReorgMeta: &model.DDLReorgMeta{
+		ReorgMeta: &model.DDLReorgMeta{ // Add index job must have this field.
 			SQLMode:       mysql.SQLMode(0),
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),

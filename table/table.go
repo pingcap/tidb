@@ -176,7 +176,6 @@ type Table interface {
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
-
 	// IndexPrefix returns the index key prefix.
 	IndexPrefix() kv.Key
 

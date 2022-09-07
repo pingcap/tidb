@@ -141,18 +141,6 @@ func TestTimeZone(t *testing.T) {
 	require.Equal(t, tz, vars.TimeZone)
 }
 
-func TestForeignKeyChecks(t *testing.T) {
-	sv := GetSysVar(ForeignKeyChecks)
-	vars := NewSessionVars()
-
-	val, err := sv.Validate(vars, "on", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val) // warns and refuses to set ON.
-
-	warn := vars.StmtCtx.GetWarnings()[0].Err
-	require.Equal(t, "[variable:8047]variable 'foreign_key_checks' does not yet support value: on", warn.Error())
-}
-
 func TestTxnIsolation(t *testing.T) {
 	sv := GetSysVar(TxnIsolation)
 	vars := NewSessionVars()
