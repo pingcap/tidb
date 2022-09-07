@@ -227,7 +227,7 @@ func (recovery *Recovery) GetTotalRegions() int {
 	return len(regions)
 }
 
-// RecoverRegion send the recovery plan to recovery region (force leader etc)
+// RecoverRegions send the recovery plan to recovery region (force leader etc)
 // only tikvs have regions whose have to recover be sent
 func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
