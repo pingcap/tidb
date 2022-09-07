@@ -150,6 +150,8 @@ type MemBuffer interface {
 	GetFlags(Key) (KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
 	SetWithFlags(Key, []byte, ...FlagsOp) error
+	// UpdateFlags updates the flags associated with key.
+	UpdateFlags(Key, ...FlagsOp)
 	// DeleteWithFlags delete key with the given KeyFlags
 	DeleteWithFlags(Key, ...FlagsOp) error
 
@@ -178,6 +180,17 @@ type MemBuffer interface {
 
 	// RemoveFromBuffer removes the entry from the buffer. It's used for testing.
 	RemoveFromBuffer(Key)
+}
+
+// FindKeysInStage returns all keys in the given stage that satisfies the given condition.
+func FindKeysInStage(m MemBuffer, h StagingHandle, predicate func(Key, KeyFlags, []byte) bool) []Key {
+	result := make([]Key, 0)
+	m.InspectStage(h, func(k Key, f KeyFlags, v []byte) {
+		if predicate(k, f, v) {
+			result = append(result, k)
+		}
+	})
+	return result
 }
 
 // LockCtx contains information for LockKeys method.
