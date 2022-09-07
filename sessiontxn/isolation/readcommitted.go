@@ -94,9 +94,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 		p.sctx.GetSessionVars().StmtCtx.RCCheckTS = true
 	}
 
-	if p.checkTSInWriteStmt {
-		p.resetCheckTSInWriteStmt()
-	}
+	p.resetCheckTSInWriteStmt()
 
 	return p.prepareStmt(!p.isTxnPrepared)
 }
