@@ -174,7 +174,7 @@ func (cb *CommonHandleCols) GetFieldsTypes() []*types.FieldType {
 	return fieldTps
 }
 
-const emptyCommonHandleCols = int64(unsafe.Sizeof(CommonHandleCols{}))
+const emptyCommonHandleColsSize = int64(unsafe.Sizeof(CommonHandleCols{}))
 
 // MemoryUsage return the memory usage of CommonHandleCols
 func (cb *CommonHandleCols) MemoryUsage() (sum int64) {
@@ -182,7 +182,7 @@ func (cb *CommonHandleCols) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyCommonHandleCols + int64(cap(cb.columns))*memory.SizeOfPointer
+	sum = emptyCommonHandleColsSize + int64(cap(cb.columns))*memory.SizeOfPointer
 	for _, col := range cb.columns {
 		sum += col.MemoryUsage()
 	}
