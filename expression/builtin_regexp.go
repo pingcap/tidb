@@ -420,8 +420,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 		return "", true, err
 	}
 
-	var pos int64 = 1
-	var occurrence int64 = 1
+	occurrence := int64(1)
 	matchType := ""
 	arg_num := len(re.args)
 	var bexpr []byte
@@ -431,7 +430,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 	}
 
 	if arg_num >= 3 {
-		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
+		pos, isNull, err := re.args[2].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
