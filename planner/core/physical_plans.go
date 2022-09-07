@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
@@ -1343,6 +1344,19 @@ func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColu
 		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
 	}
 	return corCols
+}
+
+// MemoryUsage return the memory usage of PhysicalUnionScan
+func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + memory.SizeOfSlice + p.HandleCols.MemoryUsage()
+	for _, cond := range p.Conditions {
+		sum += cond.MemoryUsage()
+	}
+	return
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
