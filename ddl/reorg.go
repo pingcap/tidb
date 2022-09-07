@@ -253,7 +253,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			return errors.Trace(err)
 		}
 		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
-		if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge && !reorgInfo.merging {
+		if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge && !reorgInfo.mergingTmpIdx {
 			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 				logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 				return errors.Trace(err1)
@@ -321,7 +321,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		var label string
-		if reorgInfo.merging {
+		if reorgInfo.mergingTmpIdx {
 			label = metrics.LblAddIndexMerge
 		} else {
 			label = metrics.LblAddIndex
@@ -378,11 +378,11 @@ func (dc *ddlCtx) isReorgRunnable(job *model.Job) error {
 type reorgInfo struct {
 	*model.Job
 
-	StartKey kv.Key
-	EndKey   kv.Key
-	d        *ddlCtx
-	first    bool
-	merging  bool
+	StartKey      kv.Key
+	EndKey        kv.Key
+	d             *ddlCtx
+	first         bool
+	mergingTmpIdx bool
 	// PhysicalTableID is used for partitioned table.
 	// DDL reorganize for a partitioned table will handle partitions one by one,
 	// PhysicalTableID is used to trace the current partition we are handling.
@@ -692,7 +692,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
 	info.PhysicalTableID = pid
 	info.currElement = element
 	info.elements = elements
-	info.merging = getIdxRange
+	info.mergingTmpIdx = getIdxRange
 
 	return &info, nil
 }

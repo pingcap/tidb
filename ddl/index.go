@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -768,10 +769,10 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			err = importIndexDataToStore(job.ID, indexInfo.ID, indexInfo.Unique, tbl)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) {
-					logutil.BgLogger().Warn("Lightning: [DDL] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+					logutil.BgLogger().Warn("import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 				} else {
-					logutil.BgLogger().Warn("Lightning import error", zap.Error(err))
+					logutil.BgLogger().Warn("lightning import error", zap.Error(err))
 					tryFallbackToTxnMerge(job, err)
 				}
 				ingest.LitBackCtxMgr.Unregister(job.ID)
@@ -792,7 +793,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
-		logutil.BgLogger().Info("Lightning backfill state merge Sync")
+		logutil.BgLogger().Info("lightning backfill state merge sync")
 		indexInfo.BackfillState = model.BackfillStateMerging
 		if bfProcess == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
@@ -872,7 +873,7 @@ func runReorgJobAndHandleMergeIndexErr(w *worker, d *ddlCtx, t *meta.Meta, job *
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("merge table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
 			}, false)
-		return w.mergeTempIndex(tbl, indexInfo, reorgInfo)
+		return w.addTableIndex(tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
@@ -1556,6 +1557,10 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 }
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
+	if reorgInfo.mergingTmpIdx {
+		logutil.BgLogger().Info("[ddl] start to merge temp index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
+		return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
+	}
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexWorker, reorgInfo)
 }
@@ -1616,25 +1621,31 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 			time.Sleep(time.Second * 3)
 		}
 	})
-	currentVer, err := getValidCurrentVersion(reorg.d.store)
-	if err != nil {
-		return false, errors.Trace(err)
+	if reorg.mergingTmpIdx {
+		indexID := reorg.currElement.ID
+		reorg.StartKey, reorg.EndKey = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|indexID)
+	} else {
+		currentVer, err := getValidCurrentVersion(reorg.d.store)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		start, end, err := getTableRange(reorg.d.jobContext(reorg.Job), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		reorg.StartKey, reorg.EndKey = start, end
 	}
-	start, end, err := getTableRange(reorg.d.jobContext(reorg.Job), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
+	reorg.PhysicalTableID = pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(start, w.sessPool)
+	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo",
 		zap.Int64("jobID", reorg.Job.ID),
 		zap.ByteString("elementType", reorg.currElement.TypeKey),
 		zap.Int64("elementID", reorg.currElement.ID),
 		zap.Int64("partitionTableID", pid),
-		zap.String("startHandle", tryDecodeToHandleString(start)),
-		zap.String("endHandle", tryDecodeToHandleString(end)), zap.Error(err))
+		zap.String("startKey", hex.EncodeToString(reorg.StartKey)),
+		zap.String("endKey", hex.EncodeToString(reorg.EndKey)), zap.Error(err))
 	return false, errors.Trace(err)
 }
 

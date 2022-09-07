@@ -391,9 +391,9 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, isMergeStage bool, test
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
-	failPath := "github.com/pingcap/tidb/ddl/" + ddl.GenFailPointName("checkBackfillWorkerNum", ddl.FPMrgIdx)
+	failPath := "github.com/pingcap/tidb/ddl/" + ddl.GenFailPointName("checkBackfillWorkerNum", ddl.FPAddIdx)
 	if isMergeStage {
-		failPath = "github.com/pingcap/tidb/ddl/" + ddl.GenFailPointName("checkBackfillWorkerNum", ddl.FPAddIdx)
+		failPath = "github.com/pingcap/tidb/ddl/" + ddl.GenFailPointName("checkBackfillWorkerNum", ddl.FPMrgIdx)
 	}
 	require.NoError(t, failpoint.Enable(failPath, `return(true)`))
 	testutil.SessionExecInGoroutine(s.store, "test_db", "create index c3_index on test_add_index (c3)", done)

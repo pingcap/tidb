@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -263,68 +262,6 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 }
 
 func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
-}
-
-// mergeTempIndex handles the merge temp index state for a table.
-func (w *worker) mergeTempIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
-	var err error
-	if tbl, ok := t.(table.PartitionedTable); ok {
-		var finish bool
-		for !finish {
-			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
-			if p == nil {
-				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
-			}
-			err = w.mergePhysicalTempIndex(p, reorgInfo)
-			if err != nil {
-				break
-			}
-			finish, err = w.updateMergeInfo(tbl, idx.ID, reorgInfo)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	} else {
-		err = w.mergePhysicalTempIndex(t.(table.PhysicalTable), reorgInfo)
-	}
-	return errors.Trace(err)
-}
-
-// updateMergeInfo will find the next partition according to current reorgInfo.
-// If no more partitions, or table t is not a partitioned table, returns true to
-// indicate that the reorganize work is finished.
-func (w *worker) updateMergeInfo(t table.PartitionedTable, idxID int64, reorg *reorgInfo) (bool, error) {
-	pi := t.Meta().GetPartitionInfo()
-	if pi == nil {
-		return true, nil
-	}
-
-	pid, err := findNextPartitionID(reorg.PhysicalTableID, pi.Definitions)
-	if err != nil {
-		// Fatal error, should not run here.
-		logutil.BgLogger().Error("[ddl] find next partition ID failed", zap.Reflect("table", t), zap.Error(err))
-		return false, errors.Trace(err)
-	}
-	if pid == 0 {
-		// Next partition does not exist, all the job done.
-		return true, nil
-	}
-
-	start, end := tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|idxID)
-
-	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
-	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
-	logutil.BgLogger().Info("[ddl] job update MergeInfo", zap.Int64("jobID", reorg.Job.ID),
-		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
-		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),
-		zap.String("endHandle", tryDecodeToHandleString(end)), zap.Error(err))
-	return false, errors.Trace(err)
-}
-
-func (w *worker) mergePhysicalTempIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
-	logutil.BgLogger().Info("[ddl] start to merge temp index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 }
 
 func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {

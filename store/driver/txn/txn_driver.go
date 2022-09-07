@@ -296,6 +296,7 @@ func (txn *tikvTxn) extractKeyErr(err error) error {
 
 func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	tableID, indexID, isRecord, err := tablecodec.DecodeKeyHead(key)
+	indexID = tablecodec.IndexIDMask & indexID
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}

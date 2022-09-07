@@ -166,8 +166,6 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			}
 			orgKey = append(orgKey, m.key...)
 			tablecodec.TempIndexKey2IndexKey(idxID, orgKey)
-			logutil.BgLogger().Info("LightningDebug:", zap.String("key:", kv.Key(orgKey).String()), zap.ByteString("value:", m.value), zap.Int64("id:", idxID),
-				zap.String("insert handle:", insertionHandle.String()))
 			indexHandle, err = tablecodec.DecodeIndexHandle(orgKey, value, len(indexInfo.Columns))
 		} else {
 			indexHandle, err = tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
