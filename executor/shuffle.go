@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -165,8 +166,7 @@ func (e *ShuffleExec) Close() error {
 	for _, w := range e.workers {
 		for _, r := range w.receivers {
 			if r.inputCh != nil {
-				for range r.inputCh {
-				}
+				channel.Clear(r.inputCh)
 			}
 		}
 		// close child executor of each worker
@@ -175,8 +175,7 @@ func (e *ShuffleExec) Close() error {
 		}
 	}
 	if e.outputCh != nil {
-		for range e.outputCh { // workers exit before `e.outputCh` is closed.
-		}
+		channel.Clear(e.outputCh)
 	}
 	e.executed = false
 

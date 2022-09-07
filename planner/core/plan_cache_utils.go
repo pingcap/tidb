@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/stringutil"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
 )
@@ -390,23 +388,4 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, ErrStmtNotFound
-}
-
-// Parameterizer used to parameterize a general statement.
-// e.g. 'select * from t where a>23' --> 'select * from t where a>?' + 23
-type Parameterizer interface {
-	// Parameterize this specific sql, ok indicates whether this sql is supported.
-	Parameterize(originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error)
-}
-
-// ParameterizerKey is used to get a parameterizer from a ctx, only for test.
-const ParameterizerKey = stringutil.StringerStr("parameterizerKey")
-
-// Parameterize parameterizes this sql, used by general plan cache.
-func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error) {
-	if v := sctx.Value(ParameterizerKey); v != nil { // for test
-		return v.(Parameterizer).Parameterize(originSQL)
-	}
-	// TODO: implement it
-	return "", nil, false, nil
 }
