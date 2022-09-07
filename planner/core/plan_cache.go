@@ -262,7 +262,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 	stmtCtx := sessVars.StmtCtx
 
 	planCacheMissCounter.Inc()
+	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	p, names, err := OptimizeAstNode(ctx, sctx, stmtAst.Stmt, is)
+	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
 	if err != nil {
 		return nil, nil, err
 	}

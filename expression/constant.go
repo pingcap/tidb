@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -448,4 +449,16 @@ func (c *Constant) Coercibility() Coercibility {
 		c.SetCoercibility(deriveCoercibilityForConstant(c))
 	}
 	return c.collationInfo.Coercibility()
+}
+
+const emptyConstantSize = int64(unsafe.Sizeof(Constant{}))
+
+// MemoryUsage return the memory usage of Constant
+func (c *Constant) MemoryUsage() (sum int64) {
+	if c == nil {
+		return
+	}
+
+	sum = emptyConstantSize + c.RetType.MemoryUsage() + c.Value.MemUsage() + int64(cap(c.hashcode))
+	return
 }

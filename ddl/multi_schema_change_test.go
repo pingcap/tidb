@@ -437,7 +437,8 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 	hook1.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteOnly {
-			tk.Exec("insert into t values ()")
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("insert into test.t values ()")
 		}
 	}
 	dom.DDL().SetHook(hook1)
