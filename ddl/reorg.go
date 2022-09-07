@@ -239,7 +239,9 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
-		job.SetRowCount(rowCount)
+		if job.RowCount == 0 {
+			job.SetRowCount(rowCount)
+		}
 
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
@@ -268,8 +270,9 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
 		rowCount, doneKey, currentElement := rc.getRowCountAndKey()
-		// Update a job's RowCount.
-		job.SetRowCount(rowCount)
+		if job.RowCount == 0 {
+			job.SetRowCount(rowCount)
+		}
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
@@ -542,7 +545,7 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 // getTableRange gets the start and end handle of a table (or partition).
 func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(ctx, d.store, priority, tbl, snapshotVer, nil, nil,
+	err = iterateSnapshotKeys(ctx, d.store, priority, tbl.RecordPrefix(), snapshotVer, nil, nil,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandleKey = rowKey
 			return false, nil
