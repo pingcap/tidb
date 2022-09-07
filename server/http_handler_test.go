@@ -513,6 +513,7 @@ func (ts *basicHTTPHandlerTestSuite) prepareData(t *testing.T) {
 	require.NoError(t, err)
 	dbt.MustExec("alter table tidb.test add index idx1 (a, b);")
 	dbt.MustExec("alter table tidb.test drop index idx1;")
+	dbt.MustExec("alter table tidb.test add index idx1 (a, b);")
 	dbt.MustExec("alter table tidb.test add unique index idx2 (a, b);")
 
 	dbt.MustExec(`create table tidb.pt (a int primary key, b varchar(20), key idx(a, b))
