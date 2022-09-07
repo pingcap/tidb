@@ -37,6 +37,7 @@ type rowContainerRecord struct {
 }
 
 type mutexForRowContainer struct {
+	// Add cache padding to avoid false sharing issue.
 	_ cpu.CacheLinePad
 	// RWMutex guarantees spill and get operator for rowContainer is mutually exclusive.
 	// `rLock` and `wLocks` is introduced to reduce the contention when multiple
