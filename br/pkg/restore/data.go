@@ -42,14 +42,14 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 		return 0, errors.Trace(err)
 	}
 
-	totalRegions := recovery.getTotalRegions()
+	totalRegions := recovery.GetTotalRegions()
 
-	if err := recovery.makeRecoveryPlan(); err != nil {
+	if err := recovery.MakeRecoveryPlan(); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
-	log.Info("recover the alloc id to pd", zap.Uint64("max alloc id", recovery.maxAllocID))
-	if err := recovery.mgr.RecoverBaseAllocID(ctx, recovery.maxAllocID); err != nil {
+	log.Info("recover the alloc id to pd", zap.Uint64("max alloc id", recovery.MaxAllocID))
+	if err := recovery.mgr.RecoverBaseAllocID(ctx, recovery.MaxAllocID); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
@@ -69,8 +69,8 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 }
 
 type StoreMeta struct {
-	storeId     uint64
-	regionMetas []*recovpb.RegionMeta
+	StoreId     uint64
+	RegionMetas []*recovpb.RegionMeta
 }
 
 func NewStoreMeta(storeId uint64) StoreMeta {
@@ -78,24 +78,25 @@ func NewStoreMeta(storeId uint64) StoreMeta {
 	return StoreMeta{storeId, meta}
 }
 
+// for test
 type Recovery struct {
 	allStores    []*metapb.Store
-	storeMetas   []StoreMeta
-	recoveryPlan map[uint64][]*recovpb.RecoverRegionRequest
-	maxAllocID   uint64
+	StoreMetas   []StoreMeta
+	RecoveryPlan map[uint64][]*recovpb.RecoverRegionRequest
+	MaxAllocID   uint64
 	mgr          *conn.Mgr
 	progress     glue.Progress
 }
 
 func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress) Recovery {
 	totalStores := len(allStores)
-	var storeMetas = make([]StoreMeta, totalStores)
+	var StoreMetas = make([]StoreMeta, totalStores)
 	var regionRecovers = make(map[uint64][]*recovpb.RecoverRegionRequest, totalStores)
 	return Recovery{
 		allStores:    allStores,
-		storeMetas:   storeMetas,
-		recoveryPlan: regionRecovers,
-		maxAllocID:   0,
+		StoreMetas:   StoreMetas,
+		RecoveryPlan: regionRecovers,
+		MaxAllocID:   0,
 		mgr:          mgr,
 		progress:     progress}
 }
@@ -118,8 +119,8 @@ func (recovery *Recovery) newRecoveryClient(ctx context.Context, storeAddr strin
 		grpc.FailOnNonTempDialError(true),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(10) * time.Second,
-			Timeout: time.Duration(300) * time.Second,
+			Time:    time.Duration(3) * time.Second,
+			Timeout: time.Duration(10) * time.Second,
 		}),
 	)
 	if err != nil {
@@ -182,7 +183,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 			for {
 				var meta *recovpb.RegionMeta
 				if meta, err = stream.Recv(); err == nil {
-					storeMeta.regionMetas = append(storeMeta.regionMetas, meta)
+					storeMeta.RegionMetas = append(storeMeta.RegionMetas, meta)
 				} else if err == io.EOF {
 					//read to end of stream or server close the connection.
 					break
@@ -201,8 +202,8 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 		case <-ectx.Done(): // err or cancel, eg.wait will catch the error
 			break
 		case storeMeta := <-metaChan:
-			recovery.storeMetas[i] = storeMeta
-			log.Info("received region meta from", zap.Int("store", int(storeMeta.storeId)))
+			recovery.StoreMetas[i] = storeMeta
+			log.Info("received region meta from", zap.Int("store", int(storeMeta.StoreId)))
 		}
 
 		recovery.progress.Inc()
@@ -212,11 +213,11 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 }
 
 // TODO: map may be more suitable for this function
-func (recovery *Recovery) getTotalRegions() int {
+func (recovery *Recovery) GetTotalRegions() int {
 	// Group region peer info by region id.
 	var regions = make(map[uint64]struct{}, 0)
-	for _, v := range recovery.storeMetas {
-		for _, m := range v.regionMetas {
+	for _, v := range recovery.StoreMetas {
+		for _, m := range v.RegionMetas {
 			if _, ok := regions[m.RegionId]; !ok {
 				regions[m.RegionId] = struct{}{}
 			}
@@ -229,10 +230,10 @@ func (recovery *Recovery) getTotalRegions() int {
 // only tikvs have regions whose have to recover be sent
 func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	totalRecoveredStores := len(recovery.recoveryPlan)
+	totalRecoveredStores := len(recovery.RecoveryPlan)
 	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, maxStoreConcurrency)), "Recover RecoverRegion")
 
-	for storeId, plan := range recovery.recoveryPlan {
+	for storeId, plan := range recovery.RecoveryPlan {
 		if err := ectx.Err(); err != nil {
 			break
 		}
@@ -257,7 +258,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 			// for a TiKV, send the stream
 			for _, s := range recoveryPlan {
 				if err = stream.Send(s); err != nil {
-					log.Error("send region recovery region failed", zap.Error(err))
+					log.Error("send recover region failed", zap.Error(err))
 					return errors.Trace(err)
 				}
 			}
@@ -268,7 +269,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 				return errors.Trace(err)
 			}
 			recovery.progress.Inc()
-			log.Info("recovery region execution success", zap.Uint64("store id", reply.GetStoreId()))
+			log.Info("recover region execution success", zap.Uint64("store id", reply.GetStoreId()))
 			return nil
 		})
 	}
@@ -304,7 +305,7 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 			}
 
 			recovery.progress.Inc()
-			log.Info("recovery wait apply execution success", zap.Uint64("store id", storeId))
+			log.Info("wait apply execution success", zap.Uint64("store id", storeId))
 			return nil
 		})
 	}
@@ -332,7 +333,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 				return errors.Trace(err)
 			}
 			defer conn.Close()
-			log.Info("resolved data to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
+			log.Info("resolve data to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			req := &recovpb.ResolveKvDataRequest{ResolvedTs: resolvedTs}
 			stream, err := recoveryClient.ResolveKvData(ectx, req)
 			if err != nil {
@@ -351,7 +352,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 				}
 			}
 			recovery.progress.Inc()
-			log.Info("resolved kv data done", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
+			log.Info("resolve kv data done", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			return nil
 		})
 	}
@@ -369,22 +370,22 @@ type RecoverRegion struct {
 // 1. check overlap the region, make a recovery decision
 // 2. build a leader list for all region during the tikv startup
 // 3. get max allocate id
-func (recovery *Recovery) makeRecoveryPlan() error {
+func (recovery *Recovery) MakeRecoveryPlan() error {
 
 	// Group region peer info by region id. find the max allocateId
 	// region [id] [peer[0-n]]
 	var regions = make(map[uint64][]*RecoverRegion, 0)
-	for _, v := range recovery.storeMetas {
-		storeId := v.storeId
+	for _, v := range recovery.StoreMetas {
+		storeId := v.StoreId
 		maxId := storeId
-		for _, m := range v.regionMetas {
+		for _, m := range v.RegionMetas {
 			if regions[m.RegionId] == nil {
 				regions[m.RegionId] = make([]*RecoverRegion, 0, len(recovery.allStores))
 			}
 			regions[m.RegionId] = append(regions[m.RegionId], &RecoverRegion{m, storeId})
 			maxId = mathutil.Max(maxId, mathutil.Max(m.RegionId, m.PeerId))
 		}
-		recovery.maxAllocID = mathutil.Max(recovery.maxAllocID, maxId)
+		recovery.MaxAllocID = mathutil.Max(recovery.MaxAllocID, maxId)
 	}
 
 	regionInfos := SortRecoverRegions(regions)
@@ -405,7 +406,7 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 			log.Warn("detected tombstone peer for region", zap.Uint64("region id", regionId))
 			for _, peer := range peers {
 				plan := &recovpb.RecoverRegionRequest{Tombstone: true, AsLeader: false}
-				recovery.recoveryPlan[peer.StoreId] = append(recovery.recoveryPlan[peer.StoreId], plan)
+				recovery.RecoveryPlan[peer.StoreId] = append(recovery.RecoveryPlan[peer.StoreId], plan)
 			}
 		} else {
 			// Generate normal commands.
@@ -416,7 +417,7 @@ func (recovery *Recovery) makeRecoveryPlan() error {
 				// sorted by log term -> last index -> commit index in a region
 				if plan.AsLeader {
 					log.Debug("as leader peer", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId))
-					recovery.recoveryPlan[peer.StoreId] = append(recovery.recoveryPlan[peer.StoreId], plan)
+					recovery.RecoveryPlan[peer.StoreId] = append(recovery.RecoveryPlan[peer.StoreId], plan)
 				}
 			}
 		}

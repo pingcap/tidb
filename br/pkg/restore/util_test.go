@@ -5,8 +5,9 @@ package restore_test
 import (
 	"context"
 	"encoding/binary"
-	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	"testing"
+
+	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
 
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
