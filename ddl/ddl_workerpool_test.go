@@ -38,7 +38,7 @@ func TestBackfillWorkerPool(t *testing.T) {
 	reorgInfo := &reorgInfo{Job: &model.Job{ID: 1}}
 	f := func() func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
-			wk := newBackfillWorker(nil, 1, nil, reorgInfo)
+			wk := newBackfillWorker(nil, 1, nil, reorgInfo, typeAddIndexWorker)
 			return wk, nil
 		}
 	}
