@@ -1236,6 +1236,9 @@ func (d *Dumper) Close() error {
 	if d.dbHandle != nil {
 		return d.dbHandle.Close()
 	}
+	if d.conf.Security.DriveTLSName != "" {
+		mysql.DeregisterTLSConfig(d.conf.Security.DriveTLSName)
+	}
 	return nil
 }
 
