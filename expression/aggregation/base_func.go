@@ -119,7 +119,7 @@ func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 	case ast.AggFuncJsonArrayagg:
 		a.typeInfer4JsonArrayAgg(ctx)
 	case ast.AggFuncJsonObjectAgg:
-		a.typeInfer4JsonObjectAgg(ctx)
+		return a.typeInfer4JsonObjectAgg(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -270,7 +270,8 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
 	}
 	a.RetTp = a.Args[0].GetType()
-	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin {
+	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin ||
+		a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag {
 		a.RetTp = a.Args[0].GetType().Clone()
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
@@ -294,10 +295,11 @@ func (a *baseFuncDesc) typeInfer4JsonArrayAgg(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
-func (a *baseFuncDesc) typeInfer4JsonObjectAgg(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer4JsonObjectAgg(ctx sessionctx.Context) error {
 	a.RetTp = types.NewFieldType(mysql.TypeJSON)
 	types.SetBinChsClnFlag(a.RetTp)
 	a.Args[0] = expression.WrapWithCastAsString(ctx, a.Args[0])
+	return nil
 }
 
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {

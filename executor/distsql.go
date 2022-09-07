@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -732,8 +733,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	close(e.finished)
 	// Drain the resultCh and discard the result, in case that Next() doesn't fully
 	// consume the data, background worker still writing to resultCh and block forever.
-	for range e.resultCh {
-	}
+	channel.Clear(e.resultCh)
 	e.idxWorkerWg.Wait()
 	e.tblWorkerWg.Wait()
 	e.finished = nil

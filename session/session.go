@@ -147,10 +147,6 @@ type Session interface {
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
-	// Parameterize tries to convert the general statement to an execute statement and then uses general plan cache to handle it.
-	// e.g. "select * from t where a>23" --> "execute 'select * from t where a>?' using 23".
-	// By using the general plan cache, it can skip the parse and optimization stage so to gain some performance benefits.
-	Parameterize(ctx context.Context, originSQL string) (*ast.ExecuteStmt, bool)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
@@ -234,8 +230,8 @@ type session struct {
 
 	store kv.Storage
 
-	preparedPlanCache *kvcache.SimpleLRUCache
-	generalPlanCache  *kvcache.SimpleLRUCache
+	preparedPlanCache sessionctx.PlanCache
+	generalPlanCache  sessionctx.PlanCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -434,14 +430,15 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache {
+func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
 	if isGeneralPlanCache { // use the general plan cache
 		if !s.GetSessionVars().EnableGeneralPlanCache {
 			return nil
 		}
 		if s.generalPlanCache == nil { // lazy construction
-			s.generalPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+			s.generalPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
+				plannercore.PickPlanFromBucket)
 		}
 		return s.generalPlanCache
 	}
@@ -451,8 +448,9 @@ func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache 
 		return nil
 	}
 	if s.preparedPlanCache == nil { // lazy construction
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
+			plannercore.PickPlanFromBucket)
 	}
 	return s.preparedPlanCache
 }
@@ -1573,26 +1571,6 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return []sqlexec.RecordSet{rs}, err
 }
 
-// Parameterize Parameterizes this sql.
-func (s *session) Parameterize(ctx context.Context, originSQL string) (exec *ast.ExecuteStmt, ok bool) {
-	if !s.GetSessionVars().EnableGeneralPlanCache {
-		return nil, false
-	}
-	paramSQL, params, ok, err := plannercore.Parameterize(s, originSQL)
-	if !ok || err != nil {
-		return nil, false
-	}
-	cachedStmt, err := s.CacheGeneralStmt(paramSQL)
-	if err != nil {
-		return nil, false
-	}
-	return &ast.ExecuteStmt{
-		BinaryArgs:      params,
-		PrepStmt:        cachedStmt,
-		FromGeneralStmt: true,
-	}, true
-}
-
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	parseStartTime := time.Now()
@@ -2016,7 +1994,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	})
 
-	stmtLabel := executor.GetStmtLabel(stmtNode)
+	stmtLabel := ast.GetStmtLabel(stmtNode)
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -2545,7 +2523,7 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 
 // Opt describes the option for creating session
 type Opt struct {
-	PreparedPlanCache *kvcache.SimpleLRUCache
+	PreparedPlanCache sessionctx.PlanCache
 }
 
 // CreateSession4TestWithOpt creates a new session environment for test.
@@ -2659,9 +2637,6 @@ func InitDDLJobTables(store kv.Storage) error {
 			tblInfo.State = model.StatePublic
 			tblInfo.ID = tbl.id
 			tblInfo.UpdateTS = t.StartTS
-			if err != nil {
-				return errors.Trace(err)
-			}
 			err = t.CreateTableOrView(dbID, tblInfo)
 			if err != nil {
 				return errors.Trace(err)
@@ -2804,6 +2779,8 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
+	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
+	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)

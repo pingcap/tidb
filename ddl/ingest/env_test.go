@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,23 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package json
+package ingest_test
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/testkit/testsetup"
-	"go.uber.org/goleak"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/ingest"
+	"github.com/stretchr/testify/require"
 )
 
-const benchStr = `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`
-
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-	}
-	goleak.VerifyTestMain(m, opts...)
+func TestGenLightningDataDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	port, iPort := "5678", uint(5678)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempDir = tmpDir
+		conf.Port = iPort
+	})
+	sPath, err := ingest.GenLightningDataDirForTest()
+	require.NoError(t, err)
+	require.Equal(t, tmpDir+"/tmp_ddl-"+port, sPath)
 }
