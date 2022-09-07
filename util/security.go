@@ -240,34 +240,22 @@ func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 		return nil
 	}
 
+	var (
+		caContent []byte
+		err       error
+	)
 	if builder.caPath != "" {
-		// clear the content if path is provided
-		builder.caContent = nil
-		loadCA := func() (*tls.Config, error) {
-			certPoolMu.Lock()
-			defer certPoolMu.Unlock()
-
-			certPool = x509.NewCertPool()
-			content, err := os.ReadFile(builder.caPath)
-			if err != nil {
-				return nil, errors.Annotate(err, "could not read ca certificate")
-			}
-			if !certPool.AppendCertsFromPEM(content) {
-				return nil, errors.New("failed to append ca certs in reading ca certs")
-			}
-			tlsCfg.RootCAs = certPool
-			tlsCfg.ClientCAs = certPool
-			return tlsCfg, nil
+		caContent, err = os.ReadFile(builder.caPath)
+		if err != nil {
+			return nil, errors.Annotate(err, "could not read ca certificate")
 		}
-		tlsCfg.GetConfigForClient = func(info *tls.ClientHelloInfo) (*tls.Config, error) {
-			return loadCA()
-		}
-		verifyFuncs = append(verifyFuncs, verifyCA)
+	} else {
+		caContent = builder.caContent
 	}
-	if len(builder.caContent) > 0 {
-		certPool = x509.NewCertPool()
 
-		if !certPool.AppendCertsFromPEM(builder.caContent) {
+	if len(caContent) > 0 {
+		certPool = x509.NewCertPool()
+		if !certPool.AppendCertsFromPEM(caContent) {
 			return nil, errors.New("failed to append ca certs")
 		}
 		tlsCfg.RootCAs = certPool
