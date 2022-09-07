@@ -39,28 +39,28 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-2: test unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, a int, id int key, name varchar(10), unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (b int, a int, id int key, name varchar(10), unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-3: test non-unique index only contain foreign key columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-4: test non-unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (name varchar(10), b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (name varchar(10), b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 	}
@@ -101,7 +101,7 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
@@ -109,7 +109,7 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=1;",
 				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
@@ -117,7 +117,7 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (b int,  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
@@ -125,7 +125,7 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=1;",
 				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (b int,  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-9: test primary key is handle and contain foreign key column.
@@ -133,7 +133,7 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int,  primary key (id));",
-				"create table t2 (b int,  a int, id int, primary key (a), foreign key fk(a) references t1(id) ON DELETE CASCADE);",
+				"create table t2 (b int,  a int, id int, primary key (a), foreign key fk(a) references t1(id));",
 			},
 		},
 	}
@@ -203,28 +203,28 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-2: test unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-3: test non-unique index only contain foreign key columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-4: test non-unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 	}
@@ -290,7 +290,7 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
@@ -298,7 +298,7 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=1;",
 				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
@@ -306,7 +306,7 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
@@ -314,7 +314,7 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=1;",
 				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 	}
@@ -372,7 +372,7 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("set @@tidb_enable_clustered_index=0;")
 	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
-	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id) ON UPDATE RESTRICT);")
+	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id));")
 	tk.MustExec("insert into t1 (id, a, b) values       (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
 	tk.MustExec("insert into t2 (id, a, b, name) values (11, 1, 21, 'a')")
 	tk.MustExec("update t2 set a = 2 where id = 11")
@@ -428,28 +428,28 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-2: test unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-3: test non-unique index only contain foreign key columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-4: test non-unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
@@ -457,7 +457,7 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (b int,  a int, name varchar(10), id int, unique index (id), primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int,  a int, name varchar(10), id int, unique index (id), primary key (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 			notNull: true,
 		},
@@ -466,7 +466,7 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=1;",
 				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (name varchar(10), b int,  a int, id int, unique index (id),primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (name varchar(10), b int,  a int, id int, unique index (id),primary key (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 			notNull: true,
 		},
@@ -475,7 +475,7 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int, name varchar(10),  a int, id int, unique index (id),primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10),  a int, id int, unique index (id),primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 			notNull: true,
 		},
@@ -484,7 +484,7 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=1;",
 				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, name varchar(10), unique index (id), primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int,  a int, id int, name varchar(10), unique index (id), primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 			notNull: true,
 		},
@@ -553,7 +553,7 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("set @@tidb_enable_clustered_index=0;")
 	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
-	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id) ON UPDATE RESTRICT);")
+	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id));")
 	tk.MustExec("insert into t1 (id, a, b) values       (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
 	tk.MustExec("insert into t2 (id, a, b, name) values (11, 1, 21, 'a')")
 
@@ -948,28 +948,28 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-2: test unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-3: test non-unique index only contain foreign key columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-4: test non-unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 	}
@@ -1004,7 +1004,7 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
@@ -1012,7 +1012,7 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=1;",
 				"create table t1 (id int, a int, b int,  primary key (a, b));",
-				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
@@ -1020,7 +1020,7 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
@@ -1028,7 +1028,7 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=1;",
 				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 	}
@@ -1058,7 +1058,7 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("set @@tidb_enable_clustered_index=0;")
 	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
-	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id) ON UPDATE RESTRICT);")
+	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id));")
 	tk.MustExec("insert into t1 (id, a, b) values       (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
 	tk.MustExec("insert into t2 (id, a, b, name) values (11, 1, 21, 'a')")
 	tk.MustExec("update t1 set id = id + 100 where id =2 or a = 13")
@@ -1085,28 +1085,28 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-2: test unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-3: test non-unique index only contain foreign key columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-4: test non-unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 	}
@@ -1141,7 +1141,7 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int, unique index(id), primary key (a, b));",
-				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
@@ -1149,7 +1149,7 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=1;",
 				"create table t1 (id int, a int, b int, unique index(id),  primary key (a, b));",
-				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
@@ -1157,7 +1157,7 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=0;",
 				"create table t1 (id int, a int, b int, unique index(id), primary key (a, b, id));",
-				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
@@ -1165,7 +1165,7 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 			prepareSQLs: []string{
 				"set @@tidb_enable_clustered_index=1;",
 				"create table t1 (id int, a int, b int, unique index(id), primary key (a, b, id));",
-				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE RESTRICT);",
+				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a, b, id), foreign key fk(a, b) references t1(a, b));",
 			},
 		},
 	}
@@ -1196,7 +1196,7 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("set @@tidb_enable_clustered_index=0;")
 	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
-	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id) ON UPDATE RESTRICT);")
+	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id));")
 	tk.MustExec("insert into t1 (id, a, b) values       (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
 	tk.MustExec("insert into t2 (id, a, b, name) values (11, 1, 21, 'a')")
 
@@ -1244,4 +1244,32 @@ func TestForeignKey(t *testing.T) {
 	execToErr(t, tk, "delete from t1 where a=1", plannercore.ErrRowIsReferenced2)
 	tk.MustExec("delete from t3 where id=1")
 	tk.MustExec("delete from t1 where id=1")
+}
+
+func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int, a int, primary key (id));")
+	tk.MustExec("create table t2 (id int, a int, index(a),  foreign key fk(a) references t1(id));")
+	tk.MustExec("insert into  t1 (id, a) values (1, 11),(2, 12), (3, 13), (4, 14)")
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+			tk.MustExec("set @@foreign_key_checks=1")
+			tk.MustExec("use test")
+			for cnt := 0; cnt < 20; cnt++ {
+				id := cnt%4 + 1
+				sql := fmt.Sprintf("insert into t2 (id, a) values (%v, %v)", cnt, id)
+				tk.MustExec(sql)
+			}
+		}()
+	}
+	wg.Wait()
 }

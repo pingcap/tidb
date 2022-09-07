@@ -1,9 +1,21 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package executor
 
 import (
 	"context"
-	"sync/atomic"
-
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -14,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/set"
+	"sync/atomic"
 )
 
 // WithForeignKeyTrigger indicates the executor has foreign key check or cascade.
@@ -139,17 +152,18 @@ func (fkc FKCheckExec) doCheck(ctx context.Context) error {
 	if len(fkc.toBeLockedKeys) == 0 {
 		return nil
 	}
-	lockWaitTime := fkc.ctx.GetSessionVars().LockWaitTimeout
-	lockCtx, err := newLockCtx(fkc.ctx, lockWaitTime, len(fkc.toBeLockedKeys))
+	sessVars := fkc.ctx.GetSessionVars()
+	lockCtx, err := newLockCtx(fkc.ctx, sessVars.LockWaitTimeout, len(fkc.toBeLockedKeys))
 	if err != nil {
 		return err
 	}
 	// WARN: Since tidb current doesn't support `LOCK IN SHARE MODE`, therefore, performance will be very poor in concurrency cases.
 	// TODO(crazycs520):After TiDB support `LOCK IN SHARE MODE`, use `LOCK IN SHARE MODE` here.
+	forUpdate := atomic.LoadUint32(&sessVars.TxnCtx.ForUpdate)
 	err = doLockKeys(ctx, fkc.ctx, lockCtx, fkc.toBeLockedKeys...)
 	// doLockKeys may set TxnCtx.ForUpdate to 1, then if the lock meet write conflict, TiDB can't retry for update.
 	// So reset TxnCtx.ForUpdate to 0 then can be retry if meet write conflict.
-	atomic.StoreUint32(&fkc.ctx.GetSessionVars().TxnCtx.ForUpdate, 0)
+	atomic.StoreUint32(&sessVars.TxnCtx.ForUpdate, forUpdate)
 	return err
 }
 
