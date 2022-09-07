@@ -207,6 +207,18 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 				break
 			}
 		}
+<<<<<<< HEAD
+=======
+		if tblInfo.TiFlashReplica != nil {
+			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+			if e != nil {
+				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+			}
+		}
+		// Placement rules cannot be removed immediately after drop table / truncate table, because the
+		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
+
+>>>>>>> 4cb0d1f7a... ddl: Delete TiFlash sync status from etcd when table is truncated or dropped (#37184)
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
@@ -518,6 +530,27 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
+<<<<<<< HEAD
+=======
+		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+		if e != nil {
+			logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+		}
+		// Set PD rules for TiFlash
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); e != nil {
+				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(e)
+			}
+		} else {
+			if e := infosync.ConfigureTiFlashPDForTable(newTableID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
+				logutil.BgLogger().Error("ConfigureTiFlashPDForTable fails", zap.Error(err))
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(e)
+			}
+		}
+>>>>>>> 4cb0d1f7a... ddl: Delete TiFlash sync status from etcd when table is truncated or dropped (#37184)
 		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
 		tblInfo.TiFlashReplica.Available = false
 	}
