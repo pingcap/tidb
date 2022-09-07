@@ -3848,19 +3848,28 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			b.outerCTEs[len(b.outerCTEs)-1].isInline = true
 		}
 	} else if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
-		// Verify Merge hints in the current query, we will update parameters for those that meet the rules, and warn those that do not.
-		// If the current query uses Merge Hint and the query is a CTE, we update the HINT information for the current query.
-		// If the current query is not a CTE query (it may be a subquery within a CTE query or an external non-CTE query), we will give a warning.
+		// Verify Merge hints in the current query,
+		// we will update parameters for those that meet the rules, and warn those that do not.
+		// If the current query uses Merge Hint and the query is a CTE,
+		// we update the HINT information for the current query.
+		// If the current query is not a CTE query (it may be a subquery within a CTE query
+		// or an external non-CTE query), we will give a warning.
 		// In particular, recursive CTE have separate warnings, so they are no longer called.
 		if b.buildingCTE {
 			if b.isCTE {
 				b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
 			} else if !b.buildingRecursivePartForCTE {
 				//If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+					ErrInternal.GenWithStack("Hint merge() is inapplicable. " +
+						"Please check whether the hint is using in the right place, " +
+						"you should use this hint in CTE inner query."))
 			}
 		} else if !b.buildingCTE && !b.isCTE {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."))
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+				ErrInternal.GenWithStack("Hint merge() is inapplicable. " +
+					"Please check whether the hint is using in the right place, " +
+					"you should use this hint in CTE inner query."))
 		}
 	}
 
