@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
-	"golang.org/x/sys/cpu"
 )
 
 type rowContainerRecord struct {
@@ -38,7 +37,7 @@ type rowContainerRecord struct {
 
 type mutexForRowContainer struct {
 	// Add cache padding to avoid false sharing issue.
-	_ cpu.CacheLinePad
+	//_ cpu.CacheLinePad
 	// RWMutex guarantees spill and get operator for rowContainer is mutually exclusive.
 	// `rLock` and `wLocks` is introduced to reduce the contention when multiple
 	// goroutine touch the same rowContainer concurrently. If there are multiple
@@ -47,10 +46,10 @@ type mutexForRowContainer struct {
 	// each goroutine. Thus each goroutine holds its own rLock but share the same
 	// underlying data, which can reduce the contention on m.rLock remarkably and
 	// get better performance.
-	rLock   sync.RWMutex
+	rLock   *sync.RWMutex
 	wLocks  []*sync.RWMutex
 	records *rowContainerRecord
-	_       cpu.CacheLinePad
+	//_       cpu.CacheLinePad
 }
 
 // Lock locks rw for writing.
@@ -90,16 +89,16 @@ type RowContainer struct {
 // NewRowContainer creates a new RowContainer in memory.
 func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer {
 	li := NewList(fieldType, chunkSize, chunkSize)
+	rlock := new(sync.RWMutex)
 	rc := &RowContainer{
 		m: &mutexForRowContainer{
 			records: &rowContainerRecord{inMemory: li},
-			rLock:   sync.RWMutex{},
-			wLocks:  []*sync.RWMutex{},
+			rLock:   rlock,
+			wLocks:  []*sync.RWMutex{rlock},
 		},
 		memTracker:  memory.NewTracker(memory.LabelForRowContainer, -1),
 		diskTracker: disk.NewTracker(memory.LabelForRowContainer, -1),
 	}
-	rc.m.wLocks = append(rc.m.wLocks, &rc.m.rLock)
 	li.GetMemTracker().AttachTo(rc.GetMemTracker())
 	return rc
 }
@@ -109,12 +108,13 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 // holds an individual rLock.
 func (c *RowContainer) ShallowCopyWithNewMutex() *RowContainer {
 	newRC := *c
+	rlock := new(sync.RWMutex)
 	newRC.m = &mutexForRowContainer{
 		records: c.m.records,
-		rLock:   sync.RWMutex{},
+		rLock:   rlock,
 		wLocks:  []*sync.RWMutex{},
 	}
-	c.m.wLocks = append(c.m.wLocks, &newRC.m.rLock)
+	c.m.wLocks = append(c.m.wLocks, rlock)
 	return &newRC
 }
 
