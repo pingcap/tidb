@@ -153,7 +153,7 @@ func (re *regexpBaseFuncSig) canMemorize(matchTypeIdx int) bool {
 	return re.args[patternIdx].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= matchTypeIdx || re.args[matchTypeIdx].ConstItem(re.ctx.GetSessionVars().StmtCtx))
 }
 
-func (reg *regexpBaseFuncSig) initMemoizedRegexp(params []*regexpParam, matchTypeIdx int, n int) error {
+func (reg *regexpBaseFuncSig) initMemoizedRegexp(params []*regexpParam, matchTypeIdx int) error {
 	// Generate compile
 	compile, err := reg.genCompile(params[matchTypeIdx].getStringVal(0))
 	if err != nil {
@@ -182,7 +182,7 @@ func (re *regexpBaseFuncSig) tryToMemorize(params []*regexpParam, matchTypeIdx i
 		return nil // It's needless to memorize again
 	}
 
-	return re.initMemoizedRegexp(params, matchTypeIdx, n)
+	return re.initMemoizedRegexp(params, matchTypeIdx)
 }
 
 // ---------------------------------- regexp_like ----------------------------------
