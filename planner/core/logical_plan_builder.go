@@ -3841,9 +3841,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
-	// If the session variable "tidb_opt_inline_cte" is true, all of CTEs will be inlined.
+	// If the session variable "tidb_opt_force_inline_cte" is true, all of CTEs will be inlined.
 	// Otherwise, whether CTEs are inlined depends on whether the merge() hint is declared.
-	if b.ctx.GetSessionVars().EnableInlineCTE() {
+	if b.ctx.GetSessionVars().EnableForceInlineCTE() {
 		if b.buildingCTE && b.isCTE {
 			b.outerCTEs[len(b.outerCTEs)-1].isInline = true
 		}

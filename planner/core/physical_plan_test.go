@@ -1153,7 +1153,7 @@ func TestCTEMergeHint(t *testing.T) {
 	}
 }
 
-func TestInlineCTE(t *testing.T) {
+func TestForceInlineCTE(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

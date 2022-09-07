@@ -1929,10 +1929,10 @@
     ]
   },
   {
-    "Name": "TestInlineCTE",
+    "Name": "TestForceInlineCTE",
     "Cases": [
       {
-        "SQL": "set tidb_opt_inline_cte=1;",
+        "SQL": "set tidb_opt_force_inline_cte=1;",
         "Plan": null,
         "Warning": null
       },
@@ -1968,7 +1968,7 @@
         ]
       },
       {
-        "SQL": "set tidb_opt_inline_cte=0;",
+        "SQL": "set tidb_opt_force_inline_cte=0;",
         "Plan": null,
         "Warning": null
       },
