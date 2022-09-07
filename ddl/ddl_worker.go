@@ -1228,7 +1228,7 @@ func toTError(err error) *terror.Error {
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
-// we wait 2 * lease time.
+// we wait at most 2 * lease time(sessionTTL, 90 seconds).
 func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return

@@ -127,7 +127,7 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
 		if job.Type == model.ActionDropSchema {
-			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', REPLACE('%s', ',', '|'), ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
+			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', '%s', ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
 			return d.checkJobIsRunnable(sess, sql)
 		}
 
@@ -143,7 +143,7 @@ func (d *ddl) checkJobIsRunnable(sess *session, sql string) (bool, error) {
 
 func (d *ddl) getReorgJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
-		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where (CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', REPLACE('%s', ',', '|'), ',') != 0 and type = %d and processing) or (find_in_set(%s, table_ids) != 0 and processing) limit 1",
+		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where (CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', '%s', ',') != 0 and type = %d and processing) or (find_in_set(%s, table_ids) != 0 and processing) limit 1",
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, strconv.Quote(strconv.FormatInt(job.TableID, 10)))
 		return d.checkJobIsRunnable(sess, sql)
 	})
@@ -237,12 +237,11 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 				return
 			}
 		}
-		if schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, job); err != nil {
+		schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, job)
+		pool.put(wk)
+		if err != nil {
 			logutil.BgLogger().Info("[ddl] handle ddl job failed", zap.Error(err), zap.String("job", job.String()))
-			pool.put(wk)
 		} else {
-			pool.put(wk)
-
 			failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 				if val.(bool) {
 					if mockDDLErrOnce == 0 {
