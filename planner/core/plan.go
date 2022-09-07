@@ -531,17 +531,13 @@ func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePlan.MemoryUsage() +
-		int64(unsafe.Sizeof(p.childrenReqProps)) + int64(cap(p.childrenReqProps))*memory.SizeOfPointer +
-		int64(unsafe.Sizeof(p.children)) + int64(cap(p.children)+1)*memory.SizeOfInterface +
-		4*int64(unsafe.Sizeof(p.cost))
+	sum = p.basePlan.MemoryUsage() + memory.SizeOfSlice + int64(cap(p.childrenReqProps))*memory.SizeOfPointer +
+		memory.SizeOfSlice + int64(cap(p.children)+1)*memory.SizeOfInterface + memory.SizeOfFloat64*2 +
+		memory.SizeOfUint64 + memory.SizeOfBool
 	for _, prop := range p.childrenReqProps {
 		sum += prop.MemoryUsage()
 	}
-	//for _, child := range p.children {
-	//	sum += child.MemoryUsage()
-	//}
-	// todo: remove comment
+	//todo: memtrace: add children's memory
 	return
 }
 

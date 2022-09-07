@@ -1322,11 +1322,11 @@ func (ls *PhysicalSort) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = ls.basePhysicalPlan.MemoryUsage() +
-		int64(unsafe.Sizeof(ls.ByItems)) + int64(cap(ls.ByItems))*memory.SizeOfPointer +
-		// todo: add the expression memory usage
-		// todo: replace sizeof
-		int64(unsafe.Sizeof(ls.IsPartialSort))
+	sum = ls.basePhysicalPlan.MemoryUsage() + memory.SizeOfSlice + int64(cap(ls.ByItems))*memory.SizeOfPointer +
+		memory.SizeOfBool
+	for _, byItem := range ls.ByItems {
+		sum += byItem.MemoryUsage()
+	}
 	return
 }
 

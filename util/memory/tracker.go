@@ -722,7 +722,7 @@ const SizeOfSlice = int64(unsafe.Sizeof(*new([]int)))
 // SizeOfByte is the memory each byte occupied
 const SizeOfByte = int64(unsafe.Sizeof(*new(byte)))
 
-// SizeOfString is the memory itself occupied
+// SizeOfString is the memory string itself occupied
 const SizeOfString = int64(unsafe.Sizeof(*new(string)))
 
 // SizeOfBool is the memory each bool occupied
@@ -733,3 +733,13 @@ const SizeOfPointer = int64(unsafe.Sizeof(new(int)))
 
 // SizeOfInterface is the memory each interface occupied, exclude the real type memory usage
 const SizeOfInterface = int64(unsafe.Sizeof(*new(interface{})))
+
+// SizeOfFloat64 is the memory each float64 occupied
+const SizeOfFloat64 = int64(unsafe.Sizeof(*new(float64)))
+
+// SizeOfUint64 is the memory each uint64 occupied
+const SizeOfUint64 = int64(unsafe.Sizeof(*new(uint64)))
+
+// SizeOfInt32 is the memory each int32 occupied
+const SizeOfInt32 = int64(unsafe.Sizeof(*new(int32)))
+ 

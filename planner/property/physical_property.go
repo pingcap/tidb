@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -47,6 +48,15 @@ func (s *SortItem) String() string {
 // Clone makes a copy of SortItem.
 func (s SortItem) Clone() SortItem {
 	return SortItem{Col: s.Col.Clone().(*expression.Column), Desc: s.Desc}
+}
+
+// MemoryUsage return the memory usage of SortItem
+func (s SortItem) MemoryUsage() (sum int64) {
+	sum = memory.SizeOfBool
+	if s.Col != nil {
+		sum += s.Col.MemoryUsage()
+	}
+	return
 }
 
 // MPPPartitionType is the way to partition during mpp data exchanging.
@@ -104,6 +114,15 @@ func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
 		}
 	}
 	return partitionCol.Col.Equal(nil, other.Col)
+}
+
+// MemoryUsage return the memory usage of MPPPartitionColumn
+func (pCol *MPPPartitionColumn) MemoryUsage() (sum int64) {
+	sum = memory.SizeOfInt32
+	if pCol.Col != nil {
+		sum += pCol.Col.MemoryUsage()
+	}
+	return
 }
 
 // ExplainColumnList generates explain information for a list of columns.
@@ -350,17 +369,15 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyPhysicalPropertySize + int64(cap(p.SortItems))*int64(unsafe.Sizeof(SortItem{})) +
-		int64(len(p.hashcode)) + int64(cap(p.MPPPartitionCols))*int64(unsafe.Sizeof(new(MPPPartitionColumn))) +
-		int64(cap(p.SortItemsForPartition))*int64(unsafe.Sizeof(SortItem{}))
-	for _, e := range p.SortItems {
-		sum += e.Col.MemoryUsage()
+	sum = emptyPhysicalPropertySize + int64(cap(p.hashcode))
+	for _, sortItem := range p.SortItems {
+		sum += sortItem.MemoryUsage()
 	}
-	for _, e := range p.SortItemsForPartition {
-		sum += e.Col.MemoryUsage()
+	for _, sortItem := range p.SortItemsForPartition {
+		sum += sortItem.MemoryUsage()
 	}
 	for _, mppCol := range p.MPPPartitionCols {
-		sum += mppCol.Col.MemoryUsage()
+		sum += mppCol.MemoryUsage()
 	}
 	return
 }

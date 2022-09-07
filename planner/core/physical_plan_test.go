@@ -20,7 +20,6 @@ import (
 	"math"
 	"strings"
 	"testing"
-	"unsafe"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -32,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -2226,13 +2227,16 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	}
 }
 
-func TestPhysicalSortMemoryTrace(t *testing.T) {
-	fmt.Println(int64(unsafe.Sizeof(core.PhysicalSort{})))
-
+func TestPhysicalPlanMemoryTrace(t *testing.T) {
+	// PhysicalSort
 	ls := core.PhysicalSort{}
-	fmt.Println(ls.MemoryUsage())
+	size := ls.MemoryUsage()
+	ls.ByItems = append(ls.ByItems, &util.ByItems{})
+	require.Greater(t, ls.MemoryUsage(), size)
 
-	fmt.Println(unsafe.Offsetof(ls.ByItems))
-	fmt.Println(unsafe.Offsetof(ls.IsPartialSort))
-	fmt.Println(unsafe.Alignof(ls))
+	//PhysicalProperty
+	pp := property.PhysicalProperty{}
+	size = pp.MemoryUsage()
+	pp.MPPPartitionCols = append(pp.MPPPartitionCols, &property.MPPPartitionColumn{})
+	require.Greater(t, pp.MemoryUsage(), size)
 }
