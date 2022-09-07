@@ -245,7 +245,7 @@ func newEBSMetaRestoreCommand() *cobra.Command {
 func newResolveKvDataCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "data",
-		Short: "restore data from snapshot volume where tikv runing on, it requires command 'restore ebs' run before.",
+		Short: "restore data from snapshot volume where tikv running on, it requires command 'restore ebs' run before.",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			err := runResolveKvDataCommand(command, task.ResolvedKvDataCmd)
