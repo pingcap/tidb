@@ -8,6 +8,7 @@ go_library(
         "label_manager.go",
         "placement_manager.go",
         "region.go",
+        "schedule_manager.go",
         "tiflash_manager.go",
     ],
     importpath = "github.com/pingcap/tidb/domain/infosync",

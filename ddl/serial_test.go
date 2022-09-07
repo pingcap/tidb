@@ -753,7 +753,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 
 	hook := &ddl.TestDDLCallback{}
 	once := sync.Once{}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
