@@ -31,4 +31,5 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           status: ${{ job.status }}
+          allowForks: true
           context: check-misc
