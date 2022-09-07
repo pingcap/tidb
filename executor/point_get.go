@@ -432,7 +432,6 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 func (e *PointGetExecutor) getValueFromLockCtx(ctx context.Context,
 	lockCtx *kv.LockCtx,
 	key []byte) ([]byte, error) {
-
 	if val, ok := lockCtx.Values[string(key)]; ok {
 		if val.Exists {
 			return val.Value, nil
