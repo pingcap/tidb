@@ -977,6 +977,25 @@ func TestAllHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, data, jobs)
+
+	// Cover the start_job_id parameter.
+	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41&limit=3")
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&jobs)
+	require.NoError(t, err)
+
+	// The result is in descending order
+	lastID := int64(42)
+	for _, job := range jobs {
+		require.Less(t, job.ID, lastID)
+		lastID = job.ID
+	}
+	require.NoError(t, resp.Body.Close())
 }
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {
@@ -1107,4 +1126,40 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
 	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
 	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
+}
+
+func TestSetLabels(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testUpdateLabels := func(labels, expected map[string]string) {
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.postStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, expected)
+	}
+
+	labels := map[string]string{
+		"zone": "us-west-1",
+		"test": "123",
+	}
+	testUpdateLabels(labels, labels)
+
+	updated := map[string]string{
+		"zone": "bj-1",
+	}
+	labels["zone"] = "bj-1"
+	testUpdateLabels(updated, labels)
+
+	// reset the global variable
+	config.GetGlobalConfig().Labels = map[string]string{}
 }

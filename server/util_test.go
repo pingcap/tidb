@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -235,7 +234,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.Equal(t, "sname", mustDecodeStr(t, bs))
 
 	js := types.Datum{}
-	binaryJSON, err := json.ParseBinaryFromString(`{"a": 1, "b": 2}`)
+	binaryJSON, err := types.ParseBinaryJSONFromString(`{"a": 1, "b": 2}`)
 	require.NoError(t, err)
 	js.SetMysqlJSON(binaryJSON)
 	columns[0].Type = mysql.TypeJSON

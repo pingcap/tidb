@@ -750,6 +750,41 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("1"))
 	tk.MustExec("set session tidb_enable_analyze_snapshot = 0")
 	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+
+	// test variables `init_connect'
+	tk.MustGetErrCode("set global init_connect = '-1'", mysql.ErrWrongTypeForVar)
+	tk.MustGetErrCode("set global init_connect = 'invalidstring'", mysql.ErrWrongTypeForVar)
+	tk.MustExec("set global init_connect = 'select now(); select timestamp()'")
+
+	// test variable 'tidb_enable_general_plan_cache'
+	// global scope
+	tk.MustQuery("select @@global.tidb_enable_general_plan_cache").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global tidb_enable_general_plan_cache = 1")
+	tk.MustQuery("select @@global.tidb_enable_general_plan_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_general_plan_cache = 0")
+	tk.MustQuery("select @@global.tidb_enable_general_plan_cache").Check(testkit.Rows("0"))
+	// session scope
+	tk.MustQuery("select @@session.tidb_enable_general_plan_cache").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set session tidb_enable_general_plan_cache = 1")
+	tk.MustQuery("select @@session.tidb_enable_general_plan_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_enable_general_plan_cache = 0")
+	tk.MustQuery("select @@session.tidb_enable_general_plan_cache").Check(testkit.Rows("0"))
+
+	// test variable 'tidb_general_plan_cache-size'
+	// global scope
+	tk.MustQuery("select @@global.tidb_general_plan_cache_size").Check(testkit.Rows("100")) // default value
+	tk.MustExec("set global tidb_general_plan_cache_size = 200")
+	tk.MustQuery("select @@global.tidb_general_plan_cache_size").Check(testkit.Rows("200"))
+	tk.MustExec("set global tidb_general_plan_cache_size = 200000000") // overflow
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_general_plan_cache_size value: '200000000'"))
+	tk.MustQuery("select @@global.tidb_general_plan_cache_size").Check(testkit.Rows("100000"))
+	// session scope
+	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("100")) // default value
+	tk.MustExec("set session tidb_general_plan_cache_size = 300")
+	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("300"))
+	tk.MustExec("set session tidb_general_plan_cache_size = -1") // underflow
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_general_plan_cache_size value: '-1'"))
+	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("1"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
@@ -774,6 +809,15 @@ func TestGetSetNoopVars(t *testing.T) {
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8144 setting query_cache_type has no effect in TiDB"))
 	// but the change is still effective.
 	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("OFF"))
+
+	// Only ON and OFF supported
+	err := tk.ExecToErr("SET GLOBAL tidb_enable_noop_variables = 2")
+	require.Error(t, err)
+	require.Equal(t, "[variable:1231]Variable 'tidb_enable_noop_variables' can't be set to the value of '2'", err.Error())
+
+	err = tk.ExecToErr("SET GLOBAL tidb_enable_noop_variables = 'warn'")
+	require.Error(t, err)
+	require.Equal(t, "[variable:1231]Variable 'tidb_enable_noop_variables' can't be set to the value of 'warn'", err.Error())
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
@@ -1657,6 +1701,7 @@ func TestSetClusterConfig(t *testing.T) {
 	require.EqualError(t, tk.ExecToErr("set config 'example.com:1111' log.level='info'"), "instance example.com:1111 is not found in this cluster") // name resolves.
 	require.EqualError(t, tk.ExecToErr("set config tikv log.level=null"), "can't set config to null")
 	require.EqualError(t, tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), "instance 1.1.1.1:1111 is not found in this cluster")
+	require.EqualError(t, tk.ExecToErr("set config tikv `raftstore.max-peer-down-duration`=DEFAULT"), "Unknown DEFAULT for SET CONFIG")
 
 	httpCnt := 0
 	tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
@@ -1771,13 +1816,22 @@ func TestSetTopSQLVariables(t *testing.T) {
 func TestPreparePlanCacheValid(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
+	// global scope
+	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("100")) // default value
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_size value: '0'"))
 	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 2")
 	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("2"))
+	// session scope
+	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("100")) // default value
+	tk.MustExec("SET SESSION tidb_prepared_plan_cache_size = 0")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_size value: '0'"))
+	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
+	tk.MustExec("SET SESSION tidb_prepared_plan_cache_size = 2")
+	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("2"))
 
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = -0.1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
@@ -1790,19 +1844,12 @@ func TestPreparePlanCacheValid(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = 0.5")
 	tk.MustQuery("select @@global.tidb_prepared_plan_cache_memory_guard_ratio").Check(testkit.Rows("0.5"))
 
-	orgEnable := variable.EnablePreparedPlanCache.Load()
-	defer func() {
-		variable.EnablePreparedPlanCache.Store(orgEnable)
-	}()
 	tk.MustExec("SET GLOBAL tidb_enable_prepared_plan_cache = 0")
 	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache").Check(testkit.Rows("0"))
-	require.False(t, variable.EnablePreparedPlanCache.Load())
 	tk.MustExec("SET GLOBAL tidb_enable_prepared_plan_cache = 1")
 	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache").Check(testkit.Rows("1"))
-	require.True(t, variable.EnablePreparedPlanCache.Load())
 	tk.MustExec("SET GLOBAL tidb_enable_prepared_plan_cache = 0")
 	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache").Check(testkit.Rows("0"))
-	require.False(t, variable.EnablePreparedPlanCache.Load())
 }
 
 func TestInstanceScopeSwitching(t *testing.T) {
@@ -1874,4 +1921,23 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	// Test set global.
 	tk.MustExec("set global tiflash_fine_grained_shuffle_stream_count = -1")
 	tk.MustExec("set global tiflash_fine_grained_shuffle_batch_size = 8192")
+}
+
+func TestSetTiFlashFastScanVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+
+	// check the default tiflash read mode
+	tk.MustQuery("select @@session.tiflash_fastscan").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tiflash_fastscan=ON;")
+	tk.MustQuery("select @@session.tiflash_fastscan").Check(testkit.Rows("1"))
+
+	tk.MustExec("set GLOBAL tiflash_fastscan=OFF;")
+	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
 }

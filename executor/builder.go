@@ -739,8 +739,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		name:         v.Name,
-		usingVars:    v.TxtProtoVars,
-		id:           v.ExecID,
+		usingVars:    v.Params,
 		stmt:         v.Stmt,
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
@@ -2430,7 +2429,9 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 // From the paper "Random sampling for histogram construction: how much is enough?"'s Corollary 1 to Theorem 5,
 // for a table size n, histogram size k, maximum relative error in bin size f, and error probability gamma,
 // the minimum random sample size is
-//         r = 4 * k * ln(2*n/gamma) / f^2
+//
+//	r = 4 * k * ln(2*n/gamma) / f^2
+//
 // If we take f = 0.5, gamma = 0.01, n =1e6, we would got r = 305.82* k.
 // Since the there's log function over the table size n, the r grows slowly when the n increases.
 // If we take n = 1e12, a 300*k sample still gives <= 0.66 bin size error with probability 0.99.
@@ -2570,7 +2571,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
-		SampleSize:    maxRegionSampleSize,
+		SampleSize:    MaxRegionSampleSize,
 		SketchSize:    maxSketchSize,
 		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt()),
 		CmsketchDepth: &depth,
@@ -4723,6 +4724,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+
+	if plan.IndexInfo != nil {
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, plan.TblInfo.Name.O+":"+plan.IndexInfo.Name.O)
 	}
 
 	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {

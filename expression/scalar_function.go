@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -375,10 +374,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
 			if ctx := sf.GetCtx(); ctx != nil {
 				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
-					if sc.TruncateAsWarning {
-						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-						err = nil
-					}
+					err = sc.HandleTruncate(err)
 				}
 			}
 		} else {
@@ -428,7 +424,7 @@ func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row chunk.Row) (t
 }
 
 // EvalJSON implements Expression interface.
-func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
 }
 

@@ -1,0 +1,63 @@
+name: DumplingCommon
+on:
+  workflow_call:
+    inputs:
+      debug:
+        type: boolean
+        description: 'set tmate on failure'
+        required: true
+      mysql_version:
+        type: string
+        description: 'specify mysql version'
+        required: true
+
+jobs:
+  integration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+    services:
+      mysql:
+        image: mysql:${{ inputs.mysql_version }}
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+    steps:
+      - name: 'checkout repository'
+        uses: actions/checkout@v3
+        with:
+          # FIXME: the version of dumpling is getting from git
+          # if it doesn't contain a meaningful git history,
+          # the release version will be empty and the program will panic.
+          #
+          # See the `DUMPLING_LDFLAGS` in `Makefile.common` for more information
+          fetch-depth: 0
+      - name: 'set up golang'
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.18
+      - name: 'try to use build cache'
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/Library/Caches/go-build
+            ~\AppData\Local\go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: 'download binary dependencies'
+        run: sh dumpling/install.sh
+      - name: 'build tidb'
+        run: make server
+      - name: 'build lightning'
+        run: make build_lightning
+      - name: 'integration test'
+        run: make dumpling_integration_test VERBOSE="true"
+      - name: 'set up tmate session if necessary'
+        if: ${{ failure() && inputs.debug }}
+        uses: mxschmitt/action-tmate@v3

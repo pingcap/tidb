@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -185,7 +184,7 @@ func (b *builtinCastTimeAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 		if tp == mysql.TypeDatetime || tp == mysql.TypeTimestamp {
 			tms[i].SetFsp(types.MaxFsp)
 		}
-		result.AppendJSON(json.CreateBinary(tms[i].String()))
+		result.AppendJSON(types.CreateBinaryJSON(tms[i].String()))
 	}
 	return nil
 }
@@ -427,7 +426,7 @@ func (b *builtinCastRealAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 		if buf.IsNull(i) {
 			result.AppendNull()
 		} else {
-			result.AppendJSON(json.CreateBinary(f64s[i]))
+			result.AppendJSON(types.CreateBinaryJSON(f64s[i]))
 		}
 	}
 	return nil
@@ -539,7 +538,7 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			times[i] = types.ZeroTime
 			continue
 		}
-		tm, err := types.ParseTime(stmt, fv, b.tp.GetType(), fsp)
+		tm, err := types.ParseTimeFromFloatString(stmt, fv, b.tp.GetType(), fsp)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -788,15 +787,37 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chu
 	}
 
 	result.ReserveJSON(n)
-	hasParse := mysql.HasParseToJSONFlag(b.tp.GetFlag())
-	if hasParse {
-		var res json.BinaryJSON
+	typ := b.args[0].GetType()
+	if types.IsBinaryStr(typ) {
+		var res types.BinaryJSON
 		for i := 0; i < n; i++ {
 			if buf.IsNull(i) {
 				result.AppendNull()
 				continue
 			}
-			res, err = json.ParseBinaryFromString(buf.GetString(i))
+
+			val := buf.GetBytes(i)
+			resultBuf := val
+			if typ.GetType() == mysql.TypeString {
+				// only for BINARY: the tailing zero should also be in the opaque json
+				resultBuf = make([]byte, typ.GetFlen())
+				copy(resultBuf, val)
+			}
+
+			res = types.CreateBinaryJSON(types.Opaque{
+				TypeCode: b.args[0].GetType().GetType(),
+				Buf:      resultBuf,
+			})
+			result.AppendJSON(res)
+		}
+	} else if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
+		var res types.BinaryJSON
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.AppendNull()
+				continue
+			}
+			res, err = types.ParseBinaryJSONFromString(buf.GetString(i))
 			if err != nil {
 				return err
 			}
@@ -808,7 +829,7 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chu
 				result.AppendNull()
 				continue
 			}
-			result.AppendJSON(json.CreateBinary(buf.GetString(i)))
+			result.AppendJSON(types.CreateBinaryJSON(buf.GetString(i)))
 		}
 	}
 	return nil
@@ -1067,7 +1088,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 			if buf.IsNull(i) {
 				result.AppendNull()
 			} else {
-				result.AppendJSON(json.CreateBinary(nums[i] != 0))
+				result.AppendJSON(types.CreateBinaryJSON(nums[i] != 0))
 			}
 		}
 	} else if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
@@ -1075,7 +1096,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 			if buf.IsNull(i) {
 				result.AppendNull()
 			} else {
-				result.AppendJSON(json.CreateBinary(uint64(nums[i])))
+				result.AppendJSON(types.CreateBinaryJSON(uint64(nums[i])))
 			}
 		}
 	} else {
@@ -1083,7 +1104,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 			if buf.IsNull(i) {
 				result.AppendNull()
 			} else {
-				result.AppendJSON(json.CreateBinary(nums[i]))
+				result.AppendJSON(types.CreateBinaryJSON(nums[i]))
 			}
 		}
 	}
@@ -1924,7 +1945,7 @@ func (b *builtinCastDecimalAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *ch
 		if err != nil {
 			return err
 		}
-		result.AppendJSON(json.CreateBinary(f))
+		result.AppendJSON(types.CreateBinaryJSON(f))
 	}
 	return nil
 }
@@ -1954,7 +1975,7 @@ func (b *builtinCastDurationAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *c
 			continue
 		}
 		dur.Duration = ds[i]
-		result.AppendJSON(json.CreateBinary(dur.String()))
+		result.AppendJSON(types.CreateBinaryJSON(dur.String()))
 	}
 	return nil
 }

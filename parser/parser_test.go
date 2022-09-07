@@ -3234,6 +3234,11 @@ func TestDDL(t *testing.T) {
 		{"flashback table t", true, "FLASHBACK TABLE `t`"},
 		{"flashback table t TO t1", true, "FLASHBACK TABLE `t` TO `t1`"},
 
+		// for flashback cluster
+		{"flashback cluster as of timestamp '2021-05-26 16:45:26'", true, "FLASHBACK CLUSTER AS OF TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback cluster as of timestamp TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())", false, ""},
+		{"flashback cluster as of timestamp DATE_SUB(NOW(), INTERVAL 3 SECOND)", false, ""},
+
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
 		{"alter table db.ident remove partitioning", true, "ALTER TABLE `db`.`ident` REMOVE PARTITIONING"},
@@ -3492,6 +3497,8 @@ func TestDDL(t *testing.T) {
 		{"create table t (a bigint auto_random primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM PRIMARY KEY,`b` VARCHAR(255))"},
 		{"create table t (a bigint primary key auto_random(4), b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT PRIMARY KEY AUTO_RANDOM(4),`b` VARCHAR(255))"},
 		{"create table t (a bigint primary key auto_random(3) primary key unique, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT PRIMARY KEY AUTO_RANDOM(3) PRIMARY KEY UNIQUE KEY,`b` VARCHAR(255))"},
+		{"create table t (a bigint auto_random(5, 53) primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM(5, 53) PRIMARY KEY,`b` VARCHAR(255))"},
+		{"create table t (a bigint auto_random(15, 32) primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM(15, 32) PRIMARY KEY,`b` VARCHAR(255))"},
 
 		// for auto_id_cache
 		{"create table t (a int) auto_id_cache=1", true, "CREATE TABLE `t` (`a` INT) AUTO_ID_CACHE = 1"},
@@ -3963,22 +3970,20 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
 
-	// Test ORDERED_HASH_JOIN
-	stmt, _, err = p.Parse("select /*+ ORDERED_HASH_JOIN(t1, T2), ordered_hash_join(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	// Test HASH_JOIN_BUILD and HASH_JOIN_PROBE
+	stmt, _, err = p.Parse("select /*+ hash_join_build(t1), hash_join_probe(t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
-	require.Equal(t, "ordered_hash_join", hints[0].HintName.L)
-	require.Len(t, hints[0].Tables, 2)
+	require.Equal(t, "hash_join_build", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
-	require.Equal(t, "t2", hints[0].Tables[1].TableName.L)
 
-	require.Equal(t, "ordered_hash_join", hints[1].HintName.L)
-	require.Len(t, hints[1].Tables, 2)
-	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
-	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
+	require.Equal(t, "hash_join_probe", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 1)
+	require.Equal(t, "t4", hints[1].Tables[0].TableName.L)
 
 	// Test HASH_JOIN with SWAP_JOIN_INPUTS/NO_SWAP_JOIN_INPUTS
 	// t1 for build, t4 for probe
@@ -6135,6 +6140,23 @@ func CleanNodeText(node ast.Node) {
 type nodeTextCleaner struct {
 }
 
+func cleanPartition(n ast.Node) {
+	if p, ok := n.(*ast.PartitionOptions); ok && p != nil {
+		var tmpCleaner nodeTextCleaner
+		if p.Interval != nil {
+			p.Interval.SetText(nil, "")
+			p.Interval.SetOriginTextPosition(0)
+			p.Interval.IntervalExpr.Expr.Accept(&tmpCleaner)
+			if p.Interval.FirstRangeEnd != nil {
+				(*p.Interval.FirstRangeEnd).Accept(&tmpCleaner)
+			}
+			if p.Interval.LastRangeEnd != nil {
+				(*p.Interval.LastRangeEnd).Accept(&tmpCleaner)
+			}
+		}
+	}
+}
+
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	in.SetText(nil, "")
@@ -6158,10 +6180,6 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 					col.Options = append(col.Options[:i], col.Options[i+1:]...)
 				}
 			}
-		}
-		if node.Partition != nil && node.Partition.Expr != nil {
-			var tmpCleaner nodeTextCleaner
-			node.Partition.Expr.Accept(&tmpCleaner)
 		}
 	case *ast.DeleteStmt:
 		for _, tableHint := range node.TableHints {
@@ -6208,6 +6226,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 		node.ExplicitParens = false
 	case *ast.ColumnDef:
 		node.Tp.CleanElemIsBinaryLit()
+	case *ast.PartitionOptions:
+		cleanPartition(node)
 	}
 	return in, false
 }
@@ -6548,6 +6568,55 @@ func TestHelp(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestWithoutCharsetFlags(t *testing.T) {
+	type testCaseWithFlag struct {
+		src     string
+		ok      bool
+		restore string
+		flag    RestoreFlags
+	}
+
+	flag := RestoreStringSingleQuotes | RestoreSpacesAroundBinaryOperation | RestoreBracketAroundBinaryOperation | RestoreNameBackQuotes
+	cases := []testCaseWithFlag{
+		{"select 'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8mb4'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8 X'D0B1'", true, "SELECT x'd0b1'", flag | RestoreStringWithoutCharset},
+
+		{"select _utf8mb4'a'", true, "SELECT 'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8'a'", true, "SELECT _utf8'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8'a'", true, "SELECT _utf8'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8 X'D0B1'", true, "SELECT _utf8 x'd0b1'", flag | RestoreStringWithoutDefaultCharset},
+	}
+
+	p := parser.New()
+	p.EnableWindowFunc(false)
+	for _, tbl := range cases {
+		stmts, _, err := p.Parse(tbl.src, "", "")
+		if !tbl.ok {
+			require.Error(t, err)
+			continue
+		}
+		require.NoError(t, err)
+		// restore correctness test
+		var sb strings.Builder
+		restoreSQLs := ""
+		for _, stmt := range stmts {
+			sb.Reset()
+			ctx := NewRestoreCtx(tbl.flag, &sb)
+			ctx.DefaultDB = "test"
+			err = stmt.Restore(ctx)
+			require.NoError(t, err)
+			restoreSQL := sb.String()
+			if restoreSQLs != "" {
+				restoreSQLs += "; "
+			}
+			restoreSQLs += restoreSQL
+		}
+		require.Equal(t, tbl.restore, restoreSQLs)
+	}
+}
+
 func TestRestoreBinOpWithBrackets(t *testing.T) {
 	cases := []testCase{
 		{"select mod(a+b, 4)+1", true, "SELECT (((`a` + `b`) % 4) + 1)"},
@@ -6796,4 +6865,24 @@ func TestNonTransactionalDelete(t *testing.T) {
 	}
 
 	RunTest(t, cases, false)
+}
+
+func TestIntervalPartition(t *testing.T) {
+	table := []testCase{
+		{"CREATE TABLE t (c1 integer,c2 integer) PARTITION BY RANGE (c1) INTERVAL (1000)", true, "CREATE TABLE `t` (`c1` INT,`c2` INT) PARTITION BY RANGE (`c1`) INTERVAL (1000)"},
+		{"CREATE TABLE t (c1 int, c2 date) PARTITION BY RANGE (c2) INTERVAL (1 Month)", true, "CREATE TABLE `t` (`c1` INT,`c2` DATE) PARTITION BY RANGE (`c2`) INTERVAL (1 MONTH)"},
+		{"CREATE TABLE t (c1 int, c2 date) PARTITION BY RANGE (c1) (partition p1 values less than (22))", true, "CREATE TABLE `t` (`c1` INT,`c2` DATE) PARTITION BY RANGE (`c1`) (PARTITION `p1` VALUES LESS THAN (22))"},
+		{`CREATE TABLE t (c1 int, c2 date) PARTITION BY RANGE COLUMNS (c2) INTERVAL (1 year) first partition less than ("2022-02-01")`, false, ""},
+		{`CREATE TABLE t (c1 int, c2 datetime) PARTITION BY RANGE COLUMNS (c2) INTERVAL (1 day) first partition less than ("2022-01-02") last partition less than ("2022-06-01") NULL PARTITION MAXVALUE PARTITION`, true, "CREATE TABLE `t` (`c1` INT,`c2` DATETIME) PARTITION BY RANGE COLUMNS (`c2`) INTERVAL (1 DAY) FIRST PARTITION LESS THAN (_UTF8MB4'2022-01-02') LAST PARTITION LESS THAN (_UTF8MB4'2022-06-01') NULL PARTITION MAXVALUE PARTITION"},
+		{`ALTER TABLE t LAST PARTITION LESS THAN (1000)`, true, "ALTER TABLE `t` LAST PARTITION LESS THAN (1000)"},
+		{`ALTER TABLE t REORGANIZE MAX PARTITION INTO NEW LAST PARTITION LESS THAN (1000)`, false, ""},
+		{`ALTER TABLE t REORGANIZE MAX PARTITION INTO LAST PARTITION LESS THAN (1000)`, false, ""},
+		{`ALTER TABLE t REORGANIZE MAXVALUE PARTITION INTO NEW LAST PARTITION LESS THAN (1000)`, false, ""},
+		{`ALTER TABLE t REORGANIZE MAXVALUE PARTITION INTO LAST PARTITION LESS THAN (1000)`, false, ""},
+		{`ALTER TABLE t split MAXVALUE PARTITION LESS THAN (1000)`, true, "ALTER TABLE `t` SPLIT MAXVALUE PARTITION LESS THAN (1000)"},
+		{`ALTER TABLE t merge first PARTITION LESS THAN (1000)`, true, "ALTER TABLE `t` MERGE FIRST PARTITION LESS THAN (1000)"},
+		{`ALTER TABLE t first PARTITION LESS THAN (1000)`, true, "ALTER TABLE `t` FIRST PARTITION LESS THAN (1000)"},
+	}
+
+	RunTest(t, table, false)
 }

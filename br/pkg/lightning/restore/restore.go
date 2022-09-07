@@ -1966,8 +1966,6 @@ func isTiDBBackend(cfg *config.Config) bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
-	ctx = WithPreInfoGetterSysVarsCache(ctx, rc.sysVars)
-	ctx = WithPreInfoGetterTableStructuresCache(ctx, rc.dbInfos)
 	if err := rc.DataCheck(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -2036,18 +2034,17 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				needCheck = taskCheckpoints == nil
 			}
 			if needCheck {
-				withSizeCacheCtx := WithPreInfoGetterEstimatedSrcSizeCache(ctx, estimatedSizeResult)
-				err = rc.localResource(withSizeCacheCtx)
+				err = rc.localResource(ctx)
 				if err != nil {
 					return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
 				}
-				if err := rc.clusterResource(withSizeCacheCtx); err != nil {
+				if err := rc.clusterResource(ctx); err != nil {
 					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
 						log.FromContext(ctx).Warn("cleanup task failed", zap.Error(err1))
 						return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 					}
 				}
-				if err := rc.checkClusterRegion(withSizeCacheCtx); err != nil {
+				if err := rc.checkClusterRegion(ctx); err != nil {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
 			}
@@ -2330,7 +2327,16 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Chunk.PrevRowIDMax = rowID
 
 		if m, ok := metric.FromContext(ctx); ok {
-			m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+			// value of currOffset comes from parser.pos which increase monotonically. the init value of parser.pos
+			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
+			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
+			// TODO: reproduce and find the root cause and fix it completely
+			if currOffset >= startOffset {
+				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+			} else {
+				deliverLogger.Warn("offset go back", zap.Int64("curr", currOffset),
+					zap.Int64("start", startOffset))
+			}
 		}
 
 		if currOffset > lastOffset || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {

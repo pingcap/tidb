@@ -95,7 +95,7 @@ func TestSchemataTables(t *testing.T) {
 	tk.MustExec("create user schemata_tester")
 	schemataTester := testkit.NewTestKit(t, store)
 	schemataTester.MustExec("use information_schema")
-	require.True(t, schemataTester.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, schemataTester.Session().Auth(&auth.UserIdentity{
 		Username: "schemata_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -153,6 +153,18 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't'").Check(testkit.Rows(
 		"def test t bit 1 b'100' YES bit <nil> <nil> 10 0 <nil> <nil> <nil> bit(10) unsigned   select,insert,update,references  "))
 	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("set time_zone='+08:00'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (b timestamp(3) NOT NULL DEFAULT '1970-01-01 08:00:01.000')")
+	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("1970-01-01 08:00:01.000"))
+	tk.MustExec("set time_zone='+04:00'")
+	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("1970-01-01 04:00:01.000"))
+	tk.MustExec("set time_zone=default")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bit DEFAULT (rand()))")
+	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("rand()"))
 }
 
 func TestEngines(t *testing.T) {
@@ -219,7 +231,7 @@ func TestDDLJobs(t *testing.T) {
 	tk.MustExec("create user DDL_JOBS_tester")
 	DDLJobsTester := testkit.NewTestKit(t, store)
 	DDLJobsTester.MustExec("use information_schema")
-	require.True(t, DDLJobsTester.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, DDLJobsTester.Session().Auth(&auth.UserIdentity{
 		Username: "DDL_JOBS_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -251,7 +263,7 @@ func TestKeyColumnUsage(t *testing.T) {
 	tk.MustExec("create user key_column_tester")
 	keyColumnTester := testkit.NewTestKit(t, store)
 	keyColumnTester.MustExec("use information_schema")
-	require.True(t, keyColumnTester.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, keyColumnTester.Session().Auth(&auth.UserIdentity{
 		Username: "key_column_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -273,7 +285,7 @@ func TestUserPrivileges(t *testing.T) {
 	tk.MustExec("create user constraints_tester")
 	constraintsTester := testkit.NewTestKit(t, store)
 	constraintsTester.MustExec("use information_schema")
-	require.True(t, constraintsTester.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, constraintsTester.Session().Auth(&auth.UserIdentity{
 		Username: "constraints_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -292,7 +304,7 @@ func TestUserPrivileges(t *testing.T) {
 	tk.MustExec("create user tester1")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use information_schema")
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{
 		Username: "tester1",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -305,7 +317,7 @@ func TestUserPrivileges(t *testing.T) {
 	tk.MustExec("GRANT r_columns_priv TO tester2;")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use information_schema")
-	require.True(t, tk2.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{
 		Username: "tester2",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -322,7 +334,7 @@ func TestUserPrivileges(t *testing.T) {
 	tk.MustExec("GRANT r_all_priv TO tester3;")
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use information_schema")
-	require.True(t, tk3.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk3.Session().Auth(&auth.UserIdentity{
 		Username: "tester3",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -340,7 +352,7 @@ func TestUserPrivilegesTable(t *testing.T) {
 
 	// test the privilege of new user for information_schema.user_privileges
 	tk.MustExec("create user usageuser")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "usageuser",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -474,6 +486,31 @@ func TestPartitionsTable(t *testing.T) {
 	tk.MustExec("drop table test_partitions")
 }
 
+// https://github.com/pingcap/tidb/issues/32693.
+func TestPartitionTablesStatsCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`
+CREATE TABLE e ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30)) PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (50),
+        PARTITION p1 VALUES LESS THAN (100),
+        PARTITION p2 VALUES LESS THAN (150),
+        PARTITION p3 VALUES LESS THAN (MAXVALUE));`)
+	tk.MustExec(`CREATE TABLE e2 ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30));`)
+	// Load the stats cache.
+	tk.MustQuery(`SELECT PARTITION_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'e';`)
+	// p0: 1 row, p3: 3 rows
+	tk.MustExec(`INSERT INTO e VALUES (1669, "Jim", "Smith"), (337, "Mary", "Jones"), (16, "Frank", "White"), (2005, "Linda", "Black");`)
+	tk.MustExec(`set tidb_enable_exchange_partition='on';`)
+	tk.MustExec(`ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2;`)
+	// p0: 1 rows, p3: 3 rows
+	tk.MustExec(`INSERT INTO e VALUES (41, "Michael", "Green");`)
+	tk.MustExec(`analyze table e;`) // The stats_meta should be effective immediately.
+	tk.MustQuery(`SELECT PARTITION_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'e';`).
+		Check(testkit.Rows("p0 1", "p1 0", "p2 0", "p3 3"))
+}
+
 func TestMetricTables(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -526,7 +563,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	tk.MustExec("create user analyze_tester")
 	analyzeTester := testkit.NewTestKit(t, store)
 	analyzeTester.MustExec("use information_schema")
-	require.True(t, analyzeTester.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, analyzeTester.Session().Auth(&auth.UserIdentity{
 		Username: "analyze_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -592,13 +629,11 @@ func TestForTableTiFlashReplica(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx(a))")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
-	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS,TABLE_MODE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0 0 NORMAL"))
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0 0"))
 	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica.Available = true
-	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS,TABLE_MODE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 1 NORMAL"))
-	tbl.Meta().TiFlashMode = model.TiFlashModeFast
-	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS,TABLE_MODE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 1 FAST"))
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 1"))
 }
 
 func TestSequences(t *testing.T) {

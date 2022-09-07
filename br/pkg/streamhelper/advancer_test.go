@@ -21,7 +21,9 @@ import (
 func TestBasic(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	defer func() {
-		fmt.Println(c)
+		if t.Failed() {
+			fmt.Println(c)
+		}
 	}()
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()

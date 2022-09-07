@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -20,6 +21,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -27,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -381,7 +385,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, false))
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, nil))
 
 	for i := 0; i < len(tables); i++ {
 		if i == 0 || i > 2 {
@@ -393,7 +397,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 
-	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, true))
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, tiflashrec.New()))
 	for i := 0; i < len(tables); i++ {
 		require.Nil(t, tables[i].Info.TiFlashReplica)
 	}
@@ -421,9 +425,27 @@ func (r *RecordStores) put(id uint64) {
 }
 
 func (r *RecordStores) sort() {
-	sort.Slice(r.stores, func(i, j int) bool {
-		return r.stores[i] < r.stores[j]
-	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	slices.Sort(r.stores)
+}
+
+func (r *RecordStores) len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.stores)
+}
+
+func (r *RecordStores) get(i int) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stores[i]
+}
+
+func (r *RecordStores) toString() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return fmt.Sprintf("%v", r.stores)
 }
 
 var recordStores RecordStores
@@ -475,13 +497,13 @@ func TestSetSpeedLimit(t *testing.T) {
 
 	recordStores.sort()
 	t.Logf("Total Cost: %v\n", cost)
-	t.Logf("Has Communicated: %v\n", recordStores.stores)
+	t.Logf("Has Communicated: %v\n", recordStores.toString())
 
 	serialCost := len(mockStores) * WORKING_TIME
 	require.Less(t, cost, time.Duration(serialCost)*time.Millisecond)
-	require.Equal(t, len(mockStores), len(recordStores.stores))
-	for i := 0; i < len(recordStores.stores); i++ {
-		require.Equal(t, mockStores[i].Id, recordStores.stores[i])
+	require.Equal(t, len(mockStores), recordStores.len())
+	for i := 0; i < recordStores.len(); i++ {
+		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
 
 	// 2. Expect the number of communicated stores to be less than the length of the mockStore
@@ -499,10 +521,10 @@ func TestSetSpeedLimit(t *testing.T) {
 
 	recordStores.sort()
 	sort.Slice(mockStores, func(i, j int) bool { return mockStores[i].Id < mockStores[j].Id })
-	t.Logf("Has Communicated: %v\n", recordStores.stores)
-	require.Less(t, len(recordStores.stores), len(mockStores))
-	for i := 0; i < len(recordStores.stores); i++ {
-		require.Equal(t, mockStores[i].Id, recordStores.stores[i])
+	t.Logf("Has Communicated: %v\n", recordStores.toString())
+	require.Less(t, recordStores.len(), len(mockStores))
+	for i := 0; i < recordStores.len(); i++ {
+		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
 }
 
@@ -551,4 +573,216 @@ func TestDeleteRangeQuery(t *testing.T) {
 	require.Equal(t, querys[1], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (4, 1, '748000000000000005', '748000000000000006', %[1]d),(4, 2, '748000000000000006', '748000000000000007', %[1]d)")
 	require.Equal(t, querys[2], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (7, 1, '7480000000000000085f698000000000000001', '7480000000000000085f698000000000000002', %[1]d)")
 	require.Equal(t, querys[3], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (9, 2, '74800000000000000a5f698000000000000001', '74800000000000000a5f698000000000000002', %[1]d),(9, 3, '74800000000000000a5f698000000000000002', '74800000000000000a5f698000000000000003', %[1]d)")
+}
+
+func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
+	files := []*backuppb.DataFileInfo{}
+	batchCount := 0
+
+	client := restore.MockClient(nil)
+	err := client.RestoreMetaKVFilesWithBatchMethod(
+		context.Background(),
+		files,
+		nil,
+		nil,
+		nil,
+		func(
+			ctx context.Context,
+			files []*backuppb.DataFileInfo,
+			schemasReplace *stream.SchemasReplace,
+			updateStats func(kvCount uint64, size uint64),
+			progressInc func(),
+		) error {
+			batchCount++
+			return nil
+		},
+	)
+	require.Nil(t, err)
+	require.Equal(t, batchCount, 0)
+}
+
+func TestRestoreMetaKVFilesWithBatchMethod2(t *testing.T) {
+	files := []*backuppb.DataFileInfo{
+		{
+			Path:  "f1",
+			MinTs: 100,
+			MaxTs: 120,
+		},
+	}
+	batchCount := 0
+	result := make(map[int][]*backuppb.DataFileInfo)
+
+	client := restore.MockClient(nil)
+	err := client.RestoreMetaKVFilesWithBatchMethod(
+		context.Background(),
+		files,
+		nil,
+		nil,
+		nil,
+		func(
+			ctx context.Context,
+			fs []*backuppb.DataFileInfo,
+			schemasReplace *stream.SchemasReplace,
+			updateStats func(kvCount uint64, size uint64),
+			progressInc func(),
+		) error {
+			result[batchCount] = fs
+			batchCount++
+			return nil
+		},
+	)
+	require.Nil(t, err)
+	require.Equal(t, batchCount, 1)
+	require.Equal(t, len(result), 1)
+	require.Equal(t, result[0], files)
+}
+
+func TestRestoreMetaKVFilesWithBatchMethod3(t *testing.T) {
+	files := []*backuppb.DataFileInfo{
+		{
+			Path:  "f1",
+			MinTs: 100,
+			MaxTs: 120,
+		},
+		{
+			Path:  "f2",
+			MinTs: 100,
+			MaxTs: 120,
+		},
+		{
+			Path:  "f3",
+			MinTs: 110,
+			MaxTs: 130,
+		},
+		{
+			Path:  "f4",
+			MinTs: 140,
+			MaxTs: 150,
+		},
+		{
+			Path:  "f5",
+			MinTs: 150,
+			MaxTs: 160,
+		},
+	}
+	batchCount := 0
+	result := make(map[int][]*backuppb.DataFileInfo)
+
+	client := restore.MockClient(nil)
+	err := client.RestoreMetaKVFilesWithBatchMethod(
+		context.Background(),
+		files,
+		nil,
+		nil,
+		nil,
+		func(
+			ctx context.Context,
+			fs []*backuppb.DataFileInfo,
+			schemasReplace *stream.SchemasReplace,
+			updateStats func(kvCount uint64, size uint64),
+			progressInc func(),
+		) error {
+			result[batchCount] = fs
+			batchCount++
+			return nil
+		},
+	)
+	require.Nil(t, err)
+	require.Equal(t, len(result), 2)
+	require.Equal(t, result[0], files[0:3])
+	require.Equal(t, result[1], files[3:])
+}
+
+func TestRestoreMetaKVFilesWithBatchMethod4(t *testing.T) {
+	files := []*backuppb.DataFileInfo{
+		{
+			Path:  "f1",
+			MinTs: 100,
+			MaxTs: 100,
+		},
+		{
+			Path:  "f2",
+			MinTs: 100,
+			MaxTs: 100,
+		},
+		{
+			Path:  "f3",
+			MinTs: 110,
+			MaxTs: 130,
+		},
+		{
+			Path:  "f4",
+			MinTs: 110,
+			MaxTs: 150,
+		},
+	}
+	batchCount := 0
+	result := make(map[int][]*backuppb.DataFileInfo)
+
+	client := restore.MockClient(nil)
+	err := client.RestoreMetaKVFilesWithBatchMethod(
+		context.Background(),
+		files,
+		nil,
+		nil,
+		nil,
+		func(
+			ctx context.Context,
+			fs []*backuppb.DataFileInfo,
+			schemasReplace *stream.SchemasReplace,
+			updateStats func(kvCount uint64, size uint64),
+			progressInc func(),
+		) error {
+			result[batchCount] = fs
+			batchCount++
+			return nil
+		},
+	)
+	require.Nil(t, err)
+	require.Equal(t, len(result), 2)
+	require.Equal(t, result[0], files[0:2])
+	require.Equal(t, result[1], files[2:])
+}
+
+func TestSortMetaKVFiles(t *testing.T) {
+	files := []*backuppb.DataFileInfo{
+		{
+			Path:       "f5",
+			MinTs:      110,
+			MaxTs:      150,
+			ResolvedTs: 120,
+		},
+		{
+			Path:       "f1",
+			MinTs:      100,
+			MaxTs:      100,
+			ResolvedTs: 80,
+		},
+		{
+			Path:       "f2",
+			MinTs:      100,
+			MaxTs:      100,
+			ResolvedTs: 90,
+		},
+		{
+			Path:       "f4",
+			MinTs:      110,
+			MaxTs:      130,
+			ResolvedTs: 120,
+		},
+		{
+			Path:       "f3",
+			MinTs:      105,
+			MaxTs:      130,
+			ResolvedTs: 100,
+		},
+	}
+
+	files = restore.SortMetaKVFiles(files)
+	require.Equal(t, len(files), 5)
+	require.Equal(t, files[0].Path, "f1")
+	require.Equal(t, files[1].Path, "f2")
+	require.Equal(t, files[2].Path, "f3")
+	require.Equal(t, files[3].Path, "f4")
+	require.Equal(t, files[4].Path, "f5")
 }

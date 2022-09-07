@@ -50,6 +50,10 @@ func TestTraceExec(t *testing.T) {
 	require.Greater(t, len(rows), 1)
 	require.True(t, rowsOrdered(rows))
 
+	rows = tk.MustQuery("trace format='row' analyze table trace").Rows()
+	require.Greater(t, len(rows), 1)
+	require.True(t, rowsOrdered(rows))
+
 	tk.MustExec("trace format='log' insert into trace (c1, c2, c3) values (1, 2, 3)")
 	rows = tk.MustQuery("trace format='log' select * from trace where id = 0;").Rows()
 	require.GreaterOrEqual(t, len(rows), 1)

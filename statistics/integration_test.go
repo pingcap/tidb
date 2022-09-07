@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
@@ -629,4 +630,28 @@ func TestCrossValidationSelectivity(t *testing.T) {
 		"TableReader 0.00 root  data:Selection",
 		"└─Selection 0.00 cop[tikv]  gt(test.t.c, 1000)",
 		"  └─TableRangeScan 2.00 cop[tikv] table:t range:(1 0,1 1000), keep order:false"))
+}
+
+func TestShowHistogramsLoadStatus(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	origLease := h.Lease()
+	h.SetLease(time.Second)
+	defer func() { h.SetLease(origLease) }()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b, c))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1,2,3), (4,5,6)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t")
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Rows()
+	for _, row := range rows {
+		if row[3] == "a" || row[3] == "idx" {
+			require.Equal(t, "allLoaded", row[10].(string))
+		} else {
+			require.Equal(t, "allEvicted", row[10].(string))
+		}
+	}
 }

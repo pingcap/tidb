@@ -1911,7 +1911,9 @@ func TestLoadHistCorrelation(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't'")
-	require.Len(t, result.Rows(), 0)
+	// After https://github.com/pingcap/tidb/pull/37444, `show stats_histograms` displays the columns whose hist/topn/cmsketch
+	// are not loaded and their stats status is allEvicted.
+	require.Len(t, result.Rows(), 1)
 	testKit.MustExec("explain select * from t where c = 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'")
@@ -2307,10 +2309,8 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 	for _, val := range []bool{false, true} {
 		func(planCache bool) {
 			store, dom := testkit.CreateMockStoreAndDomain(t)
-			tmp := testkit.NewTestKit(t, store)
-			defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
-			tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(planCache))
 			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("set tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(planCache))
 
 			originalVal2 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 			defer func() {

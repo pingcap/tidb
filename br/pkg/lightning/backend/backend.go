@@ -215,6 +215,9 @@ type AbstractBackend interface {
 	// ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 	// according to the required algorithm.
 	ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error
+
+	// TotalMemoryConsume counts total memory usage. This is only used for local backend
+	TotalMemoryConsume() int64
 }
 
 // Backend is the delivery target for Lightning
@@ -284,6 +287,10 @@ func (be Backend) FetchRemoteTableModels(ctx context.Context, schemaName string)
 
 func (be Backend) FlushAll(ctx context.Context) error {
 	return be.abstract.FlushAllEngines(ctx)
+}
+
+func (be Backend) TotalMemoryConsume() int64 {
+	return be.abstract.TotalMemoryConsume()
 }
 
 // CheckDiskQuota verifies if the total engine file size is below the given
@@ -411,6 +418,10 @@ func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterCon
 	return &LocalEngineWriter{writer: w, tableName: engine.tableName}, nil
 }
 
+func (engine *OpenedEngine) TotalMemoryConsume() int64 {
+	return engine.engine.backend.TotalMemoryConsume()
+}
+
 // WriteRows writes a collection of encoded rows into the engine.
 func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows kv.Rows) error {
 	return w.writer.AppendRows(ctx, w.tableName, columnNames, rows)
@@ -500,4 +511,8 @@ type EngineWriter interface {
 	) error
 	IsSynced() bool
 	Close(ctx context.Context) (ChunkFlushStatus, error)
+}
+
+func (engine *OpenedEngine) GetEngineUUID() uuid.UUID {
+	return engine.uuid
 }

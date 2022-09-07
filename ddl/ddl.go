@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -134,6 +135,7 @@ type DDL interface {
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
+	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//
@@ -180,7 +182,7 @@ type DDL interface {
 	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
 	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
-	SchemaSyncer() util.SchemaSyncer
+	SchemaSyncer() syncer.SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -268,7 +270,7 @@ type ddlCtx struct {
 	uuid         string
 	store        kv.Storage
 	ownerManager owner.Manager
-	schemaSyncer util.SchemaSyncer
+	schemaSyncer syncer.SchemaSyncer
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
@@ -513,16 +515,16 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	id := uuid.New().String()
 	var manager owner.Manager
-	var syncer util.SchemaSyncer
+	var schemaSyncer syncer.SchemaSyncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(ctx, id)
-		syncer = NewMockSchemaSyncer()
+		schemaSyncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
+		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -541,7 +543,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		lease:                      opt.Lease,
 		ddlJobDoneCh:               make(chan struct{}, 1),
 		ownerManager:               manager,
-		schemaSyncer:               syncer,
+		schemaSyncer:               schemaSyncer,
 		binlogCli:                  binloginfo.GetPumpsClient(),
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
@@ -659,12 +661,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.prepareWorkers4ConcurrencyDDL()
 	d.prepareWorkers4legacyDDL()
 
-	go d.schemaSyncer.StartCleanWork()
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
 		go d.startCleanDeadTableLock()
 	}
-	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 
 	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
@@ -809,7 +809,7 @@ func (d *ddl) genPlacementPolicyID() (int64, error) {
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
-func (d *ddl) SchemaSyncer() util.SchemaSyncer {
+func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
 	return d.schemaSyncer
 }
 
@@ -1683,6 +1683,26 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		return i.ID < j.ID
 	})
 	return allJobs, nil
+}
+
+// ScanHistoryDDLJobs get some of the done DDL jobs.
+// When the DDL history is quite large, GetAllHistoryDDLJobs() API can't work well, because it makes the server OOM.
+// The result is in descending order by job ID.
+func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job, error) {
+	var iter meta.LastJobIterator
+	var err error
+	if startJobID == 0 {
+		iter, err = m.GetLastHistoryDDLJobsIterator()
+	} else {
+		if limit == 0 {
+			return nil, errors.New("when 'start_job_id' is specified, it must work with a 'limit'")
+		}
+		iter, err = m.GetHistoryDDLJobsIterator(startJobID)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.GetLastJobs(limit, nil)
 }
 
 // GetHistoryJobByID return history DDL job by ID.

@@ -2239,7 +2239,7 @@ func TestIndexUsageInformation(t *testing.T) {
 	))
 }
 
-//Functional Test:test batch insert
+// Functional Test:test batch insert
 func TestIndexUsageInformationMultiIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	session.SetIndexUsageSyncLease(1)
@@ -3356,4 +3356,39 @@ func TestAnalyzeTableLRUPut(t *testing.T) {
 	// assert t should be front of lru
 	tk.MustExec("analyze table test.t")
 	require.Equal(t, tbl.Meta().ID, domain.GetDomain(tk.Session()).StatsHandle().GetStatsCacheFrontTable())
+}
+
+func TestUninitializedStatsStatus(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.StatsHandle().SetLease(0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a))")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	tblStats := h.GetTableStats(tblInfo)
+	for _, col := range tblStats.Columns {
+		require.False(t, col.IsStatsInitialized())
+	}
+	for _, idx := range tblStats.Indices {
+		require.False(t, idx.IsStatsInitialized())
+	}
+	tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Check(testkit.Rows())
+	checkStatsPseudo := func() {
+		rows := tk.MustQuery("explain select * from t").Rows()
+		operatorInfo := rows[len(rows)-1][4].(string)
+		require.True(t, strings.Contains(operatorInfo, "stats:pseudo"))
+	}
+	tk.MustExec("set @@tidb_enable_pseudo_for_outdated_stats = true")
+	checkStatsPseudo()
+	tk.MustExec("set @@tidb_enable_pseudo_for_outdated_stats = false")
+	checkStatsPseudo()
 }

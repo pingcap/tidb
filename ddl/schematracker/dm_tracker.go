@@ -26,7 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -86,7 +86,8 @@ func (d SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateData
 	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
 }
 
-func (d SchemaTracker) createTestDB() {
+// CreateTestDB creates the `test` database, which is the default behavior of TiDB.
+func (d SchemaTracker) CreateTestDB() {
 	_ = d.CreateSchema(nil, &ast.CreateDatabaseStmt{
 		Name: model.NewCIStr("test"),
 	})
@@ -302,6 +303,11 @@ func (d SchemaTracker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt
 
 // RecoverTable implements the DDL interface, which is no-op in DM's case.
 func (d SchemaTracker) RecoverTable(ctx sessionctx.Context, recoverInfo *ddl.RecoverInfo) (err error) {
+	return nil
+}
+
+// FlashbackCluster implements the DDL interface, which is no-op in DM's case.
+func (d SchemaTracker) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) (err error) {
 	return nil
 }
 
@@ -1152,7 +1158,7 @@ func (d SchemaTracker) Stop() error {
 func (SchemaTracker) RegisterStatsHandle(handle *handle.Handle) {}
 
 // SchemaSyncer implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) SchemaSyncer() util.SchemaSyncer {
+func (SchemaTracker) SchemaSyncer() syncer.SchemaSyncer {
 	return nil
 }
 

@@ -542,7 +542,7 @@ func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
-	tk.MustExec("alter table t set tiflash mode fast")
+	tk.MustExec("set @@session.tiflash_fastscan=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -4097,7 +4097,7 @@ func TestCreateViewIsolationRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
 
@@ -4306,6 +4306,7 @@ func TestPushDownSelectionForMPP(t *testing.T) {
 	}
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb';")
 
 	var input []string
 	var output []struct {
@@ -6345,8 +6346,9 @@ func TestIssue31202(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	tk.MustQuery("explain format = 'brief' select * from t31202;").Check(testkit.Rows(
-		"TableReader 10000.00 root  data:TableFullScan",
-		"└─TableFullScan 10000.00 cop[tiflash] table:t31202 keep order:false, stats:pseudo"))
+		"TableReader 10000.00 root  data:ExchangeSender",
+		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"  └─TableFullScan 10000.00 mpp[tiflash] table:t31202 keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain format = 'brief' select * from t31202 use index (primary);").Check(testkit.Rows(
 		"TableReader 10000.00 root  data:TableFullScan",
@@ -6978,10 +6980,43 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
 
+func TestLeftShiftPushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(2147483647, 32)")
+	tk.MustExec("insert into t values(12, 2)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "leftshift(test.t.a, test.t.b)->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select a << b from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
 func TestIssue36609(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
 	tk.MustExec("create table t2(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
@@ -6990,4 +7025,159 @@ func TestIssue36609(t *testing.T) {
 	tk.MustExec("create table t5(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
 	tk.MustQuery("select * from t3 straight_join t4 on t3.a = t4.b straight_join t2 on t3.d = t2.c straight_join t1 on t1.a = t2.b straight_join t5 on t4.c = t5.d where t2.b < 100 and t4.a = 10;")
 	tk.MustQuery("select * from information_schema.statements_summary;")
+}
+
+func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10));")
+	tk.MustExec("insert into t values(1, 'tiflash');")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "hex(test.t.a)->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select hex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+
+	rows = [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "hex(test.t.b)->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select hex(b) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestEltPushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(20))")
+	tk.MustExec("insert into t values(2147483647, '32')")
+	tk.MustExec("insert into t values(12, 'abc')")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "elt(test.t.a, test.t.b)->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select elt(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestCastTimeAsDurationToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a date, b datetime(4))")
+	tk.MustExec("insert into t values('2021-10-26', '2021-10-26')")
+	tk.MustExec("insert into t values('2021-10-26', '2021-10-26 11:11:11')")
+	tk.MustExec("insert into t values('2021-10-26', '2021-10-26 11:11:11.111111')")
+	tk.MustExec("insert into t values('2021-10-26', '2021-10-26 11:11:11.123456')")
+	tk.MustExec("insert into t values('2021-10-26', '2021-10-26 11:11:11.999999')")
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "cast(test.t.a, time BINARY)->Column#4, cast(test.t.b, time BINARY)->Column#5"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 2)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = ON")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tbl2, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t2", L: "t2"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	checkMpp := func(r [][]interface{}) {
+		check := false
+		for i := range r {
+			if r[i][2] == "mpp[tiflash]" {
+				check = true
+				break
+			}
+		}
+		require.Equal(t, check, true)
+	}
+
+	// Insert into ... select
+	rs := tk.MustQuery("explain insert into t2 select a+b from t").Rows()
+	checkMpp(rs)
+
+	rs = tk.MustQuery("explain insert into t2 select t.a from t2 join t on t2.a = t.a").Rows()
+	checkMpp(rs)
+
+	// Replace into ... select
+	rs = tk.MustQuery("explain replace into t2 select a+b from t").Rows()
+	checkMpp(rs)
+
+	// CTE
+	rs = tk.MustQuery("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)").Rows()
+	checkMpp(rs)
 }

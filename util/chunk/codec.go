@@ -233,17 +233,17 @@ func init() {
 
 // Decoder decodes the data returned from the coprocessor and stores the result in Chunk.
 // How Decoder works:
-// 1. Initialization phase: Decode a whole input byte slice to Decoder.intermChk(intermediate chunk) using Codec.Decode.
-//    intermChk is introduced to simplify the implementation of decode phase. This phase uses pointer operations with
-//    less CPU and memory cost.
-// 2. Decode phase:
-//    2.1 Set the number of rows to be decoded to a value that is a multiple of 8 and greater than
-//        `chk.RequiredRows() - chk.NumRows()`. This reduces the overhead of copying the srcCol.nullBitMap into
-//        destCol.nullBitMap.
-//    2.2 Append srcCol.offsets to destCol.offsets when the elements is of var-length type. And further adjust the
-//        offsets according to descCol.offsets[destCol.length]-srcCol.offsets[0].
-//    2.3 Append srcCol.nullBitMap to destCol.nullBitMap.
-// 3. Go to step 1 when the input byte slice is consumed.
+//  1. Initialization phase: Decode a whole input byte slice to Decoder.intermChk(intermediate chunk) using Codec.Decode.
+//     intermChk is introduced to simplify the implementation of decode phase. This phase uses pointer operations with
+//     less CPU and memory cost.
+//  2. Decode phase:
+//     2.1 Set the number of rows to be decoded to a value that is a multiple of 8 and greater than
+//     `chk.RequiredRows() - chk.NumRows()`. This reduces the overhead of copying the srcCol.nullBitMap into
+//     destCol.nullBitMap.
+//     2.2 Append srcCol.offsets to destCol.offsets when the elements is of var-length type. And further adjust the
+//     offsets according to descCol.offsets[destCol.length]-srcCol.offsets[0].
+//     2.3 Append srcCol.nullBitMap to destCol.nullBitMap.
+//  3. Go to step 1 when the input byte slice is consumed.
 type Decoder struct {
 	intermChk    *Chunk
 	codec        *Codec

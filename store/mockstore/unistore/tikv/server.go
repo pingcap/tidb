@@ -44,6 +44,9 @@ var _ tikvpb.TikvServer = new(Server)
 
 // Server implements the tikvpb.TikvServer interface.
 type Server struct {
+	// After updating the kvproto, some methods of TikvServer are not implemented.
+	// Construct `Server` based on `UnimplementedTikvServer`, in order to compile successfully
+	tikvpb.UnimplementedTikvServer
 	mvccStore     *MVCCStore
 	regionManager RegionManager
 	innerServer   InnerServer
