@@ -3,6 +3,7 @@ package mydump
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math/big"
@@ -26,6 +27,8 @@ const (
 	// if a parquet if small than this threshold, parquet will load the whole file in a byte slice to
 	// optimize the read performance
 	smallParquetFileThreshold = 256 * 1024 * 1024
+	jan011970                 = 2440588
+	secPerDay                 = 24 * 60 * 60
 )
 
 // ParquetParser parses a parquet file for import
@@ -446,6 +449,13 @@ func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
 	if meta.LogicalType != nil && meta.LogicalType.DECIMAL != nil {
 		v = binaryToDecimalStr([]byte(v), int(meta.LogicalType.DECIMAL.Scale))
 	}
+	if meta.Type != nil && *meta.Type == parquet.Type_INT96 && len([]byte(v)) == 12 {
+		ts := int96ToTime([]byte(v))
+		ts = ts.UTC()
+		tsStr := ts.Format("2006-01-02 15:04:05.999999Z")
+		d.SetString(tsStr, "")
+		return
+	}
 	d.SetString(v, "")
 }
 
@@ -565,4 +575,15 @@ func (*ParquetParser) SetColumns(_ []string) {
 // It implements the Parser interface.
 func (pp *ParquetParser) SetLogger(l log.Logger) {
 	pp.logger = l
+}
+
+func jdToTime(jd int32, nsec int64) time.Time {
+	sec := int64(jd-jan011970) * secPerDay
+	return time.Unix(sec, int64(nsec))
+}
+
+func int96ToTime(parquetDate []byte) time.Time {
+	nano := binary.LittleEndian.Uint64(parquetDate[:8])
+	dt := binary.LittleEndian.Uint32(parquetDate[8:])
+	return jdToTime(int32(dt), int64(nano))
 }

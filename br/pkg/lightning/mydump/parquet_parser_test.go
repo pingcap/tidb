@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/types"
@@ -286,4 +287,35 @@ func TestParquetAurora(t *testing.T) {
 	}
 
 	require.ErrorIs(t, parser.ReadRow(), io.EOF)
+}
+
+func TestHiveParquetParser(t *testing.T) {
+	name := "000000_0.parquet"
+	dir := "./parquet/"
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+	r, err := store.Open(context.TODO(), name)
+	require.NoError(t, err)
+	reader, err := NewParquetParser(context.TODO(), store, r, name)
+	require.NoError(t, err)
+	defer reader.Close()
+	// UTC+0:00
+	results := []time.Time{
+		time.Date(2022, 9, 10, 9, 9, 0, 0, time.UTC),
+		time.Date(1997, 8, 11, 2, 1, 10, 0, time.UTC),
+		time.Date(1995, 12, 31, 23, 0, 1, 0, time.UTC),
+		time.Date(2020, 2, 29, 23, 0, 0, 0, time.UTC),
+		time.Date(2038, 1, 19, 0, 0, 0, 0, time.UTC),
+	}
+
+	for i := 0; i < 5; i++ {
+		err = reader.ReadRow()
+		require.NoError(t, err)
+		lastRow := reader.LastRow()
+		require.Equal(t, 2, len(lastRow.Row))
+		require.Equal(t, types.KindString, lastRow.Row[1].Kind())
+		ts, err := time.Parse("2006-01-02 15:04:05Z", lastRow.Row[1].GetString())
+		require.NoError(t, err)
+		require.Equal(t, results[i], ts)
+	}
 }
