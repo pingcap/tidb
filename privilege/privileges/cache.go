@@ -435,10 +435,7 @@ func (s sortedUserRecord) Len() int {
 	return len(s)
 }
 
-func (s sortedUserRecord) Less(i, j int) bool {
-	x := s[i]
-	y := s[j]
-
+func compareBaseRecord(x, y *baseRecord) bool {
 	// Compare two item by user's host first.
 	c1 := compareHost(x.Host, y.Host)
 	if c1 < 0 {
@@ -450,6 +447,10 @@ func (s sortedUserRecord) Less(i, j int) bool {
 
 	// Then, compare item by user's name value.
 	return x.User < y.User
+}
+
+func (s sortedUserRecord) Less(i, j int) bool {
+	return compareBaseRecord(&s[i].baseRecord, &s[j].baseRecord)
 }
 
 // compareHost compares two host string using some special rules, return value 1, 0, -1 means > = <.
@@ -534,6 +535,14 @@ func (p *MySQLPrivilege) buildDBMap() {
 	dbMap := make(map[string][]dbRecord, len(p.DB))
 	for _, record := range p.DB {
 		dbMap[record.User] = append(dbMap[record.User], record)
+	}
+
+	// Sort the records to make the matching rule work.
+	for _, records := range dbMap {
+		sort.Slice(records, func(i, j int) bool {
+			return compareBaseRecord(&records[i].baseRecord, &records[j].baseRecord)
+		})
+
 	}
 	p.DBMap = dbMap
 }
