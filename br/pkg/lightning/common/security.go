@@ -44,8 +44,6 @@ type TLS struct {
 
 // NewTLS constructs a new HTTP client with TLS configured with the CA,
 // certificate and key paths.
-//
-// If the CA path is empty, returns an instance where TLS is disabled.
 func NewTLS(caPath, certPath, keyPath, host string, caBytes, certBytes, keyBytes []byte) (*TLS, error) {
 	inner, err := util.NewTLSConfig(
 		util.WithCAPath(caPath),

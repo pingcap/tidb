@@ -96,6 +96,6 @@ RtgQTNI=
 	keyContent := []byte("invalid key content")
 	err = os.WriteFile(keyPath, keyContent, 0o600)
 	require.NoError(t, err)
-	_, err = common.NewTLS(caPath, certPath, keyPath, "localhost", caContent, certContent, keyContent)
+	_, err = common.NewTLS(caPath, "", "", "localhost", caContent, certContent, keyContent)
 	require.ErrorContains(t, err, "tls: failed to find any PEM data in certificate input")
 }

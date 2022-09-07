@@ -112,6 +112,7 @@ type tlsConfigBuilder struct {
 	verifyCN                           []string
 }
 
+// TLSConfigOption is used to build a tls.Config in NewTLSConfig.
 type TLSConfigOption func(*tlsConfigBuilder)
 
 // WithCAPath sets the CA path to build a tls.Config, and the peer should use the certificate which can be verified by
