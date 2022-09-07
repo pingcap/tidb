@@ -25,3 +25,10 @@ jobs:
           log: info
           token: ${{ secrets.GITHUB_TOKEN }}
           config: .github/licenserc.yml
+      - name: Set commit status
+        uses: myrotvorets/set-commit-status-action@master
+        if: always()
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          status: ${{ job.status }}
+          context: check-misc
