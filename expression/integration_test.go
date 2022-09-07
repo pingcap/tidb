@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sem"
@@ -3110,15 +3109,6 @@ func TestValuesInNonInsertStmt(t *testing.T) {
 	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
 }
 
-func TestForeignKeyVar(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("SET FOREIGN_KEY_CHECKS=1")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8047 variable 'foreign_key_checks' does not yet support value: 1"))
-}
-
 func TestUserVarMockWindFunc(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -4903,6 +4893,7 @@ func TestSchemaDMLNotChange(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -6297,7 +6288,7 @@ func TestBuiltinFuncJSONMergePatch_InColumn(t *testing.T) {
 			if tt.expected == nil {
 				result.Check(testkit.Rows("<nil>"))
 			} else {
-				j, e := json.ParseBinaryFromString(tt.expected.(string))
+				j, e := types.ParseBinaryJSONFromString(tt.expected.(string))
 				require.NoError(t, e)
 				result.Check(testkit.Rows(j.String()))
 			}
@@ -6417,7 +6408,7 @@ func TestBuiltinFuncJSONMergePatch_InExpression(t *testing.T) {
 			if tt.expected == nil {
 				result.Check(testkit.Rows("<nil>"))
 			} else {
-				j, e := json.ParseBinaryFromString(tt.expected.(string))
+				j, e := types.ParseBinaryJSONFromString(tt.expected.(string))
 				require.NoError(t, e)
 				result.Check(testkit.Rows(j.String()))
 			}

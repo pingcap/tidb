@@ -176,7 +176,6 @@ go_test(
         "//testkit/external",
         "//testkit/testsetup",
         "//types",
-        "//types/json",
         "//util",
         "//util/arena",
         "//util/chunk",

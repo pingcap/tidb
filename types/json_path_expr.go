@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package json
+package types
 
 import (
 	"encoding/json"
@@ -28,10 +28,10 @@ import (
 
 /*
 	From MySQL 5.7, JSON path expression grammar:
-		pathExpression ::= scope (pathLeg)*
+		pathExpression ::= scope (jsonPathLeg)*
 		scope ::= [ columnReference ] '$'
 		columnReference ::= // omit...
-		pathLeg ::= member | arrayLocation | '**'
+		jsonPathLeg ::= member | arrayLocation | '**'
 		member ::= '.' (keyName | '*')
 		arrayLocation ::= '[' (non-negative-integer | '*') ']'
 		keyName ::= ECMAScript-identifier | ECMAScript-string-literal
@@ -50,123 +50,123 @@ import (
 		select json_extract('{"a": "b", "c": [1, "2"]}', '$.*') -> ["b", [1, "2"]]
 */
 
-type pathLegType byte
+type jsonPathLegType byte
 
 const (
-	// pathLegKey indicates the path leg with '.key'.
-	pathLegKey pathLegType = 0x01
-	// pathLegIndex indicates the path leg with form '[number]'.
-	pathLegIndex pathLegType = 0x02
-	// pathLegDoubleAsterisk indicates the path leg with form '**'.
-	pathLegDoubleAsterisk pathLegType = 0x03
+	// jsonPathLegKey indicates the path leg with '.key'.
+	jsonPathLegKey jsonPathLegType = 0x01
+	// jsonPathLegIndex indicates the path leg with form '[number]'.
+	jsonPathLegIndex jsonPathLegType = 0x02
+	// jsonPathLegDoubleAsterisk indicates the path leg with form '**'.
+	jsonPathLegDoubleAsterisk jsonPathLegType = 0x03
 )
 
-// pathLeg is only used by PathExpression.
-type pathLeg struct {
-	typ        pathLegType
-	arrayIndex int    // if typ is pathLegIndex, the value should be parsed into here.
-	dotKey     string // if typ is pathLegKey, the key should be parsed into here.
+// jsonPathLeg is only used by JSONPathExpression.
+type jsonPathLeg struct {
+	typ        jsonPathLegType
+	arrayIndex int    // if typ is jsonPathLegIndex, the value should be parsed into here.
+	dotKey     string // if typ is jsonPathLegKey, the key should be parsed into here.
 }
 
 // arrayIndexAsterisk is for parsing `*` into a number.
 // we need this number represent "all".
 const arrayIndexAsterisk = -1
 
-// pathExpressionFlag holds attributes of PathExpression
-type pathExpressionFlag byte
+// jsonPathExpressionFlag holds attributes of JSONPathExpression
+type jsonPathExpressionFlag byte
 
 const (
-	pathExpressionContainsAsterisk       pathExpressionFlag = 0x01
-	pathExpressionContainsDoubleAsterisk pathExpressionFlag = 0x02
+	jsonPathExpressionContainsAsterisk       jsonPathExpressionFlag = 0x01
+	jsonPathExpressionContainsDoubleAsterisk jsonPathExpressionFlag = 0x02
 )
 
 // containsAnyAsterisk returns true if pef contains any asterisk.
-func (pef pathExpressionFlag) containsAnyAsterisk() bool {
-	pef &= pathExpressionContainsAsterisk | pathExpressionContainsDoubleAsterisk
+func (pef jsonPathExpressionFlag) containsAnyAsterisk() bool {
+	pef &= jsonPathExpressionContainsAsterisk | jsonPathExpressionContainsDoubleAsterisk
 	return byte(pef) != 0
 }
 
-// PathExpression is for JSON path expression.
-type PathExpression struct {
-	legs  []pathLeg
-	flags pathExpressionFlag
+// JSONPathExpression is for JSON path expression.
+type JSONPathExpression struct {
+	legs  []jsonPathLeg
+	flags jsonPathExpressionFlag
 }
 
-var peCache PathExpressionCache
+var peCache JSONPathExpressionCache
 
-type pathExpressionKey string
+type jsonPathExpressionKey string
 
-func (key pathExpressionKey) Hash() []byte {
+func (key jsonPathExpressionKey) Hash() []byte {
 	return hack.Slice(string(key))
 }
 
-// PathExpressionCache is a cache for PathExpression.
-type PathExpressionCache struct {
+// JSONPathExpressionCache is a cache for JSONPathExpression.
+type JSONPathExpressionCache struct {
 	mu    sync.Mutex
 	cache *kvcache.SimpleLRUCache
 }
 
-// popOneLeg returns a pathLeg, and a child PathExpression without that leg.
-func (pe PathExpression) popOneLeg() (pathLeg, PathExpression) {
-	newPe := PathExpression{
+// popOneLeg returns a jsonPathLeg, and a child JSONPathExpression without that leg.
+func (pe JSONPathExpression) popOneLeg() (jsonPathLeg, JSONPathExpression) {
+	newPe := JSONPathExpression{
 		legs:  pe.legs[1:],
 		flags: 0,
 	}
 	for _, leg := range newPe.legs {
-		if leg.typ == pathLegIndex && leg.arrayIndex == -1 {
-			newPe.flags |= pathExpressionContainsAsterisk
-		} else if leg.typ == pathLegKey && leg.dotKey == "*" {
-			newPe.flags |= pathExpressionContainsAsterisk
-		} else if leg.typ == pathLegDoubleAsterisk {
-			newPe.flags |= pathExpressionContainsDoubleAsterisk
+		if leg.typ == jsonPathLegIndex && leg.arrayIndex == -1 {
+			newPe.flags |= jsonPathExpressionContainsAsterisk
+		} else if leg.typ == jsonPathLegKey && leg.dotKey == "*" {
+			newPe.flags |= jsonPathExpressionContainsAsterisk
+		} else if leg.typ == jsonPathLegDoubleAsterisk {
+			newPe.flags |= jsonPathExpressionContainsDoubleAsterisk
 		}
 	}
 	return pe.legs[0], newPe
 }
 
-// popOneLastLeg returns the parent PathExpression and the last pathLeg
-func (pe PathExpression) popOneLastLeg() (PathExpression, pathLeg) {
+// popOneLastLeg returns the parent JSONPathExpression and the last jsonPathLeg
+func (pe JSONPathExpression) popOneLastLeg() (JSONPathExpression, jsonPathLeg) {
 	lastLegIdx := len(pe.legs) - 1
 	lastLeg := pe.legs[lastLegIdx]
 	// It is used only in modification, it has been checked that there is no asterisks.
-	return PathExpression{legs: pe.legs[:lastLegIdx]}, lastLeg
+	return JSONPathExpression{legs: pe.legs[:lastLegIdx]}, lastLeg
 }
 
 // pushBackOneIndexLeg pushback one leg of INDEX type
-func (pe PathExpression) pushBackOneIndexLeg(index int) PathExpression {
-	newPe := PathExpression{
-		legs:  append(pe.legs, pathLeg{typ: pathLegIndex, arrayIndex: index}),
+func (pe JSONPathExpression) pushBackOneIndexLeg(index int) JSONPathExpression {
+	newPe := JSONPathExpression{
+		legs:  append(pe.legs, jsonPathLeg{typ: jsonPathLegIndex, arrayIndex: index}),
 		flags: pe.flags,
 	}
 	if index == -1 {
-		newPe.flags |= pathExpressionContainsAsterisk
+		newPe.flags |= jsonPathExpressionContainsAsterisk
 	}
 	return newPe
 }
 
 // pushBackOneKeyLeg pushback one leg of KEY type
-func (pe PathExpression) pushBackOneKeyLeg(key string) PathExpression {
-	newPe := PathExpression{
-		legs:  append(pe.legs, pathLeg{typ: pathLegKey, dotKey: key}),
+func (pe JSONPathExpression) pushBackOneKeyLeg(key string) JSONPathExpression {
+	newPe := JSONPathExpression{
+		legs:  append(pe.legs, jsonPathLeg{typ: jsonPathLegKey, dotKey: key}),
 		flags: pe.flags,
 	}
 	if key == "*" {
-		newPe.flags |= pathExpressionContainsAsterisk
+		newPe.flags |= jsonPathExpressionContainsAsterisk
 	}
 	return newPe
 }
 
 // ContainsAnyAsterisk returns true if pe contains any asterisk.
-func (pe PathExpression) ContainsAnyAsterisk() bool {
+func (pe JSONPathExpression) ContainsAnyAsterisk() bool {
 	return pe.flags.containsAnyAsterisk()
 }
 
-type stream struct {
+type jsonPathStream struct {
 	pathExpr string
 	pos      int
 }
 
-func (s *stream) skipWhiteSpace() {
+func (s *jsonPathStream) skipWhiteSpace() {
 	for ; s.pos < len(s.pathExpr); s.pos++ {
 		if !unicode.IsSpace(rune(s.pathExpr[s.pos])) {
 			break
@@ -174,25 +174,25 @@ func (s *stream) skipWhiteSpace() {
 	}
 }
 
-func (s *stream) read() byte {
+func (s *jsonPathStream) read() byte {
 	b := s.pathExpr[s.pos]
 	s.pos++
 	return b
 }
 
-func (s *stream) peek() byte {
+func (s *jsonPathStream) peek() byte {
 	return s.pathExpr[s.pos]
 }
 
-func (s *stream) skip(i int) {
+func (s *jsonPathStream) skip(i int) {
 	s.pos += i
 }
 
-func (s *stream) exhausted() bool {
+func (s *jsonPathStream) exhausted() bool {
 	return s.pos >= len(s.pathExpr)
 }
 
-func (s *stream) readWhile(f func(byte) bool) (str string, metEnd bool) {
+func (s *jsonPathStream) readWhile(f func(byte) bool) (str string, metEnd bool) {
 	start := s.pos
 	for ; !s.exhausted(); s.skip(1) {
 		if !f(s.peek()) {
@@ -202,46 +202,46 @@ func (s *stream) readWhile(f func(byte) bool) (str string, metEnd bool) {
 	return s.pathExpr[start:s.pos], true
 }
 
-func parseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
-	s := &stream{pathExpr: pathExpr, pos: 0}
+func parseJSONPathExpr(pathExpr string) (pe JSONPathExpression, err error) {
+	s := &jsonPathStream{pathExpr: pathExpr, pos: 0}
 	s.skipWhiteSpace()
 	if s.exhausted() || s.read() != '$' {
-		return PathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(1)
+		return JSONPathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(1)
 	}
 	s.skipWhiteSpace()
 
-	pe.legs = make([]pathLeg, 0, 16)
-	pe.flags = pathExpressionFlag(0)
+	pe.legs = make([]jsonPathLeg, 0, 16)
+	pe.flags = jsonPathExpressionFlag(0)
 
 	var ok bool
 
 	for !s.exhausted() {
 		switch s.peek() {
 		case '.':
-			ok = parseMember(s, &pe)
+			ok = parseJSONPathMember(s, &pe)
 		case '[':
-			ok = parseArray(s, &pe)
+			ok = parseJSONPathArray(s, &pe)
 		case '*':
-			ok = parseWildcard(s, &pe)
+			ok = parseJSONPathWildcard(s, &pe)
 		default:
 			ok = false
 		}
 
 		if !ok {
-			return PathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(s.pos)
+			return JSONPathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(s.pos)
 		}
 
 		s.skipWhiteSpace()
 	}
 
-	if len(pe.legs) > 0 && pe.legs[len(pe.legs)-1].typ == pathLegDoubleAsterisk {
-		return PathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(s.pos)
+	if len(pe.legs) > 0 && pe.legs[len(pe.legs)-1].typ == jsonPathLegDoubleAsterisk {
+		return JSONPathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(s.pos)
 	}
 
 	return
 }
 
-func parseWildcard(s *stream, p *PathExpression) bool {
+func parseJSONPathWildcard(s *jsonPathStream, p *JSONPathExpression) bool {
 	s.skip(1)
 	if s.exhausted() || s.read() != '*' {
 		return false
@@ -250,12 +250,12 @@ func parseWildcard(s *stream, p *PathExpression) bool {
 		return false
 	}
 
-	p.flags |= pathExpressionContainsDoubleAsterisk
-	p.legs = append(p.legs, pathLeg{typ: pathLegDoubleAsterisk})
+	p.flags |= jsonPathExpressionContainsDoubleAsterisk
+	p.legs = append(p.legs, jsonPathLeg{typ: jsonPathLegDoubleAsterisk})
 	return true
 }
 
-func parseArray(s *stream, p *PathExpression) bool {
+func parseJSONPathArray(s *jsonPathStream, p *JSONPathExpression) bool {
 	s.skip(1)
 	s.skipWhiteSpace()
 	if s.exhausted() {
@@ -264,8 +264,8 @@ func parseArray(s *stream, p *PathExpression) bool {
 
 	if s.peek() == '*' {
 		s.skip(1)
-		p.flags |= pathExpressionContainsAsterisk
-		p.legs = append(p.legs, pathLeg{typ: pathLegIndex, arrayIndex: arrayIndexAsterisk})
+		p.flags |= jsonPathExpressionContainsAsterisk
+		p.legs = append(p.legs, jsonPathLeg{typ: jsonPathLegIndex, arrayIndex: arrayIndexAsterisk})
 	} else {
 		// FIXME: only support an integer index for now. Need to support [last], [1 to 2]... in the future.
 		str, meetEnd := s.readWhile(func(b byte) bool {
@@ -278,7 +278,7 @@ func parseArray(s *stream, p *PathExpression) bool {
 		if err != nil || index > math.MaxUint32 {
 			return false
 		}
-		p.legs = append(p.legs, pathLeg{typ: pathLegIndex, arrayIndex: index})
+		p.legs = append(p.legs, jsonPathLeg{typ: jsonPathLegIndex, arrayIndex: index})
 	}
 
 	s.skipWhiteSpace()
@@ -289,7 +289,7 @@ func parseArray(s *stream, p *PathExpression) bool {
 	return true
 }
 
-func parseMember(s *stream, p *PathExpression) bool {
+func parseJSONPathMember(s *jsonPathStream, p *JSONPathExpression) bool {
 	var err error
 	s.skip(1)
 	s.skipWhiteSpace()
@@ -299,8 +299,8 @@ func parseMember(s *stream, p *PathExpression) bool {
 
 	if s.peek() == '*' {
 		s.skip(1)
-		p.flags |= pathExpressionContainsAsterisk
-		p.legs = append(p.legs, pathLeg{typ: pathLegKey, dotKey: "*"})
+		p.flags |= jsonPathExpressionContainsAsterisk
+		p.legs = append(p.legs, jsonPathLeg{typ: jsonPathLegKey, dotKey: "*"})
 	} else {
 		var dotKey string
 		var wasQuoted bool
@@ -329,12 +329,12 @@ func parseMember(s *stream, p *PathExpression) bool {
 		if !json.Valid(hack.Slice(dotKey)) {
 			return false
 		}
-		dotKey, err = unquoteString(dotKey[1 : len(dotKey)-1])
+		dotKey, err = unquoteJSONString(dotKey[1 : len(dotKey)-1])
 		if err != nil || (!wasQuoted && !isEcmascriptIdentifier(dotKey)) {
 			return false
 		}
 
-		p.legs = append(p.legs, pathLeg{typ: pathLegKey, dotKey: dotKey})
+		p.legs = append(p.legs, jsonPathLeg{typ: jsonPathLegKey, dotKey: dotKey})
 	}
 	return true
 }
@@ -355,33 +355,33 @@ func isEcmascriptIdentifier(s string) bool {
 	return true
 }
 
-// ParseJSONPathExpr parses a JSON path expression. Returns a PathExpression
+// ParseJSONPathExpr parses a JSON path expression. Returns a JSONPathExpression
 // object which can be used in JSON_EXTRACT, JSON_SET and so on.
-func ParseJSONPathExpr(pathExpr string) (PathExpression, error) {
+func ParseJSONPathExpr(pathExpr string) (JSONPathExpression, error) {
 	peCache.mu.Lock()
-	val, ok := peCache.cache.Get(pathExpressionKey(pathExpr))
+	val, ok := peCache.cache.Get(jsonPathExpressionKey(pathExpr))
 	if ok {
 		peCache.mu.Unlock()
-		return val.(PathExpression), nil
+		return val.(JSONPathExpression), nil
 	}
 	peCache.mu.Unlock()
 
 	pathExpression, err := parseJSONPathExpr(pathExpr)
 	if err == nil {
 		peCache.mu.Lock()
-		peCache.cache.Put(pathExpressionKey(pathExpr), kvcache.Value(pathExpression))
+		peCache.cache.Put(jsonPathExpressionKey(pathExpr), kvcache.Value(pathExpression))
 		peCache.mu.Unlock()
 	}
 	return pathExpression, err
 }
 
-func (pe PathExpression) String() string {
+func (pe JSONPathExpression) String() string {
 	var s strings.Builder
 
 	s.WriteString("$")
 	for _, leg := range pe.legs {
 		switch leg.typ {
-		case pathLegIndex:
+		case jsonPathLegIndex:
 			if leg.arrayIndex == -1 {
 				s.WriteString("[*]")
 			} else {
@@ -389,14 +389,14 @@ func (pe PathExpression) String() string {
 				s.WriteString(strconv.Itoa(leg.arrayIndex))
 				s.WriteString("]")
 			}
-		case pathLegKey:
+		case jsonPathLegKey:
 			s.WriteString(".")
 			if leg.dotKey == "*" {
 				s.WriteString(leg.dotKey)
 			} else {
-				s.WriteString(quoteString(leg.dotKey))
+				s.WriteString(quoteJSONString(leg.dotKey))
 			}
-		case pathLegDoubleAsterisk:
+		case jsonPathLegDoubleAsterisk:
 			s.WriteString("**")
 		}
 	}

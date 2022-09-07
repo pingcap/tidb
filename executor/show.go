@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -1111,11 +1110,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
-		if ast.ReferOptionType(fk.OnDelete) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete).String()))
+		if model.ReferOptionType(fk.OnDelete) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON DELETE %s", model.ReferOptionType(fk.OnDelete).String()))
 		}
-		if ast.ReferOptionType(fk.OnUpdate) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate).String()))
+		if model.ReferOptionType(fk.OnUpdate) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
 		}
 	}
 
@@ -1776,7 +1775,7 @@ func (e *ShowExec) appendRow(row []interface{}) {
 			e.result.AppendMyDecimal(i, x)
 		case types.Time:
 			e.result.AppendTime(i, x)
-		case json.BinaryJSON:
+		case types.BinaryJSON:
 			e.result.AppendJSON(i, x)
 		case types.Duration:
 			e.result.AppendDuration(i, x)
@@ -1980,7 +1979,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stateJSON := json.BinaryJSON{}
+	stateJSON := types.BinaryJSON{}
 	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
 		return err
 	}
@@ -2000,7 +1999,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tokenJSON := json.BinaryJSON{}
+	tokenJSON := types.BinaryJSON{}
 	if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
 		return err
 	}

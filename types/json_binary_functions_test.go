@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package json
+package types
 
 import (
 	"testing"
@@ -35,18 +35,18 @@ func BenchmarkDecodeEscapedUnicode(b *testing.B) {
 }
 
 func BenchmarkMergePatchBinary(b *testing.B) {
-	valueA, _ := ParseBinaryFromString(`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`)
-	valueB, _ := ParseBinaryFromString(`{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`)
+	valueA, _ := ParseBinaryJSONFromString(`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`)
+	valueB, _ := ParseBinaryJSONFromString(`{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`)
 	for i := 0; i < b.N; i++ {
-		_, _ = MergePatchBinary([]*BinaryJSON{&valueA, &valueB})
+		_, _ = MergePatchBinaryJSON([]*BinaryJSON{&valueA, &valueB})
 	}
 }
 
 func BenchmarkMergeBinary(b *testing.B) {
-	valueA, _ := ParseBinaryFromString(`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`)
-	valueB, _ := ParseBinaryFromString(`{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`)
+	valueA, _ := ParseBinaryJSONFromString(`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`)
+	valueB, _ := ParseBinaryJSONFromString(`{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`)
 	for i := 0; i < b.N; i++ {
-		_ = MergeBinary([]BinaryJSON{valueA, valueB})
+		_ = MergeBinaryJSON([]BinaryJSON{valueA, valueB})
 	}
 }
 
@@ -57,35 +57,35 @@ func TestBinaryCompare(t *testing.T) {
 		result int
 	}{
 		{
-			CreateBinary("a"),
-			CreateBinary("b"),
+			CreateBinaryJSON("a"),
+			CreateBinaryJSON("b"),
 			-1,
 		},
 		{
-			CreateBinary(Opaque{
+			CreateBinaryJSON(Opaque{
 				TypeCode: 0,
 				Buf:      []byte{0, 1, 2, 3},
 			}),
-			CreateBinary(Opaque{
+			CreateBinaryJSON(Opaque{
 				TypeCode: 0,
 				Buf:      []byte{0, 1, 2},
 			}),
 			1,
 		},
 		{
-			CreateBinary(Opaque{
+			CreateBinaryJSON(Opaque{
 				TypeCode: 0,
 				Buf:      []byte{0, 1, 2, 3},
 			}),
-			CreateBinary(Opaque{
+			CreateBinaryJSON(Opaque{
 				TypeCode: 0,
 				Buf:      []byte{0, 2, 1},
 			}),
 			-1,
 		},
 		{
-			CreateBinary("test"),
-			CreateBinary(Opaque{
+			CreateBinaryJSON("test"),
+			CreateBinaryJSON(Opaque{
 				TypeCode: 0,
 				Buf:      []byte{0, 2, 1},
 			}),
@@ -100,6 +100,6 @@ func TestBinaryCompare(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		require.Equal(t, test.result, CompareBinary(test.left, test.right), "%s should be %s %s", test.left.String(), compareMsg[test.result], test.right.String())
+		require.Equal(t, test.result, CompareBinaryJSON(test.left, test.right), "%s should be %s %s", test.left.String(), compareMsg[test.result], test.right.String())
 	}
 }

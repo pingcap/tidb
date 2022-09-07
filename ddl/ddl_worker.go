@@ -1502,6 +1502,19 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
 			}
 		}
+	case model.ActionCreateTable:
+		diff.TableID = job.TableID
+		if len(job.Args) > 0 {
+			tbInfo, _ := job.Args[0].(*model.TableInfo)
+			// When create table with foreign key, we actually has two schema status change:
+			// 1. none -> write-only
+			// 2. write-only -> public
+			// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
+			// apply create new table. So need to set diff.OldTableID here to make sure it.
+			if tbInfo != nil && tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
+				diff.OldTableID = job.TableID
+			}
+		}
 	default:
 		diff.TableID = job.TableID
 	}
