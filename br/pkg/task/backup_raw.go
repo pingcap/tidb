@@ -107,6 +107,9 @@ func (cfg *RawKvConfig) ParseBackupConfigFromFlags(flags *pflag.FlagSet) error {
 
 	cfg.RemoveSchedulers, err = flags.GetBool(flagRemoveSchedulers)
 	if err != nil {
+		// todo: bazel complains [unconvert] Unnecessary conversion (unconvert), seems a bug of bazel
+		// add this nolint to shut it up
+		//nolint: unconvert
 		return errors.Trace(err)
 	}
 	level, err := flags.GetInt32(flagCompressionLevel)
