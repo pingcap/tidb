@@ -1315,6 +1315,20 @@ func (ls *PhysicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalSort
+func (ls *PhysicalSort) MemoryUsage() (sum int64) {
+	if ls == nil {
+		return
+	}
+
+	sum = ls.basePhysicalPlan.MemoryUsage() +
+		int64(unsafe.Sizeof(ls.ByItems)) + int64(cap(ls.ByItems))*SizeOfPointer +
+		// todo: add the expression memory usage
+		// todo: replace sizeof
+		int64(unsafe.Sizeof(ls.IsPartialSort))
+	return
+}
+
 // NominalSort asks sort properties for its child. It is a fake operator that will not
 // appear in final physical operator tree. It will be eliminated or converted to Projection.
 type NominalSort struct {

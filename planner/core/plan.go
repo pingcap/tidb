@@ -16,9 +16,6 @@ package core
 
 import (
 	"fmt"
-	"math"
-	"strconv"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -31,6 +28,9 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
+	"math"
+	"strconv"
+	"unsafe"
 )
 
 // Plan is the description of an execution flow.
@@ -523,6 +523,26 @@ func (*basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 	return nil
 }
 
+// MemoryUsage return the memory usage of basePhysicalPlan
+func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePlan.MemoryUsage() +
+		int64(unsafe.Sizeof(p.childrenReqProps)) + int64(cap(p.childrenReqProps))*SizeOfPointer +
+		int64(unsafe.Sizeof(p.children)) + int64(cap(p.children)+1)*SizeOfInterface +
+		4*int64(unsafe.Sizeof(p.cost))
+	for _, prop := range p.childrenReqProps {
+		sum += prop.MemoryUsage()
+	}
+	//for _, child := range p.children {
+	//	sum += child.MemoryUsage()
+	//}
+	// todo: remove comment
+	return
+}
+
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
 func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
 	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS++
@@ -669,6 +689,9 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt 
 	return p.children[0].PruneColumns(parentUsedCols, opt)
 }
 
+const SizeOfPointer = int64(unsafe.Sizeof(new(int)))
+const SizeOfInterface = int64(unsafe.Sizeof(*new(interface{})))
+
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
@@ -724,6 +747,19 @@ func (p *basePlan) SelectBlockOffset() int {
 // Stats implements Plan Stats interface.
 func (p *basePlan) Stats() *property.StatsInfo {
 	return p.stats
+}
+
+// basePlanSize is the size of basePlan.
+const basePlanSize = int64(unsafe.Sizeof(basePlan{}))
+
+// MemoryUsage return the memory usage of basePlan
+func (p *basePlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = basePlanSize + int64(len(p.tp))
+	return sum
 }
 
 // Schema implements Plan Schema interface.

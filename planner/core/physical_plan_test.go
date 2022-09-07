@@ -20,6 +20,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -2037,4 +2038,15 @@ func TestMPPSinglePartitionType(t *testing.T) {
 		})
 		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func TestPhysicalSortMemoryTrace(t *testing.T) {
+	fmt.Println(int64(unsafe.Sizeof(core.PhysicalSort{})))
+
+	ls := core.PhysicalSort{}
+	fmt.Println(ls.MemoryUsage())
+
+	fmt.Println(unsafe.Offsetof(ls.ByItems))
+	fmt.Println(unsafe.Offsetof(ls.IsPartialSort))
+	fmt.Println(unsafe.Alignof(ls))
 }

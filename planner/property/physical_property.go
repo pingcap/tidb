@@ -17,6 +17,7 @@ package property
 import (
 	"bytes"
 	"fmt"
+	"unsafe"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
@@ -339,4 +340,27 @@ func (p *PhysicalProperty) AllSameOrder() (isSame bool, desc bool) {
 		}
 	}
 	return true, p.SortItems[0].Desc
+}
+
+const emptyPhysicalPropertySize = int64(unsafe.Sizeof(PhysicalProperty{}))
+
+// MemoryUsage return the memory usage of PhysicalProperty
+func (p *PhysicalProperty) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPhysicalPropertySize + int64(cap(p.SortItems))*int64(unsafe.Sizeof(SortItem{})) +
+		int64(len(p.hashcode)) + int64(cap(p.MPPPartitionCols))*int64(unsafe.Sizeof(new(MPPPartitionColumn))) +
+		int64(cap(p.SortItemsForPartition))*int64(unsafe.Sizeof(SortItem{}))
+	for _, e := range p.SortItems {
+		sum += e.Col.MemoryUsage()
+	}
+	for _, e := range p.SortItemsForPartition {
+		sum += e.Col.MemoryUsage()
+	}
+	for _, mppCol := range p.MPPPartitionCols {
+		sum += mppCol.Col.MemoryUsage()
+	}
+	return
 }
