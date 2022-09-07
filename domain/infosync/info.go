@@ -1047,3 +1047,70 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 	}
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+// StoreInternalSession is the entry function for store an internal session to SessionManager.
+func StoreInternalSession(se interface{}) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return
+	}
+	sm.StoreInternalSession(se)
+}
+
+// DeleteInternalSession is the entry function for delete an internal session from SessionManager.
+func DeleteInternalSession(se interface{}) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return
+	}
+	sm.DeleteInternalSession(se)
+}
+
+// SetEtcdClient is only used for test.
+func SetEtcdClient(etcdCli *clientv3.Client) {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return
+	}
+	is.etcdCli = etcdCli
+}
+
+// GetEtcdClient is only used for test.
+func GetEtcdClient() *clientv3.Client {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return nil
+	}
+	return is.etcdCli
+}
+
+// GetPDScheduleConfig gets the schedule information from pd
+func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.scheduleManager.GetPDScheduleConfig(ctx)
+}
+
+// SetPDScheduleConfig sets the schedule information for pd
+func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.scheduleManager.SetPDScheduleConfig(ctx, config)
+}
+>>>>>>> 4cb0d1f7a... ddl: Delete TiFlash sync status from etcd when table is truncated or dropped (#37184)

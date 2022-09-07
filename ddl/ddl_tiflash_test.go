@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
 )
 
@@ -944,3 +945,73 @@ func TestTiFlashBatchUnsupported(t *testing.T) {
 	require.Equal(t, "In total 2 tables: 1 succeed, 0 failed, 1 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	tk.MustGetErrCode("alter database information_schema set tiflash replica 1", 8200)
 }
+<<<<<<< HEAD
+=======
+
+func TestTiFlashProgress(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	s.tiflash.NotAvailable = true
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	save := infosync.GetEtcdClient()
+	defer infosync.SetEtcdClient(save)
+	infosync.SetEtcdClient(cluster.Client(0))
+	tk.MustExec("create database tiflash_d")
+	tk.MustExec("create table tiflash_d.t(z int)")
+	tk.MustExec("alter table tiflash_d.t set tiflash replica 1")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	mustExist := func(tid int64) {
+		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		require.NoError(t, err)
+		_, ok := pm[tb.Meta().ID]
+		require.True(t, ok)
+	}
+	mustAbsent := func(tid int64) {
+		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		require.NoError(t, err)
+		_, ok := pm[tb.Meta().ID]
+		require.False(t, ok)
+	}
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	mustExist(tb.Meta().ID)
+	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta().ID)
+	mustAbsent(tb.Meta().ID)
+
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	tk.MustExec("truncate table tiflash_d.t")
+	mustAbsent(tb.Meta().ID)
+
+	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	tk.MustExec("drop table tiflash_d.t")
+	mustAbsent(tb.Meta().ID)
+
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	tiflash := s.tiflash
+	defer teardown()
+	_ = testkit.NewTestKit(t, s.store)
+	timeout := time.Now().Add(10 * time.Second)
+	errMsg := "time out"
+	for time.Now().Before(timeout) {
+		time.Sleep(100 * time.Millisecond)
+		if tiflash.GetRuleGroupIndex() != 0 {
+			errMsg = "invalid group index"
+			break
+		}
+	}
+	require.Equal(t, placement.RuleIndexTiFlash, tiflash.GetRuleGroupIndex(), errMsg)
+	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexTable)
+	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexPartition)
+}
+>>>>>>> 4cb0d1f7a... ddl: Delete TiFlash sync status from etcd when table is truncated or dropped (#37184)
