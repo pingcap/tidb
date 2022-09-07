@@ -124,7 +124,11 @@ func (re *regexpBaseFuncSig) genCompile(matchType string) (func(string) (*regexp
 	}
 
 	return func(pat string) (*regexp.Regexp, error) {
-		return regexp.Compile(fmt.Sprintf("(?%s)%s", matchType, pat))
+		if len(matchType) == 0 {
+			return regexp.Compile(fmt.Sprintf("%s", pat))
+		} else {
+			return regexp.Compile(fmt.Sprintf("(?%s)%s", matchType, pat))
+		}
 	}, nil
 }
 
