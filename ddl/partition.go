@@ -778,10 +778,11 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		Exprs: []ast.ExprNode{*partOptions.Interval.LastRangeEnd},
 	}
 	if len(tbInfo.Partition.Columns) > 0 {
-		if _, _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, tbInfo, first.Exprs); err != nil {
+		colTypes := collectColumnsType(tbInfo)
+		if _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, first.Exprs); err != nil {
 			return err
 		}
-		if _, _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, tbInfo, last.Exprs); err != nil {
+		if _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, last.Exprs); err != nil {
 			return err
 		}
 	} else {
@@ -1076,6 +1077,7 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
+	colTypes := collectColumnsType(tbInfo)
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeList, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -1083,8 +1085,8 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 		clause := def.Clause.(*ast.PartitionDefinitionClauseIn)
 		if len(tbInfo.Partition.Columns) > 0 {
 			for _, vs := range clause.Values {
-				// TODO: use the normalised and formatted strings returned here
-				_, _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, tbInfo, vs)
+				// TODO: use the generated strings / normalized partition values
+				_, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, vs)
 				if err != nil {
 					return nil, err
 				}
@@ -1146,16 +1148,16 @@ func collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
 func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
+	colTypes := collectColumnsType(tbInfo)
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeRange, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
 		}
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
 		var partValStrings []string
-		var colTypes []types.FieldType
 		if len(tbInfo.Partition.Columns) > 0 {
 			var err error
-			if partValStrings, colTypes, err = checkAndGetColumnsTypeAndValuesMatch(ctx, tbInfo, clause.Exprs); err != nil {
+			if partValStrings, err = checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, clause.Exprs); err != nil {
 				return nil, err
 			}
 		} else {

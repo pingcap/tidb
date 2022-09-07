@@ -6380,12 +6380,11 @@ func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec
 	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
 }
 
-func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) ([]string, []types.FieldType, error) {
+func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []types.FieldType, exprs []ast.ExprNode) ([]string, error) {
 	// Validate() has already checked len(colNames) = len(exprs)
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
-	colTypes := collectColumnsType(meta)
 	valStrings := make([]string, 0, len(colTypes))
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
@@ -6395,7 +6394,7 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.Ta
 		colType := colTypes[i]
 		val, err := expression.EvalAstExpr(ctx, colExpr)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
 		vkind := val.Kind()
@@ -6404,38 +6403,38 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.Ta
 			switch vkind {
 			case types.KindString, types.KindBytes:
 			default:
-				return nil, nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			switch vkind {
 			case types.KindInt64, types.KindUint64, types.KindNull:
 			default:
-				return nil, nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		case mysql.TypeFloat, mysql.TypeDouble:
 			switch vkind {
 			case types.KindFloat32, types.KindFloat64, types.KindNull:
 			default:
-				return nil, nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		case mysql.TypeString, mysql.TypeVarString:
 			switch vkind {
 			case types.KindString, types.KindBytes, types.KindNull, types.KindBinaryLiteral:
 			default:
-				return nil, nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		}
 		newVal, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, &colType)
 		if err != nil {
-			return nil, nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
 		s, err := newVal.ToString()
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		valStrings = append(valStrings, s)
 	}
-	return valStrings, colTypes, nil
+	return valStrings, nil
 }
 
 // LockTables uses to execute lock tables statement.
