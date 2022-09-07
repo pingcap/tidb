@@ -1932,12 +1932,12 @@
     "Name": "TestForceInlineCTE",
     "Cases": [
       {
-        "SQL": "set tidb_opt_force_inline_cte=1;",
+        "SQL": "set tidb_opt_force_inline_cte=1; -- enable force inline CTE",
         "Plan": null,
         "Warning": null
       },
       {
-        "SQL": "with cte as (select * from t) select * from cte;",
+        "SQL": "with cte as (select * from t) select * from cte; -- inline",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
           "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -1945,7 +1945,7 @@
         "Warning": null
       },
       {
-        "SQL": "with cte as (select /*+ MERGE() */ * from t) select * from cte;",
+        "SQL": "with cte as (select /*+ MERGE() */ * from t) select * from cte; -- inline",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
           "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -1953,7 +1953,30 @@
         "Warning": null
       },
       {
-        "SQL": "with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;",
+        "SQL": "with cte as (select * from t) select * from cte cte1, cte cte2; -- multi inline CTEs",
+        "Plan": [
+          "HashJoin 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (select * from t), cte2 as (select a from cte1 group by a) select * from cte1, cte2; -- multi inline CTEs",
+        "Plan": [
+          "HashJoin 80000000.00 root  CARTESIAN inner join",
+          "├─HashAgg(Build) 8000.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+          "│ └─TableReader 10000.00 root  data:TableFullScan",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 100) select * from cte1; -- Recursive cte cannot be inlined",
         "Plan": [
           "CTEFullScan 2.00 root CTE:cte1 data:CTE_0",
           "CTE_0 2.00 root  Recursive CTE",
@@ -1968,12 +1991,12 @@
         ]
       },
       {
-        "SQL": "set tidb_opt_force_inline_cte=0;",
+        "SQL": "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
         "Plan": null,
         "Warning": null
       },
       {
-        "SQL": "with cte as (select * from t) select * from cte;",
+        "SQL": "with cte as (select * from t) select * from cte; -- cannot be inlined",
         "Plan": [
           "CTEFullScan 10000.00 root CTE:cte data:CTE_0",
           "CTE_0 10000.00 root  Non-Recursive CTE",
@@ -1983,7 +2006,7 @@
         "Warning": null
       },
       {
-        "SQL": "with cte as (select /*+ MERGE() */ * from t) select * from cte;",
+        "SQL": "with cte as (select /*+ MERGE() */ * from t) select * from cte; -- inline, merge hint override session variable",
         "Plan": [
           "TableReader 10000.00 root  data:TableFullScan",
           "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -1991,7 +2014,7 @@
         "Warning": null
       },
       {
-        "SQL": "with recursive cte1(c1) as (select 1 union select /*+ MERGE() */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;",
+        "SQL": "with recursive cte1(c1) as (select 1 union select /*+ MERGE() */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1; -- Recursive cte cannot be inlined",
         "Plan": [
           "CTEFullScan 2.00 root CTE:cte1 data:CTE_0",
           "CTE_0 2.00 root  Recursive CTE",

@@ -599,14 +599,16 @@
   {
     "name": "TestForceInlineCTE",
     "cases": [
-      "set tidb_opt_force_inline_cte=1;", // enable force inline CTE
-      "with cte as (select * from t) select * from cte;", // inline
-      "with cte as (select /*+ MERGE() */ * from t) select * from cte;", // inline
-      "with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;", // Recursive cte cannot be inlined.
-      "set tidb_opt_force_inline_cte=0;", // disable force inline CTE
-      "with cte as (select * from t) select * from cte;", // cannot be inlined
-      "with cte as (select /*+ MERGE() */ * from t) select * from cte;", // inline, merge hint override session variable
-      "with recursive cte1(c1) as (select 1 union select /*+ MERGE() */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;" // Recursive cte cannot be inlined.
+      "set tidb_opt_force_inline_cte=1; -- enable force inline CTE",
+      "with cte as (select * from t) select * from cte; -- inline",
+      "with cte as (select /*+ MERGE() */ * from t) select * from cte; -- inline",
+      "with cte as (select * from t) select * from cte cte1, cte cte2; -- multi inline CTEs",
+      "with cte1 as (select * from t), cte2 as (select a from cte1 group by a) select * from cte1, cte2; -- multi inline CTEs",
+      "with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 100) select * from cte1; -- Recursive cte cannot be inlined",
+      "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
+      "with cte as (select * from t) select * from cte; -- cannot be inlined",
+      "with cte as (select /*+ MERGE() */ * from t) select * from cte; -- inline, merge hint override session variable",
+      "with recursive cte1(c1) as (select 1 union select /*+ MERGE() */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1; -- Recursive cte cannot be inlined"
     ]
   },
   {
