@@ -270,7 +270,12 @@ func (s *configTestSuite) TestAdjustWillBatchImportRatioInvalid(c *C) {
 	c.Assert(cfg.Mydumper.BatchImportRatio, Equals, 0.75)
 }
 
+<<<<<<< HEAD
 func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
+=======
+func TestAdjustSecuritySection(t *testing.T) {
+	uuidHolder := "<uuid>"
+>>>>>>> 796fb1f0a... *: adjust TLS behaviour for dumpling and lightning (#37479)
 	testCases := []struct {
 		input       string
 		expectedCA  string
@@ -294,7 +299,7 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 				ca-path = "/path/to/ca.pem"
 			`,
 			expectedCA:  "/path/to/ca.pem",
-			expectedTLS: "cluster",
+			expectedTLS: uuidHolder,
 		},
 		{
 			input: `
@@ -313,7 +318,7 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 				ca-path = "/path/to/ca2.pem"
 			`,
 			expectedCA:  "/path/to/ca2.pem",
-			expectedTLS: "cluster",
+			expectedTLS: uuidHolder,
 		},
 		{
 			input: `
@@ -322,7 +327,7 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 				ca-path = "/path/to/ca2.pem"
 			`,
 			expectedCA:  "/path/to/ca2.pem",
-			expectedTLS: "cluster",
+			expectedTLS: uuidHolder,
 		},
 		{
 			input: `
@@ -346,9 +351,19 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		err = cfg.Adjust(context.Background())
+<<<<<<< HEAD
 		c.Assert(err, IsNil, comment)
 		c.Assert(cfg.TiDB.Security.CAPath, Equals, tc.expectedCA, comment)
 		c.Assert(cfg.TiDB.TLS, Equals, tc.expectedTLS, comment)
+=======
+		require.NoError(t, err, comment)
+		require.Equal(t, tc.expectedCA, cfg.TiDB.Security.CAPath, comment)
+		if tc.expectedTLS == uuidHolder {
+			require.NotEmpty(t, cfg.TiDB.TLS, comment)
+		} else {
+			require.Equal(t, tc.expectedTLS, cfg.TiDB.TLS, comment)
+		}
+>>>>>>> 796fb1f0a... *: adjust TLS behaviour for dumpling and lightning (#37479)
 	}
 }
 

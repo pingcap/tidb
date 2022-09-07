@@ -32,6 +32,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
@@ -39,6 +40,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/util"
+	filter "github.com/pingcap/tidb/util/table-filter"
+	router "github.com/pingcap/tidb/util/table-router"
+>>>>>>> 796fb1f0a... *: adjust TLS behaviour for dumpling and lightning (#37479)
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -162,7 +169,15 @@ func (cfg *Config) String() string {
 
 func (cfg *Config) ToTLS() (*common.TLS, error) {
 	hostPort := net.JoinHostPort(cfg.TiDB.Host, strconv.Itoa(cfg.TiDB.StatusPort))
-	return common.NewTLS(cfg.Security.CAPath, cfg.Security.CertPath, cfg.Security.KeyPath, hostPort)
+	return common.NewTLS(
+		cfg.Security.CAPath,
+		cfg.Security.CertPath,
+		cfg.Security.KeyPath,
+		hostPort,
+		cfg.Security.CABytes,
+		cfg.Security.CertBytes,
+		cfg.Security.KeyBytes,
+	)
 }
 
 type Lightning struct {
@@ -553,6 +568,18 @@ type Security struct {
 	KeyPath  string `toml:"key-path" json:"key-path"`
 	// RedactInfoLog indicates that whether enabling redact log
 	RedactInfoLog bool `toml:"redact-info-log" json:"redact-info-log"`
+<<<<<<< HEAD
+=======
+
+	// TLSConfigName is used to set tls config for lightning in DM, so we don't expose this field to user
+	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
+	TLSConfigName string `toml:"-" json:"-"`
+
+	// When DM/engine uses lightning as a library, it can directly pass in the content
+	CABytes   []byte `toml:"-" json:"-"`
+	CertBytes []byte `toml:"-" json:"-"`
+	KeyBytes  []byte `toml:"-" json:"-"`
+>>>>>>> 796fb1f0a... *: adjust TLS behaviour for dumpling and lightning (#37479)
 }
 
 // RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
@@ -561,9 +588,20 @@ func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
 		return nil
 	}
+<<<<<<< HEAD
 	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
 	switch {
 	case err != nil:
+=======
+
+	tlsConfig, err := util.NewTLSConfig(
+		util.WithCAPath(sec.CAPath),
+		util.WithCertAndKeyPath(sec.CertPath, sec.KeyPath),
+		util.WithCAContent(sec.CABytes),
+		util.WithCertAndKeyContent(sec.CertBytes, sec.KeyBytes),
+	)
+	if err != nil {
+>>>>>>> 796fb1f0a... *: adjust TLS behaviour for dumpling and lightning (#37479)
 		return errors.Trace(err)
 	case tlsConfig != nil:
 		// error happens only when the key coincides with the built-in names.
@@ -1124,8 +1162,18 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 
 	switch cfg.TiDB.TLS {
 	case "":
+<<<<<<< HEAD
 		if len(cfg.TiDB.Security.CAPath) > 0 {
 			cfg.TiDB.TLS = "cluster"
+=======
+		if len(cfg.TiDB.Security.CAPath) > 0 || len(cfg.TiDB.Security.CABytes) > 0 ||
+			len(cfg.TiDB.Security.CertPath) > 0 || len(cfg.TiDB.Security.CertBytes) > 0 ||
+			len(cfg.TiDB.Security.KeyPath) > 0 || len(cfg.TiDB.Security.KeyBytes) > 0 {
+			if cfg.TiDB.Security.TLSConfigName == "" {
+				cfg.TiDB.Security.TLSConfigName = uuid.NewString() // adjust this the default value
+			}
+			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
+>>>>>>> 796fb1f0a... *: adjust TLS behaviour for dumpling and lightning (#37479)
 		} else {
 			cfg.TiDB.TLS = "false"
 		}
