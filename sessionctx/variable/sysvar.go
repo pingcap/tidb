@@ -457,7 +457,7 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), nil
 		},
 	},
-	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().TempStoragePath, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
 		// FIXME: check if temp dir is being used; if used, reject
 		disk.TempDirMutex.Lock()
 		defer disk.TempDirMutex.Unlock()
