@@ -16,6 +16,10 @@ package core
 
 import (
 	"fmt"
+	"math"
+	"strconv"
+	"unsafe"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -29,9 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
-	"math"
-	"strconv"
-	"unsafe"
 )
 
 // Plan is the description of an execution flow.
