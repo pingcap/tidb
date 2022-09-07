@@ -71,7 +71,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		b.err = err
 		return nil
 	}
-	if b.ctx.GetSessionVars().GetReplicaRead() == kv.ReplicaReadClosestAdaptive {
+	if b.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, p.GetAvgRowSize()))
 	}
 	if e.runtimeStats != nil {
