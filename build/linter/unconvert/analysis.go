@@ -30,9 +30,10 @@ const Name = "unconvert"
 
 // Analyzer is the analyzer struct of unconvert.
 var Analyzer = &analysis.Analyzer{
-	Name: Name,
-	Doc:  "Remove unnecessary type conversions",
-	Run:  run,
+	Name:     Name,
+	Doc:      "Remove unnecessary type conversions",
+	Requires: []*analysis.Analyzer{inspect.Analyzer},
+	Run:      run,
 }
 
 func init() {
