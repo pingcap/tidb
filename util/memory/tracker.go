@@ -742,4 +742,3 @@ const SizeOfUint64 = int64(unsafe.Sizeof(*new(uint64)))
 
 // SizeOfInt32 is the memory each int32 occupied
 const SizeOfInt32 = int64(unsafe.Sizeof(*new(int32)))
- 
