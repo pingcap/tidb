@@ -34,6 +34,12 @@ import (
 
 type empty struct{}
 
+const patternIdx = 1
+const RegexpLikeMatchTypeIdx = 2
+const RegexpSubstrMatchTypeIdx = 4
+const RegexpInstrMatchTypeIdx = 5
+const RegexpReplaceMatchTypeIdx = 5
+
 // Valid flags in match type
 const (
 	flag_i = "i"
@@ -138,6 +144,56 @@ func (re *regexpBaseFuncSig) genRegexp(pat string, matchType string) (*regexp.Re
 	return compile(pat)
 }
 
+// we can memorize the regexp when:
+//  1. pattern and match type are constant
+//  2. pattern is const and there is no match type argument
+//
+// return true: need, false: needless
+func (re *regexpBaseFuncSig) canMemorize(matchTypeIdx int) bool {
+	return re.args[patternIdx].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= matchTypeIdx || re.args[matchTypeIdx].ConstItem(re.ctx.GetSessionVars().StmtCtx))
+}
+
+func (reg *regexpBaseFuncSig) initMemoizedRegexp(params []*regexpParam, matchTypeIdx int, n int) error {
+	patterns := params[patternIdx].getCol()
+
+	for i := 0; i < n; i++ {
+		if patterns.IsNull(i) {
+			continue
+		}
+
+		// Generate compile
+		compile, err := reg.genCompile(params[matchTypeIdx].getStringVal(0))
+		if err != nil {
+			return ErrRegexp.GenWithStackByArgs(err)
+		}
+
+		// Compile this constant pattern, so that we can avoid this repeatable work
+		reg.memorize(compile, patterns.GetString(i))
+		break
+	}
+
+	return reg.memorizedErr
+}
+
+// As multiple threads may memorize regexp and cause data race, only the first thread
+// who gets the lock is permitted to do the memorization and others should wait for him
+// until the memorization has been finished.
+func (re *regexpBaseFuncSig) tryToMemorize(params []*regexpParam, matchTypeIdx int, n int) error {
+	// Check memorization
+	if n == 0 || !re.canMemorize(matchTypeIdx) {
+		return nil
+	}
+
+	re.lock.Lock()
+	defer re.lock.Unlock()
+
+	if re.isMemorizedRegexpInitialized() {
+		return nil // It's needless to memorize again
+	}
+
+	return re.initMemoizedRegexp(params, matchTypeIdx, n)
+}
+
 // ---------------------------------- regexp_like ----------------------------------
 
 type regexpLikeFunctionClass struct {
@@ -212,7 +268,7 @@ func (re *builtinRegexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) 
 		re.memorize(compile, pat)
 	}
 
-	if re.needMemorization() {
+	if re.canMemorize(RegexpLikeMatchTypeIdx) {
 		re.once.Do(memorize) // Avoid data race
 	}
 
@@ -233,17 +289,6 @@ func (re *builtinRegexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) 
 	}
 
 	return boolToInt64(re.memorizedRegexp.MatchString(expr)), false, nil
-}
-
-// we need to memorize the regexp when:
-//  1. pattern and match type are constant
-//  2. pattern is const and there is no match type argument
-//
-// return true: need, false: needless
-func (re *builtinRegexpLikeFuncSig) needMemorization() bool {
-	re.lock.RLock()
-	defer re.lock.RUnlock()
-	return !re.isMemorizedRegexpInitialized() && (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 2 || re.args[2].ConstItem(re.ctx.GetSessionVars().StmtCtx)))
 }
 
 // REGEXP_LIKE(expr, pat[, match_type])
@@ -268,7 +313,6 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	hasMatchType := (len(re.args) == 3)
 	param, isConstNull, err := buildStringParam(&re.baseBuiltinFunc, 2, input, !hasMatchType)
 	params = append(params, param)
-
 	if err != nil {
 		return ErrRegexp.GenWithStackByArgs(err)
 	}
@@ -278,17 +322,9 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		return nil
 	}
 
-	// Check memorization
-	if re.needMemorization() {
-		// matchType must be const or null
-		matchType := params[2].getStringVal(0)
-
-		compile, err := re.genCompile(matchType)
-		if err != nil {
-			return ErrRegexp.GenWithStackByArgs(err)
-		}
-
-		re.initMemoizedRegexp(compile, params[1].getCol(), n)
+	err = re.tryToMemorize(params, RegexpLikeMatchTypeIdx, n)
+	if err != nil {
+		return err
 	}
 
 	result.ResizeInt64(n, false)
@@ -453,7 +489,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 		re.memorize(compile, pat)
 	}
 
-	if re.needMemorization() {
+	if re.canMemorize(RegexpSubstrMatchTypeIdx) {
 		re.once.Do(memorize) // Avoid data race
 	}
 
@@ -482,15 +518,6 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 	}
 
 	return re.findString(re.memorizedRegexp, expr, occurrence)
-}
-
-// we need to memorize the regexp when:
-//  1. pattern and match type are constant
-//  2. pattern is const and match type is null
-//
-// return true: need, false: needless
-func (re *builtinRegexpSubstrFuncSig) needMemorization() bool {
-	return !re.isMemorizedRegexpInitialized() && (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 4 || re.args[4].ConstItem(re.ctx.GetSessionVars().StmtCtx)))
 }
 
 // REGEXP_SUBSTR(expr, pat[, pos[, occurrence[, match_type]]])
@@ -553,16 +580,9 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 	}
 
 	// Check memorization
-	if re.needMemorization() {
-		// matchType must be const or null
-		matchType := params[4].getStringVal(0)
-
-		compile, err := re.genCompile(matchType)
-		if err != nil {
-			return ErrRegexp.GenWithStackByArgs(err)
-		}
-
-		re.initMemoizedRegexp(compile, params[1].getCol(), n)
+	err = re.tryToMemorize(params, RegexpSubstrMatchTypeIdx, n)
+	if err != nil {
+		return err
 	}
 
 	result.ReserveString(n)
@@ -805,7 +825,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 		re.memorize(compile, pat)
 	}
 
-	if re.needMemorization() {
+	if re.canMemorize(RegexpInstrMatchTypeIdx) {
 		re.once.Do(memorize) // Avoid data race
 	}
 
@@ -834,15 +854,6 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 	}
 
 	return re.findIndex(re.memorizedRegexp, expr, pos, occurrence, returnOption)
-}
-
-// we need to memorize the regexp when:
-//  1. pattern and match type are constant
-//  2. pattern is const and match type is null
-//
-// return true: need, false: needless
-func (re *builtinRegexpInStrFuncSig) needMemorization() bool {
-	return !re.isMemorizedRegexpInitialized() && (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 || re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx)))
 }
 
 // REGEXP_INSTR(expr, pat[, pos[, occurrence[, return_option[, match_type]]]])
@@ -917,17 +928,9 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 		return nil
 	}
 
-	// Check memorization
-	if re.needMemorization() {
-		// matchType must be const or null
-		matchType := params[5].getStringVal(0)
-
-		compile, err := re.genCompile(matchType)
-		if err != nil {
-			return ErrRegexp.GenWithStackByArgs(err)
-		}
-
-		re.initMemoizedRegexp(compile, params[1].getCol(), n)
+	err = re.tryToMemorize(params, RegexpInstrMatchTypeIdx, n)
+	if err != nil {
+		return err
 	}
 
 	// Start to calculate
@@ -1199,7 +1202,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		re.memorize(compile, pat)
 	}
 
-	if re.needMemorization() {
+	if re.canMemorize(RegexpReplaceMatchTypeIdx) {
 		re.once.Do(memorize) // Avoid data race
 	}
 
@@ -1227,15 +1230,6 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		return re.getReplacedBinStr(re.memorizedRegexp, bexpr, trimmedBexpr, repl, pos, occurrence)
 	}
 	return re.getReplacedStr(re.memorizedRegexp, expr, trimmedExpr, repl, trimmedLen, occurrence)
-}
-
-// we need to memorize the regexp when:
-//  1. pattern and match type are constant
-//  2. pattern is const and match type is null
-//
-// return true: need, false: needless
-func (re *builtinRegexpReplaceFuncSig) needMemorization() bool {
-	return (re.args[1].ConstItem(re.ctx.GetSessionVars().StmtCtx) && (len(re.args) <= 5 || re.args[5].ConstItem(re.ctx.GetSessionVars().StmtCtx))) && !re.isMemorizedRegexpInitialized()
 }
 
 // REGEXP_REPLACE(expr, pat, repl[, pos[, occurrence[, match_type]]])
@@ -1301,26 +1295,18 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 	hasMatchType := (paramLen == 6)
 	param, isConstNull, err = buildStringParam(&re.baseBuiltinFunc, 5, input, !hasMatchType)
 	params = append(params, param)
-
 	if err != nil {
 		return ErrRegexp.GenWithStackByArgs(err)
 	}
+
 	if isConstNull {
 		fillNullStringIntoResult(result, n)
 		return nil
 	}
 
-	// Check memorization
-	if re.needMemorization() {
-		// matchType must be const or null
-		matchType := params[5].getStringVal(0)
-
-		compile, err := re.genCompile(matchType)
-		if err != nil {
-			return ErrRegexp.GenWithStackByArgs(err)
-		}
-
-		re.initMemoizedRegexp(compile, params[1].getCol(), n)
+	err = re.tryToMemorize(params, RegexpReplaceMatchTypeIdx, n)
+	if err != nil {
+		return err
 	}
 
 	result.ReserveString(n)

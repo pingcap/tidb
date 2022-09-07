@@ -18,7 +18,6 @@ import (
 	"regexp"
 	"sync"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -166,7 +165,7 @@ func getColumnConstValInt(col *chunk.Column, n int) (int64, bool) {
 type regexpMemorizedSig struct {
 	memorizedRegexp *regexp.Regexp
 	memorizedErr    error
-	lock            sync.RWMutex
+	lock            sync.Mutex
 }
 
 func (reg *regexpMemorizedSig) isMemorizedRegexpInitialized() bool {
@@ -177,30 +176,6 @@ func (reg *regexpMemorizedSig) memorize(compile func(string) (*regexp.Regexp, er
 	re, err := compile(pattern)
 	reg.memorizedRegexp = re
 	reg.memorizedErr = err
-}
-
-func (reg *regexpMemorizedSig) initMemoizedRegexp(compile func(string) (*regexp.Regexp, error), patterns *chunk.Column, n int) {
-	// Precondition: patterns is generated from a constant expression
-	reg.lock.Lock()
-	defer reg.lock.Unlock()
-	if n == 0 || reg.isMemorizedRegexpInitialized() {
-		// If the input rownum is zero, the Regexp error shouldn't be generated.
-		return
-	}
-	for i := 0; i < n; i++ {
-		if patterns.IsNull(i) {
-			continue
-		}
-		// Compile this constant pattern, so that we can avoid this repeatable work
-		reg.memorize(compile, patterns.GetString(i))
-		break
-	}
-	if !reg.isMemorizedRegexpInitialized() {
-		reg.memorizedErr = errors.New("No valid regexp pattern found")
-	}
-	if reg.memorizedErr != nil {
-		reg.memorizedRegexp = nil
-	}
 }
 
 func releaseBuffers(bf *baseBuiltinFunc, params []*regexpParam) {
