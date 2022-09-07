@@ -147,10 +147,6 @@ type Session interface {
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
-	// Parameterize tries to convert the general statement to an execute statement and then uses general plan cache to handle it.
-	// e.g. "select * from t where a>23" --> "execute 'select * from t where a>?' using 23".
-	// By using the general plan cache, it can skip the parse and optimization stage so to gain some performance benefits.
-	Parameterize(ctx context.Context, originSQL string) (*ast.ExecuteStmt, bool)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
@@ -234,8 +230,8 @@ type session struct {
 
 	store kv.Storage
 
-	preparedPlanCache *kvcache.SimpleLRUCache
-	generalPlanCache  *kvcache.SimpleLRUCache
+	preparedPlanCache sessionctx.PlanCache
+	generalPlanCache  sessionctx.PlanCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -434,14 +430,15 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache {
+func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
 	if isGeneralPlanCache { // use the general plan cache
 		if !s.GetSessionVars().EnableGeneralPlanCache {
 			return nil
 		}
 		if s.generalPlanCache == nil { // lazy construction
-			s.generalPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+			s.generalPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
+				plannercore.PickPlanFromBucket)
 		}
 		return s.generalPlanCache
 	}
@@ -451,8 +448,9 @@ func (s *session) GetPlanCache(isGeneralPlanCache bool) *kvcache.SimpleLRUCache 
 		return nil
 	}
 	if s.preparedPlanCache == nil { // lazy construction
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
+			plannercore.PickPlanFromBucket)
 	}
 	return s.preparedPlanCache
 }
@@ -476,7 +474,7 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
-		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
+		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle(), s.GetSessionVars().GetEnablePseudoForOutdatedStats())
 		if err != nil {
 			logutil.BgLogger().Debug("store query feedback", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
@@ -1573,26 +1571,6 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return []sqlexec.RecordSet{rs}, err
 }
 
-// Parameterize Parameterizes this sql.
-func (s *session) Parameterize(ctx context.Context, originSQL string) (exec *ast.ExecuteStmt, ok bool) {
-	if !s.GetSessionVars().EnableGeneralPlanCache {
-		return nil, false
-	}
-	paramSQL, params, ok, err := plannercore.Parameterize(s, originSQL)
-	if !ok || err != nil {
-		return nil, false
-	}
-	cachedStmt, err := s.CacheGeneralStmt(paramSQL)
-	if err != nil {
-		return nil, false
-	}
-	return &ast.ExecuteStmt{
-		BinaryArgs:      params,
-		PrepStmt:        cachedStmt,
-		FromGeneralStmt: true,
-	}, true
-}
-
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	parseStartTime := time.Now()
@@ -2545,7 +2523,7 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 
 // Opt describes the option for creating session
 type Opt struct {
-	PreparedPlanCache *kvcache.SimpleLRUCache
+	PreparedPlanCache sessionctx.PlanCache
 }
 
 // CreateSession4TestWithOpt creates a new session environment for test.

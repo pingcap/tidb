@@ -61,8 +61,29 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-// PreparedStmtCount is exported for test.
-var PreparedStmtCount int64
+var (
+	// PreparedStmtCount is exported for test.
+	PreparedStmtCount int64
+	// enableAdaptiveReplicaRead indicates whether closest adaptive replica read
+	// can be enabled. We forces disable replica read when tidb server in missing
+	// in regions that contains tikv server to avoid read traffic skew.
+	enableAdaptiveReplicaRead uint32 = 1
+)
+
+// SetEnableAdaptiveReplicaRead set `enableAdaptiveReplicaRead` with given value.
+// return true if the value is changed.
+func SetEnableAdaptiveReplicaRead(enabled bool) bool {
+	value := uint32(0)
+	if enabled {
+		value = 1
+	}
+	return atomic.SwapUint32(&enableAdaptiveReplicaRead, value) != value
+}
+
+// IsAdaptiveReplicaReadEnabled returns whether adaptive closest replica read can be enabled.
+func IsAdaptiveReplicaReadEnabled() bool {
+	return atomic.LoadUint32(&enableAdaptiveReplicaRead) > 0
+}
 
 // RetryInfo saves retry information.
 type RetryInfo struct {
@@ -1234,6 +1255,9 @@ type SessionVars struct {
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
 	ConstraintCheckInPlacePessimistic bool
+
+	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
+	EnableTiFlashReadForWriteStmt bool
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1434,94 +1458,95 @@ func NewSessionVars() *SessionVars {
 			values: make(map[string]types.Datum),
 			types:  make(map[string]*types.FieldType),
 		},
-		systems:                     make(map[string]string),
-		stmtVars:                    make(map[string]string),
-		PreparedStmts:               make(map[uint32]interface{}),
-		PreparedStmtNameToID:        make(map[string]uint32),
-		PreparedParams:              make([]types.Datum, 0, 10),
-		TxnCtx:                      &TransactionContext{},
-		RetryInfo:                   &RetryInfo{},
-		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:               true,
-		AutoIncrementIncrement:      DefAutoIncrementIncrement,
-		AutoIncrementOffset:         DefAutoIncrementOffset,
-		Status:                      mysql.ServerStatusAutocommit,
-		StmtCtx:                     new(stmtctx.StatementContext),
-		AllowAggPushDown:            false,
-		AllowCartesianBCJ:           DefOptCartesianBCJ,
-		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
-		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
-		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
-		EnableOuterJoinReorder:      DefTiDBEnableOuterJoinReorder,
-		RetryLimit:                  DefTiDBRetryLimit,
-		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:            kv.PriorityLow,
-		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
-		preferRangeScan:             DefOptPreferRangeScan,
-		EnableCorrelationAdjustment: DefOptEnableCorrelationAdjustment,
-		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
-		CorrelationThreshold:        DefOptCorrelationThreshold,
-		CorrelationExpFactor:        DefOptCorrelationExpFactor,
-		cpuFactor:                   DefOptCPUFactor,
-		copCPUFactor:                DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
-		networkFactor:               DefOptNetworkFactor,
-		scanFactor:                  DefOptScanFactor,
-		descScanFactor:              DefOptDescScanFactor,
-		seekFactor:                  DefOptSeekFactor,
-		memoryFactor:                DefOptMemoryFactor,
-		diskFactor:                  DefOptDiskFactor,
-		concurrencyFactor:           DefOptConcurrencyFactor,
-		EnableVectorizedExpression:  DefEnableVectorizedExpression,
-		CommandValue:                uint32(mysql.ComSleep),
-		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
-		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
-		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
-		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
-		enableIndexMerge:            DefTiDBEnableIndexMerge,
-		NoopFuncsMode:               TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
-		replicaRead:                 kv.ReplicaReadLeader,
-		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
-		UsePlanBaselines:            DefTiDBUsePlanBaselines,
-		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		EnableExtendedStats:         false,
-		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
-		MetricSchemaStep:            DefTiDBMetricSchemaStep,
-		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
-		SequenceState:               NewSequenceState(),
-		WindowingUseHighPrecision:   true,
-		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
-		FoundInPlanCache:            DefTiDBFoundInPlanCache,
-		PrevFoundInBinding:          DefTiDBFoundInBinding,
-		FoundInBinding:              DefTiDBFoundInBinding,
-		SelectLimit:                 math.MaxUint64,
-		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
-		EnableParallelApply:         DefTiDBEnableParallelApply,
-		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
-		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    kv.NewDefaultTxnScopeVar(),
-		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
-		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
-		Enable1PC:                   DefTiDBEnable1PC,
-		GuaranteeLinearizability:    DefTiDBGuaranteeLinearizability,
-		AnalyzeVersion:              DefTiDBAnalyzeVersion,
-		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
-		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
-		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
-		TMPTableSize:                DefTiDBTmpTableMaxSize,
-		MPPStoreLastFailTime:        make(map[string]time.Time),
-		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
-		Rng:                         mathutil.NewWithTime(),
-		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
-		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
-		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
-		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
-		MaxAllowedPacket:            DefMaxAllowedPacket,
-		TiFlashFastScan:             DefTiFlashFastScan,
+		systems:                       make(map[string]string),
+		stmtVars:                      make(map[string]string),
+		PreparedStmts:                 make(map[uint32]interface{}),
+		PreparedStmtNameToID:          make(map[string]uint32),
+		PreparedParams:                make([]types.Datum, 0, 10),
+		TxnCtx:                        &TransactionContext{},
+		RetryInfo:                     &RetryInfo{},
+		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:                 true,
+		AutoIncrementIncrement:        DefAutoIncrementIncrement,
+		AutoIncrementOffset:           DefAutoIncrementOffset,
+		Status:                        mysql.ServerStatusAutocommit,
+		StmtCtx:                       new(stmtctx.StatementContext),
+		AllowAggPushDown:              false,
+		AllowCartesianBCJ:             DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdSize,
+		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
+		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
+		RetryLimit:                    DefTiDBRetryLimit,
+		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:              kv.PriorityLow,
+		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
+		preferRangeScan:               DefOptPreferRangeScan,
+		EnableCorrelationAdjustment:   DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:        DefOptLimitPushDownThreshold,
+		CorrelationThreshold:          DefOptCorrelationThreshold,
+		CorrelationExpFactor:          DefOptCorrelationExpFactor,
+		cpuFactor:                     DefOptCPUFactor,
+		copCPUFactor:                  DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:   DefOptTiFlashConcurrencyFactor,
+		networkFactor:                 DefOptNetworkFactor,
+		scanFactor:                    DefOptScanFactor,
+		descScanFactor:                DefOptDescScanFactor,
+		seekFactor:                    DefOptSeekFactor,
+		memoryFactor:                  DefOptMemoryFactor,
+		diskFactor:                    DefOptDiskFactor,
+		concurrencyFactor:             DefOptConcurrencyFactor,
+		EnableVectorizedExpression:    DefEnableVectorizedExpression,
+		CommandValue:                  uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:        DefWaitSplitRegionTimeout,
+		enableIndexMerge:              DefTiDBEnableIndexMerge,
+		NoopFuncsMode:                 TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
+		replicaRead:                   kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:            DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:              DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:           DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:           false,
+		IsolationReadEngines:          make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:               DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:              DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:     DefTiDBMetricSchemaRangeDuration,
+		SequenceState:                 NewSequenceState(),
+		WindowingUseHighPrecision:     true,
+		PrevFoundInPlanCache:          DefTiDBFoundInPlanCache,
+		FoundInPlanCache:              DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:            DefTiDBFoundInBinding,
+		FoundInBinding:                DefTiDBFoundInBinding,
+		SelectLimit:                   math.MaxUint64,
+		AllowAutoRandExplicitInsert:   DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:          DefTiDBEnableClusteredIndex,
+		EnableParallelApply:           DefTiDBEnableParallelApply,
+		ShardAllocateStep:             DefTiDBShardAllocateStep,
+		EnableAmendPessimisticTxn:     DefTiDBEnableAmendPessimisticTxn,
+		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                      kv.NewDefaultTxnScopeVar(),
+		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:             DefTiDBEnableAsyncCommit,
+		Enable1PC:                     DefTiDBEnable1PC,
+		GuaranteeLinearizability:      DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:                DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:          DefTiDBEnableIndexMergeJoin,
+		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
+		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
+		TMPTableSize:                  DefTiDBTmpTableMaxSize,
+		MPPStoreLastFailTime:          make(map[string]time.Time),
+		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
+		Rng:                           mathutil.NewWithTime(),
+		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
+		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
+		MaxAllowedPacket:              DefMaxAllowedPacket,
+		TiFlashFastScan:               DefTiFlashFastScan,
+		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1636,12 +1661,21 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
+	// if closest-adaptive is unavailable, fallback to leader read
+	if s.replicaRead == kv.ReplicaReadClosestAdaptive && !IsAdaptiveReplicaReadEnabled() {
+		return kv.ReplicaReadLeader
+	}
 	return s.replicaRead
 }
 
 // SetReplicaRead set SessionVars.replicaRead.
 func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
 	s.replicaRead = val
+}
+
+// IsReplicaReadClosestAdaptive returns whether adaptive closest replica can be enabled.
+func (s *SessionVars) IsReplicaReadClosestAdaptive() bool {
+	return s.replicaRead == kv.ReplicaReadClosestAdaptive && IsAdaptiveReplicaReadEnabled()
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.

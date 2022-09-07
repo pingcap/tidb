@@ -1778,9 +1778,9 @@ var defaultSysVars = []*SysVar{
 	}},
 	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.
 	{Scope: ScopeGlobal, Name: TiDBDDLDiskQuota, Value: strconv.Itoa(DefTiDBDDLDiskQuota), Type: TypeInt, MinValue: DefTiDBDDLDiskQuota, MaxValue: 1024 * 1024 * DefTiDBDDLDiskQuota / 100, GetGlobal: func(sv *SessionVars) (string, error) {
-		return strconv.FormatInt(DDLDiskQuota.Load(), 10), nil
+		return strconv.FormatUint(DDLDiskQuota.Load(), 10), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		DDLDiskQuota.Store(TidbOptInt64(val, DefTiDBDDLDiskQuota))
+		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(DefTiDBConstraintCheckInPlacePessimistic), Type: TypeBool,
@@ -1791,6 +1791,10 @@ var defaultSysVars = []*SysVar{
 			}
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashReadForWriteStmt, Value: BoolToOnOff(DefTiDBEnableTiFlashReadForWriteStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableTiFlashReadForWriteStmt = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

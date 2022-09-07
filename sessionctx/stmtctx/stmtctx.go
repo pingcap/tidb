@@ -145,6 +145,7 @@ type StatementContext struct {
 	// in stmtCtx
 	IsStaleness     bool
 	InRestrictedSQL bool
+	ViewDepth       int32
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -318,6 +319,8 @@ type StatementContext struct {
 	IsSyncStatsFailed bool
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
 	UseDynamicPruneMode bool
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
 }
 
 // StmtHints are SessionVars related sql hints.

@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -56,7 +55,7 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 		entries3 = append(entries3, entries1...)
 		entries3 = append(entries3, entries2...)
 
-		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, json.CreateBinary(entries1), json.CreateBinary(entries2), json.CreateBinary(entries3)))
+		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, types.CreateBinaryJSON(entries1), types.CreateBinaryJSON(entries2), types.CreateBinaryJSON(entries3)))
 	}
 
 	for _, test := range tests {
@@ -83,7 +82,7 @@ func TestJsonArrayagg(t *testing.T) {
 		// to adapt the `genSrcChk` Chunk format
 		entries = append(entries, nil)
 
-		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, nil, json.CreateBinary(entries)))
+		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, nil, types.CreateBinaryJSON(entries)))
 	}
 
 	for _, test := range tests {
@@ -114,7 +113,7 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 			memDelta += int64(len(val))
 		case mysql.TypeJSON:
 			val := row.GetJSON(0)
-			// +1 for the memory usage of the TypeCode of json
+			// +1 for the memory usage of the JSONTypeCode of json
 			memDelta += int64(len(val.Value) + 1)
 		case mysql.TypeDuration:
 			val := row.GetDuration(0, dataType.GetDecimal())

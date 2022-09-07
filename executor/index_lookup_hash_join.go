@@ -30,6 +30,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
@@ -290,13 +291,11 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		e.cancelFunc()
 	}
 	if e.resultCh != nil {
-		for range e.resultCh {
-		}
+		channel.Clear(e.resultCh)
 		e.resultCh = nil
 	}
 	if e.taskCh != nil {
-		for range e.taskCh {
-		}
+		channel.Clear(e.taskCh)
 		e.taskCh = nil
 	}
 	for i := range e.joinChkResourceCh {
