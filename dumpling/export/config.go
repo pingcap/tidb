@@ -4,10 +4,8 @@ package export
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"strconv"
 	"strings"
@@ -17,6 +15,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb-tools/pkg/utils"
@@ -99,12 +98,13 @@ type Config struct {
 	User     string
 	Password string `json:"-"`
 	Security struct {
+		DriveTLSName string `json:"-"`
 		CAPath       string
 		CertPath     string
 		KeyPath      string
 		SSLCABytes   []byte `json:"-"`
 		SSLCertBytes []byte `json:"-"`
-		SSLKEYBytes  []byte `json:"-"`
+		SSLKeyBytes  []byte `json:"-"`
 	}
 
 	LogLevel      string
@@ -198,8 +198,8 @@ func (conf *Config) GetDSN(db string) string {
 	hostPort := net.JoinHostPort(conf.Host, strconv.Itoa(conf.Port))
 	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?collation=utf8mb4_general_ci&readTimeout=%s&writeTimeout=30s&interpolateParams=true&maxAllowedPacket=0",
 		conf.User, conf.Password, hostPort, db, conf.ReadTimeout)
-	if len(conf.Security.CAPath) > 0 {
-		dsn += "&tls=dumpling-tls-target"
+	if conf.Security.DriveTLSName != "" {
+		dsn += "&tls=" + conf.Security.DriveTLSName
 	}
 	if conf.AllowCleartextPasswords {
 		dsn += "&allowCleartextPasswords=1"
@@ -583,6 +583,7 @@ func adjustConfig(conf *Config, fns ...func(*Config) error) error {
 }
 
 func registerTLSConfig(conf *Config) error {
+<<<<<<< HEAD
 	if len(conf.Security.CAPath) > 0 {
 		var err error
 		var tlsConfig *tls.Config
@@ -614,8 +615,25 @@ func registerTLSConfig(conf *Config) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+=======
+	tlsConfig, err := util.NewTLSConfig(
+		util.WithCAPath(conf.Security.CAPath),
+		util.WithCertAndKeyPath(conf.Security.CertPath, conf.Security.KeyPath),
+		util.WithCAContent(conf.Security.SSLCABytes),
+		util.WithCertAndKeyContent(conf.Security.SSLCertBytes, conf.Security.SSLKeyBytes),
+	)
+	if err != nil {
+		return errors.Trace(err)
+>>>>>>> 796fb1f0a... *: adjust TLS behaviour for dumpling and lightning (#37479)
 	}
-	return nil
+
+	if tlsConfig == nil {
+		return nil
+	}
+
+	conf.Security.DriveTLSName = "dumpling" + uuid.NewString()
+	err = mysql.RegisterTLSConfig(conf.Security.DriveTLSName, tlsConfig)
+	return errors.Trace(err)
 }
 
 func validateSpecifiedSQL(conf *Config) error {
