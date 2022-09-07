@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
@@ -1615,6 +1616,11 @@ func (cis *CIStr) UnmarshalJSON(b []byte) error {
 	}
 	cis.L = strings.ToLower(cis.O)
 	return nil
+}
+
+// MemoryUsage return the memory usage of CIStr
+func (cis *CIStr) MemoryUsage() (sum int64) {
+	return int64(unsafe.Sizeof(cis.O))*2 + int64(len(cis.O)+len(cis.L))
 }
 
 // TableItemID is composed by table ID and column/index ID
