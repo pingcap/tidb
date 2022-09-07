@@ -699,11 +699,13 @@ func pickBackfillProcess(w *worker, job *model.Job) model.ReorgType {
 	return model.ReorgTypeTxn
 }
 
-// fallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.
-func fallbackToTxnMerge(job *model.Job, err error) {
-	logutil.BgLogger().Info("fallback to txn-merge backfill process", zap.Error(err))
-	job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
-	job.SnapshotVer = 0
+// tryFallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.
+func tryFallbackToTxnMerge(job *model.Job, err error) {
+	if job.State != model.JobStateRollingback {
+		logutil.BgLogger().Info("fallback to txn-merge backfill process", zap.Error(err))
+		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
+		job.SnapshotVer = 0
+	}
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -751,13 +753,13 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
 			if err != nil {
-				fallbackToTxnMerge(job, err)
+				tryFallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
 			}
 			done, ver, err = runReorgJobAndHandleAddIndexErr(w, d, t, job, tbl, indexInfo)
 			if err != nil {
 				ingest.LitBackCtxMgr.Unregister(job.ID)
-				fallbackToTxnMerge(job, err)
+				tryFallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
 			}
 			if !done {
@@ -769,8 +771,8 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 					logutil.BgLogger().Warn("Lightning: [DDL] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 				} else {
-					logutil.BgLogger().Warn("Lightning import error:", zap.Error(err))
-					fallbackToTxnMerge(job, err)
+					logutil.BgLogger().Warn("Lightning import error", zap.Error(err))
+					tryFallbackToTxnMerge(job, err)
 				}
 				ingest.LitBackCtxMgr.Unregister(job.ID)
 				return false, ver, errors.Trace(err)
