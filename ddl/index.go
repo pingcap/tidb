@@ -609,6 +609,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		job.SchemaState = model.StateDeleteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String()).Set(0)
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndexMerge, job.SchemaName, tblInfo.Name.String()).Set(0)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		indexInfo.State = model.StateWriteOnly
@@ -785,7 +786,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				return false, ver, errors.Trace(err)
 			}
 		}
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, job.TableName).Set(85)
 		indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
@@ -807,7 +807,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		if !done {
 			return false, ver, err
 		}
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, job.TableName).Set(100)
 		indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		return true, ver, nil
 	default:

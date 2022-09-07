@@ -391,11 +391,11 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, isMergeStage bool, test
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
+	failPath := "github.com/pingcap/tidb/ddl/" + ddl.GenFailPointName("checkBackfillWorkerNum", ddl.FPMrgIdx)
 	if isMergeStage {
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkMergeWorkerNum", `return(true)`))
-	} else {
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
+		failPath = "github.com/pingcap/tidb/ddl/" + ddl.GenFailPointName("checkBackfillWorkerNum", ddl.FPAddIdx)
 	}
+	require.NoError(t, failpoint.Enable(failPath, `return(true)`))
 	testutil.SessionExecInGoroutine(s.store, "test_db", "create index c3_index on test_add_index (c3)", done)
 	checkNum := 0
 
@@ -416,11 +416,10 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, isMergeStage bool, test
 
 	if isMergeStage {
 		require.GreaterOrEqual(t, checkNum, 1)
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkMergeWorkerNum"))
 	} else {
 		require.Greater(t, checkNum, 5)
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
 	}
+	require.NoError(t, failpoint.Disable(failPath))
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
 }

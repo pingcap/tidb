@@ -672,11 +672,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:
-				backfillWorker, err := spawnAddIndexWorker(sessCtx, i, job, t, decodeColMap, reorgInfo, jc)
+				idxWorker, err := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc, job)
 				if err != nil {
-					return err
+					return errors.Trace(err)
 				}
-				backfillWorkers = append(backfillWorkers, backfillWorker)
+				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			case typeAddIndexMergeTmpWorker:
 				tmpIdxWorker := newMergeTempIndexWorker(sessCtx, i, t, reorgInfo, jc)
 				backfillWorkers = append(backfillWorkers, tmpIdxWorker.backfillWorker)
@@ -702,11 +703,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			closeBackfillWorkers(workers)
 		}
 
-		var checkWorkerNum = "checkBackfillWorkerNum"
-		if bfWorkerType == typeAddIndexMergeTmpWorker {
-			checkWorkerNum = "checkMergeWorkerNum"
-		}
-		failpoint.Inject(checkWorkerNum, func(val failpoint.Value) {
+		failpoint.Inject(GenFailPointName("checkBackfillWorkerNum", bfWorkerType), func(val failpoint.Value) {
 			//nolint:forcetypeassert
 			if val.(bool) {
 				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
@@ -755,20 +752,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		startKey = remains[0].StartKey
 	}
 	return nil
-}
-
-func spawnAddIndexWorker(sessCtx sessionctx.Context, seq int, job *model.Job, t table.PhysicalTable,
-	decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*backfillWorker, error) {
-	// If it is not normal started add index reorg task, ie modify column started add index use default backfill process
-	if job.Type != model.ActionAddIndex && job.Type != model.ActionAddPrimaryKey {
-		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
-	}
-	idxWorker, err := newAddIndexWorker(sessCtx, seq, t, decodeColMap, reorgInfo, jc, job)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
-	return idxWorker.backfillWorker, nil
 }
 
 // recordIterFunc is used for low-level record iteration.

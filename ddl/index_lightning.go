@@ -36,11 +36,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// BackfillProgressPercent set a backfill ratio in whole reorg task.
-	BackfillProgressPercent float64 = 0.6
-)
-
 var (
 	telemetryAddIndexLightningUsage = metrics.TelemetryAddIndexLightningCnt
 )

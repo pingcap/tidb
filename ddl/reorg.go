@@ -241,9 +241,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
-		if job.RowCount == 0 {
-			job.SetRowCount(rowCount)
-		}
+		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
@@ -254,13 +252,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		switch reorgInfo.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String()).Set(0)
-		case model.ActionModifyColumn:
-			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
-		}
+		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
 		if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge && !reorgInfo.merging {
 			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 				logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
@@ -274,9 +266,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
 		rowCount, doneKey, currentElement := rc.getRowCountAndKey()
-		if job.RowCount == 0 {
-			job.SetRowCount(rowCount)
-		}
+		job.SetRowCount(rowCount)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
@@ -311,29 +301,32 @@ func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 	job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
 }
 
-func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
-	addedRowCount int64) {
-	if tblInfo == nil || addedRowCount == 0 || reorgInfo.merging {
+func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo, addedRowCount int64) {
+	if tblInfo == nil {
 		return
 	}
-	totalCount := getTableTotalCount(w, tblInfo)
 	progress := float64(0)
-	if totalCount > 0 {
-		progress = float64(addedRowCount) / float64(totalCount)
-	} else {
-		progress = 1
+	if addedRowCount != 0 {
+		totalCount := getTableTotalCount(w, tblInfo)
+		if totalCount > 0 {
+			progress = float64(addedRowCount) / float64(totalCount)
+		} else {
+			progress = 1
+		}
+		if progress > 1 {
+			progress = 1
+		}
 	}
-	if progress > 1 {
-		progress = 1
-	}
+
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		// For lightning there is a part import should be counted.
-		if _, ok := ingest.LitBackCtxMgr.Load(reorgInfo.Job.ID); ok {
-			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorgInfo.SchemaName, tblInfo.Name.String()).Set(BackfillProgressPercent * progress * 100)
+		var label string
+		if reorgInfo.merging {
+			label = metrics.LblAddIndexMerge
 		} else {
-			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+			label = metrics.LblAddIndex
 		}
+		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	case model.ActionModifyColumn:
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	}
