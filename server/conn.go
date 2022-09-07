@@ -923,6 +923,11 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	// method to match the one configured for that specific user.
 	if (cc.authPlugin != userplugin) || (cc.authPlugin != resp.AuthPlugin) {
 		if resp.Capability&mysql.ClientPluginAuth > 0 {
+			// For compatibility, since most mysql client doesn't support 'tidb_sm3_password',
+			// they can connect to TiDB using a `tidb_sm3_password` user with a 'caching_sha2_password' plugin.
+			if userplugin == mysql.AuthTiDBSM3Password {
+				userplugin = mysql.AuthCachingSha2Password
+			}
 			authData, err := cc.authSwitchRequest(ctx, userplugin)
 			if err != nil {
 				return nil, err
