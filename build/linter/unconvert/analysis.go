@@ -59,7 +59,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	}
 
 	for _, pos := range positions {
-		pass.Reportf(token.Pos(pos.Offset), fmt.Sprintf("[%s] Unnecessary conversion", Name))
+		pass.Reportf(token.Pos(0), fmt.Sprintf("%s:%d:%d [%s] Unnecessary conversion", pos.Filename, pos.Line, pos.Column, Name))
 	}
 	return nil, nil
 }
