@@ -297,10 +297,14 @@ func TestRecoverTableMeetError(t *testing.T) {
 func TestRecoverClusterMeetError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(30*time.Second)), "Not support flashback cluster in non-TiKV env")
+
 	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	flashbackTs := oracle.GetTimeFromTS(ts)
 
 	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
 	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
@@ -332,6 +336,7 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", flashbackTs), "schema version not same, have done ddl during [flashbackTS, now)")
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 }
 

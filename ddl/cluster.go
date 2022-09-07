@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -57,6 +58,9 @@ var pdScheduleKey = []string{
 const (
 	flashbackMaxBackoff = 300000           // 300s
 	flashbackTimeout    = 30 * time.Second // 30s
+
+	readOnlyArgsOffset  = 2
+	gcEnabledArgsOffset = 3
 )
 
 func closePDSchedule() error {
@@ -113,6 +117,24 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
+func setTiDBRestrictedReadOnly(sess sessionctx.Context, value bool) error {
+	var setValue string
+	if value == true {
+		setValue = variable.On
+	} else {
+		setValue = variable.Off
+	}
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBRestrictedReadOnly, setValue)
+}
+
+func getTiDBRestrictedReadOnly(sess sessionctx.Context) (bool, error) {
+	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBRestrictedReadOnly)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return variable.TiDBOptOn(val), nil
+}
+
 func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
 		return err
@@ -122,6 +144,9 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 		return err
 	}
 	if err = closePDSchedule(); err != nil {
+		return err
+	}
+	if err = setTiDBRestrictedReadOnly(sess, variable.TiDBOptOn(variable.On)); err != nil {
 		return err
 	}
 
@@ -330,12 +355,32 @@ func FlashbackToVersion(
 // 2. before flashback start, check timestamp, disable GC and close PD schedule.
 // 3. before flashback done, get key ranges, send flashback RPC.
 func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	inFlashbackTest := false
+	failpoint.Inject("mockFlashbackTest", func(val failpoint.Value) {
+		if val.(bool) {
+			inFlashbackTest = true
+		}
+	})
+	// TODO support flashback in unistore
+	if d.store.Name() != "TiKV" && !inFlashbackTest {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("Not support flashback cluster in non-TiKV env")
+	}
+
 	var flashbackTS uint64
 	var pdScheduleValue map[string]interface{}
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue); err != nil {
+	var readOnlyValue, gcEnabledValue bool
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &readOnlyValue, &gcEnabledValue); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	sess, err := w.sessPool.get()
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	defer w.sessPool.put(sess)
 
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and save the PD schedule.
@@ -357,6 +402,18 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
+			readOnlyValue, err = getTiDBRestrictedReadOnly(sess)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			job.Args[readOnlyArgsOffset] = &readOnlyValue
+			gcEnableValue, err := gcutil.CheckGCEnable(sess)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			job.Args[gcEnabledArgsOffset] = &gcEnableValue
 		} else {
 			job.State = model.JobStateCancelled
 			return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
@@ -365,26 +422,26 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
 	case model.StateWriteOnly:
-		sess, err := w.sessPool.get()
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		defer w.sessPool.put(sess)
 		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		// A hack way to make global variables are synchronized to all tidb.
+		// TiKV will block read/write request during flashback cluster,
+		// So it's not very dangerous when sync failed.
+		time.Sleep(1 * time.Second)
 		job.SchemaState = model.StateWriteReorganization
 		return ver, nil
 	// Stage 3, get key ranges.
 	case model.StateWriteReorganization:
-		sess, err := w.sessPool.get()
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+		// TODO support flashback in unistore
+		if inFlashbackTest {
+			asyncNotifyEvent(d, &util.Event{Tp: model.ActionFlashbackCluster})
+			job.State = model.JobStateDone
+			job.SchemaState = model.StatePublic
+			return ver, nil
 		}
-		defer w.sessPool.put(sess)
+
 		keyRanges, err := GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -408,27 +465,37 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 func finishFlashbackCluster(w *worker, job *model.Job) error {
 	var flashbackTS uint64
 	var pdScheduleValue map[string]interface{}
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue); err != nil {
+	var readOnlyValue, gcEnabled bool
+	var jobID int64
+
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &readOnlyValue, &gcEnabled); err != nil {
 		return errors.Trace(err)
 	}
+	sess, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(sess)
 
-	err := kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		jobID, err := t.GetFlashbackClusterJobID()
+		jobID, err = t.GetFlashbackClusterJobID()
 		if err != nil {
 			return err
 		}
 		if jobID == job.ID {
-			if pdScheduleValue != nil {
-				if err = recoverPDSchedule(pdScheduleValue); err != nil {
+			if err = recoverPDSchedule(pdScheduleValue); err != nil {
+				return err
+			}
+			if err = setTiDBRestrictedReadOnly(sess, readOnlyValue); err != nil {
+				return err
+			}
+			if gcEnabled == true {
+				if err = gcutil.EnableGC(sess); err != nil {
 					return err
 				}
 			}
-			if err = enableGC(w); err != nil {
-				return err
-			}
-			err = t.SetFlashbackClusterJobID(0)
-			if err != nil {
+			if err = t.SetFlashbackClusterJobID(0); err != nil {
 				return err
 			}
 		}
