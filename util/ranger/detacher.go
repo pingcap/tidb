@@ -283,22 +283,38 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	eqOrInCount := len(accessConds)
 	res.EqCondCount = eqCount
 	res.EqOrInCount = eqOrInCount
-	ranges, err = d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
+	ranges, err = d.buildRangeOnColsByCNFCond(tpSlice, eqOrInCount, accessConds)
 	if err != nil {
 		return nil, err
 	}
-
-	// Though ranges are built from equal/in conditions, some range may not be a single point after UnionRanges in buildCNFIndexRange.
-	// In order to prepare for the following appendRanges2PointRanges, we set d.mergeConsecutive to false and call buildCNFIndexRange
-	// again to get pointRanges, in which each range must be a single point. If we use ranges rather than pointRanges when calling
-	// appendRanges2PointRanges, wrong ranges would be calculated as issue https://github.com/pingcap/tidb/issues/26029 describes.
-	mergeConsecutive := d.mergeConsecutive
-	d.mergeConsecutive = false
-	pointRanges, err := d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
-	if err != nil {
-		return nil, err
+	// If index has prefix column and d.mergeConsecutive is true, ranges may not be point ranges anymore after UnionRanges.
+	// Therefore, we need to calculate pointRanges separately so that it can be used to append tail ranges in considerDNF branch.
+	// See https://github.com/pingcap/tidb/issues/26029 for details.
+	var pointRanges []*Range
+	if hasPrefix(d.lengths) && fixPrefixColRange(ranges, d.lengths, tpSlice) {
+		if d.mergeConsecutive {
+			pointRanges = make([]*Range, 0, len(ranges))
+			for _, ran := range ranges {
+				pointRanges = append(pointRanges, ran.Clone())
+			}
+			ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			pointRanges, err = UnionRanges(d.sctx, pointRanges, false)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			pointRanges = ranges
+		}
+	} else {
+		pointRanges = ranges
 	}
-	d.mergeConsecutive = mergeConsecutive
 
 	res.Ranges = ranges
 	res.AccessConds = accessConds

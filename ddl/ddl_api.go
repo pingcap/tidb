@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -1809,7 +1810,7 @@ func BuildTableInfo(
 			if constr.Name != "" {
 				fkName = model.NewCIStr(constr.Name)
 			} else {
-				fkName = model.NewCIStr(fmt.Sprintf("fk_%v", foreignKeyID))
+				fkName = model.NewCIStr(fmt.Sprintf("fk_%d", foreignKeyID))
 			}
 			if model.FindFKInfoByName(tbInfo.ForeignKeys, fkName.L) != nil {
 				return nil, infoschema.ErrCannotAddForeign
@@ -1914,7 +1915,7 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		handleCol = tbInfo.GetPkColInfo()
 	}
 	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < 1 {
+		if fk.Version < model.FKVersion1 {
 			continue
 		}
 		if handleCol != nil && len(fk.Cols) == 1 && handleCol.Name.L == fk.Cols[0].L {
@@ -1923,19 +1924,18 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		if model.FindIndexByColumns(tbInfo, fk.Cols...) != nil {
 			continue
 		}
-		for _, idx := range tbInfo.Indices {
-			if idx.Name.L == fk.Name.L {
-				return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", fk.Name.O)
-			}
+		idxName := fk.Name
+		if tbInfo.FindIndexByName(idxName.L) != nil {
+			return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", fk.Name.O)
 		}
 		keys := make([]*ast.IndexPartSpecification, 0, len(fk.Cols))
 		for _, col := range fk.Cols {
 			keys = append(keys, &ast.IndexPartSpecification{
 				Column: &ast.ColumnName{Name: col},
-				Length: -1,
+				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, fk.Name, false, false, false, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, idxName, false, false, false, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2641,6 +2641,18 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	}
 }
 
+func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
+	logutil.BgLogger().Info("[ddl] get flashback cluster job", zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
+	job := &model.Job{
+		Type:       model.ActionFlashbackCluster,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{flashbackTS, map[string]interface{}{}},
+	}
+	err := d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schemaID, tbInfo := recoverInfo.SchemaID, recoverInfo.TableInfo
@@ -3285,8 +3297,6 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
-		case ast.AlterTableSetTiFlashMode:
-			err = d.AlterTableSetTiFlashMode(sctx, ident, spec.TiFlashMode)
 		case ast.AlterTableOrderByColumns:
 			err = d.OrderByColumns(sctx, ident)
 		case ast.AlterTableIndexInvisible:
@@ -5099,42 +5109,6 @@ func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
 	return nil
 }
 
-func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, mode model.TiFlashMode) error {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if mode != model.TiFlashModeNormal && mode != model.TiFlashModeFast {
-		return fmt.Errorf("unsupported TiFlash mode %s", mode)
-	}
-
-	err = isTableTiFlashSupported(schema, tb)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Prompt warning when there is no TiFlash replica, as TiFlash mode will
-	// only take effect when executing in TiFlash.
-	tbReplicaInfo := tb.Meta().TiFlashReplica
-	if tbReplicaInfo == nil || tbReplicaInfo.Count == 0 {
-		ctx.GetSessionVars().StmtCtx.AppendNote(dbterror.ErrAlterTiFlashModeForTableWithoutTiFlashReplica)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionSetTiFlashMode,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{mode},
-	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
-}
-
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
 	// Check the tiflash replica count should be less than the total tiflash stores.
 	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx)
@@ -5499,12 +5473,12 @@ func (d *ddl) dropTableObject(
 		}
 	}
 	if len(notExistTables) > 0 && !ifExists {
-		return dropExistErr.GenWithStackByArgs(strings.Join(notExistTables, ","))
+		return dropExistErr.FastGenByArgs(strings.Join(notExistTables, ","))
 	}
 	// We need add warning when use if exists.
 	if len(notExistTables) > 0 && ifExists {
 		for _, table := range notExistTables {
-			sessVars.StmtCtx.AppendNote(dropExistErr.GenWithStackByArgs(table))
+			sessVars.StmtCtx.AppendNote(dropExistErr.FastGenByArgs(table))
 		}
 	}
 	return nil
@@ -6124,7 +6098,7 @@ func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPa
 		Cols:      make([]model.CIStr, len(keys)),
 	}
 	if variable.EnableForeignKey.Load() {
-		fkInfo.Version = 1
+		fkInfo.Version = model.FKVersion1
 	}
 
 	for i, key := range keys {
@@ -6170,7 +6144,7 @@ func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPa
 			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
 		}
 		if mysql.HasNotNullFlag(col.GetFlag()) && (refer.OnDelete.ReferOpt == model.ReferOptionSetNull || refer.OnUpdate.ReferOpt == model.ReferOptionSetNull) {
-			return nil, infoschema.ErrFkColumnNotNull.GenWithStackByArgs(col.Name.O, fkName)
+			return nil, infoschema.ErrForeignKeyColumnNotNull.GenWithStackByArgs(col.Name.O, fkName)
 		}
 		fkInfo.Cols[i] = key.Column.Name
 	}

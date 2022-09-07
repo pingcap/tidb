@@ -15,19 +15,16 @@
 package executor_test
 
 import (
-	"crypto/tls"
 	"fmt"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -84,64 +81,19 @@ func TestIgnorePlanCache(t *testing.T) {
 	require.False(t, tk.Session().GetSessionVars().StmtCtx.UseCache)
 }
 
-type mockSessionManager2 struct {
-	se     session.Session
-	killed int32
-}
-
-func (sm *mockSessionManager2) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-func (sm *mockSessionManager2) ShowProcessList() map[uint64]*util.ProcessInfo {
-	pl := make(map[uint64]*util.ProcessInfo)
-	if pi, ok := sm.GetProcessInfo(0); ok {
-		pl[pi.ID] = pi
-	}
-	return pl
-}
-
-func (sm *mockSessionManager2) GetProcessInfo(_ uint64) (pi *util.ProcessInfo, notNil bool) {
-	pi = sm.se.ShowProcess()
-	if pi != nil {
-		notNil = true
-	}
-	return
-}
-
-func (sm *mockSessionManager2) Kill(_ uint64, _ bool) {
-	atomic.StoreInt32(&sm.killed, 1)
-	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
-}
-func (sm *mockSessionManager2) KillAllConnections()           {}
-func (sm *mockSessionManager2) UpdateTLSConfig(_ *tls.Config) {}
-func (sm *mockSessionManager2) ServerID() uint64              { return 1 }
-
-func (sm *mockSessionManager2) StoreInternalSession(se interface{}) {}
-
-func (sm *mockSessionManager2) DeleteInternalSession(se interface{}) {}
-
-func (sm *mockSessionManager2) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
-
 func TestPreparedStmtWithHint(t *testing.T) {
 	// see https://github.com/pingcap/tidb/issues/18535
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
 
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
-	tk.SetSession(se)
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 
-	sm := &mockSessionManager2{
-		se: se,
-	}
-	se.SetSessionManager(sm)
-	go dom.ExpensiveQueryHandle().SetSessionManager(sm).Run()
+	go dom.ExpensiveQueryHandle().SetSessionManager(sv).Run()
 	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
 	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
-	require.Equal(t, int32(1), atomic.LoadInt32(&sm.killed))
 }
 
 func TestPreparedNullParam(t *testing.T) {
@@ -1244,6 +1196,9 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	require.Equal(t, "cop[tikv]", rows[len(rows)-1][2])
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	// allowing mpp will generate mpp[tiflash] plan, the test framework will time out due to
+	// "retry for TiFlash peer with region missing", so disable mpp mode to use cop mode instead.
+	tk.MustExec("set @@session.tidb_allow_mpp=0")
 	tk.MustExec("execute stmt")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}

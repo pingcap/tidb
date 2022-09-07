@@ -431,7 +431,7 @@ func (is *infoSchema) deletePolicy(name string) {
 
 func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < 1 {
+		if fk.Version < model.FKVersion1 {
 			continue
 		}
 		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
@@ -471,7 +471,7 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 
 func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < 1 {
+		if fk.Version < model.FKVersion1 {
 			continue
 		}
 		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
@@ -496,8 +496,8 @@ func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model
 	return is.referredForeignKeyMap[name]
 }
 
-// LocalTemporaryTables store local temporary tables
-type LocalTemporaryTables struct {
+// SessionTables store local temporary tables
+type SessionTables struct {
 	// Local temporary tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
 	// schemaTables.dbInfo will only be used when the db is dropped and it may be stale after the db is created again.
 	// But it's fine because we only need its name.
@@ -505,16 +505,16 @@ type LocalTemporaryTables struct {
 	idx2table map[int64]table.Table
 }
 
-// NewLocalTemporaryTables creates a new NewLocalTemporaryTables object
-func NewLocalTemporaryTables() *LocalTemporaryTables {
-	return &LocalTemporaryTables{
+// NewSessionTables creates a new NewSessionTables object
+func NewSessionTables() *SessionTables {
+	return &SessionTables{
 		schemaMap: make(map[string]*schemaTables),
 		idx2table: make(map[int64]table.Table),
 	}
 }
 
 // TableByName get table by name
-func (is *LocalTemporaryTables) TableByName(schema, table model.CIStr) (table.Table, bool) {
+func (is *SessionTables) TableByName(schema, table model.CIStr) (table.Table, bool) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok := tbNames.tables[table.L]; ok {
 			return t, true
@@ -524,19 +524,19 @@ func (is *LocalTemporaryTables) TableByName(schema, table model.CIStr) (table.Ta
 }
 
 // TableExists check if table with the name exists
-func (is *LocalTemporaryTables) TableExists(schema, table model.CIStr) (ok bool) {
+func (is *SessionTables) TableExists(schema, table model.CIStr) (ok bool) {
 	_, ok = is.TableByName(schema, table)
 	return
 }
 
 // TableByID get table by table id
-func (is *LocalTemporaryTables) TableByID(id int64) (tbl table.Table, ok bool) {
+func (is *SessionTables) TableByID(id int64) (tbl table.Table, ok bool) {
 	tbl, ok = is.idx2table[id]
 	return
 }
 
 // AddTable add a table
-func (is *LocalTemporaryTables) AddTable(db *model.DBInfo, tbl table.Table) error {
+func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	schemaTables := is.ensureSchema(db)
 
 	tblMeta := tbl.Meta()
@@ -555,7 +555,7 @@ func (is *LocalTemporaryTables) AddTable(db *model.DBInfo, tbl table.Table) erro
 }
 
 // RemoveTable remove a table
-func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bool) {
+func (is *SessionTables) RemoveTable(schema, table model.CIStr) (exist bool) {
 	tbls := is.schemaTables(schema)
 	if tbls == nil {
 		return false
@@ -575,12 +575,12 @@ func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bo
 }
 
 // Count gets the count of the temporary tables.
-func (is *LocalTemporaryTables) Count() int {
+func (is *SessionTables) Count() int {
 	return len(is.idx2table)
 }
 
 // SchemaByTable get a table's schema name
-func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
+func (is *SessionTables) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
 	if tableInfo == nil {
 		return nil, false
 	}
@@ -596,7 +596,7 @@ func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (*mode
 	return nil, false
 }
 
-func (is *LocalTemporaryTables) ensureSchema(db *model.DBInfo) *schemaTables {
+func (is *SessionTables) ensureSchema(db *model.DBInfo) *schemaTables {
 	if tbls, ok := is.schemaMap[db.Name.L]; ok {
 		return tbls
 	}
@@ -606,7 +606,7 @@ func (is *LocalTemporaryTables) ensureSchema(db *model.DBInfo) *schemaTables {
 	return tbls
 }
 
-func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaTables {
+func (is *SessionTables) schemaTables(schema model.CIStr) *schemaTables {
 	if is.schemaMap == nil {
 		return nil
 	}
@@ -618,16 +618,16 @@ func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaTables {
 	return nil
 }
 
-// TemporaryTableAttachedInfoSchema implements InfoSchema
+// SessionExtendedInfoSchema implements InfoSchema
 // Local temporary table has a loose relationship with database.
 // So when a database is dropped, its temporary tables still exist and can be returned by TableByName/TableByID.
-type TemporaryTableAttachedInfoSchema struct {
+type SessionExtendedInfoSchema struct {
 	InfoSchema
-	LocalTemporaryTables *LocalTemporaryTables
+	LocalTemporaryTables *SessionTables
 }
 
 // TableByName implements InfoSchema.TableByName
-func (ts *TemporaryTableAttachedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
+func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
 	if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
 		return tbl, nil
 	}
@@ -636,7 +636,7 @@ func (ts *TemporaryTableAttachedInfoSchema) TableByName(schema, table model.CISt
 }
 
 // TableByID implements InfoSchema.TableByID
-func (ts *TemporaryTableAttachedInfoSchema) TableByID(id int64) (table.Table, bool) {
+func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
 	if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
 		return tbl, true
 	}
@@ -645,7 +645,7 @@ func (ts *TemporaryTableAttachedInfoSchema) TableByID(id int64) (table.Table, bo
 }
 
 // SchemaByTable implements InfoSchema.SchemaByTable, it returns a stale DBInfo even if it's dropped.
-func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
+func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
 	if tableInfo == nil {
 		return nil, false
 	}
@@ -658,6 +658,6 @@ func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.Table
 }
 
 // HasTemporaryTable returns whether information schema has temporary table
-func (ts *TemporaryTableAttachedInfoSchema) HasTemporaryTable() bool {
+func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
 	return ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
 }

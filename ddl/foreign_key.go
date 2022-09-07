@@ -127,7 +127,7 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 	}
 	fkCheck := sctx.GetSessionVars().ForeignKeyChecks
 	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < 1 {
+		if fk.Version < model.FKVersion1 {
 			continue
 		}
 		err := checkTableForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
@@ -175,7 +175,7 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 			if (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) && !fkCheck {
 				return nil
 			}
-			return infoschema.ErrFkCannotOpenParent.GenWithStackByArgs(fk.RefTable.O)
+			return infoschema.ErrForeignKeyCannotOpenParent.GenWithStackByArgs(fk.RefTable.O)
 		}
 		referTblInfo = referTable.Meta()
 	}
@@ -195,7 +195,7 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, t
 		return true, errors.New("need wait owner to load latest schema")
 	}
 	for _, fk := range tbInfo.ForeignKeys {
-		if fk.Version < 1 {
+		if fk.Version < model.FKVersion1 {
 			continue
 		}
 		var referTableInfo *model.TableInfo
@@ -240,7 +240,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 		return infoschema.ErrCannotAddForeign
 	}
 
-	// check refer columns in paren table.
+	// check refer columns in parent table.
 	for i := range fkInfo.RefCols {
 		refCol := model.FindColumnInfo(referTblInfo.Columns, fkInfo.RefCols[i].L)
 		if refCol == nil {
@@ -265,7 +265,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	}
 	// check refer columns should have index.
 	if model.FindIndexByColumns(referTblInfo, fkInfo.RefCols...) == nil {
-		return infoschema.ErrFkNoIndexParent.GenWithStackByArgs(fkInfo.Name, fkInfo.RefTable)
+		return infoschema.ErrForeignKeyNoIndexInParent.GenWithStackByArgs(fkInfo.Name, fkInfo.RefTable)
 	}
 	return nil
 }

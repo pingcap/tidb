@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
@@ -420,9 +421,12 @@ func (t *Tracker) Release(bytes int64) {
 		if tracker.shouldRecordRelease() {
 			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
-			runtime.SetFinalizer(newRef, func(ref *finalizerRef) {
-				tracker.release(bytes)
-			})
+			finalizer := func(tracker *Tracker) func(ref *finalizerRef) {
+				return func(ref *finalizerRef) {
+					tracker.release(bytes) // finalizer func is called async
+				}
+			}
+			runtime.SetFinalizer(newRef, finalizer(tracker))
 			tracker.recordRelease(bytes)
 			return
 		}
@@ -709,3 +713,17 @@ const (
 var MetricsTypes = map[int][]string{
 	LabelForGlobalAnalyzeMemory: {"analyze", "inuse", "released"},
 }
+
+// below constants are the size of commonly used types, for memory trace
+
+// SizeOfSlice is the memory itself used, excludes the elements' memory
+const SizeOfSlice = int64(unsafe.Sizeof(*new([]int)))
+
+// SizeOfByte is the memory each byte occupied
+const SizeOfByte = int64(unsafe.Sizeof(*new(byte)))
+
+// SizeOfString is the memory itself occupied
+const SizeOfString = int64(unsafe.Sizeof(*new(string)))
+
+// SizeOfBool is the memory each bool occupied
+const SizeOfBool = int64(unsafe.Sizeof(*new(bool)))

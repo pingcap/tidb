@@ -370,6 +370,15 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
 	case model.ActionCreateTable:
+		// WARN: when support create table with foreign key in https://github.com/pingcap/tidb/pull/37148,
+		// create table with foreign key requires a multi-step state change(none -> write-only -> public),
+		// when the table's state changes from write-only to public, infoSchema need to drop the old table
+		// which state is write-only, otherwise, infoSchema.sortedTablesBuckets will contain 2 table both
+		// have the same ID, but one state is write-only, another table's state is public, it's unexpected.
+		//
+		// WARN: this change will break the compatibility if execute create table with foreign key DDL when upgrading TiDB,
+		// since old-version TiDB doesn't know to delete the old table.
+		// Since the cluster-index feature also has similar problem, we chose to prevent DDL execution during the upgrade process to avoid this issue.
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:

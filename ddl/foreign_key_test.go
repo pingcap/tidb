@@ -701,6 +701,11 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			create: "create table t2 (a int, b int, foreign key (a,b) references t1(a,a));",
 			err:    "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_1' in the referenced table 't1'",
 		},
+		{
+			refer:  "create table t1 (id int key, b int, index(b))",
+			create: "create table t2 (a int, b int, index fk_1(a), foreign key (b) references t1(b));",
+			err:    "[ddl:1061]duplicate key name fk_1",
+		},
 	}
 	for _, ca := range cases {
 		tk.MustExec("drop table if exists t2")
