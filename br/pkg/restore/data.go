@@ -232,7 +232,7 @@ func (recovery *Recovery) GetTotalRegions() int {
 func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalRecoveredStores := len(recovery.RecoveryPlan)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, maxStoreConcurrency)), "Recover RecoverRegion")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, maxStoreConcurrency)), "Recover Regions")
 
 	for storeId, plan := range recovery.RecoveryPlan {
 		if err := ectx.Err(); err != nil {
