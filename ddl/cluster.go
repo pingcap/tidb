@@ -265,7 +265,7 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRa
 	return keyRanges, nil
 }
 
-func flashbackToVersion(
+func sendFlashbackToVersionRPC(
 	ctx context.Context,
 	s tikv.Storage,
 	version uint64,
@@ -334,7 +334,7 @@ func flashbackToVersion(
 	return taskStat, nil
 }
 
-func FlashbackToVersion(
+func flashbackToVersion(
 	ctx context.Context,
 	d *ddlCtx,
 	version uint64,
@@ -345,7 +345,7 @@ func FlashbackToVersion(
 		d.store.(tikv.Storage),
 		int(variable.GetFlashbackConcurrency()),
 		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-			return flashbackToVersion(ctx, d.store.(tikv.Storage), version, r)
+			return sendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), version, r)
 		},
 	).RunOnRange(ctx, startKey, endKey)
 }
@@ -448,7 +448,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 
 		for _, ranges := range keyRanges {
-			if err = FlashbackToVersion(context.Background(), d, flashbackTS, ranges.StartKey, ranges.EndKey); err != nil {
+			if err = flashbackToVersion(context.Background(), d, flashbackTS, ranges.StartKey, ranges.EndKey); err != nil {
 				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
 				return ver, err
 			}
