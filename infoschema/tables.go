@@ -2026,6 +2026,11 @@ func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
 }
 
+// IndexPrefix implements table.Table IndexPrefix interface.
+func (it *infoschemaTable) IndexPrefix() kv.Key {
+	return nil
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return nil, table.ErrUnsupportedOp
@@ -2101,6 +2106,11 @@ func (vt *VirtualTable) Indices() []table.Index {
 
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (vt *VirtualTable) RecordPrefix() kv.Key {
+	return nil
+}
+
+// IndexPrefix implements table.Table IndexPrefix interface.
+func (vt *VirtualTable) IndexPrefix() kv.Key {
 	return nil
 }
 

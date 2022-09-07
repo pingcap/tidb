@@ -48,8 +48,6 @@ type TestKit struct {
 	t       testing.TB
 	store   kv.Storage
 	session session.Session
-
-	useGeneralPlanCache bool
 }
 
 // NewTestKit returns a new *TestKit.
@@ -89,13 +87,6 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 		store:   store,
 		session: se,
 	}
-}
-
-// NewTestKitWithGeneralPlanCache returns a new *TestKit.
-func NewTestKitWithGeneralPlanCache(t testing.TB, store kv.Storage) *TestKit {
-	tk := NewTestKit(t, store)
-	tk.useGeneralPlanCache = true
-	return tk
 }
 
 // RefreshSession set a new session for the testkit
@@ -268,11 +259,6 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
 		var stmts []ast.StmtNode
-		if tk.useGeneralPlanCache {
-			if execStmt, ok := tk.session.Parameterize(ctx, sql); ok {
-				stmts = append(stmts, execStmt)
-			}
-		}
 		if len(stmts) == 0 {
 			var err error
 			stmts, err = tk.session.Parse(ctx, sql)
