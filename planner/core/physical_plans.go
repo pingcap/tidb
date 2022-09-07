@@ -131,6 +131,27 @@ type PartitionInfo struct {
 	ColumnNames    types.NameSlice
 }
 
+const emptyPartitionInfoSize = int64(unsafe.Sizeof(PartitionInfo{}))
+
+// MemoryUsage return the memory usage of PartitionInfo
+func (pi *PartitionInfo) MemoryUsage() (sum int64) {
+	if pi == nil {
+		return
+	}
+
+	sum = emptyPartitionInfoSize
+	for _, cond := range pi.PruningConds {
+		sum += cond.MemoryUsage()
+	}
+	for _, cis := range pi.PartitionNames {
+		sum += cis.MemoryUsage()
+	}
+	for _, col := range pi.Columns {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // GetTablePlan exports the tablePlan.
 func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 	return p.tablePlan
@@ -747,6 +768,44 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 // SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
 func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
 	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
+}
+
+const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))
+
+func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
+	if ts == nil {
+		return
+	}
+
+	sum = emptyPhysicalTableScanSize + ts.physicalSchemaProducer.MemoryUsage() + int64(cap(ts.Columns))*memory.SizeOfPointer +
+		ts.DBName.MemoryUsage() + int64(cap(ts.HandleIdx))*memory.SizeOfInt +
+		ts.PartitionInfo.MemoryUsage()
+
+	if ts.TableAsName != nil {
+		sum += ts.TableAsName.MemoryUsage()
+	}
+	if ts.HandleCols != nil {
+		sum += ts.HandleCols.MemoryUsage()
+	}
+	if ts.prop != nil {
+		sum += ts.prop.MemoryUsage()
+	}
+
+	for _, cond := range ts.AccessCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range ts.filterCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, rang := range ts.Ranges {
+		sum += rang.MemoryUsage()
+	}
+	for _, col := range ts.rangeDecidedBy {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range ts.tblCols {
+		sum += col.MemoryUsage()
+	}
 }
 
 // PhysicalProjection is the physical operator of projection.
