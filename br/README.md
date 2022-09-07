@@ -34,6 +34,8 @@ $ make
 $ make test
 ```
 
+Notice BR supports building with Go version `Go >= 1.16`
+
 When BR is built successfully, you can find binary in the `bin` directory.
 
 ## Quick start(docker-compose)
