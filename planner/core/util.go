@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"golang.org/x/exp/slices"
@@ -183,7 +182,7 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = s.basePhysicalPlan.MemoryUsage() + memory.SizeOfPointer
+	sum = s.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer
 	return
 }
 

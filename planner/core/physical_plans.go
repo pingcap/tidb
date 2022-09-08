@@ -777,7 +777,8 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyPhysicalTableScanSize + ts.physicalSchemaProducer.MemoryUsage() + ts.DBName.MemoryUsage() + ts.PartitionInfo.MemoryUsage()
+	sum = emptyPhysicalTableScanSize + ts.physicalSchemaProducer.MemoryUsage() + ts.DBName.MemoryUsage() +
+		ts.PartitionInfo.MemoryUsage()
 	if ts.TableAsName != nil {
 		sum += ts.TableAsName.MemoryUsage()
 	}
@@ -803,6 +804,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	for _, col := range ts.tblCols {
 		sum += col.MemoryUsage()
 	}
+	return
 }
 
 // PhysicalProjection is the physical operator of projection.

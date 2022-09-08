@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 // HandleCols is the interface that holds handle columns.
@@ -182,7 +181,7 @@ func (cb *CommonHandleCols) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyCommonHandleColsSize + int64(cap(cb.columns))*memory.SizeOfPointer
+	sum = emptyCommonHandleColsSize + int64(cap(cb.columns))*size.SizeOfPointer
 	for _, col := range cb.columns {
 		sum += col.MemoryUsage()
 	}
