@@ -35,17 +35,17 @@ import (
 type empty struct{}
 
 const patternIdx = 1
-const RegexpLikeMatchTypeIdx = 2
-const RegexpSubstrMatchTypeIdx = 4
-const RegexpInstrMatchTypeIdx = 5
-const RegexpReplaceMatchTypeIdx = 5
+const regexpLikeMatchTypeIdx = 2
+const regexpSubstrMatchTypeIdx = 4
+const regexpInstrMatchTypeIdx = 5
+const regexpReplaceMatchTypeIdx = 5
 
 // Valid flags in match type
 const (
-	flag_i = "i"
-	flag_c = "c"
-	flag_m = "m"
-	flag_s = "s"
+	flagI = "i"
+	flagC = "c"
+	flagM = "m"
+	flagS = "s"
 )
 
 const (
@@ -55,10 +55,10 @@ const (
 )
 
 var validMatchType = map[string]empty{
-	flag_i: {}, // Case-insensitive matching
-	flag_c: {}, // Case-sensitive matching
-	flag_m: {}, // Multiple-line mode
-	flag_s: {}, // The . character matches line terminators
+	flagI: {}, // Case-insensitive matching
+	flagC: {}, // Case-sensitive matching
+	flagM: {}, // Multiple-line mode
+	flagS: {}, // The . character matches line terminators
 }
 
 type regexpBaseFuncSig struct {
@@ -86,7 +86,7 @@ func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchTyp
 	matchTypeSet := make(map[string]empty)
 
 	if collate.IsCICollation(bf.collation) {
-		matchTypeSet[flag_i] = empty{}
+		matchTypeSet[flagI] = empty{}
 	}
 
 	for _, val := range userInputMatchType {
@@ -98,10 +98,10 @@ func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchTyp
 			return "", ErrRegexp.GenWithStackByArgs(invalidMatchType)
 		}
 
-		if c == flag_c {
+		if c == flagC {
 			// re2 is case-sensitive by default, so we only need to delete 'i' flag
 			// to enable the case-sensitive for the regexp
-			delete(matchTypeSet, flag_i)
+			delete(matchTypeSet, flagI)
 			continue
 		}
 
@@ -262,7 +262,7 @@ func (re *builtinRegexpLikeFuncSig) evalInt(row chunk.Row) (int64, bool, error) 
 		re.memorize(compile, pat)
 	}
 
-	if re.canMemorize(RegexpLikeMatchTypeIdx) {
+	if re.canMemorize(regexpLikeMatchTypeIdx) {
 		re.once.Do(memorize) // Avoid data race
 	}
 
@@ -316,7 +316,7 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		return nil
 	}
 
-	err = re.tryToMemorize(params, RegexpLikeMatchTypeIdx, n)
+	err = re.tryToMemorize(params, regexpLikeMatchTypeIdx, n)
 	if err != nil {
 		return err
 	}
@@ -422,14 +422,14 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 
 	occurrence := int64(1)
 	matchType := ""
-	arg_num := len(re.args)
+	argNum := len(re.args)
 	var bexpr []byte
 
 	if re.isBinCollation() {
 		bexpr = []byte(expr)
 	}
 
-	if arg_num >= 3 {
+	if argNum >= 3 {
 		pos, isNull, err := re.args[2].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
@@ -455,7 +455,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 		}
 	}
 
-	if arg_num >= 4 {
+	if argNum >= 4 {
 		occurrence, isNull, err = re.args[3].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
@@ -466,7 +466,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 		}
 	}
 
-	if arg_num == 5 {
+	if argNum == 5 {
 		matchType, isNull, err = re.args[4].EvalString(re.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
@@ -482,7 +482,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 		re.memorize(compile, pat)
 	}
 
-	if re.canMemorize(RegexpSubstrMatchTypeIdx) {
+	if re.canMemorize(regexpSubstrMatchTypeIdx) {
 		re.once.Do(memorize) // Avoid data race
 	}
 
@@ -573,7 +573,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 	}
 
 	// Check memorization
-	err = re.tryToMemorize(params, RegexpSubstrMatchTypeIdx, n)
+	err = re.tryToMemorize(params, regexpSubstrMatchTypeIdx, n)
 	if err != nil {
 		return err
 	}
@@ -745,14 +745,14 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 	occurrence := int64(1)
 	returnOption := int64(0)
 	matchType := ""
-	arg_num := len(re.args)
+	argNum := len(re.args)
 	var bexpr []byte
 
 	if re.isBinCollation() {
 		bexpr = []byte(expr)
 	}
 
-	if arg_num >= 3 {
+	if argNum >= 3 {
 		pos, isNull, err = re.args[2].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return 0, true, err
@@ -778,7 +778,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 		}
 	}
 
-	if arg_num >= 4 {
+	if argNum >= 4 {
 		occurrence, isNull, err = re.args[3].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return 0, true, err
@@ -789,7 +789,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 		}
 	}
 
-	if arg_num >= 5 {
+	if argNum >= 5 {
 		returnOption, isNull, err = re.args[4].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return 0, true, err
@@ -800,7 +800,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 		}
 	}
 
-	if arg_num == 6 {
+	if argNum == 6 {
 		matchType, isNull, err = re.args[5].EvalString(re.ctx, row)
 		if isNull || err != nil {
 			return 0, true, err
@@ -816,7 +816,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 		re.memorize(compile, pat)
 	}
 
-	if re.canMemorize(RegexpInstrMatchTypeIdx) {
+	if re.canMemorize(regexpInstrMatchTypeIdx) {
 		re.once.Do(memorize) // Avoid data race
 	}
 
@@ -919,7 +919,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 		return nil
 	}
 
-	err = re.tryToMemorize(params, RegexpInstrMatchTypeIdx, n)
+	err = re.tryToMemorize(params, regexpInstrMatchTypeIdx, n)
 	if err != nil {
 		return err
 	}
@@ -1122,7 +1122,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 	pos := int64(1)
 	occurrence := int64(0)
 	matchType := ""
-	arg_num := len(re.args)
+	argNum := len(re.args)
 	var bexpr []byte
 	var trimmedBexpr []byte
 
@@ -1132,7 +1132,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 	}
 
 	trimmedLen := int64(0)
-	if arg_num >= 4 {
+	if argNum >= 4 {
 		pos, isNull, err = re.args[3].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
@@ -1158,7 +1158,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		}
 	}
 
-	if arg_num >= 5 {
+	if argNum >= 5 {
 		occurrence, isNull, err = re.args[4].EvalInt(re.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
@@ -1169,7 +1169,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		}
 	}
 
-	if arg_num == 6 {
+	if argNum == 6 {
 		matchType, isNull, err = re.args[5].EvalString(re.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
@@ -1192,7 +1192,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		re.memorize(compile, pat)
 	}
 
-	if re.canMemorize(RegexpReplaceMatchTypeIdx) {
+	if re.canMemorize(regexpReplaceMatchTypeIdx) {
 		re.once.Do(memorize) // Avoid data race
 	}
 
@@ -1294,7 +1294,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 		return nil
 	}
 
-	err = re.tryToMemorize(params, RegexpReplaceMatchTypeIdx, n)
+	err = re.tryToMemorize(params, regexpReplaceMatchTypeIdx, n)
 	if err != nil {
 		return err
 	}
