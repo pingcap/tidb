@@ -1800,8 +1800,8 @@ var defaultSysVars = []*SysVar{
 		s.EnableTiFlashReadForWriteStmt = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptRangeMemQuota, Value: strconv.Itoa(DefTiDBOptRangeMemQuota), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.RangeMemQuota = TidbOptInt64(val, DefTiDBOptRangeMemQuota)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptRangeMaxSize, Value: strconv.FormatInt(DefTiDBOptRangeMaxSize, 10), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.RangeMemQuota = TidbOptInt64(val, DefTiDBOptRangeMaxSize)
 		return nil
 	}},
 }

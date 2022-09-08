@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
 	"github.com/pingcap/tidb/util/paging"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/atomic"
 )
 
@@ -810,10 +811,10 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
-	// TiDBOptRangeMemQuota is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
+	// TiDBOptRangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
-	TiDBOptRangeMemQuota = "tidb_opt_range_mem_quota"
+	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 )
 
 // TiDB intentional limits
@@ -1041,7 +1042,7 @@ const (
 	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
-	DefTiDBOptRangeMemQuota                         = 67108864 // 64 MB
+	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
 )
 
 // Process global variables.
