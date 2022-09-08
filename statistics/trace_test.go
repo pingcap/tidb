@@ -36,6 +36,10 @@ func TestTraceCE(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, d varchar(10), index idx(a, b))")
+	tk.MustExec("create table t1(a int, b int, c int)")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("create table t3(a int, b int, c int)")
+	tk.MustExec("create table t4(a int, b int, c int)")
 	tk.MustExec(`insert into t values(1, 1, "aaa"),
 		(1, 1, "bbb"),
 		(1, 2, "ccc"),
@@ -43,6 +47,10 @@ func TestTraceCE(t *testing.T) {
 		(2, 2, "aaa"),
 		(2, 3, "bbb")`)
 	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+	tk.MustExec("analyze table t4")
 	var (
 		in  []string
 		out []struct {
@@ -55,7 +63,7 @@ func TestTraceCE(t *testing.T) {
 
 	// Load needed statistics.
 	for _, tt := range in {
-		sql := "explain select * from t where " + tt
+		sql := "explain " + tt
 		tk.MustExec(sql)
 	}
 	statsHandle := dom.StatsHandle()
@@ -65,11 +73,12 @@ func TestTraceCE(t *testing.T) {
 	sctx := tk.Session().(sessionctx.Context)
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	p := parser.New()
-	for i, expr := range in {
+	for i, sql := range in {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
-		sql := "explain select * from t where " + expr
 		stmtCtx.EnableOptimizerCETrace = true
 		stmtCtx.OptimizerCETrace = nil
+		stmtCtx.CETraceColNameAlloc.Store(0)
+		stmtCtx.CETraceTblNameAlloc.Store(0)
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		_, _, err = plannercore.OptimizeAstNode(context.Background(), sctx, stmt, is)
@@ -82,13 +91,13 @@ func TestTraceCE(t *testing.T) {
 		}
 
 		testdata.OnRecord(func() {
-			out[i].Expr = expr
+			out[i].Expr = sql
 			out[i].Trace = traceResult
 		})
 		// Assert using the result in the stmtCtx
 		require.ElementsMatch(t, traceResult, out[i].Trace)
 
-		sql = "trace plan target='estimation' select * from t where " + expr
+		sql = "trace plan target='estimation' " + sql
 		result := tk.MustQuery(sql)
 		require.Len(t, result.Rows(), 1)
 		resultStr := result.Rows()[0][0].(string)

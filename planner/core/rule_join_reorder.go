@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/exp/slices"
@@ -482,6 +483,9 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 		reordered: true,
 	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
+	join.names = make([]*types.FieldName, 0, lChild.Schema().Len()+rChild.Schema().Len())
+	join.names = append(join.names, lChild.OutputNames()...)
+	join.names = append(join.names, rChild.OutputNames()...)
 	join.SetChildren(lChild, rChild)
 	return join
 }

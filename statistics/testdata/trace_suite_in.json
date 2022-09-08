@@ -2,11 +2,25 @@
   {
     "name": "TestTraceCE",
     "cases": [
-      "a > 0 and a < 2",
-      "a >= 1 and a < 10",
-      "a < 3 or b < 4",
-      "a = 1 and b = 2",
-      "a < 5 or a > 10"
+      "select * from t where a > 0 and a < 2",
+      "select * from t where a >= 1 and a < 10",
+      "select * from t where a < 3 or b < 4",
+      "select * from t where a = 1 and b = 2",
+      "select * from t where a < 5 or a > 10",
+      "select sum(t2.b) from t1 join t2 on t1.a = t2.b group by t2.a",
+      "select * from t1 left outer join (t3, t2) on t1.a = t2.b and t3.c = t2.a right outer join t4 on t4.b = t3.a",
+      "select * from t1 right outer join (select t2.a, t3.b from t2 join t3 on t2.b = t3.a) tt on t1.a = tt.b",
+      "select * from (select t1.a from t1 left join t2 on t1.b > t2.c) tt1, (select t3.b, t4.c from t4 join t3 on t3.a = t4.b) tt2",
+      "select * from t1 where a in (select b from t2)",
+      "select b, a in (select b from t2) from t1",
+      "select * from t1 where a not in (select b from t2)",
+      "select b, a not in (select b from t2) from t1",
+      "select * from t1 where exists (select b from t2 where t2.a = t1.c)",
+      "select * from t1 where not exists (select b from t2 where t2.a = t1.c)",
+      "select exists (select b from t2 where t2.a = t1.c) as e, c from t1 having e is not null",
+      "select not exists (select b from t2 where t2.a = t1.c), c from t1",
+      "select sum(e) from (select b > (select a from t2 where c = t1.b limit 1) as e , c from t1) tt",
+      "select b > (select count(a) from t2 where c = t1.b), c from t1"
     ]
   }
 ]

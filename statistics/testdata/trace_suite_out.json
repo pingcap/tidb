@@ -3,7 +3,7 @@
     "Name": "TestTraceCE",
     "Cases": [
       {
-        "Expr": "a > 0 and a < 2",
+        "Expr": "select * from t where a > 0 and a < 2",
         "Trace": [
           {
             "table_name": "t",
@@ -32,7 +32,7 @@
         ]
       },
       {
-        "Expr": "a >= 1 and a < 10",
+        "Expr": "select * from t where a >= 1 and a < 10",
         "Trace": [
           {
             "table_name": "t",
@@ -55,7 +55,7 @@
         ]
       },
       {
-        "Expr": "a < 3 or b < 4",
+        "Expr": "select * from t where a < 3 or b < 4",
         "Trace": [
           {
             "table_name": "t",
@@ -102,7 +102,7 @@
         ]
       },
       {
-        "Expr": "a = 1 and b = 2",
+        "Expr": "select * from t where a = 1 and b = 2",
         "Trace": [
           {
             "table_name": "t",
@@ -131,7 +131,7 @@
         ]
       },
       {
-        "Expr": "a < 5 or a > 10",
+        "Expr": "select * from t where a < 5 or a > 10",
         "Trace": [
           {
             "table_name": "t",
@@ -150,6 +150,436 @@
             "type": "Table Stats-Expression-CNF",
             "expr": "`or`(`lt`(test.t.a, 5), `gt`(test.t.a, 10))",
             "row_count": 6
+          }
+        ]
+      },
+      {
+        "Expr": "select sum(t2.b) from t1 join t2 on t1.a = t2.b group by t2.a",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Aggregation",
+            "expr": "SELECT sum(tbl_4.col_3) AS col_7 FROM (SELECT tbl_1.a AS col_1 FROM t1 AS tbl_1 WHERE `not`(`isnull`(tbl_1.a))) AS tbl_3 inner join (SELECT tbl_2.a AS col_2, tbl_2.b AS col_3 FROM t2 AS tbl_2 WHERE `not`(`isnull`(tbl_2.b))) AS tbl_4 ON `eq`(tbl_3.col_1, tbl_4.col_3) GROUP BY tbl_4.col_2",
+            "row_count": 7992
+          },
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_3.col_1 AS col_4, tbl_4.col_2 AS col_5, tbl_4.col_3 AS col_6 FROM (SELECT tbl_1.a AS col_1 FROM t1 AS tbl_1 WHERE `not`(`isnull`(tbl_1.a))) AS tbl_3 inner join (SELECT tbl_2.a AS col_2, tbl_2.b AS col_3 FROM t2 AS tbl_2 WHERE `not`(`isnull`(tbl_2.b))) AS tbl_4 ON `eq`(tbl_3.col_1, tbl_4.col_3)",
+            "row_count": 12487
+          },
+          {
+            "table_name": "t1",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((a is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t1",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t1.a))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((b is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t2.b))",
+            "row_count": 9990
+          }
+        ]
+      },
+      {
+        "Expr": "select * from t1 left outer join (t3, t2) on t1.a = t2.b and t3.c = t2.a right outer join t4 on t4.b = t3.a",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_4.col_4 AS col_10, tbl_4.col_5 AS col_11, tbl_4.col_6 AS col_12, tbl_5.col_7 AS col_13, tbl_5.col_8 AS col_14, tbl_5.col_9 AS col_15 FROM (SELECT tbl_2.a AS col_4, tbl_2.b AS col_5, tbl_2.c AS col_6 FROM t3 AS tbl_2 WHERE `not`(`isnull`(tbl_2.c)) AND `not`(`isnull`(tbl_2.a))) AS tbl_4 inner join (SELECT tbl_3.a AS col_7, tbl_3.b AS col_8, tbl_3.c AS col_9 FROM t2 AS tbl_3 WHERE `not`(`isnull`(tbl_3.a)) AND `not`(`isnull`(tbl_3.b))) AS tbl_5 ON `eq`(tbl_4.col_6, tbl_5.col_7)",
+            "row_count": 12475
+          },
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_6.col_1 AS col_22, tbl_6.col_2 AS col_23, tbl_6.col_3 AS col_24, tbl_4.col_4 AS col_16, tbl_4.col_5 AS col_17, tbl_4.col_6 AS col_18, tbl_5.col_7 AS col_19, tbl_5.col_8 AS col_20, tbl_5.col_9 AS col_21 FROM (SELECT tbl_2.a AS col_4, tbl_2.b AS col_5, tbl_2.c AS col_6 FROM t3 AS tbl_2 WHERE `not`(`isnull`(tbl_2.c)) AND `not`(`isnull`(tbl_2.a))) AS tbl_4 inner join (SELECT tbl_3.a AS col_7, tbl_3.b AS col_8, tbl_3.c AS col_9 FROM t2 AS tbl_3 WHERE `not`(`isnull`(tbl_3.a)) AND `not`(`isnull`(tbl_3.b))) AS tbl_5 ON `eq`(tbl_4.col_6, tbl_5.col_7) inner join (SELECT tbl_1.a AS col_1, tbl_1.b AS col_2, tbl_1.c AS col_3 FROM t1 AS tbl_1 WHERE `not`(`isnull`(tbl_1.a))) AS tbl_6 ON `eq`(tbl_5.col_8, tbl_6.col_1)",
+            "row_count": 15593
+          },
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_8.col_25 AS col_37, tbl_8.col_26 AS col_38, tbl_8.col_27 AS col_39, tbl_8.col_28 AS col_40, tbl_8.col_29 AS col_41, tbl_8.col_30 AS col_42, tbl_8.col_31 AS col_43, tbl_8.col_32 AS col_44, tbl_8.col_33 AS col_45, tbl_7.a AS col_46, tbl_7.b AS col_47, tbl_7.c AS col_48 FROM (SELECT tbl_6.col_1 AS col_25, tbl_6.col_2 AS col_26, tbl_6.col_3 AS col_27, tbl_4.col_4 AS col_28, tbl_4.col_5 AS col_29, tbl_4.col_6 AS col_30, tbl_5.col_7 AS col_31, tbl_5.col_8 AS col_32, tbl_5.col_9 AS col_33 FROM (SELECT tbl_2.a AS col_4, tbl_2.b AS col_5, tbl_2.c AS col_6 FROM t3 AS tbl_2 WHERE `not`(`isnull`(tbl_2.c)) AND `not`(`isnull`(tbl_2.a))) AS tbl_4 inner join (SELECT tbl_3.a AS col_7, tbl_3.b AS col_8, tbl_3.c AS col_9 FROM t2 AS tbl_3 WHERE `not`(`isnull`(tbl_3.a)) AND `not`(`isnull`(tbl_3.b))) AS tbl_5 ON `eq`(tbl_4.col_6, tbl_5.col_7) inner join (SELECT tbl_1.a AS col_1, tbl_1.b AS col_2, tbl_1.c AS col_3 FROM t1 AS tbl_1 WHERE `not`(`isnull`(tbl_1.a))) AS tbl_6 ON `eq`(tbl_5.col_8, tbl_6.col_1)) AS tbl_8 right outer join t4 AS tbl_7 ON `eq`(tbl_8.col_28, tbl_7.b)",
+            "row_count": 19492
+          },
+          {
+            "table_name": "t1",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((a is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t1",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t1.a))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((a is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((b is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`and`(`not`(`isnull`(test.t2.a)), `not`(`isnull`(test.t2.b)))",
+            "row_count": 9980
+          },
+          {
+            "table_name": "t2",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t2.a))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t3",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((a is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t3",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((c is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t3",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`and`(`not`(`isnull`(test.t3.a)), `not`(`isnull`(test.t3.c)))",
+            "row_count": 9980
+          },
+          {
+            "table_name": "t3",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`and`(`not`(`isnull`(test.t3.c)), `not`(`isnull`(test.t3.a)))",
+            "row_count": 9980
+          },
+          {
+            "table_name": "t3",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t3.a))",
+            "row_count": 9990
+          }
+        ]
+      },
+      {
+        "Expr": "select * from t1 right outer join (select t2.a, t3.b from t2 join t3 on t2.b = t3.a) tt on t1.a = tt.b",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_6.col_9 AS col_12, tbl_6.col_10 AS col_13, tbl_6.col_11 AS col_14, tbl_3.col_1 AS col_15, tbl_4.col_4 AS col_16 FROM (SELECT tbl_5.a AS col_9, tbl_5.b AS col_10, tbl_5.c AS col_11 FROM t1 AS tbl_5 WHERE `not`(`isnull`(tbl_5.a))) AS tbl_6 right outer join ((SELECT tbl_1.a AS col_1, tbl_1.b AS col_2 FROM t2 AS tbl_1 WHERE `not`(`isnull`(tbl_1.b))) AS tbl_3 inner join (SELECT tbl_2.a AS col_3, tbl_2.b AS col_4 FROM t3 AS tbl_2 WHERE `not`(`isnull`(tbl_2.a))) AS tbl_4 ON `eq`(tbl_3.col_2, tbl_4.col_3)) ON `eq`(tbl_6.col_9, tbl_4.col_4)",
+            "row_count": 15609
+          },
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_3.col_1 AS col_5, tbl_3.col_2 AS col_6, tbl_4.col_3 AS col_7, tbl_4.col_4 AS col_8 FROM (SELECT tbl_1.a AS col_1, tbl_1.b AS col_2 FROM t2 AS tbl_1 WHERE `not`(`isnull`(tbl_1.b))) AS tbl_3 inner join (SELECT tbl_2.a AS col_3, tbl_2.b AS col_4 FROM t3 AS tbl_2 WHERE `not`(`isnull`(tbl_2.a))) AS tbl_4 ON `eq`(tbl_3.col_2, tbl_4.col_3)",
+            "row_count": 12487
+          },
+          {
+            "table_name": "t1",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((a is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t1",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t1.a))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((b is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t2.b))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t3",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((a is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t3",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t3.a))",
+            "row_count": 9990
+          }
+        ]
+      },
+      {
+        "Expr": "select * from (select t1.a from t1 left join t2 on t1.b > t2.c) tt1, (select t3.b, t4.c from t4 join t3 on t3.a = t4.b) tt2",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_1.a AS col_17, tbl_6.col_8 AS col_15, tbl_7.col_10 AS col_16 FROM (SELECT tbl_4.b AS col_7, tbl_4.c AS col_8 FROM t4 AS tbl_4 WHERE `not`(`isnull`(tbl_4.b))) AS tbl_6 inner join (SELECT tbl_5.a AS col_9, tbl_5.b AS col_10 FROM t3 AS tbl_5 WHERE `not`(`isnull`(tbl_5.a))) AS tbl_7 ON `eq`(tbl_6.col_7, tbl_7.col_9) inner join (t1 AS tbl_1 left outer join (SELECT tbl_2.c AS col_3 FROM t2 AS tbl_2 WHERE `not`(`isnull`(tbl_2.c))) AS tbl_3 ON `gt`(tbl_1.b, tbl_3.col_3))",
+            "row_count": 1247501250000
+          },
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_1.a AS col_4, tbl_1.b AS col_5, tbl_3.col_3 AS col_6 FROM t1 AS tbl_1 left outer join (SELECT tbl_2.c AS col_3 FROM t2 AS tbl_2 WHERE `not`(`isnull`(tbl_2.c))) AS tbl_3 ON `gt`(tbl_1.b, tbl_3.col_3)",
+            "row_count": 99900000
+          },
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_6.col_7 AS col_11, tbl_6.col_8 AS col_12, tbl_7.col_9 AS col_13, tbl_7.col_10 AS col_14 FROM (SELECT tbl_4.b AS col_7, tbl_4.c AS col_8 FROM t4 AS tbl_4 WHERE `not`(`isnull`(tbl_4.b))) AS tbl_6 inner join (SELECT tbl_5.a AS col_9, tbl_5.b AS col_10 FROM t3 AS tbl_5 WHERE `not`(`isnull`(tbl_5.a))) AS tbl_7 ON `eq`(tbl_6.col_7, tbl_7.col_9)",
+            "row_count": 12487
+          },
+          {
+            "table_name": "t2",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((c is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t2.c))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t3",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((a is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t3",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t3.a))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t4",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((b is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t4",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t4.b))",
+            "row_count": 9990
+          }
+        ]
+      },
+      {
+        "Expr": "select * from t1 where a in (select b from t2)",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Aggregation",
+            "expr": "SELECT tbl_2.b AS col_5 FROM t2 AS tbl_2 WHERE `not`(`isnull`(tbl_2.b)) GROUP BY tbl_2.b",
+            "row_count": 7992
+          },
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_3.col_1 AS col_6, tbl_3.col_2 AS col_7, tbl_3.col_3 AS col_8, tbl_4.col_5 AS col_9 FROM (SELECT tbl_1.a AS col_1, tbl_1.b AS col_2, tbl_1.c AS col_3 FROM t1 AS tbl_1 WHERE `not`(`isnull`(tbl_1.a))) AS tbl_3 inner join (SELECT tbl_2.b AS col_5 FROM t2 AS tbl_2 WHERE `not`(`isnull`(tbl_2.b)) GROUP BY tbl_2.b) AS tbl_4 ON `eq`(tbl_3.col_1, tbl_4.col_5)",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t1",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((a is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t1",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t1.a))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((b is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t2.b))",
+            "row_count": 9990
+          }
+        ]
+      },
+      {
+        "Expr": "select b, a in (select b from t2) from t1",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_1.b AS col_6, tbl_1.a IN (SELECT tbl_2.b AS col_4 FROM t2 AS tbl_2) AS col_5 FROM t1 AS tbl_1",
+            "row_count": 10000
+          }
+        ]
+      },
+      {
+        "Expr": "select * from t1 where a not in (select b from t2)",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_1.a AS col_6, tbl_1.b AS col_7, tbl_1.c AS col_8 FROM t1 AS tbl_1 WHERE tbl_1.a NOT IN (SELECT tbl_2.b AS col_5 FROM t2 AS tbl_2)",
+            "row_count": 8000
+          }
+        ]
+      },
+      {
+        "Expr": "select b, a not in (select b from t2) from t1",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_1.b AS col_6, tbl_1.a NOT IN (SELECT tbl_2.b AS col_4 FROM t2 AS tbl_2) AS col_5 FROM t1 AS tbl_1",
+            "row_count": 10000
+          }
+        ]
+      },
+      {
+        "Expr": "select * from t1 where exists (select b from t2 where t2.a = t1.c)",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_1.a AS col_6, tbl_1.b AS col_7, tbl_1.c AS col_8 FROM t1 AS tbl_1 WHERE `not`(`isnull`(tbl_1.c)) AND EXISTS (SELECT tbl_2.a AS col_5 FROM t2 AS tbl_2 WHERE `not`(`isnull`(tbl_2.a)) AND `eq`(tbl_1.c, tbl_2.a))",
+            "row_count": 7992
+          },
+          {
+            "table_name": "t1",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((c is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t1",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t1.c))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((a is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t2.a))",
+            "row_count": 9990
+          }
+        ]
+      },
+      {
+        "Expr": "select * from t1 where not exists (select b from t2 where t2.a = t1.c)",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_1.a AS col_6, tbl_1.b AS col_7, tbl_1.c AS col_8 FROM t1 AS tbl_1 WHERE NOT EXISTS (SELECT tbl_2.a AS col_5 FROM t2 AS tbl_2 WHERE `eq`(tbl_1.c, tbl_2.a))",
+            "row_count": 8000
+          }
+        ]
+      },
+      {
+        "Expr": "select exists (select b from t2 where t2.a = t1.c) as e, c from t1 having e is not null",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_1.c AS col_5, EXISTS (SELECT tbl_2.a AS col_3 FROM t2 AS tbl_2 WHERE `eq`(tbl_1.c, tbl_2.a)) AS col_4 FROM t1 AS tbl_1",
+            "row_count": 10000
+          },
+          {
+            "table_name": "",
+            "type": "Selection",
+            "expr": "SELECT tbl_1.c AS col_6, EXISTS (SELECT tbl_2.a AS col_3 FROM t2 AS tbl_2 WHERE `eq`(tbl_1.c, tbl_2.a)) AS col_4 FROM t1 AS tbl_1 WHERE `not`(`isnull`(col_4))",
+            "row_count": 8000
+          }
+        ]
+      },
+      {
+        "Expr": "select not exists (select b from t2 where t2.a = t1.c), c from t1",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_1.c AS col_5, NOT EXISTS (SELECT tbl_2.a AS col_3 FROM t2 AS tbl_2 WHERE `eq`(tbl_1.c, tbl_2.a)) AS col_4 FROM t1 AS tbl_1",
+            "row_count": 10000
+          }
+        ]
+      },
+      {
+        "Expr": "select sum(e) from (select b > (select a from t2 where c = t1.b limit 1) as e , c from t1) tt",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Aggregation",
+            "expr": "SELECT sum(`gt`(tbl_1.b, (SELECT tbl_3.col_4 AS col_5 FROM (SELECT tbl_2.a AS col_4 FROM t2 AS tbl_2 WHERE `eq`(tbl_2.c, tbl_1.b) LIMIT 1) AS tbl_3))) AS col_8 FROM t1 AS tbl_1",
+            "row_count": 1
+          }
+        ]
+      },
+      {
+        "Expr": "select b > (select count(a) from t2 where c = t1.b), c from t1",
+        "Trace": [
+          {
+            "table_name": "",
+            "type": "Aggregation",
+            "expr": "SELECT tbl_2.c AS col_6, count(tbl_2.a) AS col_5 FROM t2 AS tbl_2 WHERE `not`(`isnull`(tbl_2.c)) GROUP BY tbl_2.c",
+            "row_count": 7992
+          },
+          {
+            "table_name": "",
+            "type": "Join",
+            "expr": "SELECT tbl_1.b AS col_7, tbl_1.c AS col_8, tbl_3.col_5 AS col_9 FROM t1 AS tbl_1 left outer join (SELECT tbl_2.c AS col_6, count(tbl_2.a) AS col_5 FROM t2 AS tbl_2 WHERE `not`(`isnull`(tbl_2.c)) GROUP BY tbl_2.c) AS tbl_3 ON `eq`(tbl_1.b, tbl_3.col_6)",
+            "row_count": 10000
+          },
+          {
+            "table_name": "t2",
+            "type": "Column Stats-Pseudo-Range",
+            "expr": "((c is not null))",
+            "row_count": 9990
+          },
+          {
+            "table_name": "t2",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`not`(`isnull`(test.t2.c))",
+            "row_count": 9990
           }
         ]
       }
