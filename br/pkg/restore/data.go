@@ -347,7 +347,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 					log.Info("current delete key", zap.Uint64("resolved key num", resp.ResolvedKeyCount), zap.Uint64("store id", resp.StoreId))
 				} else if err == io.EOF {
 					break
-				} else if err != nil {
+				} else {
 					return errors.Trace(err)
 				}
 			}
