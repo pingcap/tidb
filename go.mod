@@ -244,4 +244,4 @@ replace (
 	github.com/pingcap/tidb/parser => ./parser
 )
 
-replace github.com/pingcap/kvproto => github.com/3pointer/kvproto v0.0.0-20220908055306-39622b33c8d6
+replace github.com/pingcap/kvproto => github.com/3pointer/kvproto v0.0.0-20220908075047-cee537fa4291

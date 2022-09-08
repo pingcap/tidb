@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	recovpb "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/common"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -21,14 +22,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
-)
-
-// in future, num of tikv may extend to a large number, this is limitation of connection pool to tikv
-// per our knowledge, in present, 128 may a good enough.
-const (
-	maxStoreConcurrency = 128
 )
 
 // RecoverData recover the tikv cluster
@@ -106,18 +100,9 @@ func (recovery *Recovery) newRecoveryClient(ctx context.Context, storeAddr strin
 	// Connect to the Recovery service on the given TiKV node.
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = gRPCBackOffMaxDelay
-	opt := grpc.WithInsecure()
-	if recovery.mgr.GetTLSConfig() != nil {
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(recovery.mgr.GetTLSConfig()))
-	}
 	//TODO: connection may need some adjust
 	//keepaliveConf keepalive.ClientParameters
-	conn, err := grpc.DialContext(
-		ctx,
-		storeAddr,
-		opt,
-		grpc.WithBlock(),
-		grpc.FailOnNonTempDialError(true),
+	conn, err := utils.GRPCConn(ctx, storeAddr, recovery.mgr.GetTLSConfig(),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:    time.Duration(10) * time.Second,
@@ -151,7 +136,7 @@ func getStoreAddress(allStores []*metapb.Store, storeId uint64) string {
 func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, maxStoreConcurrency)), "Collect Region Meta") // TODO: int overflow?
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "Collect Region Meta") // TODO: int overflow?
 
 	// TODO: optimize the ErroGroup when TiKV is panic
 	metaChan := make(chan StoreMeta, 1024)
@@ -232,7 +217,7 @@ func (recovery *Recovery) getTotalRegions() int {
 func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalRecoveredStores := len(recovery.recoveryPlan)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, maxStoreConcurrency)), "Recover Regions")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, common.MaxStoreConcurrency)), "Recover Regions")
 
 	for storeId, plan := range recovery.recoveryPlan {
 		if err := ectx.Err(); err != nil {
@@ -282,7 +267,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, maxStoreConcurrency)), "wait apply")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "wait apply")
 
 	for _, store := range recovery.allStores {
 		if err := ectx.Err(); err != nil {
@@ -318,7 +303,7 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, maxStoreConcurrency)), "resolve data from tikv")
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "resolve data from tikv")
 
 	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at least some retry may necessary
 	// TODO: what if the network disturbing, a retry machanism may need here
