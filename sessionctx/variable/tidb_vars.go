@@ -289,8 +289,8 @@ const (
 	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// TiDBOptConcurrencyFactor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
-	// TiDBOptInlineCTE is used to enable/disable inline CTE
-	TiDBOptInlineCTE = "tidb_opt_force_inline_cte"
+	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
+	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
 
 	// Variables for the Cost Model Ver2
 	// TiDBOptCPUFactorV2 is the CPU factor for the Cost Model Ver2

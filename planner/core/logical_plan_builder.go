@@ -3862,14 +3862,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 				//If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
 					ErrInternal.GenWithStack("Hint merge() is inapplicable. " +
-						"Please check whether the hint is using in the right place, " +
-						"you should use this hint in CTE inner query."))
+						"Please check whether the hint is used in the right place, " +
+						"you should use this hint inside the CTE."))
 			}
 		} else if !b.buildingCTE && !b.isCTE {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(
 				ErrInternal.GenWithStack("Hint merge() is inapplicable. " +
-					"Please check whether the hint is using in the right place, " +
-					"you should use this hint in CTE inner query."))
+					"Please check whether the hint is used in the right place, " +
+					"you should use this hint inside the CTE."))
 		}
 	}
 
@@ -4258,7 +4258,8 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
 			if cte.recurLP != nil && cte.isInline {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Recursive cte cannot be inlined."))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+					ErrInternal.GenWithStack("Recursive CTE can not be inlined."))
 			}
 			if cte.recurLP == nil && cte.isInline {
 				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
