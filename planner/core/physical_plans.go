@@ -627,8 +627,8 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	for _, rang := range p.Ranges {
 		sum += rang.MemoryUsage()
 	}
-	for tid, expr := range p.GenExprs {
-		sum += int64(unsafe.Sizeof(tid)) + expr.MemoryUsage()
+	for iid, expr := range p.GenExprs {
+		sum += int64(unsafe.Sizeof(iid)) + expr.MemoryUsage()
 	}
 	return
 }
@@ -814,7 +814,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPhysicalTableScanSize + ts.physicalSchemaProducer.MemoryUsage() + ts.DBName.MemoryUsage() +
-		ts.PartitionInfo.MemoryUsage()
+		int64(cap(ts.HandleIdx))*size.SizeOfInt + ts.PartitionInfo.MemoryUsage()
 	if ts.TableAsName != nil {
 		sum += ts.TableAsName.MemoryUsage()
 	}
