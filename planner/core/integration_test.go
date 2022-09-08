@@ -7297,3 +7297,15 @@ func TestPlanCacheForTableRangeFallback(t *testing.T) {
 	// The plan with range fallback is not cached.
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
+
+func TestUT(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery("explain format='brief' select * from t where t.a is not null").Check(testkit.Rows(
+		"TableReader 9990.00 root  data:Selection",
+		"└─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+}

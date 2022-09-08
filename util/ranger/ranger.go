@@ -346,7 +346,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 	if tableRange {
 		ranges, rangeFallback, err = points2TableRanges(sctx, rangePoints, newTp, rangeMaxSize)
 	} else {
-		ranges, rangeFallback, err = points2TableRanges(sctx, rangePoints, newTp, rangeMaxSize)
+		ranges, rangeFallback, err = points2Ranges(sctx, rangePoints, newTp, rangeMaxSize)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
