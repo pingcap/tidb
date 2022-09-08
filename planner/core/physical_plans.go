@@ -1129,6 +1129,7 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalLimit
 func (p *PhysicalLimit) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
