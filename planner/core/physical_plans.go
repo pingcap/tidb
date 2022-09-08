@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -608,7 +607,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPhysicalIndexScanSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IdxColLens))*size.SizeOfInt +
-		p.DBName.MemoryUsage() + len(p.rangeInfo)
+		p.DBName.MemoryUsage() + int64(len(p.rangeInfo))
 	if p.TableAsName != nil {
 		sum += p.TableAsName.MemoryUsage()
 	}
@@ -1475,7 +1474,7 @@ func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + memory.SizeOfSlice + p.HandleCols.MemoryUsage()
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + p.HandleCols.MemoryUsage()
 	for _, cond := range p.Conditions {
 		sum += cond.MemoryUsage()
 	}
