@@ -2119,7 +2119,7 @@ func checkRangeFallbackAndReset(t *testing.T, sctx sessionctx.Context, expectedR
 	sctx.GetSessionVars().StmtCtx.RangeFallback = false
 }
 
-func TestRangeFallbackForBuildTableRange(t *testing.T) {
+func TestBuildTableRangeFallback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2153,7 +2153,7 @@ func TestRangeFallbackForBuildTableRange(t *testing.T) {
 	checkRangeFallbackAndReset(t, sctx, true)
 }
 
-func TestRangeFallbackForBuildColumnRange(t *testing.T) {
+func TestBuildColumnRangeFallback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
