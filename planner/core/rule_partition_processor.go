@@ -1044,7 +1044,6 @@ func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.E
 	}
 
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, exprs, columnsPruner.partCols, lens)
-
 	if err != nil {
 		return fullRange(len(columnsPruner.lessThan))
 	}

@@ -1002,27 +1002,26 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 }
 
 func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
-	var err error
-	var isNull bool
+	var lastError error
 	partitionExprs := t.partitionExpr.UpperBounds
 	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
-	var ret int64
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		evalBuffer.SetDatums(r...)
-		ret, isNull, err = partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
+		ret, isNull, err := partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
 		if err != nil {
-			return true // Break the search.
+			lastError = err
+			return true // Does not matter, will propagate the last error anyway.
 		}
 		if isNull {
 			// If the column value used to determine the partition is NULL, the row is inserted into the lowest partition.
 			// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-handling-nulls.html
-			return true // Break the search.
+			return true // Always less than any other value (NULL cannot be in the partition definition VALUE LESS THAN).
 		}
 		return ret > 0
 	})
-	if err != nil {
-		return 0, errors.Trace(err)
+	if lastError != nil {
+		return 0, errors.Trace(lastError)
 	}
 	if idx >= len(partitionExprs) {
 		// The data does not belong to any of the partition returns `table has no partition for value %s`.
