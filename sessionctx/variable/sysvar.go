@@ -1800,6 +1800,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableTiFlashReadForWriteStmt = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptRangeMemQuota, Value: strconv.Itoa(DefTiDBOptRangeMemQuota), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.RangeMemQuota = TidbOptInt64(val, DefTiDBOptRangeMemQuota)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
