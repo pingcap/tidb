@@ -22,8 +22,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +49,17 @@ import (
 var _ Executor = &PlanReplayerSingleExec{}
 var _ Executor = &PlanReplayerLoadExec{}
 
+const (
+	configFile          = "config.toml"
+	metaFile            = "meta.txt"
+	variablesFile       = "variables.toml"
+	sqlFile             = "sqls.sql"
+	tiFlashReplicasFile = "table_tiflash_replica.txt"
+	sessionBindingFile  = "session_bindings.sql"
+	globalBindingFile   = "global_bindings.sql"
+	explainFile         = "explain.txt"
+)
+
 // PlanReplayerSingleExec represents a plan replayer executor.
 type PlanReplayerSingleExec struct {
 	baseExecutor
@@ -59,12 +72,17 @@ type PlanReplayerSingleExec struct {
 type tableNamePair struct {
 	DBName    string
 	TableName string
+	IsView    bool
 }
 
 type tableNameExtractor struct {
-	curDB    string
+	ctx      context.Context
+	executor sqlexec.RestrictedSQLExecutor
+	is       infoschema.InfoSchema
+	curDB    model.CIStr
 	names    map[tableNamePair]struct{}
 	cteNames map[string]struct{}
+	err      error
 }
 
 func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -75,10 +93,18 @@ func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
 }
 
 func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
+	if tne.err != nil {
+		return in, true
+	}
 	if t, ok := in.(*ast.TableName); ok {
-		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L}
+		isView, err := tne.handleIsView(t)
+		if err != nil {
+			tne.err = err
+			return in, true
+		}
+		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
 		if tp.DBName == "" {
-			tp.DBName = tne.curDB
+			tp.DBName = tne.curDB.L
 		}
 		if _, ok := tne.names[tp]; !ok {
 			tne.names[tp] = struct{}{}
@@ -93,6 +119,29 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
+func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
+	schema := t.Schema
+	if schema.L == "" {
+		schema = tne.curDB
+	}
+	table := t.Name
+	isView := tne.is.TableIsView(schema, table)
+	if !isView {
+		return false, nil
+	}
+	viewTbl, err := tne.is.TableByName(schema, table)
+	if err != nil {
+		return false, err
+	}
+	sql := viewTbl.Meta().View.SelectStmt
+	node, err := tne.executor.ParseWithParams(tne.ctx, sql)
+	if err != nil {
+		return false, err
+	}
+	node.Accept(tne)
+	return true, nil
+}
+
 // Next implements the Executor Next interface.
 func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
@@ -102,7 +151,7 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
 	if e.ExecStmt == nil {
 		return errors.New("plan replayer: sql is empty")
 	}
-	res, err := e.dumpSingle(domain.GetPlanReplayerDirName())
+	res, err := e.dumpSingle(ctx, domain.GetPlanReplayerDirName())
 	if err != nil {
 		return err
 	}
@@ -113,20 +162,29 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
 
 // dumpSingle will dump the information about a single sql.
 // The files will be organized into the following format:
-// |-meta.txt
-// |-schema.sql
-// |-stats
-// |   |-stats1.json
-// |   |-stats2.json
-// |   |-....
-// |-config.toml
-// |-variables.toml
-// |-bindings.sql
-// |-sqls.sql
-// |_explain
-//     |-explain.txt
-//
-func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err error) {
+/*
+ |-meta.txt
+ |-schema
+ |	 |-db1.table1.schema.txt
+ |	 |-db2.table2.schema.txt
+ |	 |-....
+ |-view
+ | 	 |-db1.view1.view.txt
+ |	 |-db2.view2.view.txt
+ |	 |-....
+ |-stats
+ |   |-stats1.json
+ |   |-stats2.json
+ |   |-....
+ |-config.toml
+ |-table_tiflash_replica.txt
+ |-variables.toml
+ |-bindings.sql
+ |-sqls.sql
+ |_explain
+     |-explain.txt
+*/
+func (e *PlanReplayerSingleExec) dumpSingle(ctx context.Context, path string) (fileName string, err error) {
 	// Create path
 	err = os.MkdirAll(path, os.ModePerm)
 	if err != nil {
@@ -177,13 +235,18 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err e
 	do := domain.GetDomain(e.ctx)
 
 	// Retrieve all tables
-	pairs, err := extractTableNames(e.ExecStmt, dbName.L)
+	pairs, err := e.extractTableNames(ctx, e.ExecStmt, dbName)
 	if err != nil {
 		return "", errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
 	}
 
-	// Dump Schema
+	// Dump Schema and View
 	if err = dumpSchemas(e.ctx, zw, pairs); err != nil {
+		return "", err
+	}
+
+	// Dump tables tiflash replicas
+	if err = dumpTiFlashReplica(e.ctx, zw, pairs); err != nil {
 		return "", err
 	}
 
@@ -198,7 +261,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err e
 	}
 
 	// Dump sql
-	sql, err := zw.Create("sqls.sql")
+	sql, err := zw.Create(sqlFile)
 	if err != nil {
 		return "", nil
 	}
@@ -226,7 +289,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err e
 }
 
 func dumpConfig(zw *zip.Writer) error {
-	cf, err := zw.Create("config.toml")
+	cf, err := zw.Create(configFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
@@ -237,13 +300,38 @@ func dumpConfig(zw *zip.Writer) error {
 }
 
 func dumpMeta(zw *zip.Writer) error {
-	mt, err := zw.Create("meta.txt")
+	mt, err := zw.Create(metaFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
 	_, err = mt.Write([]byte(printer.GetTiDBInfo()))
 	if err != nil {
 		return errors.AddStack(err)
+	}
+	return nil
+}
+
+func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
+	bf, err := zw.Create(tiFlashReplicasFile)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	is := domain.GetDomain(ctx).InfoSchema()
+	for pair := range pairs {
+		dbName := model.NewCIStr(pair.DBName)
+		tableName := model.NewCIStr(pair.TableName)
+		t, err := is.TableByName(dbName, tableName)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to find table info", zap.Error(err),
+				zap.String("dbName", dbName.L), zap.String("tableName", tableName.L))
+			continue
+		}
+		if t.Meta().TiFlashReplica != nil && t.Meta().TiFlashReplica.Count > 0 {
+			row := []string{
+				pair.DBName, pair.TableName, strconv.FormatUint(t.Meta().TiFlashReplica.Count, 10),
+			}
+			fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
+		}
 	}
 	return nil
 }
@@ -260,6 +348,9 @@ func dumpSchemas(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair
 
 func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *domain.Domain) error {
 	for pair := range pairs {
+		if pair.IsView {
+			continue
+		}
 		jsonTbl, err := getStatsForTable(do, pair)
 		if err != nil {
 			return err
@@ -286,11 +377,11 @@ func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
 	if err != nil {
 		return err
 	}
-	vf, err := zw.Create("variables.toml")
+	vf, err := zw.Create(variablesFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
@@ -313,11 +404,11 @@ func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], true)
 	if err != nil {
 		return err
 	}
-	bf, err := zw.Create("session_bindings.sql")
+	bf, err := zw.Create(sessionBindingFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
@@ -337,11 +428,11 @@ func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
 	if err != nil {
 		return err
 	}
-	bf, err := zw.Create("global_bindings.sql")
+	bf, err := zw.Create(globalBindingFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
@@ -372,11 +463,11 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 			return err
 		}
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
 	if err != nil {
 		return err
 	}
-	fw, err := zw.Create("explain.txt")
+	fw, err := zw.Create(explainFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
@@ -391,16 +482,27 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 	return nil
 }
 
-func extractTableNames(ExecStmt ast.StmtNode, curDB string) (map[tableNamePair]struct{}, error) {
+func (e *PlanReplayerSingleExec) extractTableNames(ctx context.Context,
+	ExecStmt ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
+		ctx:      ctx,
+		executor: e.ctx.(sqlexec.RestrictedSQLExecutor),
+		is:       domain.GetDomain(e.ctx).InfoSchema(),
 		curDB:    curDB,
 		names:    make(map[tableNamePair]struct{}),
 		cteNames: make(map[string]struct{}),
 	}
 	ExecStmt.Accept(tableExtractor)
+	if tableExtractor.err != nil {
+		return nil, tableExtractor.err
+	}
 	r := make(map[tableNamePair]struct{})
-	// remove cte in table names
 	for tablePair := range tableExtractor.names {
+		if tablePair.IsView {
+			r[tablePair] = struct{}{}
+			continue
+		}
+		// remove cte in table names
 		_, ok := tableExtractor.cteNames[tablePair.TableName]
 		if !ok {
 			r[tablePair] = struct{}{}
@@ -425,18 +527,29 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
 	if err != nil {
 		return err
 	}
-	fw, err := zw.Create(fmt.Sprintf("schema/%v.%v.schema.txt", pair.DBName, pair.TableName))
-	if err != nil {
-		return errors.AddStack(err)
+	var fw io.Writer
+	if pair.IsView {
+		fw, err = zw.Create(fmt.Sprintf("view/%v.%v.view.txt", pair.DBName, pair.TableName))
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		if len(sRows) == 0 || len(sRows[0]) != 4 {
+			return fmt.Errorf("plan replayer: get create view %v.%v failed", pair.DBName, pair.TableName)
+		}
+	} else {
+		fw, err = zw.Create(fmt.Sprintf("schema/%v.%v.schema.txt", pair.DBName, pair.TableName))
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		if len(sRows) == 0 || len(sRows[0]) != 2 {
+			return fmt.Errorf("plan replayer: get create table %v.%v failed", pair.DBName, pair.TableName)
+		}
 	}
-	if len(sRows) == 0 || len(sRows[0]) != 2 {
-		return fmt.Errorf("plan replayer: get create table %v.%v failed", pair.DBName, pair.TableName)
-	}
-	fmt.Fprintf(fw, "create database `%v`; use `%v`;", pair.DBName, pair.DBName)
+	fmt.Fprintf(fw, "create database if not exists `%v`; use `%v`;", pair.DBName, pair.DBName)
 	fmt.Fprintf(fw, "%s", sRows[0][1])
 	if len(recordSets) > 0 {
 		if err := recordSets[0].Close(); err != nil {
@@ -446,7 +559,7 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	return nil
 }
 
-func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet) ([][]string, error) {
+func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet, emptyAsNil bool) ([][]string, error) {
 	rows, err := getRows(ctx, rs)
 	if err != nil {
 		return nil, err
@@ -466,6 +579,9 @@ func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet) ([][]stri
 				iRow[j], err = d.ToString()
 				if err != nil {
 					return nil, err
+				}
+				if len(iRow[j]) < 1 && emptyAsNil {
+					iRow[j] = "<nil>"
 				}
 			}
 		}
@@ -534,9 +650,106 @@ func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error
 	return nil
 }
 
-func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
+func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 	for _, zipFile := range z.File {
-		if strings.Compare(zipFile.Name, "variables.toml") == 0 {
+		if strings.Compare(zipFile.Name, tiFlashReplicasFile) == 0 {
+			v, err := zipFile.Open()
+			if err != nil {
+				return errors.AddStack(err)
+			}
+			//nolint: errcheck,all_revive
+			defer v.Close()
+			buf := new(bytes.Buffer)
+			_, err = buf.ReadFrom(v)
+			if err != nil {
+				return errors.AddStack(err)
+			}
+			rows := strings.Split(buf.String(), "\n")
+			for _, row := range rows {
+				if len(row) < 1 {
+					continue
+				}
+				r := strings.Split(row, "\t")
+				if len(r) < 3 {
+					logutil.BgLogger().Debug("plan replayer: skip error",
+						zap.Error(errors.New("setting tiflash replicas failed")))
+					continue
+				}
+				dbName := r[0]
+				tableName := r[1]
+				c := context.Background()
+				// Though we record tiflash replica in txt, we only set 1 tiflash replica as it's enough for reproduce the plan
+				sql := fmt.Sprintf("alter table %s.%s set tiflash replica 1", dbName, tableName)
+				_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sql)
+				logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
+			}
+		}
+	}
+	return nil
+}
+
+func loadAllBindings(ctx sessionctx.Context, z *zip.Reader) error {
+	for _, f := range z.File {
+		if strings.Compare(f.Name, sessionBindingFile) == 0 {
+			err := loadBindings(ctx, f, true)
+			if err != nil {
+				return err
+			}
+		} else if strings.Compare(f.Name, globalBindingFile) == 0 {
+			err := loadBindings(ctx, f, false)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
+	r, err := f.Open()
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	//nolint: errcheck
+	defer r.Close()
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(r)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	if len(buf.String()) < 1 {
+		return nil
+	}
+	bindings := strings.Split(buf.String(), "\n")
+	for _, binding := range bindings {
+		cols := strings.Split(binding, "\t")
+		if len(cols) < 3 {
+			continue
+		}
+		originSQL := cols[0]
+		bindingSQL := cols[1]
+		enabled := cols[3]
+		if strings.Compare(enabled, "enabled") == 0 {
+			sql := fmt.Sprintf("CREATE %s BINDING FOR %s USING %s", func() string {
+				if isSession {
+					return "SESSION"
+				}
+				return "GLOBAL"
+			}(), originSQL, bindingSQL)
+			c := context.Background()
+			_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sql)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
+	unLoadVars := make([]string, 0)
+	for _, zipFile := range z.File {
+		if strings.Compare(zipFile.Name, variablesFile) == 0 {
 			varMap := make(map[string]string)
 			v, err := zipFile.Open()
 			if err != nil {
@@ -552,24 +765,33 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			for name, value := range varMap {
 				sysVar := variable.GetSysVar(name)
 				if sysVar == nil {
-					return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+					unLoadVars = append(unLoadVars, name)
+					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
+					continue
 				}
 				sVal, err := sysVar.Validate(vars, value, variable.ScopeSession)
 				if err != nil {
-					logutil.BgLogger().Debug(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
+					unLoadVars = append(unLoadVars, name)
+					logutil.BgLogger().Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
 					continue
 				}
 				err = vars.SetSystemVar(name, sVal)
 				if err != nil {
-					return err
+					unLoadVars = append(unLoadVars, name)
+					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
+					continue
 				}
 			}
 		}
 	}
+	if len(unLoadVars) > 0 {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("variables set failed:%s", strings.Join(unLoadVars, ",")))
+	}
 	return nil
 }
 
-func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
+// createSchemaAndItems creates schema and tables or views
+func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	r, err := f.Open()
 	if err != nil {
 		return errors.AddStack(err)
@@ -586,7 +808,7 @@ func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
 		return errors.New("plan replayer: create schema and tables failed")
 	}
 	c := context.Background()
-	// create database
+	// create database if not exists
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[0])
 	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 	// use database
@@ -594,7 +816,7 @@ func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
 	if err != nil {
 		return err
 	}
-	// create table
+	// create table or view
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[2])
 	if err != nil {
 		return err
@@ -640,11 +862,28 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 		return err
 	}
 
-	// build schema and table
+	// build schema and table first
 	for _, zipFile := range z.File {
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 {
-			err = createSchemaAndTables(e.Ctx, zipFile)
+			err = createSchemaAndItems(e.Ctx, zipFile)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// set tiflash replica if exists
+	err = loadSetTiFlashReplica(e.Ctx, z)
+	if err != nil {
+		return err
+	}
+
+	// build view next
+	for _, zipFile := range z.File {
+		path := strings.Split(zipFile.Name, "/")
+		if len(path) == 2 && strings.Compare(path[0], "view") == 0 {
+			err = createSchemaAndItems(e.Ctx, zipFile)
 			if err != nil {
 				return err
 			}
@@ -660,6 +899,12 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 				return err
 			}
 		}
+	}
+
+	err = loadAllBindings(e.Ctx, z)
+	if err != nil {
+		logutil.BgLogger().Warn("load bindings failed", zap.Error(err))
+		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
 	return nil
 }

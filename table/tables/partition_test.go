@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -393,6 +394,8 @@ func TestLocatePartitionSingleColumn(t *testing.T) {
 }
 
 func TestLocatePartition(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -512,6 +515,12 @@ func TestRangePartitionUnderNoUnsigned(t *testing.T) {
 	tk.MustExec("drop table if exists tu;")
 	defer tk.MustExec("drop table if exists t2;")
 	defer tk.MustExec("drop table if exists tu;")
+	tk.MustGetErrCode(`CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
+							PARTITION p0 VALUES LESS THAN (-5),
+							PARTITION p1 VALUES LESS THAN (0),
+							PARTITION p2 VALUES LESS THAN (5),
+							PARTITION p3 VALUES LESS THAN (10),
+							PARTITION p4 VALUES LESS THAN (MAXVALUE));`, mysql.ErrPartitionConstDomain)
 	tk.MustExec("SET @@sql_mode='NO_UNSIGNED_SUBTRACTION';")
 	tk.MustExec(`create table t2 (a bigint unsigned) partition by range (a) (
   						  partition p1 values less than (0),

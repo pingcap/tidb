@@ -310,7 +310,7 @@ func (importer *FileImporter) getKeyRangeForFiles(
 		if importer.isRawKvMode {
 			start, end = f.GetStartKey(), f.GetEndKey()
 		} else {
-			start, end, err = RewriteFileKeys(f, rewriteRules)
+			start, end, err = GetRewriteRawKeys(f, rewriteRules)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -390,7 +390,7 @@ func (importer *FileImporter) ImportKVFiles(
 ) error {
 	startTime := time.Now()
 	log.Debug("import kv files", zap.String("file", file.Path))
-	startKey, endKey, err := RewriteFileKeys(file, rule)
+	startKey, endKey, err := GetRewriteEncodedKeys(file, rule)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -824,10 +824,11 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	}
 
 	meta := &import_sstpb.KVMeta{
-		Name: file.Path,
-		Cf:   file.Cf,
-		// TODO fill the length
-		Length:          0,
+		Name:            file.Path,
+		Cf:              file.Cf,
+		Offset:          file.Offset,
+		Length:          file.Length,
+		CompressLength:  file.CompressLength,
 		IsDelete:        file.Type == backuppb.FileType_Delete,
 		StartSnapshotTs: startTS,
 		RestoreTs:       restoreTS,

@@ -93,25 +93,31 @@ func (*Join) resultSet() {}
 // NewCrossJoin builds a cross join without `on` or `using` clause.
 // If the right child is a join tree, we need to handle it differently to make the precedence get right.
 // Here is the example: t1 join t2 join t3
-//                 JOIN ON t2.a = t3.a
-//  t1    join    /    \
-//              t2      t3
+//
+//	               JOIN ON t2.a = t3.a
+//	t1    join    /    \
+//	            t2      t3
+//
 // (left)         (right)
 //
 // We can not build it directly to:
-//         JOIN
-//        /    \
-//       t1	   JOIN ON t2.a = t3.a
-//             /   \
-//            t2    t3
+//
+//	  JOIN
+//	 /    \
+//	t1	   JOIN ON t2.a = t3.a
+//	      /   \
+//	     t2    t3
+//
 // The precedence would be t1 join (t2 join t3 on t2.a=t3.a), not (t1 join t2) join t3 on t2.a=t3.a
 // We need to find the left-most child of the right child, and build a cross join of the left-hand side
 // of the left child(t1), and the right hand side with the original left-most child of the right child(t2).
-//          JOIN t2.a = t3.a
-//         /    \
-//       JOIN    t3
-//       /  \
-//      t1  t2
+//
+//	    JOIN t2.a = t3.a
+//	   /    \
+//	 JOIN    t3
+//	 /  \
+//	t1  t2
+//
 // Besides, if the right handle side join tree's join type is right join and has explicit parentheses, we need to rewrite it to left join.
 // So t1 join t2 right join t3 would be rewrite to t1 join t3 left join t2.
 // If not, t1 join (t2 right join t3) would be (t1 join t2) right join t3. After rewrite the right join to left join.

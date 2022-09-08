@@ -40,6 +40,7 @@ import (
 //   - Provides some methods like `activateTxn` and `prepareTxn` to manage the inner transaction.
 //   - Provides default methods `GetTxnInfoSchema`, `GetStmtReadTS` and `GetStmtForUpdateTS` and return the snapshot information schema or ts when `tidb_snapshot` is set.
 //   - Provides other default methods like `Advise`, `OnStmtStart`, `OnStmtRetry` and `OnStmtErrorForNextAction`
+//
 // The subclass can set some inner property of `baseTxnContextProvider` when it is constructed.
 // For example, `getStmtReadTSFunc` and `getStmtForUpdateTSFunc` should be set, and they will be called when `GetStmtReadTS`
 // or `GetStmtForUpdate` to get the timestamp that should be used by the corresponding isolation level.
@@ -161,7 +162,7 @@ func (p *baseTxnContextProvider) GetReadReplicaScope() string {
 	return kv.GlobalReplicaScope
 }
 
-//GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
@@ -195,6 +196,17 @@ func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode
 func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
 	return nil
+}
+
+// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
+func (p *baseTxnContextProvider) OnLocalTemporaryTableCreated() {
+	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, p.infoSchema)
+	p.sctx.GetSessionVars().TxnCtx.InfoSchema = p.infoSchema
+	if p.txn != nil && p.txn.Valid() {
+		if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
+			p.txn.SetOption(kv.SnapInterceptor, interceptor)
+		}
+	}
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -251,7 +263,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if readReplicaType.IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, readReplicaType)
 	}
-	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+
+	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
+		txn.SetOption(kv.SnapInterceptor, interceptor)
+	}
 
 	if sessVars.StmtCtx.WeakConsistency {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
@@ -393,7 +408,11 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	snapshot := internal.GetSnapshotWithTS(p.sctx, snapshotTS)
+	snapshot := internal.GetSnapshotWithTS(
+		p.sctx,
+		snapshotTS,
+		temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
+	)
 
 	replicaReadType := sessVars.GetReplicaRead()
 	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {

@@ -23,7 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -268,6 +268,12 @@ func (d Checker) RecoverTable(ctx sessionctx.Context, recoverInfo *ddl.RecoverIn
 	panic("implement me")
 }
 
+// FlashbackCluster implements the DDL interface.
+func (d Checker) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) (err error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 // DropView implements the DDL interface.
 func (d Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	err = d.realDDL.DropView(ctx, stmt)
@@ -485,7 +491,7 @@ func (d Checker) RegisterStatsHandle(h *handle.Handle) {
 }
 
 // SchemaSyncer implements the DDL interface.
-func (d Checker) SchemaSyncer() util.SchemaSyncer {
+func (d Checker) SchemaSyncer() syncer.SchemaSyncer {
 	return d.realDDL.SchemaSyncer()
 }
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 # Copyright 2022 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +14,9 @@
 # limitations under the License.
 #
 
-find . \( -name "*.png" \
+FIND=$(which gfind || which find || echo "find")
+
+files="$($FIND . \( -name "*.png" \
 	-o -name "*.md" \
 	-o -name "*.toml" \
 	-o -name "*.yaml" \
@@ -25,14 +27,14 @@ find . \( -name "*.png" \
 	-o -name "*.png" \
 	-o -name "go.mod" \
 	-o -name "go.sum" \
-\) -exec chmod -x {} \;
+\) -executable)"
 
 # no files should be changed
-if [ -z "$(git status --untracked-files=no --porcelain)" ]; then 
+if [ -z "$files" ]; then
 	exit 0
 else 
 	echo "you may have files with wrong permission, for example an executable txt or png file"
-	git status
+	echo "$files"
 	exit 1
 fi
 

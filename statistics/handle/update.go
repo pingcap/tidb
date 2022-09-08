@@ -192,12 +192,12 @@ var (
 )
 
 // StoreQueryFeedback merges the feedback into stats collector. Deprecated.
-func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
+func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle, enablePseudoForOutdatedStats bool) error {
 	q := feedback.(*statistics.QueryFeedback)
 	if !q.Valid || q.Hist == nil {
 		return nil
 	}
-	err := h.RecalculateExpectCount(q)
+	err := h.RecalculateExpectCount(q, enablePseudoForOutdatedStats)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -340,8 +340,11 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 	return mapper
 }
 
-//batchInsertSize is the every insert values size limit.Used in such as DumpIndexUsageToKV,DumpColStatsUsageToKV
+// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
+
+// maxInsertLength is the length limit for internal insert SQL.
+const maxInsertLength = 1024 * 1024
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
@@ -970,11 +973,11 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 }
 
 // NeedAnalyzeTable checks if we need to analyze the table:
-// 1. If the table has never been analyzed, we need to analyze it when it has
-//    not been modified for a while.
-// 2. If the table had been analyzed before, we need to analyze it when
-//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
-//    between `start` and `end`.
+//  1. If the table has never been analyzed, we need to analyze it when it has
+//     not been modified for a while.
+//  2. If the table had been analyzed before, we need to analyze it when
+//     "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
+//     between `start` and `end`.
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
@@ -1379,13 +1382,13 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 }
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
-func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
+func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback, enablePseudoForOutdatedStats bool) error {
 	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return nil
 	}
 	tablePseudo := t.Pseudo
-	if h.mu.ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
+	if enablePseudoForOutdatedStats {
 		tablePseudo = t.Pseudo || t.IsOutdated()
 	}
 	if !tablePseudo {

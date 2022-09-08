@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"golang.org/x/exp/slices"
@@ -141,9 +141,9 @@ func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row chunk.Row)
 }
 
 // EvalJSON returns JSON representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
 	if col.Data.IsNull() {
-		return json.BinaryJSON{}, true, nil
+		return types.BinaryJSON{}, true, nil
 	}
 	return col.Data.GetMysqlJSON(), false, nil
 }
@@ -190,6 +190,16 @@ func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ *Schema) (Expression,
 
 func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
 	return true
+}
+
+// MemoryUsage return the memory usage of CorrelatedColumn
+func (col *CorrelatedColumn) MemoryUsage() (sum int64) {
+	if col == nil {
+		return
+	}
+
+	sum = col.Column.MemoryUsage() + col.Data.MemUsage()
+	return sum
 }
 
 // Column represents a column.
@@ -451,9 +461,9 @@ func (col *Column) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Du
 }
 
 // EvalJSON returns JSON representation of Column.
-func (col *Column) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+func (col *Column) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
 	if row.IsNull(col.Index) {
-		return json.BinaryJSON{}, true, nil
+		return types.BinaryJSON{}, true, nil
 	}
 	return row.GetJSON(col.Index), false, nil
 }
@@ -722,4 +732,21 @@ func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
 	}
 
 	return true
+}
+
+const emptyColumnSize = int64(unsafe.Sizeof(Column{}))
+
+// MemoryUsage return the memory usage of Column
+func (col *Column) MemoryUsage() (sum int64) {
+	if col == nil {
+		return
+	}
+
+	sum = emptyColumnSize + col.RetType.MemoryUsage() + int64(cap(col.hashcode)) +
+		int64(len(col.OrigName)+len(col.charset)+len(col.collation))
+
+	if col.VirtualExpr != nil {
+		sum += col.VirtualExpr.MemoryUsage()
+	}
+	return
 }

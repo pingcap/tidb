@@ -33,8 +33,10 @@ type joinReorderGreedySolver struct {
 // current join tree.
 //
 // cumulative join cost = CumCount(lhs) + CumCount(rhs) + RowCount(join)
-//   For base node, its CumCount equals to the sum of the count of its subtree.
-//   See baseNodeCumCost for more details.
+//
+//	For base node, its CumCount equals to the sum of the count of its subtree.
+//	See baseNodeCumCost for more details.
+//
 // TODO: this formula can be changed to real physical cost in future.
 //
 // For the nodes and join trees which don't have a join equal condition to

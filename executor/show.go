@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -799,17 +798,6 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 	return nil
 }
 
-func (e *ShowExec) sysVarHiddenForSem(sysVarNameInLower string) bool {
-	if !sem.IsEnabled() || !sem.IsInvisibleSysVar(sysVarNameInLower) {
-		return false
-	}
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker == nil || checker.RequestDynamicVerification(e.ctx.GetSessionVars().ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
-		return false
-	}
-	return true
-}
-
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
 		value       string
@@ -839,7 +827,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
 				}
-				if e.sysVarHiddenForSem(v.Name) {
+				if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 					continue
 				}
 				value, err = sessionVars.GetGlobalSystemVar(v.Name)
@@ -864,7 +852,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if e.sysVarHiddenForSem(v.Name) {
+		if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 			continue
 		}
 		value, err = sessionVars.GetSessionOrGlobalSystemVar(v.Name)
@@ -1031,7 +1019,12 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			}
 		}
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
-			buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", tableInfo.AutoRandomBits))
+			s, r := tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits
+			if r == 0 || r == autoid.AutoRandomRangeBitsDefault {
+				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", s))
+			} else {
+				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d, %d) */", s, r))
+			}
 		}
 		if len(col.Comment) > 0 {
 			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
@@ -1117,11 +1110,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
-		if ast.ReferOptionType(fk.OnDelete) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete).String()))
+		if model.ReferOptionType(fk.OnDelete) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON DELETE %s", model.ReferOptionType(fk.OnDelete).String()))
 		}
-		if ast.ReferOptionType(fk.OnUpdate) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate).String()))
+		if model.ReferOptionType(fk.OnUpdate) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
 		}
 	}
 
@@ -1759,10 +1752,6 @@ func (e *ShowExec) tableAccessDenied(access string, table string) error {
 
 func (e *ShowExec) appendRow(row []interface{}) {
 	for i, col := range row {
-		if col == nil {
-			e.result.AppendNull(i)
-			continue
-		}
 		switch x := col.(type) {
 		case nil:
 			e.result.AppendNull(i)
@@ -1786,7 +1775,7 @@ func (e *ShowExec) appendRow(row []interface{}) {
 			e.result.AppendMyDecimal(i, x)
 		case types.Time:
 			e.result.AppendTime(i, x)
-		case json.BinaryJSON:
+		case types.BinaryJSON:
 			e.result.AppendJSON(i, x)
 		case types.Duration:
 			e.result.AppendDuration(i, x)
@@ -1990,7 +1979,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stateJSON := json.BinaryJSON{}
+	stateJSON := types.BinaryJSON{}
 	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
 		return err
 	}
@@ -2010,7 +1999,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tokenJSON := json.BinaryJSON{}
+	tokenJSON := types.BinaryJSON{}
 	if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
 		return err
 	}

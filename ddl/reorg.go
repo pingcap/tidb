@@ -152,18 +152,18 @@ func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 // 1: add index
 // 2: alter column type
 // 3: clean global index
-//
-// ddl goroutine >---------+
-//   ^                     |
-//   |                     |
-//   |                     |
-//   |                     | <---(doneCh)--- f()
-// HandleDDLQueue(...)     | <---(regular timeout)
-//   |                     | <---(ctx done)
-//   |                     |
-//   |                     |
-// A more ddl round  <-----+
-//
+/*
+ ddl goroutine >---------+
+   ^                     |
+   |                     |
+   |                     |
+   |                     | <---(doneCh)--- f()
+ HandleDDLQueue(...)     | <---(regular timeout)
+   |                     | <---(ctx done)
+   |                     |
+   |                     |
+ A more ddl round  <-----+
+*/
 // How can we cancel reorg job?
 //
 // The background reorg is continuously running except for several factors, for instances, ddl owner change,
@@ -268,7 +268,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
 		rowCount, doneKey, currentElement := rc.getRowCountAndKey()
-		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
@@ -542,7 +541,7 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 // getTableRange gets the start and end handle of a table (or partition).
 func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(ctx, d.store, priority, tbl, snapshotVer, nil, nil,
+	err = iterateSnapshotKeys(ctx, d.store, priority, tbl.RecordPrefix(), snapshotVer, nil, nil,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandleKey = rowKey
 			return false, nil

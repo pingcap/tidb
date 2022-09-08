@@ -215,7 +215,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tr
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan model.TableItemID{}
+	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -699,19 +699,24 @@ func (h *Handle) loadNeededColumnHistograms(reader *statsReader, col model.Table
 		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ID))
 		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", col.TableID, col.ID))
 	}
+	statsVer := rows[0].GetInt64(0)
 	colHist := &statistics.Column{
-		PhysicalID:        col.TableID,
-		Histogram:         *hg,
-		Info:              c.Info,
-		CMSketch:          cms,
-		TopN:              topN,
-		FMSketch:          fms,
-		IsHandle:          c.IsHandle,
-		StatsVer:          rows[0].GetInt64(0),
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		PhysicalID: col.TableID,
+		Histogram:  *hg,
+		Info:       c.Info,
+		CMSketch:   cms,
+		TopN:       topN,
+		FMSketch:   fms,
+		IsHandle:   c.IsHandle,
+		StatsVer:   statsVer,
 	}
 	// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 	colHist.Count = int64(colHist.TotalRowCount())
+	// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+	// So we need add colHist.Count > 0 here.
+	if statsVer != statistics.Version0 || colHist.Count > 0 {
+		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache = h.statsCache.Load().(statsCache)
@@ -835,6 +840,7 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
+	statsVer := row.GetInt64(7)
 	idx := table.Indices[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -861,10 +867,20 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fmSketch,
-				Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag,
-				PhysicalID:        table.PhysicalID,
-				StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
+			idx = &statistics.Index{
+				Histogram:  *hg,
+				CMSketch:   cms,
+				TopN:       topN,
+				FMSketch:   fmSketch,
+				Info:       idxInfo,
+				ErrorRate:  errorRate,
+				StatsVer:   statsVer,
+				Flag:       flag,
+				PhysicalID: table.PhysicalID,
+			}
+			if statsVer != statistics.Version0 {
+				idx.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			}
 			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
@@ -923,6 +939,11 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
+			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+			// So we need add col.Count > 0 here.
+			if statsVer != statistics.Version0 || col.Count > 0 {
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			col.Histogram.Correlation = correlation
 			break
@@ -936,27 +957,34 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
-			// we load all the statistics, i.e., loadAll is true. We don't need to read FMSketch from storage in notNeedLoad IF.
-			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
-			if err != nil {
-				return errors.Trace(err)
+			var fmSketch *statistics.FMSketch
+			if loadAll {
+				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+				// we load all the statistics, i.e., loadAll is true.
+				fmSketch, err = h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			col = &statistics.Column{
-				PhysicalID:        table.PhysicalID,
-				Histogram:         *hg,
-				Info:              colInfo,
-				CMSketch:          cms,
-				TopN:              topN,
-				FMSketch:          fmSketch,
-				ErrorRate:         errorRate,
-				IsHandle:          tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:              flag,
-				StatsVer:          statsVer,
-				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+				PhysicalID: table.PhysicalID,
+				Histogram:  *hg,
+				Info:       colInfo,
+				CMSketch:   cms,
+				TopN:       topN,
+				FMSketch:   fmSketch,
+				ErrorRate:  errorRate,
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				Flag:       flag,
+				StatsVer:   statsVer,
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
+			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+			// So we need add colHist.Count > 0 here.
+			if statsVer != statistics.Version0 || col.Count > 0 {
+				col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			break
 		}
@@ -1107,6 +1135,85 @@ func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (int64, int64, erro
 	return count, modifyCount, nil
 }
 
+func saveTopNToStorage(ctx context.Context, exec sqlexec.SQLExecutor, tableID int64, isIndex int, histID int64, topN *statistics.TopN) error {
+	if topN == nil {
+		return nil
+	}
+	for i := 0; i < len(topN.TopN); {
+		end := i + batchInsertSize
+		if end > len(topN.TopN) {
+			end = len(topN.TopN)
+		}
+		sql := new(strings.Builder)
+		sql.WriteString("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ")
+		for j := i; j < end; j++ {
+			topn := topN.TopN[j]
+			val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?)", tableID, isIndex, histID, topn.Encoded, topn.Count)
+			if j > i {
+				val = "," + val
+			}
+			if j > i && sql.Len()+len(val) > maxInsertLength {
+				end = j
+				break
+			}
+			sql.WriteString(val)
+		}
+		i = end
+		if _, err := exec.ExecuteInternal(ctx, sql.String()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stmtctx.StatementContext, tableID int64, isIndex int, hg *statistics.Histogram) (lastAnalyzePos []byte, err error) {
+	if hg == nil {
+		return
+	}
+	for i := 0; i < len(hg.Buckets); {
+		end := i + batchInsertSize
+		if end > len(hg.Buckets) {
+			end = len(hg.Buckets)
+		}
+		sql := new(strings.Builder)
+		sql.WriteString("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
+		for j := i; j < end; j++ {
+			bucket := hg.Buckets[j]
+			count := bucket.Count
+			if j > 0 {
+				count -= hg.Buckets[j-1].Count
+			}
+			var upperBound types.Datum
+			upperBound, err = hg.GetUpper(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+			if err != nil {
+				return
+			}
+			if j == len(hg.Buckets)-1 {
+				lastAnalyzePos = upperBound.GetBytes()
+			}
+			var lowerBound types.Datum
+			lowerBound, err = hg.GetLower(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+			if err != nil {
+				return
+			}
+			val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, isIndex, hg.ID, j, count, bucket.Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), bucket.NDV)
+			if j > i {
+				val = "," + val
+			}
+			if j > i && sql.Len()+len(val) > maxInsertLength {
+				end = j
+				break
+			}
+			sql.WriteString(val)
+		}
+		i = end
+		if _, err = exec.ExecuteInternal(ctx, sql.String()); err != nil {
+			return
+		}
+	}
+	return
+}
+
 // SaveTableStatsToStorage saves the stats of a table to storage.
 func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS, analyzeSnapshot bool) (err error) {
 	tableID := results.TableID.GetStatisticsID()
@@ -1197,7 +1304,6 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		statsVer = version
 	}
 	// 2. Save histograms.
-	const maxInsertLength = 1024 * 1024
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
 			// It's normal virtual column, skip it.
@@ -1220,30 +1326,8 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
 				return err
 			}
-			if topN := result.TopNs[i]; topN != nil {
-				for j := 0; j < len(topN.TopN); {
-					end := j + batchInsertSize
-					if end > len(topN.TopN) {
-						end = len(topN.TopN)
-					}
-					sql := new(strings.Builder)
-					sql.WriteString("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ")
-					for k := j; k < end; k++ {
-						val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, topN.TopN[k].Encoded, topN.TopN[k].Count)
-						if k > j {
-							val = "," + val
-						}
-						if k > j && sql.Len()+len(val) > maxInsertLength {
-							end = k
-							break
-						}
-						sql.WriteString(val)
-					}
-					j = end
-					if _, err = exec.ExecuteInternal(ctx, sql.String()); err != nil {
-						return err
-					}
-				}
+			if err = saveTopNToStorage(ctx, exec, tableID, result.IsIndex, hg.ID, result.TopNs[i]); err != nil {
+				return err
 			}
 			if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
 				return err
@@ -1262,45 +1346,9 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			}
 			sc := h.mu.ctx.GetSessionVars().StmtCtx
 			var lastAnalyzePos []byte
-			for j := 0; j < len(hg.Buckets); {
-				end := j + batchInsertSize
-				if end > len(hg.Buckets) {
-					end = len(hg.Buckets)
-				}
-				sql := new(strings.Builder)
-				sql.WriteString("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
-				for k := j; k < end; k++ {
-					count := hg.Buckets[k].Count
-					if k > 0 {
-						count -= hg.Buckets[k-1].Count
-					}
-					var upperBound types.Datum
-					upperBound, err = hg.GetUpper(k).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
-					if err != nil {
-						return err
-					}
-					if k == len(hg.Buckets)-1 {
-						lastAnalyzePos = upperBound.GetBytes()
-					}
-					var lowerBound types.Datum
-					lowerBound, err = hg.GetLower(k).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
-					if err != nil {
-						return err
-					}
-					val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, k, count, hg.Buckets[k].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[k].NDV)
-					if k > j {
-						val = "," + val
-					}
-					if k > j && sql.Len()+len(val) > maxInsertLength {
-						end = k
-						break
-					}
-					sql.WriteString(val)
-				}
-				j = end
-				if _, err = exec.ExecuteInternal(ctx, sql.String()); err != nil {
-					return err
-				}
+			lastAnalyzePos, err = saveBucketsToStorage(ctx, exec, sc, tableID, result.IsIndex, hg)
+			if err != nil {
+				return err
 			}
 			if len(lastAnalyzePos) > 0 {
 				if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, result.IsIndex, hg.ID); err != nil {
@@ -1384,12 +1432,8 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
 	}
-	if topN != nil {
-		for _, meta := range topN.TopN {
-			if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%?, %?, %?, %?, %?)", tableID, isIndex, hg.ID, meta.Encoded, meta.Count); err != nil {
-				return err
-			}
-		}
+	if err = saveTopNToStorage(ctx, exec, tableID, isIndex, hg.ID, topN); err != nil {
+		return err
 	}
 	if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
@@ -1407,27 +1451,9 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	var lastAnalyzePos []byte
-	for i := range hg.Buckets {
-		count := hg.Buckets[i].Count
-		if i > 0 {
-			count -= hg.Buckets[i-1].Count
-		}
-		var upperBound types.Datum
-		upperBound, err = hg.GetUpper(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
-		if err != nil {
-			return
-		}
-		if i == len(hg.Buckets)-1 {
-			lastAnalyzePos = upperBound.GetBytes()
-		}
-		var lowerBound types.Datum
-		lowerBound, err = hg.GetLower(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
-		if err != nil {
-			return
-		}
-		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[i].NDV); err != nil {
-			return err
-		}
+	lastAnalyzePos, err = saveBucketsToStorage(ctx, exec, sc, tableID, isIndex, hg)
+	if err != nil {
+		return err
 	}
 	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, isIndex, hg.ID); err != nil {

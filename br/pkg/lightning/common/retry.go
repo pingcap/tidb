@@ -25,8 +25,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	tmysql "github.com/pingcap/tidb/errno"
+	drivererr "github.com/pingcap/tidb/store/driver/error"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -67,6 +67,26 @@ func IsRetryableError(err error) bool {
 	return true
 }
 
+var retryableErrorIDs = map[errors.ErrorID]struct{}{
+	ErrKVEpochNotMatch.ID():  {},
+	ErrKVNotLeader.ID():      {},
+	ErrKVRegionNotFound.ID(): {},
+	// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
+	// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
+	// so we have to transform it into a defined code
+	ErrKVServerIsBusy.ID():        {},
+	ErrKVReadIndexNotReady.ID():   {},
+	ErrKVIngestFailed.ID():        {},
+	ErrKVRaftProposalDropped.ID(): {},
+	// during checksum coprocessor will transform error into driver error in handleCopResponse using ToTiDBErr
+	// met ErrRegionUnavailable on free-tier import during checksum, others hasn't met yet
+	drivererr.ErrRegionUnavailable.ID(): {},
+	drivererr.ErrTiKVStaleCommand.ID():  {},
+	drivererr.ErrTiKVServerTimeout.ID(): {},
+	drivererr.ErrTiKVServerBusy.ID():    {},
+	drivererr.ErrUnknown.ID():           {},
+}
+
 func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
 
@@ -101,14 +121,7 @@ func isSingleRetryableError(err error) bool {
 			return false
 		}
 	case *errors.Error:
-		switch {
-		case berrors.Is(nerr, ErrKVEpochNotMatch), berrors.Is(nerr, ErrKVNotLeader),
-			berrors.Is(nerr, ErrKVRegionNotFound), berrors.Is(nerr, ErrKVServerIsBusy),
-			berrors.Is(nerr, ErrKVReadIndexNotReady), berrors.Is(nerr, ErrKVIngestFailed),
-			berrors.Is(nerr, ErrKVRaftProposalDropped):
-			// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
-			// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
-			// so we have to transform it into a defined code
+		if _, ok := retryableErrorIDs[nerr.ID()]; ok {
 			return true
 		}
 		return false

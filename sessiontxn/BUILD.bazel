@@ -29,6 +29,7 @@ go_test(
     deps = [
         ":sessiontxn",
         "//domain",
+        "//errno",
         "//expression",
         "//infoschema",
         "//kv",
@@ -37,6 +38,7 @@ go_test(
         "//sessionctx",
         "//sessiontxn/internal",
         "//sessiontxn/staleread",
+        "//table/temptable",
         "//tablecodec",
         "//testkit",
         "//testkit/testfork",

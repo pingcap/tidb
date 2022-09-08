@@ -29,23 +29,25 @@ import (
 // CheckpointAdvancer is the central node for advancing the checkpoint of log backup.
 // It's a part of "checkpoint v3".
 // Generally, it scan the regions in the task range, collect checkpoints from tikvs.
-//                                         ┌──────┐
-//                                   ┌────►│ TiKV │
-//                                   │     └──────┘
-//                                   │
-//                                   │
-// ┌──────────┐GetLastFlushTSOfRegion│     ┌──────┐
-// │ Advancer ├──────────────────────┼────►│ TiKV │
-// └────┬─────┘                      │     └──────┘
-//      │                            │
-//      │                            │
-//      │                            │     ┌──────┐
-//      │                            └────►│ TiKV │
-//      │                                  └──────┘
-//      │
-//      │ UploadCheckpointV3   ┌──────────────────┐
-//      └─────────────────────►│  PD              │
-//                             └──────────────────┘
+/*
+                                         ┌──────┐
+                                   ┌────►│ TiKV │
+                                   │     └──────┘
+                                   │
+                                   │
+ ┌──────────┐GetLastFlushTSOfRegion│     ┌──────┐
+ │ Advancer ├──────────────────────┼────►│ TiKV │
+ └────┬─────┘                      │     └──────┘
+      │                            │
+      │                            │
+      │                            │     ┌──────┐
+      │                            └────►│ TiKV │
+      │                                  └──────┘
+      │
+      │ UploadCheckpointV3   ┌──────────────────┐
+      └─────────────────────►│  PD              │
+                             └──────────────────┘
+*/
 type CheckpointAdvancer struct {
 	env Env
 

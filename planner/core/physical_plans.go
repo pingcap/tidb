@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1315,6 +1316,20 @@ func (ls *PhysicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalSort
+func (ls *PhysicalSort) MemoryUsage() (sum int64) {
+	if ls == nil {
+		return
+	}
+
+	sum = ls.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ls.ByItems))*size.SizeOfPointer +
+		size.SizeOfBool
+	for _, byItem := range ls.ByItems {
+		sum += byItem.MemoryUsage()
+	}
+	return
+}
+
 // NominalSort asks sort properties for its child. It is a fake operator that will not
 // appear in final physical operator tree. It will be eliminated or converted to Projection.
 type NominalSort struct {
@@ -1325,6 +1340,20 @@ type NominalSort struct {
 	// are out of bounds. (issue #11653)
 	ByItems    []*util.ByItems
 	OnlyColumn bool
+}
+
+// MemoryUsage return the memory usage of NominalSort
+func (ns *NominalSort) MemoryUsage() (sum int64) {
+	if ns == nil {
+		return
+	}
+
+	sum = ns.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ns.ByItems))*size.SizeOfPointer +
+		size.SizeOfBool
+	for _, byItem := range ns.ByItems {
+		sum += byItem.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalUnionScan represents a union scan operator.
@@ -1494,12 +1523,15 @@ func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
 
 // PhysicalShuffle represents a shuffle plan.
 // `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
-//  to build the child executors chain.
+//
+//	to build the child executors chain.
+//
 // Take `Window` operator for example:
-//  Shuffle -> Window -> Sort -> DataSource, will be separated into:
-//    ==> Shuffle: for main thread
-//    ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
-//    ==> DataSource: for `fetchDataAndSplit` thread
+//
+//	Shuffle -> Window -> Sort -> DataSource, will be separated into:
+//	  ==> Shuffle: for main thread
+//	  ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
+//	  ==> DataSource: for `fetchDataAndSplit` thread
 type PhysicalShuffle struct {
 	basePhysicalPlan
 

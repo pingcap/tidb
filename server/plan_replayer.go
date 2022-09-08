@@ -35,7 +35,6 @@ type PlanReplayerHandler struct {
 	infoGetter *infosync.InfoSyncer
 	address    string
 	statusPort uint
-	scheme     string
 }
 
 func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
@@ -43,13 +42,9 @@ func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
 	prh := &PlanReplayerHandler{
 		address:    cfg.AdvertiseAddress,
 		statusPort: cfg.Status.StatusPort,
-		scheme:     "http",
 	}
 	if s.dom != nil && s.dom.InfoSyncer() != nil {
 		prh.infoGetter = s.dom.InfoSyncer()
-	}
-	if len(cfg.Security.ClusterSSLKey) > 0 || len(cfg.Security.SSLKey) > 0 {
-		prh.scheme = "https"
 	}
 	return prh
 }
@@ -65,7 +60,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		statusPort:         prh.statusPort,
 		urlPath:            fmt.Sprintf("plan_replayer/dump/%s", name),
 		downloadedFilename: "plan_replayer",
-		scheme:             prh.scheme,
+		scheme:             util.InternalHTTPSchema(),
 	}
 	handleDownloadFile(handler, w, req)
 }
