@@ -355,7 +355,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			inFlashbackTest = true
 		}
 	})
-	// TODO support flashback in unistore
+	// TODO: Support flashback in unistore.
 	if d.store.Name() != "TiKV" && !inFlashbackTest {
 		job.State = model.JobStateCancelled
 		return ver, errors.Errorf("Not support flashback cluster in non-TiKV env")
@@ -421,15 +421,15 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		// A hack way to make global variables are synchronized to all tidb.
-		// TiKV will block read/write request during flashback cluster,
+		// A hack way to make global variables are synchronized to all TiDB.
+		// TiKV will block read/write requests during flashback cluster.
 		// So it's not very dangerous when sync failed.
 		time.Sleep(1 * time.Second)
 		job.SchemaState = model.StateWriteReorganization
 		return ver, nil
 	// Stage 3, get key ranges.
 	case model.StateWriteReorganization:
-		// TODO support flashback in unistore
+		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
 			asyncNotifyEvent(d, &util.Event{Tp: model.ActionFlashbackCluster})
 			job.State = model.JobStateDone
