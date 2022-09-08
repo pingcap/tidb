@@ -185,7 +185,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// NOTE: we should start snapshot in specify order.
 
 	progress := g.StartProgress(ctx, cmdName, int64(storeCount), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(storeCount))
+	go progressFileWriterRoutine(ctx, progress, int64(storeCount)*100)
 
 	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency)
 	if err != nil {
@@ -222,7 +222,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		log.Info("async snapshots finished.")
 	} else {
 		for i := 0; i < int(storeCount); i++ {
-			progress.Inc()
+			progress.IncBy(100)
 			totalSize = 1024
 			log.Info("mock snapshot finished.", zap.Int("index", i))
 			time.Sleep(800 * time.Millisecond)

@@ -4,6 +4,7 @@ package aws
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -129,6 +130,26 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 	return snapIDMap, volAZs, nil
 }
 
+func (e *EC2Session) extractSnapProgress(str *string) int64 {
+	if str == nil {
+		return 0
+	}
+	var val float64
+	// example output from: https://docs.aws.amazon.com/cli/latest/reference/ec2/describe-snapshots.html
+	// not sure whether it's always an integer or can be float point, so we scan it as float
+	*str = strings.Trim(*str, " ")
+	n, err := fmt.Sscanf(*str, "%f%%", &val)
+	if err != nil || n != 1 {
+		log.Warn("failed to extract aws progress", zap.Stringp("progress-str", str))
+		return 0
+	}
+	if val > 100 {
+		// may not happen
+		val = 100
+	}
+	return int64(val)
+}
+
 // WaitSnapshotsCreated waits all snapshots finished.
 // according to EBS snapshot will do real snapshot background.
 // so we'll check whether all snapshots finished.
@@ -139,6 +160,7 @@ func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress 
 		pendingSnapshots = append(pendingSnapshots, &snapID)
 	}
 	totalVolumeSize := int64(0)
+	snapProgressMap := make(map[string]int64, len(snapIDMap))
 
 	log.Info("starts check pending snapshots", zap.Any("snapshots", pendingSnapshots))
 	for {
@@ -162,10 +184,14 @@ func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress 
 			if *s.State == ec2.SnapshotStateCompleted {
 				log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
 				totalVolumeSize += *s.VolumeSize
-				progress.Inc()
 			} else {
 				log.Debug("snapshot creating...", zap.Stringer("snap", s))
 				uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
+			}
+			currSnapProgress := e.extractSnapProgress(s.Progress)
+			if currSnapProgress > snapProgressMap[*s.SnapshotId] {
+				progress.IncBy(currSnapProgress - snapProgressMap[*s.SnapshotId])
+				snapProgressMap[*s.SnapshotId] = currSnapProgress
 			}
 		}
 		pendingSnapshots = uncompletedSnapshots
