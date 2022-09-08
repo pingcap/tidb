@@ -314,7 +314,7 @@ func TestHiveParquetParser(t *testing.T) {
 		lastRow := reader.LastRow()
 		require.Equal(t, 2, len(lastRow.Row))
 		require.Equal(t, types.KindString, lastRow.Row[1].Kind())
-		ts, err := time.Parse("2006-01-02 15:04:05Z", lastRow.Row[1].GetString())
+		ts, err := time.Parse(utcTimeLayout, lastRow.Row[1].GetString())
 		require.NoError(t, err)
 		require.Equal(t, results[i], ts)
 	}

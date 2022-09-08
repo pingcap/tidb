@@ -30,6 +30,9 @@ const (
 	// jan011970 is the date of unix epoch in julian day,
 	jan011970 = 2440588
 	secPerDay = 24 * 60 * 60
+
+	utcTimeLayout = "2006-01-02 15:04:05.999999Z"
+	timeLayout    = "2006-01-02 15:04:05.999999"
 )
 
 // ParquetParser parses a parquet file for import
@@ -450,10 +453,10 @@ func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
 	if meta.LogicalType != nil && meta.LogicalType.DECIMAL != nil {
 		v = binaryToDecimalStr([]byte(v), int(meta.LogicalType.DECIMAL.Scale))
 	}
-	if meta.Type != nil && *meta.Type == parquet.Type_INT96 && len([]byte(v)) == 96/8 {
+	if meta.Type != nil && *meta.Type == parquet.Type_INT96 && len(v) == 96/8 {
 		ts := int96ToTime([]byte(v))
 		ts = ts.UTC()
-		v = ts.Format("2006-01-02 15:04:05.999999Z")
+		v = ts.Format(utcTimeLayout)
 	}
 	d.SetString(v, "")
 }
@@ -518,8 +521,8 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
 		d.SetString(dateStr, "")
 	case logicalType.TIMESTAMP != nil:
 		// convert all timestamp types (datetime/timestamp) to string
-		timeStr := formatTime(v, logicalType.TIMESTAMP.Unit, "2006-01-02 15:04:05.999999",
-			"2006-01-02 15:04:05.999999Z", logicalType.TIMESTAMP.IsAdjustedToUTC)
+		timeStr := formatTime(v, logicalType.TIMESTAMP.Unit, timeLayout,
+			utcTimeLayout, logicalType.TIMESTAMP.IsAdjustedToUTC)
 		d.SetString(timeStr, "")
 	case logicalType.TIME != nil:
 		// convert all timestamp types (datetime/timestamp) to string
