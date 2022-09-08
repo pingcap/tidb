@@ -42,6 +42,14 @@ const (
 	JSONTypeCodeString JSONTypeCode = 0x0c
 	// JSONTypeCodeOpaque indicates the JSON is a opaque
 	JSONTypeCodeOpaque JSONTypeCode = 0x0d
+	// JSONTypeCodeDate indicates the JSON is a opaque
+	JSONTypeCodeDate JSONTypeCode = 0x0e
+	// JSONTypeCodeDatetime indicates the JSON is a opaque
+	JSONTypeCodeDatetime JSONTypeCode = 0x0f
+	// JSONTypeCodeTimestamp indicates the JSON is a opaque
+	JSONTypeCodeTimestamp JSONTypeCode = 0x10
+	// JSONTypeCodeDuration indicates the JSON is a opaque
+	JSONTypeCodeDuration JSONTypeCode = 0x11
 )
 
 const (
