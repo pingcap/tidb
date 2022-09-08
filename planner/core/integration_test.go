@@ -7244,3 +7244,22 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	rs = tk.MustQuery("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)").Rows()
 	checkMpp(rs)
 }
+
+func TestPlanCacheForTableRangeFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("set @@tidb_opt_range_max_size=10")
+	tk.MustExec("prepare stmt from 'select * from t where a in (?, ?, ?, ?, ?) and b > 1'")
+	tk.MustExec("set @a=10, @b=20, @c=30, @d=40, @e=50")
+	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
+	// The plan with range fallback is not cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
