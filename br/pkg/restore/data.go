@@ -319,7 +319,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 	totalStores := len(recovery.allStores)
 	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, maxStoreConcurrency)), "resolve data from tikv")
 
-	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at least some retry may neccessary
+	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at least some retry may necessary
 	// TODO: what if the network disturbing, a retry machanism may need here
 	for _, store := range recovery.allStores {
 		if err := ectx.Err(); err != nil {
