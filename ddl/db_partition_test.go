@@ -4410,4 +4410,66 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		"PARTITION BY LIST COLUMNS(\"a\")\n" +
 		`(PARTITION "p0" VALUES IN ('''','''''',''''''''),` + "\n" +
 		` PARTITION "p1" VALUES IN ('""','\\',x'5c27090a'))`))
+
+	// https://github.com/pingcap/tidb/issues/37692
+	tk.MustExec("drop table t")
+	tk.MustExec(`CREATE TABLE t (a varchar(255)) PARTITION BY RANGE COLUMNS(a) (
+		PARTITION p0 VALUES LESS THAN ('"'),
+		PARTITION p1 VALUES LESS THAN ('""'),
+		PARTITION p2 VALUES LESS THAN ('\''),
+		PARTITION p3 VALUES LESS THAN (''''''),
+		PARTITION p4 VALUES LESS THAN ('\\''\t\n'),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE))`)
+	//PARTITION p4 VALUES IN (x'5c27090a'))`)
+	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		`PARTITION BY RANGE COLUMNS("a")` + "\n" +
+		`(PARTITION "p0" VALUES LESS THAN ('"'),` + "\n" +
+		` PARTITION "p1" VALUES LESS THAN ('""'),` + "\n" +
+		` PARTITION "p2" VALUES LESS THAN (''''),` + "\n" +
+		` PARTITION "p3" VALUES LESS THAN (''''''),` + "\n" +
+		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n'),` + "\n" +
+		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE))`))
+	tk.MustExec("drop table t")
+	tk.MustExec(`CREATE TABLE t (a varchar(255)) PARTITION BY RANGE COLUMNS(a) (
+		PARTITION p0 VALUES LESS THAN ('"'),
+		PARTITION p1 VALUES LESS THAN ('""'),
+		PARTITION p2 VALUES LESS THAN ('\''),
+		PARTITION p3 VALUES LESS THAN (''''''),
+		PARTITION p4 VALUES LESS THAN (0x5c27090a),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		`PARTITION BY RANGE COLUMNS("a")` + "\n" +
+		`(PARTITION "p0" VALUES LESS THAN ('"'),` + "\n" +
+		` PARTITION "p1" VALUES LESS THAN ('""'),` + "\n" +
+		` PARTITION "p2" VALUES LESS THAN (''''),` + "\n" +
+		` PARTITION "p3" VALUES LESS THAN (''''''),` + "\n" +
+		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n'),` + "\n" +
+		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE))`))
+
+	tk.MustExec("drop table t")
+	tk.MustExec(`CREATE TABLE t (a varchar(255), b varchar(255)) PARTITION BY RANGE COLUMNS(a,b) (
+		PARTITION p0 VALUES LESS THAN ('"','"'),
+		PARTITION p1 VALUES LESS THAN ('""','""'),
+		PARTITION p2 VALUES LESS THAN ('\'','\''),
+		PARTITION p3 VALUES LESS THAN ('''''',''''''),
+		PARTITION p4 VALUES LESS THAN ('\\''\t\n',0x5c27090a),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE,maxvalue))`)
+	tk.MustExec(`insert into t values (0x5c27090a,'\\''\t\n')`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		"  \"b\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		`PARTITION BY RANGE COLUMNS("a","b")` + "\n" +
+		`(PARTITION "p0" VALUES LESS THAN ('"','"'),` + "\n" +
+		` PARTITION "p1" VALUES LESS THAN ('""','""'),` + "\n" +
+		` PARTITION "p2" VALUES LESS THAN ('''',''''),` + "\n" +
+		` PARTITION "p3" VALUES LESS THAN ('''''',''''''),` + "\n" +
+		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n','\\''\t\n'),` + "\n" +
+		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
 }
