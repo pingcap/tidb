@@ -78,49 +78,6 @@ func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
 	return m
 }
 
-func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) (map[int64][]*FKCheck, error) {
-	if !ctx.GetSessionVars().ForeignKeyChecks {
-		return nil, nil
-	}
-	tblID2UpdateColumns := updt.buildTbl2UpdateColumns()
-	fkChecks := make(map[int64][]*FKCheck)
-	for tid, tbl := range tblID2table {
-		tblInfo := tbl.Meta()
-		dbInfo, exist := is.SchemaByTable(tblInfo)
-		if !exist {
-			return nil, infoschema.ErrDatabaseNotExists
-		}
-		updateCols := tblID2UpdateColumns[tid]
-		if len(updateCols) == 0 {
-			continue
-		}
-		referredFKChecks, err := buildOnUpdateReferredFKChecks(is, dbInfo.Name.L, tblInfo, updateCols)
-		if err != nil {
-			return nil, err
-		}
-		if len(referredFKChecks) > 0 {
-			fkChecks[tid] = append(fkChecks[tid], referredFKChecks...)
-		}
-		for _, fk := range tblInfo.ForeignKeys {
-			if fk.Version < 1 {
-				continue
-			}
-			if !isMapContainAnyCols(updateCols, fk.Cols...) {
-				continue
-			}
-			failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbInfo.Name.L, tblInfo.Name.L))
-			fkCheck, err := buildFKCheckOnModifyChildTable(is, fk, failedErr)
-			if err != nil {
-				return nil, err
-			}
-			if fkCheck != nil {
-				fkChecks[tid] = append(fkChecks[tid], fkCheck)
-			}
-		}
-	}
-	return fkChecks, nil
-}
-
 func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
 	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
 	fkChecks := make([]*FKCheck, 0, len(referredFKs))
@@ -147,46 +104,6 @@ func isMapContainAnyCols(colsMap map[string]struct{}, cols ...model.CIStr) bool 
 		}
 	}
 	return false
-}
-
-func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
-	colsInfo := make([]*model.ColumnInfo, len(updt.SelectPlan.Schema().Columns))
-	for _, content := range updt.TblColPosInfos {
-		tbl := updt.tblID2Table[content.TblID]
-		for i, c := range tbl.WritableCols() {
-			colsInfo[content.Start+i] = c.ColumnInfo
-		}
-	}
-	tblID2UpdateColumns := make(map[int64]map[string]struct{})
-	for tid := range updt.tblID2Table {
-		tblID2UpdateColumns[tid] = make(map[string]struct{})
-	}
-	for _, assign := range updt.OrderedList {
-		col := colsInfo[assign.Col.Index]
-		for _, content := range updt.TblColPosInfos {
-			if assign.Col.Index >= content.Start && assign.Col.Index < content.End {
-				tblID2UpdateColumns[content.TblID][col.Name.L] = struct{}{}
-				break
-			}
-		}
-	}
-	for tid, tbl := range updt.tblID2Table {
-		updateCols := tblID2UpdateColumns[tid]
-		if len(updateCols) == 0 {
-			continue
-		}
-		for _, col := range tbl.WritableCols() {
-			if !col.IsGenerated() || !col.GeneratedStored {
-				continue
-			}
-			for depCol := range col.Dependences {
-				if _, ok := updateCols[depCol]; ok {
-					tblID2UpdateColumns[tid][col.Name.L] = struct{}{}
-				}
-			}
-		}
-	}
-	return tblID2UpdateColumns
 }
 
 func buildFKCheckOnModifyChildTable(is infoschema.InfoSchema, fk *model.FKInfo, failedErr error) (*FKCheck, error) {
@@ -267,29 +184,4 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 		IdxIsPrimaryKey: referTbIdxInfo.Primary && tblInfo.IsCommonHandle,
 		FailedErr:       failedErr,
 	}, nil
-}
-
-func buildOnDeleteFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) (map[int64][]*FKCheck, error) {
-	if !ctx.GetSessionVars().ForeignKeyChecks {
-		return nil, nil
-	}
-	fkChecks := make(map[int64][]*FKCheck)
-	for tid, tbl := range tblID2table {
-		tblInfo := tbl.Meta()
-		dbInfo, exist := is.SchemaByTable(tblInfo)
-		if !exist {
-			return nil, infoschema.ErrDatabaseNotExists
-		}
-		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
-		for _, referredFK := range referredFKs {
-			fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
-			if err != nil {
-				return nil, err
-			}
-			if fkCheck != nil {
-				fkChecks[tid] = append(fkChecks[tid], fkCheck)
-			}
-		}
-	}
-	return fkChecks, nil
 }

@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -1455,11 +1454,6 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
 	}
-	fkChecks, err := updatePlan.buildOnUpdateFKChecks(ctx, is, updatePlan.tblID2Table)
-	if err != nil {
-		return nil
-	}
-	updatePlan.FKChecks = fkChecks
 	return updatePlan
 }
 
@@ -1547,14 +1541,6 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			},
 		},
 	}.Init(ctx)
-	var err error
-	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
-	t, _ := is.TableByID(tbl.ID)
-	tblID2Table := map[int64]table.Table{tbl.ID: t}
-	delPlan.FKChecks, err = buildOnDeleteFKChecks(ctx, is, tblID2Table)
-	if err != nil {
-		return nil
-	}
 	return delPlan
 }
 

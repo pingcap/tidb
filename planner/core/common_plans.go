@@ -346,8 +346,6 @@ type Update struct {
 	PartitionedTable []table.PartitionedTable
 
 	tblID2Table map[int64]table.Table
-
-	FKChecks map[int64][]*FKCheck
 }
 
 // Delete represents a delete plan.
@@ -359,8 +357,6 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
-
-	FKChecks map[int64][]*FKCheck
 }
 
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.

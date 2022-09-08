@@ -5327,12 +5327,8 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
-	if err != nil {
-		return nil, err
-	}
 	updt.PartitionedTable = b.partitionedTable
 	updt.tblID2Table = tblID2table
-	updt.FKChecks, err = updt.buildOnUpdateFKChecks(b.ctx, b.is, tblID2table)
 	return updt, err
 }
 
@@ -5793,10 +5789,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
-	if err != nil {
-		return nil, err
-	}
-	del.FKChecks, err = buildOnDeleteFKChecks(b.ctx, b.is, tblID2table)
 	return del, err
 }
 
