@@ -599,7 +599,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
-		if pickBackfillProcess(w, job).NeedMergeProcess() {
+		if pickBackfillProcess(job).NeedMergeProcess() {
 			indexInfo.BackfillState = model.BackfillStateRunning
 		}
 		indexInfo.State = model.StateDeleteOnly
@@ -677,7 +677,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 // pickBackfillProcess determines which backfill process will be used.
-func pickBackfillProcess(w *worker, job *model.Job) model.ReorgType {
+func pickBackfillProcess(job *model.Job) model.ReorgType {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't switch the backfill process.
@@ -706,7 +706,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	bfProcess := pickBackfillProcess(w, job)
+	bfProcess := pickBackfillProcess(job)
 	if !bfProcess.NeedMergeProcess() {
 		return runReorgJobAndHandleAddIndexErr(w, d, t, job, tbl, indexInfo)
 	}
@@ -718,16 +718,13 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateRunning:
-		switch bfProcess {
-		case model.ReorgTypeTxnMerge:
-			done, ver, err = runReorgJobAndHandleAddIndexErr(w, d, t, job, tbl, indexInfo)
-			if err != nil {
-				return false, ver, errors.Trace(err)
-			}
-			if !done {
-				ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-				return false, ver, errors.Trace(err)
-			}
+		done, ver, err = runReorgJobAndHandleAddIndexErr(w, d, t, job, tbl, indexInfo)
+		if err != nil {
+			return false, ver, errors.Trace(err)
+		}
+		if !done {
+			ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+			return false, ver, errors.Trace(err)
 		}
 		indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
@@ -1127,7 +1124,7 @@ type addIndexWorker struct {
 }
 
 func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column,
-	reorgInfo *reorgInfo, jc *JobContext, job *model.Job) (*addIndexWorker, error) {
+	reorgInfo *reorgInfo, jc *JobContext, _ *model.Job) (*addIndexWorker, error) {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
 		logutil.BgLogger().Error("Element type for addIndexWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
 			zap.String("reorgInfo", reorgInfo.String()))
