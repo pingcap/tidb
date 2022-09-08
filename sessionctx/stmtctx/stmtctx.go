@@ -989,10 +989,11 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 	return time.Unix(0, startTime)
 }
 
-// AppendRangeFallbackWarning appends a warning to indicate that building complete ranges exceeds the memory limit so it
-// falls back to less accurate ranges such as full range. It only appends one warning even if building ranges happens
-// several times when optimizing one query.
-func (sc *StatementContext) AppendRangeFallbackWarning(rangeMaxSize int64) {
+// RecordRangeFallback records range fallback.
+func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
+	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
+	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
+	sc.SkipPlanCache = true
 	if !sc.RangeFallback {
 		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
 		sc.RangeFallback = true

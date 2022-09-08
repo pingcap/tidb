@@ -352,7 +352,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		return nil, nil, nil, errors.Trace(err)
 	}
 	if rangeFallback {
-		sctx.GetSessionVars().StmtCtx.AppendRangeFallbackWarning(rangeMaxSize)
+		sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
 		return FullRange(), nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
