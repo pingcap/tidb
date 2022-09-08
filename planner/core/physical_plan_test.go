@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -2284,4 +2286,18 @@ func TestMPPSinglePartitionType(t *testing.T) {
 		})
 		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func TestPhysicalPlanMemoryTrace(t *testing.T) {
+	// PhysicalSort
+	ls := core.PhysicalSort{}
+	size := ls.MemoryUsage()
+	ls.ByItems = append(ls.ByItems, &util.ByItems{})
+	require.Greater(t, ls.MemoryUsage(), size)
+
+	//PhysicalProperty
+	pp := property.PhysicalProperty{}
+	size = pp.MemoryUsage()
+	pp.MPPPartitionCols = append(pp.MPPPartitionCols, &property.MPPPartitionColumn{})
+	require.Greater(t, pp.MemoryUsage(), size)
 }
