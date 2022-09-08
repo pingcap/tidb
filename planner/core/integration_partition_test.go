@@ -66,9 +66,6 @@ func TestListPartitionPushDown(t *testing.T) {
 }
 
 func TestListColVariousTypes(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
-
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -92,6 +89,9 @@ func TestListColVariousTypes(t *testing.T) {
 	tk.MustExec(`insert into tint values (0), (1), (2), (3)`)
 	tk.MustExec(`insert into tdate values ('2000-01-01'), ('2000-01-02'), ('2000-01-03'), ('2000-01-04')`)
 	tk.MustExec(`insert into tstring values ('a'), ('b'), ('c'), ('d')`)
+	tk.MustExec(`analyze table tint`)
+	tk.MustExec(`analyze table tdate`)
+	tk.MustExec(`analyze table tstring`)
 
 	var input []string
 	var output []struct {
@@ -130,6 +130,8 @@ func TestListPartitionPruning(t *testing.T) {
     partition p1 values in (3, 4, 5),
     partition p2 values in (6, 7, 8),
     partition p3 values in (9, 10, 11))`)
+	tk.MustExec(`analyze table tlist`)
+	tk.MustExec(`analyze table tcollist`)
 
 	var input []string
 	var output []struct {
@@ -1303,6 +1305,7 @@ func TestRangeMultiColumnsPruning(t *testing.T) {
 	tk.MustExec(`insert into t values (1,null,"Wow")`)
 	tk.MustExec(`insert into t values (NULL,'2022-01-01',"Wow")`)
 	tk.MustExec(`insert into t values (11,null,"Wow")`)
+	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`select a,b from t where b = '2022-01-01'`).Sort().Check(testkit.Rows(
 		"10 2022-01-01 00:00:00",
 		"10 2022-01-01 00:00:00",
@@ -1311,15 +1314,15 @@ func TestRangeMultiColumnsPruning(t *testing.T) {
 	tk.MustQuery(`select a,b,c from t where a = 1`).Check(testkit.Rows("1 <nil> Wow"))
 	tk.MustQuery(`select a,b,c from t where a = 1 AND c = "Wow"`).Check(testkit.Rows("1 <nil> Wow"))
 	tk.MustQuery(`explain format = 'brief' select a,b,c from t where a = 1 AND c = "Wow"`).Check(testkit.Rows(
-		`IndexReader 0.01 root partition:p8 index:Selection`,
-		`└─Selection 0.01 cop[tikv]  eq(rcolumnsmulti.t.c, "Wow")`,
-		`  └─IndexRangeScan 10.00 cop[tikv] table:t, index:a(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
+		`IndexReader 0.50 root partition:p8 index:Selection`,
+		`└─Selection 0.50 cop[tikv]  eq(rcolumnsmulti.t.c, "Wow")`,
+		`  └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a, b, c) range:[1,1], keep order:false`))
 	// WAS HERE, Why is the start return TRUE making this to work and FALSE disapear?
 	tk.MustQuery(`select a,b,c from t where a = 0 AND c = "Wow"`).Check(testkit.Rows("0 2020-01-01 00:00:00 Wow"))
 	tk.MustQuery(`explain format = 'brief' select a,b,c from t where a = 0 AND c = "Wow"`).Check(testkit.Rows(
-		`IndexReader 0.01 root partition:p3,p4,p5,p6,p7,p8 index:Selection`,
-		`└─Selection 0.01 cop[tikv]  eq(rcolumnsmulti.t.c, "Wow")`,
-		`  └─IndexRangeScan 10.00 cop[tikv] table:t, index:a(a, b, c) range:[0,0], keep order:false, stats:pseudo`))
+		`IndexReader 0.50 root partition:p3,p4,p5,p6,p7,p8 index:Selection`,
+		`└─Selection 0.50 cop[tikv]  eq(rcolumnsmulti.t.c, "Wow")`,
+		`  └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a, b, c) range:[0,0], keep order:false`))
 }
 
 func TestRangeColumnsExpr(t *testing.T) {
@@ -1446,18 +1449,18 @@ func TestRangeColumnsExpr(t *testing.T) {
 		"TableReader 3.43 root partition:p1,p5,p6,p11,p12 data:Selection",
 		"└─Selection 3.43 cop[tikv]  in(rce.t.a, 4, 14), or(in(rce.t.b, 11, 10), isnull(rce.t.b))",
 		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
-	tk.MustQuery(`select * from tref where a in (4,14) and (b in (11,10) OR b is null)`).Check(testkit.Rows(
-		"4 <nil> 4",
-		"4 10 3",
+	tk.MustQuery(`select * from tref where a in (4,14) and (b in (11,10) OR b is null)`).Sort().Check(testkit.Rows(
+		"14 10 4",
 		"14 <nil> 2",
 		"14 <nil> <nil>",
-		"14 10 4"))
-	tk.MustQuery(`select * from t where a in (4,14) and (b in (11,10) OR b is null)`).Check(testkit.Rows(
-		"4 <nil> 4",
 		"4 10 3",
+		"4 <nil> 4"))
+	tk.MustQuery(`select * from t where a in (4,14) and (b in (11,10) OR b is null)`).Sort().Check(testkit.Rows(
+		"14 10 4",
 		"14 <nil> 2",
 		"14 <nil> <nil>",
-		"14 10 4"))
+		"4 10 3",
+		"4 <nil> 4"))
 }
 
 func TestPartitionRangePrunerCharWithCollation(t *testing.T) {
@@ -1477,6 +1480,7 @@ func TestPartitionRangePrunerCharWithCollation(t *testing.T) {
 			` partition p5 values less than (MAXVALUE))`)
 
 	tk.MustExec(`insert into t values ('a'),('A'),('c'),('C'),('f'),('F'),('h'),('H'),('l'),('L'),('t'),('T'),('z'),('Z')`)
+	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`select * from t partition(p0)`).Sort().Check(testkit.Rows("A", "a"))
 	tk.MustQuery(`select * from t partition(p1)`).Sort().Check(testkit.Rows("C", "c"))
 	tk.MustQuery(`select * from t partition(p2)`).Sort().Check(testkit.Rows("F", "f"))
@@ -1486,13 +1490,13 @@ func TestPartitionRangePrunerCharWithCollation(t *testing.T) {
 	tk.MustQuery(`select * from t where a > 'C' and a < 'q'`).Sort().Check(testkit.Rows("F", "H", "L", "f", "h", "l"))
 	tk.MustQuery(`select * from t where a > 'c' and a < 'Q'`).Sort().Check(testkit.Rows("F", "H", "L", "f", "h", "l"))
 	tk.MustQuery(`explain format = 'brief' select * from t where a > 'C' and a < 'q'`).Check(testkit.Rows(
-		`TableReader 250.00 root partition:p1,p2,p3,p4 data:Selection`,
-		`└─Selection 250.00 cop[tikv]  gt(cwc.t.a, "C"), lt(cwc.t.a, "q")`,
-		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+		`TableReader 6.00 root partition:p1,p2,p3,p4 data:Selection`,
+		`└─Selection 6.00 cop[tikv]  gt(cwc.t.a, "C"), lt(cwc.t.a, "q")`,
+		`  └─TableFullScan 14.00 cop[tikv] table:t keep order:false`))
 	tk.MustQuery(`explain format = 'brief' select * from t where a > 'c' and a < 'Q'`).Check(testkit.Rows(
-		`TableReader 250.00 root partition:p1,p2,p3,p4 data:Selection`,
-		`└─Selection 250.00 cop[tikv]  gt(cwc.t.a, "c"), lt(cwc.t.a, "Q")`,
-		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+		`TableReader 6.00 root partition:p1,p2,p3,p4 data:Selection`,
+		`└─Selection 6.00 cop[tikv]  gt(cwc.t.a, "c"), lt(cwc.t.a, "Q")`,
+		`  └─TableFullScan 14.00 cop[tikv] table:t keep order:false`))
 }
 
 func TestPartitionRangePrunerDate(t *testing.T) {
