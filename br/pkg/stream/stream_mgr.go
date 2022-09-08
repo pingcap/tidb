@@ -247,12 +247,14 @@ func (*MetadataHelper) ParseToMetadataHard(rawMetaData []byte) (*backuppb.Metada
 			groups = append(groups, &backuppb.DataFileGroup{
 				// For MetaDataV2, file's path is stored in it.
 				Path: d.Path,
-				// In fact, each file in MetaDataV1 can be regard
-				// as a file group in MetaDataV2. But for simplicity,
-				// the files in MetaDataV1 are considered as a group.
+				// Each file in MetaDataV1 can be regard
+				// as a file group in MetaDataV2.
 				DataFilesInfo: []*backuppb.DataFileInfo{d},
 				MaxTs:         d.MaxTs,
 				MinTs:         d.MinTs,
+				MinResolvedTs: d.ResolvedTs,
+				// File from MetaVersion_V1 isn't compressed.
+				Length: d.Length,
 				// Other fields are Unused.
 			})
 		}
@@ -261,8 +263,10 @@ func (*MetadataHelper) ParseToMetadataHard(rawMetaData []byte) (*backuppb.Metada
 	return meta, errors.Trace(err)
 }
 
+// For truncate command. Marshal metadata to reupload to external storage.
+// The metadata must be unmarshal by `ParseToMetadataHard`
 func (*MetadataHelper) Marshal(meta *backuppb.Metadata) ([]byte, error) {
-	// the field `Files` doen't changed
+	// the field `Files` isn't modified.
 	if meta.MetaVersion == backuppb.MetaVersion_V1 {
 		if len(meta.FileGroups) != len(meta.Files) {
 			// some files are deleted
