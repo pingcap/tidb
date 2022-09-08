@@ -1110,11 +1110,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
-		if ast.ReferOptionType(fk.OnDelete) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete).String()))
+		if model.ReferOptionType(fk.OnDelete) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON DELETE %s", model.ReferOptionType(fk.OnDelete).String()))
 		}
-		if ast.ReferOptionType(fk.OnUpdate) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate).String()))
+		if model.ReferOptionType(fk.OnUpdate) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
 		}
 	}
 

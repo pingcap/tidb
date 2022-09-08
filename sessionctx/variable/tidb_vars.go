@@ -736,6 +736,10 @@ const (
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
+
+	// TiDBEnableForeignKey indicates whether to enable foreign key feature.
+	// TODO(crazycs520): remove this after foreign key GA.
+	TiDBEnableForeignKey = "tidb_enable_foreign_key"
 )
 
 // TiDB vars that have only global scope
@@ -963,7 +967,7 @@ const (
 	DefTiDBTSOClientBatchMaxWaitTime               = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                  = false
 	DefTiDBEnableOrderedResultMode                 = false
-	DefTiDBEnablePseudoForOutdatedStats            = true
+	DefTiDBEnablePseudoForOutdatedStats            = false
 	DefTiDBRegardNULLAsPoint                       = true
 	DefEnablePlacementCheck                        = true
 	DefTimestamp                                   = "0"
@@ -1032,6 +1036,7 @@ const (
 	MinDDLReorgBatchSize                     int32  = 32
 	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
 	DefTiDBConstraintCheckInPlacePessimistic        = true
+	DefTiDBForeignKeyChecks                         = false
 )
 
 // Process global variables.
@@ -1077,7 +1082,9 @@ var (
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
-	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
+	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
+	// EnableForeignKey indicates whether to enable foreign key feature.
+	EnableForeignKey = atomic.NewBool(false)
 )
 
 var (
