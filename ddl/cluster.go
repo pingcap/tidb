@@ -117,22 +117,16 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
-func setTiDBRestrictedReadOnly(sess sessionctx.Context, value bool) error {
-	var setValue string
-	if value {
-		setValue = variable.On
-	} else {
-		setValue = variable.Off
-	}
-	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBRestrictedReadOnly, setValue)
+func setTiDBSuperReadOnly(sess sessionctx.Context, value string) error {
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBSuperReadOnly, value)
 }
 
-func getTiDBRestrictedReadOnly(sess sessionctx.Context) (bool, error) {
-	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBRestrictedReadOnly)
+func getTiDBSuperReadOnly(sess sessionctx.Context) (string, error) {
+	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSuperReadOnly)
 	if err != nil {
-		return false, errors.Trace(err)
+		return "", errors.Trace(err)
 	}
-	return variable.TiDBOptOn(val), nil
+	return val, nil
 }
 
 func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
@@ -146,7 +140,7 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	if err = closePDSchedule(); err != nil {
 		return err
 	}
-	if err = setTiDBRestrictedReadOnly(sess, variable.TiDBOptOn(variable.On)); err != nil {
+	if err = setTiDBSuperReadOnly(sess, variable.On); err != nil {
 		return err
 	}
 
@@ -369,7 +363,8 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 	var flashbackTS uint64
 	var pdScheduleValue map[string]interface{}
-	var readOnlyValue, gcEnabledValue bool
+	var readOnlyValue string
+	var gcEnabledValue bool
 	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &readOnlyValue, &gcEnabledValue); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -402,7 +397,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			readOnlyValue, err = getTiDBRestrictedReadOnly(sess)
+			readOnlyValue, err = getTiDBSuperReadOnly(sess)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -465,7 +460,8 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 func finishFlashbackCluster(w *worker, job *model.Job) error {
 	var flashbackTS uint64
 	var pdScheduleValue map[string]interface{}
-	var readOnlyValue, gcEnabled bool
+	var readOnlyValue string
+	var gcEnabled bool
 	var jobID int64
 
 	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &readOnlyValue, &gcEnabled); err != nil {
@@ -487,7 +483,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 			if err = recoverPDSchedule(pdScheduleValue); err != nil {
 				return err
 			}
-			if err = setTiDBRestrictedReadOnly(sess, readOnlyValue); err != nil {
+			if err = setTiDBSuperReadOnly(sess, readOnlyValue); err != nil {
 				return err
 			}
 			if gcEnabled {

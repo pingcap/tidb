@@ -507,7 +507,7 @@ var defaultSysVars = []*SysVar{
 		MemQuotaBindingCache.Store(TidbOptInt64(val, DefTiDBMemQuotaBindingCache))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBFlashbackConcurrency, Value: strconv.Itoa(DefTiDBFlashbackConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal, Name: TiDBDDLFlashbackConcurrency, Value: strconv.Itoa(DefTiDBFlashbackConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(s *SessionVars, val string) error {
 		SetFlashbackConcurrency(int32(tidbOptPositiveInt32(val, DefTiDBFlashbackConcurrency)))
 		return nil
 	}},

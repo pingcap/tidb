@@ -126,7 +126,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	oldValue := map[string]interface{}{
 		"hot-region-schedule-limit": 1,
 	}
-	infosync.SetPDScheduleConfig(context.Background(), oldValue)
+	require.NoError(t, infosync.SetPDScheduleConfig(context.Background(), oldValue))
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
@@ -186,7 +186,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
-			rs, err := tk.Exec("show variables like 'tidb_restricted_read_only'")
+			rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
 			assert.NoError(t, err)
 			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 			rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
@@ -195,24 +195,24 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 		}
 	}
 	dom.DDL().SetHook(hook)
-	// first try with `tidb_gc_enable` = on and `tidb_restricted_read_only` = off
+	// first try with `tidb_gc_enable` = on and `tidb_super_read_only` = off
 	tk.MustExec("set global tidb_gc_enable = on")
-	tk.MustExec("set global tidb_restricted_read_only = off")
+	tk.MustExec("set global tidb_super_read_only = off")
 
 	tk.MustExec(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)))
-	rs, err := tk.Exec("show variables like 'tidb_restricted_read_only'")
+	rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 
-	// second try with `tidb_gc_enable` = off and `tidb_restricted_read_only` = on
+	// second try with `tidb_gc_enable` = off and `tidb_super_read_only` = on
 	tk.MustExec("set global tidb_gc_enable = off")
-	tk.MustExec("set global tidb_restricted_read_only = on")
+	tk.MustExec("set global tidb_super_read_only = on")
 
 	tk.MustExec(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)))
-	rs, err = tk.Exec("show variables like 'tidb_restricted_read_only'")
+	rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")

@@ -75,6 +75,8 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:    20,
 }
 
+// updateStatsVersion will set statistics version to the newest TS,
+// then tidb-server will reload automatic.
 func (h *Handle) updateStatsVersion() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()

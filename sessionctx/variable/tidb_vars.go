@@ -444,8 +444,8 @@ const (
 	// TiDBDDLReorgWorkerCount defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 
-	// TiDBFlashbackConcurrency defines the count of ddl flashback workers.
-	TiDBFlashbackConcurrency = "tidb_flashback_concurrency"
+	// TiDBDDLFlashbackConcurrency defines the count of ddl flashback workers.
+	TiDBDDLFlashbackConcurrency = "tidb_ddl_flashback_concurrency"
 
 	// TiDBDDLReorgBatchSize defines the transaction batch size of ddl reorg workers.
 	TiDBDDLReorgBatchSize = "tidb_ddl_reorg_batch_size"
