@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // ByItems wraps a "by" item.
@@ -52,7 +52,7 @@ func (by *ByItems) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = memory.SizeOfBool
+	sum = size.SizeOfBool
 	if by.Expr != nil {
 		sum += by.Expr.MemoryUsage()
 	}

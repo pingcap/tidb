@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1322,8 +1322,8 @@ func (ls *PhysicalSort) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = ls.basePhysicalPlan.MemoryUsage() + memory.SizeOfSlice + int64(cap(ls.ByItems))*memory.SizeOfPointer +
-		memory.SizeOfBool
+	sum = ls.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ls.ByItems))*size.SizeOfPointer +
+		size.SizeOfBool
 	for _, byItem := range ls.ByItems {
 		sum += byItem.MemoryUsage()
 	}
@@ -1348,8 +1348,8 @@ func (ns *NominalSort) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = ns.basePhysicalPlan.MemoryUsage() + memory.SizeOfSlice + int64(cap(ns.ByItems))*memory.SizeOfPointer +
-		memory.SizeOfBool
+	sum = ns.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ns.ByItems))*size.SizeOfPointer +
+		size.SizeOfBool
 	for _, byItem := range ns.ByItems {
 		sum += byItem.MemoryUsage()
 	}

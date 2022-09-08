@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -52,7 +52,7 @@ func (s SortItem) Clone() SortItem {
 
 // MemoryUsage return the memory usage of SortItem
 func (s SortItem) MemoryUsage() (sum int64) {
-	sum = memory.SizeOfBool
+	sum = size.SizeOfBool
 	if s.Col != nil {
 		sum += s.Col.MemoryUsage()
 	}
@@ -118,7 +118,7 @@ func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
 
 // MemoryUsage return the memory usage of MPPPartitionColumn
 func (partitionCol *MPPPartitionColumn) MemoryUsage() (sum int64) {
-	sum = memory.SizeOfInt32
+	sum = size.SizeOfInt32
 	if partitionCol.Col != nil {
 		sum += partitionCol.Col.MemoryUsage()
 	}

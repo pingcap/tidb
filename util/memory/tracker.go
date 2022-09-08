@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"unsafe"
 
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
@@ -713,32 +712,3 @@ const (
 var MetricsTypes = map[int][]string{
 	LabelForGlobalAnalyzeMemory: {"analyze", "inuse", "released"},
 }
-
-// below constants are the size of commonly used types, for memory trace
-
-// SizeOfSlice is the memory itself used, excludes the elements' memory
-const SizeOfSlice = int64(unsafe.Sizeof(*new([]int)))
-
-// SizeOfByte is the memory each byte occupied
-const SizeOfByte = int64(unsafe.Sizeof(*new(byte)))
-
-// SizeOfString is the memory string itself occupied
-const SizeOfString = int64(unsafe.Sizeof(*new(string)))
-
-// SizeOfBool is the memory each bool occupied
-const SizeOfBool = int64(unsafe.Sizeof(*new(bool)))
-
-// SizeOfPointer is the memory each pointer occupied
-const SizeOfPointer = int64(unsafe.Sizeof(new(int)))
-
-// SizeOfInterface is the memory each interface occupied, exclude the real type memory usage
-const SizeOfInterface = int64(unsafe.Sizeof(*new(interface{})))
-
-// SizeOfFloat64 is the memory each float64 occupied
-const SizeOfFloat64 = int64(unsafe.Sizeof(*new(float64)))
-
-// SizeOfUint64 is the memory each uint64 occupied
-const SizeOfUint64 = int64(unsafe.Sizeof(*new(uint64)))
-
-// SizeOfInt32 is the memory each int32 occupied
-const SizeOfInt32 = int64(unsafe.Sizeof(*new(int32)))

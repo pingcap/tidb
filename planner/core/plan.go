@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -531,9 +531,9 @@ func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePlan.MemoryUsage() + memory.SizeOfSlice + int64(cap(p.childrenReqProps))*memory.SizeOfPointer +
-		memory.SizeOfSlice + int64(cap(p.children)+1)*memory.SizeOfInterface + memory.SizeOfFloat64*2 +
-		memory.SizeOfUint64 + memory.SizeOfBool
+	sum = p.basePlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
+		size.SizeOfSlice + int64(cap(p.children)+1)*size.SizeOfInterface + size.SizeOfFloat64*2 +
+		size.SizeOfUint64 + size.SizeOfBool
 	for _, prop := range p.childrenReqProps {
 		sum += prop.MemoryUsage()
 	}
