@@ -996,7 +996,7 @@ func RunStreamRestore(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if logClusterID != fullClusterID {
+		if logClusterID > 0 && fullClusterID > 0 && logClusterID != fullClusterID {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
 				"the full snapshot(from cluster ID:%v) and log(from cluster ID:%v) come from different cluster.",
 				fullClusterID, logClusterID)
