@@ -1967,9 +1967,9 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
-	tk.MustExec("rename table t1 to t")
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	checkErr = nil
+	tk.MustExec("rename table t1 to t")
 
 	// rename then add column, but rename to other database
 	concurrentDDLQuery = "alter table t add column g int"
@@ -1977,8 +1977,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to test2.t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	// [schema:1146]Table '(Schema ID 1).(Table ID 65)' doesn't exist
-	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	checkErr = nil
 
@@ -1989,8 +1988,7 @@ func TestParallelRenameTable(t *testing.T) {
 	concurrentDDLQueryPre = "create table t(a int)"
 	wg.Wait()
 	require.Error(t, checkErr)
-	// [schema:1146]Table '(Schema ID 1).(Table ID 65)' doesn't exist
-	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	concurrentDDLQueryPre = ""
 	checkErr = nil
@@ -2001,7 +1999,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table t1 to t")
 	checkErr = nil
 
@@ -2011,7 +2009,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to test2.t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	checkErr = nil
 
@@ -2023,7 +2021,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to tt, t2 to tt2, t3 to tt3")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table tt to t")
 }
 
