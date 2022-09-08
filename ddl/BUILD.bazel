@@ -51,7 +51,6 @@ go_library(
     ],
     deps = [
         "//config",
-        "//ddl/ingest",
         "//ddl/label",
         "//ddl/placement",
         "//ddl/syncer",

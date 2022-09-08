@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -710,8 +709,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	if !bfProcess.NeedMergeProcess() {
 		return runReorgJobAndHandleAddIndexErr(w, d, t, job, tbl, indexInfo)
 	}
-	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	elem := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 	switch indexInfo.BackfillState {
 	case model.BackfillStateInapplicable:
 		indexInfo.BackfillState = model.BackfillStateRunning
@@ -732,13 +729,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	case model.BackfillStateReadyToMerge:
 		logutil.BgLogger().Info("lightning backfill state merge sync")
 		indexInfo.BackfillState = model.BackfillStateMerging
-		if bfProcess == model.ReorgTypeLitMerge {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
-			err = rh.RemoveDDLReorgHandle(job, elem)
-			if err != nil {
-				logutil.BgLogger().Info("Lightning: [DDL] remove reorg handle", zap.Error(err))
-			}
-		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
