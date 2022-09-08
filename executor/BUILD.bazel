@@ -295,7 +295,6 @@ go_test(
         "partition_table_test.go",
         "pkg_test.go",
         "point_get_test.go",
-        "point_get_lock_if_exists_test.go",
         "prepared_test.go",
         "recover_test.go",
         "resource_tag_test.go",
