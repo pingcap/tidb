@@ -7268,6 +7268,7 @@ func TestTableRangeFallback(t *testing.T) {
 		"TableReader 8000.00 root  data:Selection",
 		"└─Selection 8000.00 cop[tikv]  gt(test.t1.b, 1), in(test.t1.a, 10, 20, 30, 40, 50)",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
 	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50)").Check(testkit.Rows(
 		"HashJoin 10000.00 root  inner join, equal:[eq(test.t1.b, test.t2.c)]",
 		"├─TableReader(Build) 8000.00 root  data:Selection",
@@ -7276,6 +7277,7 @@ func TestTableRangeFallback(t *testing.T) {
 		"└─TableReader(Probe) 8000.00 root  data:Selection",
 		"  └─Selection 8000.00 cop[tikv]  in(test.t1.a, 10, 20, 30, 40, 50), not(isnull(test.t1.b))",
 		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
 }
 
 func TestPlanCacheForTableRangeFallback(t *testing.T) {
