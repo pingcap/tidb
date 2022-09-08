@@ -423,3 +423,42 @@ func TestSortRecoverRegions(t *testing.T) {
 	}
 	require.Equal(t, expectRegionInfos, regionsInfos)
 }
+
+func TestCheckConsistencyAndValidPeer(t *testing.T) {
+	//key space is continuous
+	validPeer1 := newPeerMeta(9, 11, 2, []byte(""), []byte("bb"), 2, 0, 0, 0, false)
+	validPeer2 := newPeerMeta(19, 22, 3, []byte("bb"), []byte("cc"), 2, 1, 0, 1, false)
+	validPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte(""), 2, 1, 1, 2, false)
+
+	validRegionInfos := []*restore.RecoverRegionInfo{
+		newRecoverRegionInfo(validPeer1),
+		newRecoverRegionInfo(validPeer2),
+		newRecoverRegionInfo(validPeer3),
+	}
+
+	validPeer, err := restore.CheckConsistencyAndValidPeer(validRegionInfos)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(validPeer))
+	var regions = make(map[uint64]struct{}, 3)
+	regions[9] = struct{}{}
+	regions[19] = struct{}{}
+	regions[29] = struct{}{}
+
+	require.Equal(t, regions, validPeer)
+
+	//key space is not continuous
+	invalidPeer1 := newPeerMeta(9, 11, 2, []byte("aa"), []byte("cc"), 2, 0, 0, 0, false)
+	invalidPeer2 := newPeerMeta(19, 22, 3, []byte("dd"), []byte("cc"), 2, 1, 0, 1, false)
+	invalidPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte("dd"), 2, 1, 1, 2, false)
+
+	invalidRegionInfos := []*restore.RecoverRegionInfo{
+		newRecoverRegionInfo(invalidPeer1),
+		newRecoverRegionInfo(invalidPeer2),
+		newRecoverRegionInfo(invalidPeer3),
+	}
+
+	_, err = restore.CheckConsistencyAndValidPeer(invalidRegionInfos)
+	require.Error(t, err)
+	require.Regexp(t, ".*invalid restore range.*", err.Error())
+
+}

@@ -169,10 +169,6 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	if err != nil {
 		return errors.Trace(err)
 	}
-	numOnlineStore := len(allStores)
-	// progress = read meta + send recovery + resolve kv data.
-	progress := g.StartProgress(ctx, cmdName, int64(numOnlineStore*3), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(numOnlineStore*3))
 
 	// progress = read meta + send recovery + resolve kv data.
 	progress := g.StartProgress(ctx, cmdName, int64(numOnlineStore*3), !cfg.LogProgress)

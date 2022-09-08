@@ -18,7 +18,7 @@ import (
 const (
 	numOnlineStore = 3
 	// test max allocate id
-	maxAllocateId = 5999
+	maxAllocateId = 0x176f
 )
 
 type testData struct {
@@ -55,21 +55,21 @@ func newRegionMeta(
 
 func (t *testData) generateRegionMeta() {
 	storeMeta0 := restore.NewStoreMeta(1)
-	storeMeta0.RegionMetas = append(storeMeta0.RegionMetas, newRegionMeta(11, 24, 8, 5, 4, 1, false, []byte("a"), []byte("b")))
+	storeMeta0.RegionMetas = append(storeMeta0.RegionMetas, newRegionMeta(11, 24, 8, 5, 4, 1, false, []byte(""), []byte("b")))
 	storeMeta0.RegionMetas = append(storeMeta0.RegionMetas, newRegionMeta(12, 34, 5, 6, 5, 1, false, []byte("b"), []byte("c")))
-	storeMeta0.RegionMetas = append(storeMeta0.RegionMetas, newRegionMeta(13, 44, 1200, 6, 6, 1, false, []byte("c"), []byte("d")))
+	storeMeta0.RegionMetas = append(storeMeta0.RegionMetas, newRegionMeta(13, 44, 1200, 7, 6, 1, false, []byte("c"), []byte("")))
 	t.mockRecovery.StoreMetas[0] = storeMeta0
 
 	storeMeta1 := restore.NewStoreMeta(2)
-	storeMeta1.RegionMetas = append(storeMeta1.RegionMetas, newRegionMeta(11, 25, 7, 6, 4, 1, false, []byte("a"), []byte("b")))
+	storeMeta1.RegionMetas = append(storeMeta1.RegionMetas, newRegionMeta(11, 25, 7, 6, 4, 1, false, []byte(""), []byte("b")))
 	storeMeta1.RegionMetas = append(storeMeta1.RegionMetas, newRegionMeta(12, 35, 5, 6, 5, 1, false, []byte("b"), []byte("c")))
-	storeMeta1.RegionMetas = append(storeMeta1.RegionMetas, newRegionMeta(13, 45, 1200, 6, 6, 1, false, []byte("c"), []byte("d")))
+	storeMeta1.RegionMetas = append(storeMeta1.RegionMetas, newRegionMeta(13, 45, 1200, 6, 6, 1, false, []byte("c"), []byte("")))
 	t.mockRecovery.StoreMetas[1] = storeMeta1
 
 	storeMeta2 := restore.NewStoreMeta(3)
-	storeMeta2.RegionMetas = append(storeMeta2.RegionMetas, newRegionMeta(11, 26, 7, 5, 4, 1, false, []byte("a"), []byte("b")))
+	storeMeta2.RegionMetas = append(storeMeta2.RegionMetas, newRegionMeta(11, 26, 7, 5, 4, 1, false, []byte(""), []byte("b")))
 	storeMeta2.RegionMetas = append(storeMeta2.RegionMetas, newRegionMeta(12, 36, 5, 6, 6, 1, false, []byte("b"), []byte("c")))
-	storeMeta2.RegionMetas = append(storeMeta2.RegionMetas, newRegionMeta(13, maxAllocateId, 1200, 6, 6, 1, false, []byte("c"), []byte("d")))
+	storeMeta2.RegionMetas = append(storeMeta2.RegionMetas, newRegionMeta(13, maxAllocateId, 1200, 6, 6, 1, false, []byte("c"), []byte("")))
 	t.mockRecovery.StoreMetas[2] = storeMeta2
 }
 
@@ -86,7 +86,7 @@ func createStores() []*metapb.Store {
 }
 
 func createDataSuite(t *testing.T) *testData {
-	_, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	tikvClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	mockGlue := &gluetidb.MockGlue{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -97,7 +97,7 @@ func createDataSuite(t *testing.T) *testData {
 	fakeProgress := mockGlue.StartProgress(ctx, "Restore Data", int64(numOnlineStore*3), false)
 
 	var recovery = restore.NewRecovery(createStores(), mockMgr, fakeProgress)
-
+	tikvClient.Close()
 	return &testData{
 		ctx:          ctx,
 		cancel:       cancel,
@@ -108,14 +108,18 @@ func createDataSuite(t *testing.T) *testData {
 
 func TestGetTotalRegions(t *testing.T) {
 	testData := createDataSuite(t)
+	testData.generateRegionMeta()
 	totalRegion := testData.mockRecovery.GetTotalRegions()
 	require.Equal(t, totalRegion, 3)
+	testData.cleanUp()
 }
 
 func TestMakeRecoveryPlan(t *testing.T) {
 	testData := createDataSuite(t)
-	totalRegion := testData.mockRecovery.MakeRecoveryPlan()
-	require.Equal(t, totalRegion, 3)
-	require.Equal(t, testData.mockRecovery.MaxAllocID, maxAllocateId)
-	require.Equal(t, len(testData.mockRecovery.RecoveryPlan), 3)
+	testData.generateRegionMeta()
+	err := testData.mockRecovery.MakeRecoveryPlan()
+	require.NoError(t, err)
+	require.Equal(t, testData.mockRecovery.MaxAllocID, uint64(maxAllocateId))
+	require.Equal(t, len(testData.mockRecovery.RecoveryPlan), 2)
+	testData.cleanUp()
 }
