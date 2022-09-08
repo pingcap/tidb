@@ -938,16 +938,21 @@ var defaultSysVars = []*SysVar{
 		s.TimeZone = tz
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: ForeignKeyChecks, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: ForeignKeyChecks, Value: BoolToOnOff(DefTiDBForeignKeyChecks), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if TiDBOptOn(normalizedValue) {
-			// TiDB does not yet support foreign keys.
-			// Return the original value in the warning, so that users are not confused.
-			vars.StmtCtx.AppendWarning(ErrUnsupportedValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue))
-			return Off, nil
+			vars.ForeignKeyChecks = true
+			return On, nil
 		} else if !TiDBOptOn(normalizedValue) {
+			vars.ForeignKeyChecks = false
 			return Off, nil
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
+	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableForeignKey, Value: BoolToOnOff(false), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		EnableForeignKey.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(EnableForeignKey.Load()), nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
