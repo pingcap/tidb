@@ -725,9 +725,9 @@ func (re *builtinRegexpInStrFuncSig) findIndex(reg *regexp.Regexp, expr string, 
 	}
 
 	if returnOption == 0 {
-		return int64(stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][0]))) + pos - 1, false, nil
+		return stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][0])) + pos - 1, false, nil
 	}
-	return int64(stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][1]))) + pos - 1, false, nil
+	return stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][1])) + pos - 1, false, nil
 }
 
 func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
@@ -1001,9 +1001,9 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 			}
 
 			if returnOption == 0 {
-				i64s[i] = int64(stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][0]))) + pos - 1
+				i64s[i] = stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][0])) + pos - 1
 			} else {
-				i64s[i] = int64(stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][1]))) + pos - 1
+				i64s[i] = stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][1])) + pos - 1
 			}
 		}
 	}
@@ -1075,7 +1075,7 @@ func (re *builtinRegexpReplaceFuncSig) getReplacedBinStr(reg *regexp.Regexp, bex
 			return []byte(repl)
 		}
 
-		return []byte(matchedStr)
+		return matchedStr
 	}
 
 	replacedBStr := reg.ReplaceAllFunc(trimmedBexpr, repFunc)
@@ -1377,7 +1377,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 					return []byte(repl)
 				}
 
-				return []byte(matchedStr)
+				return matchedStr
 			}
 
 			replacedBStr := reg.ReplaceAllFunc(trimmedBexpr, repFunc)
