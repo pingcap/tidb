@@ -70,8 +70,8 @@ type SchemaSyncer interface {
 	// Restart restarts the syncer when it's on longer being refreshed.
 	Restart(ctx context.Context) error
 	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
-	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
-	// It returns until all servers' versions are equal to the latest version or the ctx is done.
+	// the latest schema version. (exclude the isolated TiDB)
+	// It returns until all servers' versions are equal to the latest version.
 	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
 	// Close ends SchemaSyncer.
 	Close()

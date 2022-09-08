@@ -930,9 +930,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		ctx, cancel := context.WithTimeout(w.ctx, waitTime)
-		waitSchemaChanged(ctx, d, waitTime, schemaVer, job)
-		cancel()
+		waitSchemaChanged(context.Background(), d, waitTime, schemaVer, job)
 
 		if RunInGoTest {
 			// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
@@ -1258,15 +1256,10 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 		}
 	}
 
-	// OwnerCheckAllVersions returns only when context is timeout(2 * lease) or all TiDB schemas are synced.
+	// OwnerCheckAllVersions returns only when  all TiDB schemas are synced(exclude the isolated TiDB).
 	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
-		logutil.Logger(d.ctx).Info("[ddl] wait latest schema version to deadline", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if terror.ErrorEqual(err, context.DeadlineExceeded) {
-			return
-		}
-		// Wait until timeout.
-		<-ctx.Done()
+		logutil.Logger(d.ctx).Info("[ddl] wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		return
 	}
 	logutil.Logger(d.ctx).Info("[ddl] wait latest schema version changed",
@@ -1285,8 +1278,6 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
-	ctx, cancelFunc := context.WithTimeout(w.ctx, waitTime)
-	defer cancelFunc()
 
 	ver, _ := w.store.CurrentVersion(kv.GlobalTxnScope)
 	snapshot := w.store.GetSnapshot(ver)
@@ -1307,7 +1298,7 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 		}
 	})
 
-	waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
+	waitSchemaChanged(context.Background(), d, waitTime, latestSchemaVersion, job)
 	return nil
 }
 
