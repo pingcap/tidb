@@ -598,6 +598,41 @@ func (p *PhysicalIndexScan) ExtractCorrelatedCols() []*expression.CorrelatedColu
 	return corCols
 }
 
+const emptyPhysicalIndexScanSize = int64(unsafe.Sizeof(PhysicalIndexScan{}))
+
+// MemoryUsage return the memory usage of PhysicalIndexScan
+func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPhysicalIndexScanSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IdxColLens))*size.SizeOfInt +
+		p.DBName.MemoryUsage() + len(p.rangeInfo)
+	if p.TableAsName != nil {
+		sum += p.TableAsName.MemoryUsage()
+	}
+	if p.pkIsHandleCol != nil {
+		sum += p.pkIsHandleCol.MemoryUsage()
+	}
+	if p.prop != nil {
+		sum += p.prop.MemoryUsage()
+	}
+	// slice memory usage
+	for _, cond := range p.AccessCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, col := range p.IdxCols {
+		sum += col.MemoryUsage()
+	}
+	for _, rang := range p.Ranges {
+		sum += rang.MemoryUsage()
+	}
+	for tid, expr := range p.GenExprs {
+		sum += int64(unsafe.Sizeof(tid)) + expr.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalMemTable reads memory table.
 type PhysicalMemTable struct {
 	physicalSchemaProducer
@@ -772,6 +807,7 @@ func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool
 
 const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))
 
+// MemoryUsage return the memory usage of PhysicalTableScan
 func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	if ts == nil {
 		return
@@ -788,7 +824,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	if ts.prop != nil {
 		sum += ts.prop.MemoryUsage()
 	}
-
+	// slice memory usage
 	for _, cond := range ts.AccessCondition {
 		sum += cond.MemoryUsage()
 	}
