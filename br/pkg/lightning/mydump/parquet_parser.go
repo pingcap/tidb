@@ -590,7 +590,7 @@ func jdToTime(jd int32, nsec int64) time.Time {
 // --------------------------
 // |   64 bit   |   32 bit   |
 // ---------------------------
-// |  nano sec  |  timestamp |
+// |  nano sec  |  julian day  |
 // ---------------------------
 // NOTE: parquet date can be less than 1970-01-01 that is not supported by TiDB,
 // where dt is a negative number but still legal in the context of Go.
