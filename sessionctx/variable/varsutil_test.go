@@ -120,12 +120,11 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
 
-	// 1/ON is not supported (generates a warning and sets to OFF)
 	err = v.SetSystemVar("foreign_key_checks", "1")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar("foreign_key_checks")
 	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
+	require.Equal(t, "ON", val)
 
 	err = v.SetSystemVar("sql_mode", "strict_trans_tables")
 	require.NoError(t, err)
