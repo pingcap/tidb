@@ -27,6 +27,7 @@ go_library(
         "foreign_key.go",
         "generated_column.go",
         "index.go",
+        "index_merge_tmp.go",
         "job_table.go",
         "mock.go",
         "multi_schema_change.go",
@@ -50,6 +51,7 @@ go_library(
     ],
     deps = [
         "//config",
+        "//ddl/ingest",
         "//ddl/label",
         "//ddl/placement",
         "//ddl/syncer",
@@ -162,6 +164,7 @@ go_test(
         "fail_test.go",
         "foreign_key_test.go",
         "index_change_test.go",
+        "index_merge_tmp_test.go",
         "index_modify_test.go",
         "integration_test.go",
         "job_table_test.go",
@@ -191,6 +194,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//config",
+        "//ddl/ingest",
         "//ddl/placement",
         "//ddl/schematracker",
         "//ddl/testutil",
