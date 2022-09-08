@@ -217,8 +217,8 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 			keyVer = append(keyVer, rawValue[length-1:]...)
 			rawValue = rawValue[:length-1]
 			length--
-			// Just skip it.
 			if bytes.Equal(keyVer, []byte("m")) {
+				// The kv is written in the merging state. It has been written to the origin index, we can skip it.
 				return true, nil
 			}
 			if bytes.Equal(rawValue, []byte("delete")) {
@@ -235,13 +235,13 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, originIdxKey)
 
 			idxRecord := &temporaryIndexRecord{
-				delete:   isDelete,
-				unique:   unique,
-				skip:     false,
-				distinct: !isDelete && tablecodec.IndexKVIsUnique(rawValue),
+				delete: isDelete,
+				unique: unique,
+				skip:   false,
 			}
 			if !isDelete {
 				idxRecord.vals = rawValue
+				idxRecord.distinct = tablecodec.IndexKVIsUnique(rawValue)
 			}
 			w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
 			w.originIdxKeys = append(w.originIdxKeys, originIdxKey)

@@ -42,6 +42,7 @@ type featureUsage struct {
 	NewClusterIndex       *NewClusterIndexUsage            `json:"newClusterIndex"`
 	TemporaryTable        bool                             `json:"temporaryTable"`
 	CTE                   *m.CTEUsageCounter               `json:"cte"`
+	AccountLock           *m.AccountLockCounter            `json:"accountLock"`
 	CachedTable           bool                             `json:"cachedTable"`
 	AutoCapture           bool                             `json:"autoCapture"`
 	PlacementPolicyUsage  *placementPolicyUsage            `json:"placementPolicy"`
@@ -76,6 +77,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.Txn = getTxnUsageInfo(sctx)
 
 	usage.CTE = getCTEUsageInfo()
+
+	usage.AccountLock = getAccountLockUsageInfo()
 
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
 
@@ -221,6 +224,7 @@ type TxnUsage struct {
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
+var initialAccountLockCounter m.AccountLockCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
@@ -270,6 +274,10 @@ func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
 }
 
+func postReportAccountLockUsage() {
+	initialAccountLockCounter = m.GetAccountLockCounter()
+}
+
 // PostSavepointCount exports for testing.
 func PostSavepointCount() {
 	initialSavepointStmtCounter = m.GetSavepointStmtCounter()
@@ -283,6 +291,13 @@ func postReportLazyPessimisticUniqueCheckSetCount() {
 func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
+	return &diff
+}
+
+// getAccountLockUsageInfo gets the AccountLock usages.
+func getAccountLockUsageInfo() *m.AccountLockCounter {
+	curr := m.GetAccountLockCounter()
+	diff := curr.Sub(initialAccountLockCounter)
 	return &diff
 }
 

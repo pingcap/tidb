@@ -85,6 +85,13 @@ var (
 			Name:      "table_partition_max_partition_usage",
 			Help:      "Counter of partitions created by CREATE TABLE statements",
 		})
+	TelemetryAccountLockCnt = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "account_lock_usage",
+			Help:      "Counter of locked/unlocked users",
+		}, []string{LblAccountLock})
 	TelemetryAddIndexLightningCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -129,6 +136,31 @@ func GetCTECounter() CTEUsageCounter {
 		NonRecursiveCTEUsed: readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "nonRecurCTE"})),
 		RecursiveUsed:       readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "recurCTE"})),
 		NonCTEUsed:          readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "notCTE"})),
+	}
+}
+
+// AccountLockCounter records the number of lock users/roles
+type AccountLockCounter struct {
+	LockUser          int64 `json:"lockUser"`
+	UnlockUser        int64 `json:"unlockUser"`
+	CreateOrAlterUser int64 `json:"createOrAlterUser"`
+}
+
+// Sub returns the difference of two counters.
+func (c AccountLockCounter) Sub(rhs AccountLockCounter) AccountLockCounter {
+	return AccountLockCounter{
+		LockUser:          c.LockUser - rhs.LockUser,
+		UnlockUser:        c.UnlockUser - rhs.UnlockUser,
+		CreateOrAlterUser: c.CreateOrAlterUser - rhs.CreateOrAlterUser,
+	}
+}
+
+// GetAccountLockCounter gets the AccountLockCounter
+func GetAccountLockCounter() AccountLockCounter {
+	return AccountLockCounter{
+		LockUser:          readCounter(TelemetryAccountLockCnt.With(prometheus.Labels{LblAccountLock: "lockUser"})),
+		UnlockUser:        readCounter(TelemetryAccountLockCnt.With(prometheus.Labels{LblAccountLock: "unlockUser"})),
+		CreateOrAlterUser: readCounter(TelemetryAccountLockCnt.With(prometheus.Labels{LblAccountLock: "createOrAlterUser"})),
 	}
 }
 
