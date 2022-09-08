@@ -276,6 +276,12 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
 	case *plannercore.Delete:
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
+	case *plannercore.Insert:
+		if v.SelectPlan == nil &&
+			len(v.OnDuplicate) == 0 &&
+			!v.IsReplace {
+			return true
+		}
 	}
 	return false
 }
@@ -311,17 +317,8 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 	}
 
 	useLastOracleTS := false
-	sessionVars := p.sctx.GetSessionVars()
-	if !sessionVars.RetryInfo.Retrying {
-		if v, ok := plan.(*plannercore.Insert); ok && v.SelectPlan == nil {
-			if len(v.OnDuplicate) == 0 && !v.IsReplace {
-				useLastOracleTS = true
-			}
-		} else {
-			if sessionVars.ConnectionID > 0 && sessionVars.InTxn() {
-				useLastOracleTS = planSkipGetTsoFromPD(p.sctx, plan, false)
-			}
-		}
+	if !p.sctx.GetSessionVars().RetryInfo.Retrying {
+		useLastOracleTS = planSkipGetTsoFromPD(p.sctx, plan, false)
 	}
 
 	if useLastOracleTS {
