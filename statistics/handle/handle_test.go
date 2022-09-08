@@ -982,9 +982,12 @@ func TestAnalyzeGlobalStatsWithOpts2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	originalVal2 := tk.MustQuery("select @@tidb_enable_auto_analyze").Rows()[0][0].(string)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_auto_analyze = %v", originalVal2))
 	}()
+	tk.MustExec("set global tidb_enable_auto_analyze = false")
 	tk.MustExec("set global tidb_persist_analyze_options=false")
 	prepareForGlobalStatsWithOpts(t, dom, tk, "test_gstats_opt2", "test_gstats_opt2")
 
