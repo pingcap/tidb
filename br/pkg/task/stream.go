@@ -1053,7 +1053,7 @@ func restoreStream(
 				zap.String("restore-to", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
 				zap.Uint64("total-kv-count", totalKVCount),
 				zap.String("total-size", units.HumanSize(float64(totalSize))),
-				zap.String("average-speed", units.HumanSize(float64(totalSize)/float64(totalDureTime.Seconds()))+"/s"),
+				zap.String("average-speed", units.HumanSize(float64(totalSize)/totalDureTime.Seconds())+"/s"),
 			)
 		}
 	}()
