@@ -103,21 +103,17 @@ func getVecExprBenchCaseForRegexp(retType types.EvalType, isBin bool, inputs ...
 	paramTypes := make([]types.EvalType, 0, 6)
 
 	for _, input := range inputs {
-		switch input.(type) {
+		switch input := input.(type) {
 		case []int:
-			actualInput := input.([]int)
 			gens = append(gens, &rangeInt64Gener{
-				begin:   actualInput[0],
-				end:     actualInput[1],
+				begin:   input[0],
+				end:     input[1],
 				randGen: newDefaultRandGen(),
 			})
 			paramTypes = append(paramTypes, types.ETInt)
 		case []string:
 			strs := make([]string, 0)
-			actualInput := input.([]string)
-			for _, elem := range actualInput {
-				strs = append(strs, elem)
-			}
+			strs = append(strs, input...)
 			gens = append(gens, &selectStringGener{
 				candidates: strs,
 				randGen:    newDefaultRandGen(),
