@@ -498,7 +498,7 @@ func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model
 
 // SessionTables store local temporary tables
 type SessionTables struct {
-	// Local temporary tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
+	// Session tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
 	// schemaTables.dbInfo will only be used when the db is dropped and it may be stale after the db is created again.
 	// But it's fine because we only need its name.
 	schemaMap map[string]*schemaTables
