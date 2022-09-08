@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/util/size"
 	"strings"
 	"unsafe"
 
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // HandleCols is the interface that holds handle columns.
