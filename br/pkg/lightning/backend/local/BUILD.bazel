@@ -88,6 +88,7 @@ go_test(
         "engine_test.go",
         "iterator_test.go",
         "key_adapter_test.go",
+        "local_check_test.go",
         "local_test.go",
         "localhelper_test.go",
     ],
