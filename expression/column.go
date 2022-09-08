@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
@@ -189,6 +190,16 @@ func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ *Schema) (Expression,
 
 func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
 	return true
+}
+
+// MemoryUsage return the memory usage of CorrelatedColumn
+func (col *CorrelatedColumn) MemoryUsage() (sum int64) {
+	if col == nil {
+		return
+	}
+
+	sum = col.Column.MemoryUsage() + col.Data.MemUsage()
+	return sum
 }
 
 // Column represents a column.
@@ -721,4 +732,21 @@ func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
 	}
 
 	return true
+}
+
+const emptyColumnSize = int64(unsafe.Sizeof(Column{}))
+
+// MemoryUsage return the memory usage of Column
+func (col *Column) MemoryUsage() (sum int64) {
+	if col == nil {
+		return
+	}
+
+	sum = emptyColumnSize + col.RetType.MemoryUsage() + int64(cap(col.hashcode)) +
+		int64(len(col.OrigName)+len(col.charset)+len(col.collation))
+
+	if col.VirtualExpr != nil {
+		sum += col.VirtualExpr.MemoryUsage()
+	}
+	return
 }
