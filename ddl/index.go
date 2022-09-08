@@ -766,7 +766,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			if !done {
 				return false, ver, nil
 			}
-			err = importIndexDataToStore(job.ID, indexInfo.ID, indexInfo.Unique, tbl)
+			err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) {
 					logutil.BgLogger().Warn("import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))

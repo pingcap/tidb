@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -59,52 +58,21 @@ func isPiTREnable(w *worker) bool {
 	}
 	defer w.sessPool.put(ctx)
 	failpoint.Inject("EnablePiTR", func() {
-		logutil.BgLogger().Info("Lightning: Failpoint enable PiTR.")
+		logutil.BgLogger().Info("lightning: mock enable PiTR")
 		failpoint.Return(true)
 	})
 	return utils.CheckLogBackupEnabled(ctx)
 }
 
-// importIndexDataToStore import local index sst file into TiKV.
-func importIndexDataToStore(jobID int64, indexID int64, unique bool, tbl table.Table) error {
-	if bc, ok := ingest.LitBackCtxMgr.Load(jobID); ok {
-		err := bc.FinishImport(indexID, unique, tbl)
-		if err != nil {
-			err = errors.Trace(err)
-			return err
-		}
-	}
-	return nil
-}
-
 func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxRecords []*temporaryIndexRecord) error {
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
-		// non-unique key need not to check, just overwrite it,
+		// non-unique key need not check, just overwrite it,
 		// because in most case, backfilling indices is not exists.
 		return nil
 	}
 
-	if len(w.idxKeyBufs) < w.batchCnt {
-		w.idxKeyBufs = make([][]byte, w.batchCnt)
-	}
-	w.batchCheckKeys = w.batchCheckKeys[:0]
-	w.distinctCheckFlags = w.distinctCheckFlags[:0]
-
-	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
-	for i, record := range idxRecords {
-		distinct := false
-		if !record.delete && tablecodec.IndexKVIsUnique(record.vals) {
-			distinct = true
-		}
-		// save the buffer to reduce memory allocations.
-		w.idxKeyBufs[i] = record.key
-
-		w.batchCheckKeys = append(w.batchCheckKeys, record.key)
-		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
-	}
-
-	batchVals, err := txn.BatchGet(context.Background(), w.batchCheckKeys)
+	batchVals, err := txn.BatchGet(context.Background(), w.originIdxKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -112,9 +80,9 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxR
 	// 1. unique-key/primary-key is duplicate and the handle is equal, skip it.
 	// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
 	// 3. non-unique-key is duplicate, skip it.
-	for i, key := range w.batchCheckKeys {
+	for i, key := range w.originIdxKeys {
 		if val, found := batchVals[string(key)]; found {
-			if w.distinctCheckFlags[i] {
+			if idxRecords[i].distinct {
 				if !bytes.Equal(val, idxRecords[i].vals) {
 					return kv.ErrKeyExists
 				}
@@ -122,40 +90,33 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxR
 			if !idxRecords[i].delete {
 				idxRecords[i].skip = true
 			}
-		} else if w.distinctCheckFlags[i] {
+		} else if idxRecords[i].distinct {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
 			batchVals[string(key)] = idxRecords[i].vals
 		}
 	}
-	// Constrains is already checked.
-	stmtCtx.BatchCheck = true
 	return nil
 }
 
 // temporaryIndexRecord is the record information of an index.
 type temporaryIndexRecord struct {
-	key    []byte
-	vals   []byte
-	skip   bool // skip indicates that the index key is already exists, we should not add it.
-	delete bool
-	unique bool
-	keyVer []byte
+	vals     []byte
+	skip     bool // skip indicates that the index key is already exists, we should not add it.
+	delete   bool
+	unique   bool
+	distinct bool
 }
+
 type mergeIndexWorker struct {
 	*backfillWorker
 
 	index table.Index
 
-	// The following attributes are used to reduce memory allocation.
-	idxKeyBufs         [][]byte
-	batchCheckKeys     []kv.Key
-	distinctCheckFlags []bool
-	tmpIdxRecords      []*temporaryIndexRecord
-	batchCheckTmpKeys  []kv.Key
-	jobContext         *JobContext
-	skipAll            bool
-	firstVal           []byte
+	tmpIdxRecords []*temporaryIndexRecord
+	originIdxKeys []kv.Key
+	tmpIdxKeys    []kv.Key
+	jobContext    *JobContext
 }
 
 func newMergeTempIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo, jc *JobContext) *mergeIndexWorker {
@@ -182,74 +143,33 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		temporaryIndexRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, taskRange)
+		tmpIdxRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, taskRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		err = w.batchCheckTemporaryUniqueKey(txn, temporaryIndexRecords)
+		err = w.batchCheckTemporaryUniqueKey(txn, tmpIdxRecords)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		endPos := len(temporaryIndexRecords)
-		for i, idxRecord := range temporaryIndexRecords {
+		for i, idxRecord := range tmpIdxRecords {
 			// The index is already exists, we skip it, no needs to backfill it.
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
 			// If all batch are skipped, update first index key to make txn commit to release lock.
-			if idxRecord.skip && !w.skipAll {
+			if idxRecord.skip {
 				continue
 			}
-			if w.skipAll {
-				isDelete := false
-				unique := false
-				length := len(w.firstVal)
-				w.firstVal = w.firstVal[:length-1]
-				length--
-
-				if bytes.Equal(w.firstVal, []byte("delete")) {
-					isDelete = true
-					w.firstVal = w.firstVal[:length-6]
-				} else if bytes.Equal(w.firstVal, []byte("deleteu")) {
-					isDelete = true
-					unique = true
-					w.firstVal = w.firstVal[:length-7]
-				}
-				if isDelete {
-					if unique {
-						err = txn.GetMemBuffer().DeleteWithFlags(w.batchCheckTmpKeys[0], kv.SetNeedLocked)
-					} else {
-						err = txn.GetMemBuffer().Delete(w.batchCheckTmpKeys[0])
-					}
-				} else {
-					// Set latest key/val back to temp index.
-					err = txn.GetMemBuffer().Set(w.batchCheckTmpKeys[0], w.firstVal)
-				}
-				if err != nil {
-					return err
-				}
-				break
-			}
-
 			if idxRecord.delete {
 				if idxRecord.unique {
-					err = txn.GetMemBuffer().DeleteWithFlags(idxRecord.key, kv.SetNeedLocked)
+					err = txn.GetMemBuffer().DeleteWithFlags(w.originIdxKeys[i], kv.SetNeedLocked)
 				} else {
-					err = txn.GetMemBuffer().Delete(idxRecord.key)
+					err = txn.GetMemBuffer().Delete(w.originIdxKeys[i])
 				}
 			} else {
-				err = txn.GetMemBuffer().Set(idxRecord.key, idxRecord.vals)
-				// If the merge key is batch end should be deleted in temp index to avoid
-				// merge twice when do parallel merge procession.
-				if i == endPos-1 {
-					if idxRecord.unique {
-						err = txn.GetMemBuffer().DeleteWithFlags(w.batchCheckTmpKeys[i], kv.SetNeedLocked)
-					} else {
-						err = txn.GetMemBuffer().Delete(w.batchCheckTmpKeys[i])
-					}
-				}
+				err = txn.GetMemBuffer().Set(w.originIdxKeys[i], idxRecord.vals)
 			}
 			if err != nil {
 				return err
@@ -267,11 +187,13 @@ func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
 func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
 	startTime := time.Now()
 	w.tmpIdxRecords = w.tmpIdxRecords[:0]
-	w.batchCheckTmpKeys = w.batchCheckTmpKeys[:0]
+	w.tmpIdxKeys = w.tmpIdxKeys[:0]
+	w.originIdxKeys = w.originIdxKeys[:0]
 	// taskDone means that the merged handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
 	idxPrefix := w.table.IndexPrefix()
+	var lastKey kv.Key
 	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, idxPrefix, txn.StartTS(),
 		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
@@ -307,15 +229,24 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 				unique = true
 				rawValue = rawValue[:length-7]
 			}
-			var convertedIndexKey []byte
-			convertedIndexKey = append(convertedIndexKey, indexKey...)
-			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, convertedIndexKey)
-			idxRecord := &temporaryIndexRecord{key: convertedIndexKey, delete: isDelete, unique: unique, keyVer: keyVer, skip: false}
+
+			originIdxKey := make([]byte, len(indexKey))
+			copy(originIdxKey, indexKey)
+			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, originIdxKey)
+
+			idxRecord := &temporaryIndexRecord{
+				delete:   isDelete,
+				unique:   unique,
+				skip:     false,
+				distinct: !isDelete && tablecodec.IndexKVIsUnique(rawValue),
+			}
 			if !isDelete {
 				idxRecord.vals = rawValue
 			}
 			w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
-			w.batchCheckTmpKeys = append(w.batchCheckTmpKeys, indexKey)
+			w.originIdxKeys = append(w.originIdxKeys, originIdxKey)
+			w.tmpIdxKeys = append(w.tmpIdxKeys, indexKey)
+			lastKey = indexKey
 			return true, nil
 		})
 
@@ -326,11 +257,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	if taskDone {
 		nextKey = taskRange.endKey
 	} else {
-		var convertedNextKey []byte
-		lastPos := len(w.tmpIdxRecords)
-		convertedNextKey = append(convertedNextKey, w.tmpIdxRecords[lastPos-1].key...)
-		tablecodec.IndexKey2TempIndexKey(w.index.Meta().ID, convertedNextKey)
-		nextKey = convertedNextKey
+		nextKey = lastKey
 	}
 
 	logutil.BgLogger().Debug("[ddl] merge temp index txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
