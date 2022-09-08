@@ -909,7 +909,7 @@ const (
 	DefTiDBRowFormatV2                             = 2
 	DefTiDBDDLReorgWorkerCount                     = 4
 	DefTiDBDDLReorgBatchSize                       = 256
-	DefTiDBFlashbackConcurrency                    = 64
+	DefTiDBDDLFlashbackConcurrency                 = 64
 	DefTiDBDDLErrorCountLimit                      = 512
 	DefTiDBMaxDeltaSchemaCount                     = 1024
 	DefTiDBPlacementMode                           = PlacementModeStrict
@@ -1054,7 +1054,7 @@ var (
 	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
 	ddlReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
-	ddlFlashbackConcurrency int32 = DefTiDBFlashbackConcurrency
+	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
 	ddlErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
 	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
 	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount

@@ -337,7 +337,7 @@ func flashbackToVersion(
 	return rangetask.NewRangeTaskRunner(
 		"flashback-to-version-runner",
 		d.store.(tikv.Storage),
-		int(variable.GetFlashbackConcurrency()),
+		int(variable.GetDDLFlashbackConcurrency()),
 		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			return sendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), version, r)
 		},

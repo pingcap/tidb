@@ -46,14 +46,14 @@ func GetDDLReorgWorkerCounter() int32 {
 	return atomic.LoadInt32(&ddlReorgWorkerCounter)
 }
 
-// SetFlashbackConcurrency sets ddlFlashbackConcurrency count.
+// SetDDLFlashbackConcurrency sets ddlFlashbackConcurrency count.
 // Sysvar validation enforces the range to already be correct.
-func SetFlashbackConcurrency(cnt int32) {
+func SetDDLFlashbackConcurrency(cnt int32) {
 	atomic.StoreInt32(&ddlFlashbackConcurrency, cnt)
 }
 
-// GetFlashbackConcurrency gets ddlFlashbackConcurrency count.
-func GetFlashbackConcurrency() int32 {
+// GetDDLFlashbackConcurrency gets ddlFlashbackConcurrency count.
+func GetDDLFlashbackConcurrency() int32 {
 	return atomic.LoadInt32(&ddlFlashbackConcurrency)
 }
 
