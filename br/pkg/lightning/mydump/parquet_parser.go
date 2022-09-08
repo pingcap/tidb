@@ -28,7 +28,6 @@ const (
 	// optimize the read performance
 	smallParquetFileThreshold = 256 * 1024 * 1024
 	// jan011970 is the start date of any julian day,
-	// we calcuate the offset to it to determine the date of a timestamp.
 	jan011970 = 2440588
 	secPerDay = 24 * 60 * 60
 )
