@@ -319,3 +319,11 @@ func TestHiveParquetParser(t *testing.T) {
 		require.Equal(t, results[i], ts)
 	}
 }
+
+func TestNsecOutSideRange(t *testing.T) {
+	a := time.Date(2022, 9, 10, 9, 9, 0, 0, time.Now().Local().Location())
+	b := time.Unix(a.Unix(), 1000000000)
+	// For nano sec out of 999999999, time will automatically execute a
+	// carry operation. i.e. 1000000000 nsec => 1 sec
+	require.Equal(t, a.Add(1*time.Second), b)
+}
