@@ -182,7 +182,11 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
 			if db == "MySQL" {
-				require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table", err.Error())
+				if one == "tidb_ddl_lock" {
+					require.EqualError(t, err, "[ddl:1347]'MySQL.tidb_ddl_lock' is not BASE TABLE")
+				} else {
+					require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table", err.Error())
+				}
 			} else {
 				require.Equal(t, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)), err.Error())
 			}
@@ -201,6 +205,7 @@ func TestSkipSchemaChecker(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_mdl=0")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
 	tk2 := testkit.NewTestKit(t, store)

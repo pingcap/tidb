@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -44,7 +45,9 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
+	"go.uber.org/zap"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -1480,6 +1483,15 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.err = err
 		return
 	}
+	currentDB := p.ctx.GetSessionVars().CurrentDB
+	if tn.Schema.String() != "" {
+		currentDB = tn.Schema.L
+	}
+	table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+	if err != nil {
+		p.err = err
+		return
+	}
 
 	tableInfo := table.Meta()
 	dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
@@ -1684,4 +1696,104 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 		return true
 	}
 	return false
+}
+
+func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+	if !variable.EnableMDL.Load() {
+		return tbl, nil
+	}
+	if is.SchemaMetaVersion() == 0 {
+		return tbl, nil
+	}
+	skipLock := false
+	if sctx.GetSessionVars().SnapshotInfoschema != nil {
+		return tbl, nil
+	}
+	if sctx.GetSessionVars().TxnCtx.IsStaleness {
+		return tbl, nil
+	}
+	if tbl.Meta().TempTableType == model.TempTableLocal {
+		// Don't attach, don't lock.
+		return tbl, nil
+	} else if tbl.Meta().TempTableType == model.TempTableGlobal {
+		skipLock = true
+	}
+	if IsAutoCommitTxn(sctx) && sctx.GetSessionVars().StmtCtx.IsReadOnly {
+		return tbl, nil
+	}
+	tableInfo := tbl.Meta()
+	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
+		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock {
+			if se.MdlTables == nil {
+				return tbl, nil
+			}
+			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
+				// Already attach.
+				return tbl, nil
+			}
+		}
+		var err error
+		tbl, err = domain.GetDomain(sctx).InfoSchema().TableByName(dbName, tableInfo.Name)
+		if err != nil {
+			return nil, err
+		}
+		// Check the table change, if adding new public index or modify a column, we need to handle them.
+		if !sctx.GetSessionVars().IsPessimisticReadConsistency() {
+			var copyTableInfo *model.TableInfo
+			for i, idx := range tbl.Meta().Indices {
+				if idx.State != model.StatePublic {
+					continue
+				}
+				found := false
+				for _, idxx := range tableInfo.Indices {
+					if idx.Name.L == idxx.Name.L && idx.ID == idxx.ID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					if copyTableInfo == nil {
+						copyTableInfo = tbl.Meta().Clone()
+					}
+					copyTableInfo.Indices[i].State = model.StateWriteReorganization
+					dbInfo, _ := domain.GetDomain(sctx).InfoSchema().SchemaByName(dbName)
+					allocs := autoid.NewAllocatorsFromTblInfo(sctx.GetStore(), dbInfo.ID, copyTableInfo)
+					tbl, err = table.TableFromMeta(allocs, copyTableInfo)
+					if err != nil {
+						return nil, err
+					}
+				}
+			}
+			// Check the column change.
+			for _, col := range tbl.Meta().Columns {
+				if col.State != model.StatePublic {
+					continue
+				}
+				found := false
+				for _, coll := range tableInfo.Columns {
+					if col.Name.L == coll.Name.L && col.ID != coll.ID {
+						logutil.BgLogger().Info("public column changed", zap.String("column", col.Name.L), zap.String("old_col", coll.Name.L), zap.Int64("new id", col.ID), zap.Int64("old id", coll.ID))
+						found = true
+						break
+					}
+				}
+				if found {
+					return nil, ErrSchemaChanged.GenWithStack("public column %s has changed", col.Name)
+				}
+			}
+		}
+
+		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+			db, _ := domain.GetDomain(sctx).InfoSchema().SchemaByTable(tbl.Meta())
+			err = se.UpdateTableInfo(tbl.Meta().ID, db, tbl)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if !skipLock {
+			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, struct{}{})
+		}
+		return tbl, nil
+	}
+	return tbl, nil
 }

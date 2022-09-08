@@ -147,6 +147,7 @@ func TestAlterTableCache(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_mdl=0")
 	tk.MustExec("drop table if exists t1")
 	tk2.MustExec("use test")
 	/* Test of cache table */

@@ -3271,6 +3271,7 @@ func TestPartitionErrorCode(t *testing.T) {
 	// Reduce the impact on DML when executing partition DDL
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_mdl=0")
 	tk1.MustExec("drop table if exists t;")
 	tk1.MustExec(`create table t(id int primary key)
 		partition by hash(id) partitions 4;`)
@@ -3432,6 +3433,7 @@ func TestCommitWhenSchemaChange(t *testing.T) {
 	})
 	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_mdl=0")
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 4096")
 	tk.MustExec("use test")
 	tk.MustExec(`create table schema_change (a int, b timestamp)

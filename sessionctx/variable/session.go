@@ -221,6 +221,10 @@ type TxnCtxNoNeedToRestore struct {
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
+	// EnableMDL indicates whether to enable the MDL lock for the transaction.
+	EnableMDL bool
+	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to struct{}.
+	relatedTableForMDL *sync.Map
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -320,6 +324,8 @@ func (tc *TransactionContext) Cleanup() {
 	tc.pessimisticLockCache = nil
 	tc.IsStaleness = false
 	tc.Savepoints = nil
+	tc.EnableMDL = false
+	tc.relatedTableForMDL = nil
 }
 
 // ClearDelta clears the delta map.
@@ -3030,6 +3036,16 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
+}
+
+// GetRelatedTableForMDL gets the related table for metadata lock.
+func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	if s.TxnCtx.relatedTableForMDL == nil {
+		s.TxnCtx.relatedTableForMDL = new(sync.Map)
+	}
+	return s.TxnCtx.relatedTableForMDL
 }
 
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE

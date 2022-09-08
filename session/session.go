@@ -562,6 +562,11 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
+	txnInfo.RelatedTableIDs = make(map[int64]struct{})
+	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
+		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		return true
+	})
 
 	return &txnInfo
 }
@@ -641,8 +646,12 @@ func (s *session) doCommit(ctx context.Context) error {
 		}
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
+	needCheckSchema := true
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs))
+	if s.GetSessionVars().TxnCtx != nil {
+		needCheckSchema = !s.GetSessionVars().TxnCtx.EnableMDL
+	}
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	if sessVars.EnableAmendPessimisticTxn {
@@ -2610,6 +2619,7 @@ var (
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
 	}
+	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT(64) NOT NULL, version BIGINT(64) NOT NULL, table_ids text(65535), PRIMARY KEY (job_id));"
 )
 
 // InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
@@ -2653,6 +2663,46 @@ func InitDDLJobTables(store kv.Storage) error {
 	})
 }
 
+// InitMDLTable is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+func InitMDLTable(store kv.Storage) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		exists, err := t.CheckMDLTableExists()
+		if err != nil || exists {
+			return errors.Trace(err)
+		}
+		dbID, err := t.CreateMySQLDatabaseIfNotExists()
+		if err != nil {
+			return err
+		}
+		p := parser.New()
+		id, err := t.GetGlobalID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if id >= meta.MaxGlobalID {
+			return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please concat TiDB team", id)
+		}
+		stmt, err := p.ParseOneStmt(mdlTable, "", "")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo.State = model.StatePublic
+		tblInfo.ID = ddl.MDLTableID
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableOrView(dbID, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		return t.SetMDLTables()
+	})
+}
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -2667,6 +2717,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 	err := InitDDLJobTables(store)
+	if err != nil {
+		return nil, err
+	}
+	err = InitMDLTable(store)
 	if err != nil {
 		return nil, err
 	}
@@ -3449,4 +3503,22 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 			}
 		}
 	}
+}
+
+// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
+func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string) {
+	if s.GetSessionVars().InRestrictedSQL {
+		return
+	}
+	s.GetSessionVars().GetRelatedTableForMDL().Range(func(tblID, value any) bool {
+		logutil.BgLogger().Debug("CheckOldRunningTxn", zap.Any("tblID", tblID), zap.Int64("schemaVer", sessiontxn.GetTxnManager(s).GetTxnInfoSchema().SchemaMetaVersion()))
+		for jobID, ver := range job2ver {
+			ids := util.Str2Int64Map(job2ids[jobID])
+			if _, ok := ids[tblID.(int64)]; ok && sessiontxn.GetTxnManager(s).GetTxnInfoSchema().SchemaMetaVersion() < ver {
+				delete(job2ver, jobID)
+				logutil.BgLogger().Debug("delete table ID from old running transaction", zap.Int64("table ID", tblID.(int64)), zap.String("txn", s.GetSessionVars().LastTxnInfo))
+			}
+		}
+		return true
+	})
 }

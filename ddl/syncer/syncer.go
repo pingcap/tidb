@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,7 +28,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -58,7 +61,7 @@ type SchemaSyncer interface {
 	// then watch this path, and initializes the self schema version to etcd.
 	Init(ctx context.Context) error
 	// UpdateSelfVersion updates the current version to the self path on etcd.
-	UpdateSelfVersion(ctx context.Context, version int64) error
+	UpdateSelfVersion(ctx context.Context, jobID int64, version int64) error
 	// OwnerUpdateGlobalVersion updates the latest version to the global path on etcd until updating is successful or the ctx is done.
 	OwnerUpdateGlobalVersion(ctx context.Context, version int64) error
 	// GlobalVersionCh gets the chan for watching global version.
@@ -72,7 +75,7 @@ type SchemaSyncer interface {
 	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
 	// the latest schema version. (exclude the isolated TiDB)
 	// It returns until all servers' versions are equal to the latest version.
-	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
+	OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error
 	// Close ends SchemaSyncer.
 	Close()
 }
@@ -85,6 +88,7 @@ type schemaVersionSyncer struct {
 		sync.RWMutex
 		globalVerCh clientv3.WatchChan
 	}
+	ddlID string
 }
 
 // NewSchemaSyncer creates a new SchemaSyncer.
@@ -92,6 +96,7 @@ func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 	return &schemaVersionSyncer{
 		etcdCli:           etcdCli,
 		selfSchemaVerPath: fmt.Sprintf("%s/%s", util.DDLAllSchemaVersions, id),
+		ddlID:             id,
 	}
 }
 
@@ -199,10 +204,18 @@ func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context) {
 }
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
-func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, version int64) error {
+func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version int64) error {
 	startTime := time.Now()
 	ver := strconv.FormatInt(version, 10)
-	err := util.PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, s.selfSchemaVerPath, ver,
+	var err error
+	var path string
+	if variable.EnableMDL.Load() {
+		path = fmt.Sprintf("%s/%d/%s", util.DDLAllSchemaVersionsByJob, jobID, s.ddlID)
+	} else {
+		path = s.selfSchemaVerPath
+	}
+
+	err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, path, ver,
 		clientv3.WithLease(s.loadSession().Lease()))
 
 	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -233,17 +246,23 @@ func (s *schemaVersionSyncer) removeSelfVersionPath() error {
 }
 
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
-func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer int64) error {
+func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
 	startTime := time.Now()
 	time.Sleep(CheckVersFirstWaitTime)
 	notMatchVerCnt := 0
 	intervalCnt := int(time.Second / checkVersInterval)
-	updatedMap := make(map[string]struct{})
 
 	var err error
 	defer func() {
 		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerCheckAllVersions, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
+
+	// If MDL is disabled, updatedMap is a cache. We need to ensure all the keys equal to the least version.
+	// We can skip checking the key if it is checked in the cache(set by the previous loop).
+	// If MDL is enabled, updatedMap is used to check if all the servers report the least version.
+	// updatedMap is initialed to record all the server in every loop. We delete a server from the map if it gets the metadata lock(the key version equal the given version.
+	// updatedMap should be empty if all the servers get the metadata lock.
+	updatedMap := make(map[string]struct{})
 	for {
 		if util.IsContextDone(ctx) {
 			// ctx is canceled or timeout.
@@ -251,35 +270,77 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 			return err
 		}
 
-		resp, err := s.etcdCli.Get(ctx, util.DDLAllSchemaVersions, clientv3.WithPrefix())
+		// Prepare some variables.
+		path := util.DDLAllSchemaVersions
+		if variable.EnableMDL.Load() {
+			path = fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
+			serverInfos, err := infosync.GetAllServerInfo(ctx)
+			if err != nil {
+				return err
+			}
+			updatedMap = make(map[string]struct{})
+			for _, info := range serverInfos {
+				updatedMap[info.ID] = struct{}{}
+			}
+		}
+
+		// Get all the schema versions from ETCD.
+		resp, err := s.etcdCli.Get(ctx, path, clientv3.WithPrefix())
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] syncer check all versions failed, continue checking.", zap.Error(err))
 			continue
 		}
 
+		// Check all schema versions.
 		succ := true
-		for _, kv := range resp.Kvs {
-			if _, ok := updatedMap[string(kv.Key)]; ok {
-				continue
-			}
-
-			ver, err := strconv.Atoi(string(kv.Value))
-			if err != nil {
-				logutil.BgLogger().Info("[ddl] syncer check all versions, convert value to int failed, continue checking.", zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
-				succ = false
-				break
-			}
-			if int64(ver) < latestVer {
-				if notMatchVerCnt%intervalCnt == 0 {
-					logutil.BgLogger().Info("[ddl] syncer check all versions, someone is not synced, continue checking",
-						zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
+		if variable.EnableMDL.Load() {
+			for _, kv := range resp.Kvs {
+				key := string(kv.Key)
+				ver, err := strconv.Atoi(string(kv.Value))
+				if err != nil {
+					logutil.BgLogger().Info("[ddl] syncer check all versions, convert value to int failed, continue checking.", zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
+					succ = false
+					break
 				}
-				succ = false
-				notMatchVerCnt++
-				break
+				if int64(ver) < latestVer {
+					if notMatchVerCnt%intervalCnt == 0 {
+						logutil.BgLogger().Info("[ddl] syncer check all versions, someone is not synced, continue checking",
+							zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
+					}
+					succ = false
+					notMatchVerCnt++
+					break
+				}
+				delete(updatedMap, key[strings.LastIndex(key, "/")+1:])
 			}
-			updatedMap[string(kv.Key)] = struct{}{}
+			if len(updatedMap) > 0 {
+				succ = false
+			}
+		} else {
+			for _, kv := range resp.Kvs {
+				if _, ok := updatedMap[string(kv.Key)]; ok {
+					continue
+				}
+
+				ver, err := strconv.Atoi(string(kv.Value))
+				if err != nil {
+					logutil.BgLogger().Info("[ddl] syncer check all versions, convert value to int failed, continue checking.", zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
+					succ = false
+					break
+				}
+				if int64(ver) < latestVer {
+					if notMatchVerCnt%intervalCnt == 0 {
+						logutil.BgLogger().Info("[ddl] syncer check all versions, someone is not synced, continue checking",
+							zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
+					}
+					succ = false
+					notMatchVerCnt++
+					break
+				}
+				updatedMap[string(kv.Key)] = struct{}{}
+			}
 		}
+
 		if succ {
 			return nil
 		}

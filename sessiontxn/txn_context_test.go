@@ -151,6 +151,7 @@ func TestTxnContextInExplicitTxn(t *testing.T) {
 	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_mdl=0")
 	tk.MustExec("use test")
 	se := tk.Session()
 
@@ -252,6 +253,7 @@ func TestTxnContextWithAutocommitFalse(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_mdl=0")
 	se := tk.Session()
 
 	tk2 := testkit.NewTestKit(t, store)
@@ -677,6 +679,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_mdl=0")
 	tk.MustExec("use test")
 	se := tk.Session()
 

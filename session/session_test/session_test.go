@@ -60,6 +60,7 @@ func TestSchemaCheckerSQL(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_enable_mdl=0")
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
@@ -138,6 +139,7 @@ func TestSchemaCheckerTempTable(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_mdl=0")
 	tk2.MustExec("use test")
 
 	// create table

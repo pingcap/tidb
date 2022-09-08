@@ -874,6 +874,9 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	se, err := session.CreateSession4Test(ts.store)
 	require.NoError(t, err)
 
+	_, err = se.Execute(context.Background(), "set global tidb_enable_mdl=0")
+	require.NoError(t, err)
+
 	count := 10
 	stmts := make([]ast.StmtNode, count)
 	for i := 0; i < count; i++ {

@@ -3770,6 +3770,7 @@ func TestSetVariables(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
 	require.False(t, variable.EnableConcurrentDDL.Load())
 	testkit.NewTestKit(t, store).MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=1")
 }
 
 func TestPreparePlanCache(t *testing.T) {

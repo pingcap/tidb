@@ -448,7 +448,7 @@ func (do *Domain) Reload() error {
 		// loaded newer schema
 		if oldSchemaVersion < is.SchemaMetaVersion() {
 			// Update self schema version to etcd.
-			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), is.SchemaMetaVersion())
+			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), 0, is.SchemaMetaVersion())
 			if err != nil {
 				logutil.BgLogger().Info("update self version failed",
 					zap.Int64("oldSchemaVersion", oldSchemaVersion),
@@ -600,6 +600,81 @@ func (do *Domain) topologySyncerKeeper() {
 				logutil.BgLogger().Error("server topology syncer restart failed", zap.Error(err))
 			} else {
 				logutil.BgLogger().Info("server topology syncer restarted")
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) mdlCheckLoop() {
+	ticker := time.Tick(time.Millisecond * 50)
+	var saveMaxSchemaVersion int64
+	jobNeedToSync := false
+	jobCache := make(map[int64]int64, 1000)
+	for {
+		select {
+		case <-ticker:
+			if !variable.EnableMDL.Load() {
+				continue
+			}
+			maxVer := do.InfoSchema().SchemaMetaVersion()
+			if maxVer > saveMaxSchemaVersion {
+				saveMaxSchemaVersion = maxVer
+			} else if !jobNeedToSync {
+				// Schema doesn't change, and no job to check in the last run.
+				continue
+			}
+			// Get job to check.
+			se, err := do.sysSessionPool.Get()
+			if err != nil {
+				logutil.Logger(context.Background()).Error("get sys session failed", zap.Error(err))
+				return
+			}
+			do.sysSessionPool.Put(se)
+
+			exec := se.(sqlexec.RestrictedSQLExecutor)
+			rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, "select * from mysql.tidb_mdl_info")
+			if err != nil {
+				continue
+			}
+			if len(rows) == 0 {
+				jobNeedToSync = false
+				continue
+			}
+			jobNeedToSync = true
+
+			jobsVerMap := make(map[int64]int64, len(rows))
+			jobsIdsMap := make(map[int64]string, len(rows))
+			for i := 0; i < len(rows); i++ {
+				jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
+				jobsIdsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
+			}
+
+			sm := do.InfoSyncer().GetSessionManager()
+			if sm == nil {
+				logutil.BgLogger().Info("session manager is nil")
+			} else {
+				sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
+			}
+
+			// Try to gc jobsVerMap.
+			if len(jobsVerMap) > 1000 {
+				jobsVerMap = make(map[int64]int64, 1000)
+			}
+
+			for jobID, ver := range jobsVerMap {
+				if cver, ok := jobCache[jobID]; ok && cver >= ver {
+					// Already update, skip it.
+					continue
+				}
+				logutil.Logger(context.Background()).Warn("mdl check job", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
+				if err != nil {
+					logutil.BgLogger().Info("update self version failed")
+				} else {
+					jobCache[jobID] = ver
+				}
 			}
 		case <-do.exit:
 			return
@@ -904,6 +979,7 @@ func (do *Domain) Init(
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
+	do.wg.Run(do.mdlCheckLoop)
 	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()

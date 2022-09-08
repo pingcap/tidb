@@ -545,6 +545,12 @@ func (m *Meta) SetDDLTables() error {
 	return errors.Trace(err)
 }
 
+// SetMDLTables write a key into storage.
+func (m *Meta) SetMDLTables() error {
+	err := m.txn.Set(mDDLTableVersion, []byte("2"))
+	return errors.Trace(err)
+}
+
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	id, err := m.GetSystemDBID()
@@ -588,6 +594,15 @@ func (m *Meta) CheckDDLTableExists() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	return len(v) != 0, nil
+}
+
+// CheckMDLTableExists check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckMDLTableExists() (bool, error) {
+	v, err := m.txn.Get(mDDLTableVersion)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return bytes.Equal(v, []byte("2")), nil
 }
 
 // SetFlashbackClusterJobID set flashback cluster jobID

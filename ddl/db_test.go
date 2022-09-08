@@ -244,6 +244,7 @@ func TestIssue22819(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set global tidb_enable_mdl=0")
 	tk1.MustExec("use test;")
 	tk1.MustExec("create table t1 (v int) partition by hash (v) partitions 2")
 	tk1.MustExec("insert into t1 values (1)")
@@ -817,7 +818,11 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			err := tk.ExecToErr(fmt.Sprintf("alter table `%s` cache", one))
 			if db == "MySQL" {
-				require.EqualError(t, err, "[ddl:8200]ALTER table cache for tables in system database is currently unsupported")
+				if one == "tidb_ddl_lock" {
+					require.EqualError(t, err, "[ddl:1347]'MySQL.tidb_ddl_lock' is not BASE TABLE")
+				} else {
+					require.EqualError(t, err, "[ddl:8200]ALTER table cache for tables in system database is currently unsupported")
+				}
 			} else {
 				require.EqualError(t, err, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)))
 			}
@@ -980,6 +985,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	// Prepare work.
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_mdl=0")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
@@ -1325,6 +1331,7 @@ func TestTxnSavepointWithDDL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_mdl=0")
 	tk2.MustExec("use test;")
 
 	prepareFn := func() {
@@ -1376,6 +1383,7 @@ func TestAmendTxnSavepointWithDDL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_mdl=0")
 	tk2.MustExec("use test;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
@@ -1437,7 +1445,7 @@ func TestSnapshotVersion(t *testing.T) {
 
 	// For updating the self schema version.
 	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err := dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	err := dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, 0, is.SchemaMetaVersion())
 	cancel()
 	require.NoError(t, err)
 
@@ -1447,7 +1455,7 @@ func TestSnapshotVersion(t *testing.T) {
 
 	// Make sure that the self schema version doesn't be changed.
 	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, 0, is.SchemaMetaVersion())
 	cancel()
 	require.NoError(t, err)
 
@@ -1498,33 +1506,33 @@ func TestSchemaValidator(t *testing.T) {
 	require.NoError(t, err)
 
 	ts := ver.Ver
-	_, res := dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, res := dom.SchemaValidator.Check(ts, schemaVer, nil, true)
 	require.Equal(t, domain.ResultSucc, res)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`))
 
 	err = dom.Reload()
 	require.Error(t, err)
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
 	require.Equal(t, domain.ResultSucc, res)
 	time.Sleep(dbTestLease)
 
 	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
 	ts = ver.Ver
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
 	require.Equal(t, domain.ResultUnknown, res)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"))
 	err = dom.Reload()
 	require.NoError(t, err)
 
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
 	require.Equal(t, domain.ResultSucc, res)
 
 	// For schema check, it tests for getting the result of "ResultUnknown".
 	is := dom.InfoSchema()
-	schemaChecker := domain.NewSchemaChecker(dom, is.SchemaMetaVersion(), nil)
+	schemaChecker := domain.NewSchemaChecker(dom, is.SchemaMetaVersion(), nil, true)
 	// Make sure it will retry one time and doesn't take a long time.
 	domain.SchemaOutOfDateRetryTimes.Store(1)
 	domain.SchemaOutOfDateRetryInterval.Store(time.Millisecond * 1)

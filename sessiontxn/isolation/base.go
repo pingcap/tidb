@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -255,6 +256,16 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
+	}
+	if p.enterNewTxnType == sessiontxn.EnterNewTxnWithBeginStmt {
+		sessVars.SetInTxn(true)
+	}
+	if !core.IsAutoCommitTxn(p.sctx) && variable.EnableMDL.Load() {
+		p.infoSchema = infoschema.AttachMDLTableInfoSchema(p.infoSchema)
+		sessVars.TxnCtx.InfoSchema = p.infoSchema
+	}
+	if variable.EnableMDL.Load() {
+		sessVars.TxnCtx.EnableMDL = true
 	}
 
 	txn.SetVars(sessVars.KVVars)

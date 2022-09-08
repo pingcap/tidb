@@ -485,6 +485,53 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 	return errors.Trace(err)
 }
 
+// registerMDLInfo registers metadata lock info.
+func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
+	if !variable.EnableMDL.Load() {
+		return nil
+	}
+	if ver == 0 {
+		return nil
+	}
+	rows, err := w.sess.execute(context.Background(), fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", job.ID), "register-mdl-info")
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("can't find ddl job %d", job.ID)
+	}
+	ids := rows[0].GetString(0)
+	sql := fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
+	_, err = w.sess.execute(context.Background(), sql, "register-mdl-info")
+	return err
+}
+
+// cleanMDLInfo cleans metadata lock info.
+func cleanMDLInfo(pool *sessionPool, jobID int64) {
+	if !variable.EnableMDL.Load() {
+		return
+	}
+	sql := fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", jobID)
+	sctx, _ := pool.get()
+	defer pool.put(sctx)
+	sess := newSession(sctx)
+	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, _ = sess.execute(context.Background(), sql, "delete-mdl-info")
+}
+
+// checkMDLInfo checks if metadata lock info exists. It means the schema is locked by some TiDBs if exists.
+func (w *worker) checkMDLInfo(jobID int64) (bool, error) {
+	sql := fmt.Sprintf("select * from mysql.tidb_mdl_info where job_id = %d", jobID)
+	sctx, _ := w.sessPool.get()
+	defer w.sessPool.put(sctx)
+	sess := newSession(sctx)
+	rows, err := sess.execute(context.Background(), sql, "check-mdl-info")
+	if err != nil {
+		return false, err
+	}
+	return len(rows) > 0, nil
+}
+
 func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// we shouldn't replace RawArgs with the marshaling Args.
@@ -775,6 +822,12 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		schemaVer = 0
 	}
 
+	err = w.registerMDLInfo(job, schemaVer)
+	if err != nil {
+		w.sess.rollback()
+		d.unlockSchemaVersion(job.ID)
+		return 0, err
+	}
 	err = w.updateDDLJob(t, job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.rollback()
@@ -1287,8 +1340,8 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 		}
 	}
 
-	// OwnerCheckAllVersions returns only when  all TiDB schemas are synced(exclude the isolated TiDB).
-	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
+	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
+	err = d.schemaSyncer.OwnerCheckAllVersions(context.Background(), job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(d.ctx).Info("[ddl] wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		return
