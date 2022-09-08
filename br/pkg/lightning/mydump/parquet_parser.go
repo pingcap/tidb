@@ -27,7 +27,7 @@ const (
 	// if a parquet if small than this threshold, parquet will load the whole file in a byte slice to
 	// optimize the read performance
 	smallParquetFileThreshold = 256 * 1024 * 1024
-	// jan011970 is the start date of any julian day,
+	// jan011970 is the date of unix epoch in julian day,
 	jan011970 = 2440588
 	secPerDay = 24 * 60 * 60
 )
