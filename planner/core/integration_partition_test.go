@@ -1527,6 +1527,7 @@ func TestPartitionRangePrunerDate(t *testing.T) {
 			" PARTITION `p5` VALUES LESS THAN ('2020-01-01'),\n" +
 			" PARTITION `p6` VALUES LESS THAN (MAXVALUE))"))
 	tk.MustExec(`insert into t values ('19990101'),('1999-06-01'),('2000-05-01'),('20080401'),('2010-03-01'),('2016-02-01'),('2020-01-01')`)
+	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`select * from t partition(p0)`).Sort().Check(testkit.Rows("1999-01-01"))
 	tk.MustQuery(`select * from t partition(p1)`).Sort().Check(testkit.Rows("1999-06-01"))
 	tk.MustQuery(`select * from t partition(p2)`).Sort().Check(testkit.Rows("2000-05-01"))
