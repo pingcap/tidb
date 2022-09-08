@@ -317,6 +317,8 @@ type StatementContext struct {
 	StatsLoadStatus map[model.TableItemID]string
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
+	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
+	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan []int64
 }
@@ -982,6 +984,11 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 		atomic.StoreInt64(&sc.lockWaitStartTime, startTime)
 	}
 	return time.Unix(0, startTime)
+}
+
+// UseDynamicPartitionPrune indicates whether dynamic partition is used during the query
+func (sc *StatementContext) UseDynamicPartitionPrune() bool {
+	return sc.UseDynamicPruneMode
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.
