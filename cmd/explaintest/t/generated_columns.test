@@ -107,6 +107,8 @@ PARTITION p4 VALUES LESS THAN (5),
 PARTITION p5 VALUES LESS THAN (6),
 PARTITION max VALUES LESS THAN MAXVALUE);
 
+analyze table sgc3;
+
 EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a <= 1;
 EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a < 7;
 
