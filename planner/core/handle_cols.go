@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/util/size"
 	"strings"
 	"unsafe"
 
