@@ -559,14 +559,14 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	}
 
 	rows := tk.MustQuery("explain select * from t").Rows()
-	require.Equal(t, rows[len(rows)-1][2], "cop[tiflash]")
+	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
 
 	rows = tk.MustQuery("explain format='hint' select * from t").Rows()
 	require.Equal(t, rows[0][0], "read_from_storage(@`sel_1` tiflash[`test`.`t`])")
 
 	hints := tk.MustQuery("explain format='hint' select * from t;").Rows()[0][0]
 	rows = tk.MustQuery(fmt.Sprintf("explain select /*+ %s */ * from t", hints)).Rows()
-	require.Equal(t, rows[len(rows)-1][2], "cop[tiflash]")
+	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
 }
 
 func TestNthPlanHint(t *testing.T) {

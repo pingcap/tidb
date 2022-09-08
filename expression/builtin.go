@@ -27,6 +27,7 @@ package expression
 import (
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/set"
@@ -296,8 +296,8 @@ func (b *baseBuiltinFunc) evalDuration(row chunk.Row) (types.Duration, bool, err
 	return types.Duration{}, false, errors.Errorf("baseBuiltinFunc.evalDuration() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
-	return json.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
+func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
+	return types.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) vectorized() bool {
@@ -478,7 +478,7 @@ type builtinFunc interface {
 	// evalDuration evaluates duration representation of builtinFunc by given row.
 	evalDuration(row chunk.Row) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
-	evalJSON(row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
+	evalJSON(row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// equal check if this function equals to another function.
@@ -501,6 +501,8 @@ type builtinFunc interface {
 	metadata() proto.Message
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
+
+	MemoryUsage() int64
 
 	CollationInfo
 }
@@ -961,4 +963,27 @@ func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
 		// Add the length for `.`.
 		b.tp.SetFlenUnderLimit(b.tp.GetFlen() + 1)
 	}
+}
+
+const emptyBaseBuiltinFunc = int64(unsafe.Sizeof(baseBuiltinFunc{}))
+const onceSize = int64(unsafe.Sizeof(sync.Once{}))
+
+// MemoryUsage return the memory usage of baseBuiltinFunc
+func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
+	if b == nil {
+		return
+	}
+
+	sum = emptyBaseBuiltinFunc + b.bufAllocator.MemoryUsage() +
+		b.tp.MemoryUsage() + int64(len(b.charset)+len(b.collation))
+	if b.childrenVectorizedOnce != nil {
+		sum += onceSize
+	}
+	if b.childrenReversedOnce != nil {
+		sum += onceSize
+	}
+	for _, e := range b.args {
+		sum += e.MemoryUsage()
+	}
+	return
 }
