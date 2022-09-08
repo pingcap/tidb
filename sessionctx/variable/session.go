@@ -834,6 +834,8 @@ type SessionVars struct {
 	diskFactorV2 float64
 	// concurrencyFactorV2 is the concurrency factor for the Cost Model Ver2.
 	concurrencyFactorV2 float64
+	// enableForceInlineCTE is used to enable/disable force inline CTE.
+	enableForceInlineCTE bool
 
 	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
 	CopTiFlashConcurrencyFactor float64
@@ -1261,6 +1263,11 @@ type SessionVars struct {
 
 	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
 	ForeignKeyChecks bool
+
+	// RangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
+	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
+	// memory limit for ranges.
+	RangeMaxSize int64
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1332,8 +1339,10 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	return kv.GlobalTxnScope
 }
 
-// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
-func (s *SessionVars) UseDynamicPartitionPrune() bool {
+// IsDynamicPartitionPruneEnabled indicates whether dynamic partition prune enabled
+// Note that: IsDynamicPartitionPruneEnabled only indicates whether dynamic partition prune mode is enabled according to
+// session variable, it isn't guaranteed to be used during query due to other conditions checking.
+func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -1498,6 +1507,7 @@ func NewSessionVars() *SessionVars {
 		memoryFactor:                  DefOptMemoryFactor,
 		diskFactor:                    DefOptDiskFactor,
 		concurrencyFactor:             DefOptConcurrencyFactor,
+		enableForceInlineCTE:          DefOptForceInlineCTE,
 		EnableVectorizedExpression:    DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
@@ -3020,4 +3030,9 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
+}
+
+// EnableForceInlineCTE returns the session variable enableForceInlineCTE
+func (s *SessionVars) EnableForceInlineCTE() bool {
+	return s.enableForceInlineCTE
 }
