@@ -4462,7 +4462,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		PARTITION pMax VALUES LESS THAN (MAXVALUE,maxvalue))`)
 	tk.MustExec(`insert into t values (0x5c27090a,'\\''\t\n')`)
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
-		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		"  \"a\" varchar(255) DEFAULT NULL,\n" +
 		"  \"b\" varchar(255) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		`PARTITION BY RANGE COLUMNS("a","b")` + "\n" +
