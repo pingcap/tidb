@@ -1129,6 +1129,15 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+func (p *PhysicalLimit) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2
+	return
+}
+
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
