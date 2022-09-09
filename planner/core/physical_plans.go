@@ -1287,6 +1287,15 @@ func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalHashAgg
+func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.basePhysicalAgg.MemoryUsage()
+}
+
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
 func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
 	agg := basePhysicalAgg{
@@ -1310,6 +1319,15 @@ func (p *PhysicalStreamAgg) Clone() (PhysicalPlan, error) {
 	}
 	cloned.basePhysicalAgg = *base
 	return cloned, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalStreamAgg
+func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.basePhysicalAgg.MemoryUsage()
 }
 
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
