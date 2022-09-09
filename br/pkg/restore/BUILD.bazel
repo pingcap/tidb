@@ -24,6 +24,7 @@ go_library(
     deps = [
         "//br/pkg/backup",
         "//br/pkg/checksum",
+        "//br/pkg/common",
         "//br/pkg/conn",
         "//br/pkg/conn/util",
         "//br/pkg/errors",
