@@ -257,9 +257,7 @@ func (ran *Range) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyRangeSize +
-		int64(cap(ran.LowVal)-len(ran.LowVal))*int64(unsafe.Sizeof(types.Datum{})) +
-		int64(cap(ran.HighVal)-len(ran.HighVal))*int64(unsafe.Sizeof(types.Datum{}))
+	sum = emptyRangeSize
 	for _, low := range ran.LowVal {
 		sum += low.MemUsage()
 	}

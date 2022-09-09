@@ -149,6 +149,9 @@ func (pi *PartitionInfo) MemoryUsage() (sum int64) {
 	for _, col := range pi.Columns {
 		sum += col.MemoryUsage()
 	}
+	for _, colName := range pi.ColumnNames {
+		sum += colName.MemoryUsage()
+	}
 	return
 }
 
