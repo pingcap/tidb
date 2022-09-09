@@ -424,6 +424,49 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 
 func (p *BatchPointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
 
+const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
+
+// MemoryUsage return the memory usage of BatchPointGetPlan
+func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyBatchPointGetPlanSize + p.baseSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
+		int64(cap(p.IdxColLens))*size.SizeOfInt
+
+	if p.HandleType != nil {
+		sum += p.HandleType.MemoryUsage()
+	}
+
+	for _, constant := range p.HandleParams {
+		sum += constant.MemoryUsage()
+	}
+	for _, values := range p.IndexValues {
+		for _, value := range values {
+			sum += value.MemUsage()
+		}
+	}
+	for _, params := range p.IndexValueParams {
+		for _, param := range params {
+			sum += param.MemoryUsage()
+		}
+	}
+	for _, idxType := range p.IndexColTypes {
+		sum += idxType.MemoryUsage()
+	}
+	for _, cond := range p.AccessConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, col := range p.IdxCols {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.accessCols {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.
 const PointPlanKey = stringutil.StringerStr("pointPlanKey")
 
