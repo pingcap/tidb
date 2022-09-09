@@ -2467,6 +2467,52 @@ func TestAddExpressionIndex(t *testing.T) {
 	})
 }
 
+func TestCreateExpressionIndexWithJSONFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b json);")
+	tk.MustExec("insert into t values (1, '{\"a\": 1}');")
+
+	tk.MustExec("alter table t add index idx((cast(b->'$.a' as char(255))));")
+	tk.MustQuery("select * from t force index(idx);").Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery("select * from t ignore index(idx);").Check(testkit.Rows("1 {\"a\": 1}"))
+
+	tk.MustExec("alter table t add index idx1((cast(b->>'$.a' as char(255))));")
+	tk.MustQuery("select * from t force index(idx1);").Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery("select * from t ignore index(idx1);").Check(testkit.Rows("1 {\"a\": 1}"))
+
+	tk.MustExec("alter table t add index idx2((json_type(b)));")
+	tk.MustQuery("select * from t force index(idx2) where json_type(b) = 'OBJECT';").Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery("select * from t ignore index(idx2) where json_type(b) = 'OBJECT';").Check(testkit.Rows("1 {\"a\": 1}"))
+
+	tk.MustGetErrCode("alter table t add index idx_wrong((b->'$.a'));", errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode("alter table t add index idx_wrong((b->>'$.a'));", errno.ErrFunctionalIndexOnBlob)
+	tk.MustGetErrCode("alter table t add index idx_wrong((json_pretty(b)));", errno.ErrFunctionalIndexOnBlob)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustGetErrCode("create table t(a char(255), index idx((json_quote(a))));", errno.ErrTooLongKey)
+	tk.MustExec("create table t(a char(40));")
+	tk.MustExec("insert into t values ('[1, 2, 3]')")
+	tk.MustExec("alter table t add index idx3((json_quote(a)));")
+	tk.MustQuery("select * from t force index(idx3) where json_quote(a) = '\"[1, 2, 3]\"';").Check(testkit.Rows("[1, 2, 3]"))
+	tk.MustQuery("select * from t ignore index(idx3) where json_quote(a) = '\"[1, 2, 3]\"';").Check(testkit.Rows("[1, 2, 3]"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b json);")
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_array(b)));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_object('key', b)));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_merge_preserve(b, '{"k": "v"}')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_set(b, '$.a', 'v')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_insert(b, '$.a', 'v')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_replace(b, '$.a', 'v')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_remove(b, '$.a')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_array_append(b, '$.a', 1)));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_merge_patch(b, '{"k": "v"}')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_search(b, 'one', 'a')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+}
+
 func TestCreateExpressionIndexError(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		// Test for table lock.
