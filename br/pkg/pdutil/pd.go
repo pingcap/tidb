@@ -53,6 +53,11 @@ const (
 
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
+
+	// this config is not an explicit schedule config on pd side since it's used by BR only for now.
+	// api "/config/schedule" will not return config about it.
+	// so need to handle it specially
+	enableTikvSplitRegionCfg = "enable-tikv-split-region"
 )
 
 // pauseConfigGenerator generate a config value according to store count and current value.
@@ -603,7 +608,12 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 	log.Info("restoring config", zap.Any("config", clusterCfg.ScheduleCfg))
 	mergeCfg := make(map[string]interface{})
 	for cfgKey := range configsNeedRestore {
-		value := clusterCfg.ScheduleCfg[cfgKey]
+		var value interface{}
+		if cfgKey == enableTikvSplitRegionCfg {
+			value = 1 // allow tikv split
+		} else {
+			value = clusterCfg.ScheduleCfg[cfgKey]
+		}
 		if value == nil {
 			// Ignore non-exist config.
 			continue
@@ -666,6 +676,7 @@ func (p *PdController) RemoveAllPDSchedulers(ctx context.Context) (undo UndoFunc
 		"merge-schedule-limit",
 		"region-schedule-limit",
 		"replica-schedule-limit",
+		enableTikvSplitRegionCfg,
 	}
 	pdConfigGenerators := DefaultExpectPDCfgGenerators()
 	for _, param := range scheduleLimitParams {
@@ -709,6 +720,10 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context, 
 	disablePDCfg := make(map[string]interface{}, len(pdConfigGenerators))
 	originPDCfg := make(map[string]interface{}, len(pdConfigGenerators))
 	for cfgKey, cfgValFunc := range pdConfigGenerators {
+		if cfgKey == enableTikvSplitRegionCfg {
+			disablePDCfg[cfgKey] = cfgValFunc(len(stores), nil)
+			continue
+		}
 		value, ok := scheduleCfg[cfgKey]
 		if !ok {
 			// Ignore non-exist config.
