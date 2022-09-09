@@ -335,6 +335,20 @@ func (p *PhysicalIndexReader) appendChildCandidate(op *physicalOptimizeOp) {
 	}
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexReader
+func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.PartitionInfo.MemoryUsage()
+	for _, col := range p.OutputColumns {
+		sum += col.MemoryUsage()
+	}
+	// todo: memtrace: 	p.IndexPlans p.PhysicalPlan
+	return
+}
+
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
 type PushedDownLimit struct {
 	Offset uint64
