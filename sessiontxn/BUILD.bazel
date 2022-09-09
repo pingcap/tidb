@@ -29,6 +29,7 @@ go_test(
     deps = [
         ":sessiontxn",
         "//domain",
+        "//errno",
         "//expression",
         "//infoschema",
         "//kv",

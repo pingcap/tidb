@@ -189,6 +189,7 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
+	LblAccountLock = "account_lock"
 	LblIdle        = "idle"
 	LblRunning     = "executing_sql"
 	LblLockWaiting = "waiting_for_lock"

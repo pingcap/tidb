@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/stringutil"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
 )
@@ -159,38 +157,17 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 func getValidPlanFromCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, paramTypes []*types.FieldType) (*PlanCacheValue, bool) {
 	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	val, exist := cache.Get(key)
+	val, exist := cache.Get(key, paramTypes)
 	if !exist {
 		return nil, exist
 	}
-	candidates := val.([]*PlanCacheValue)
-	for _, candidate := range candidates {
-		if candidate.varTypesUnchanged(paramTypes) {
-			return candidate, true
-		}
-	}
-	return nil, false
+	candidate := val.(*PlanCacheValue)
+	return candidate, true
 }
 
-func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue) {
+func putPlanIntoCache(sctx sessionctx.Context, isGeneralPlanCache bool, key kvcache.Key, plan *PlanCacheValue, paramTypes []*types.FieldType) {
 	cache := sctx.GetPlanCache(isGeneralPlanCache)
-	val, exist := cache.Get(key)
-	if !exist {
-		cache.Put(key, []*PlanCacheValue{plan})
-		return
-	}
-	candidates := val.([]*PlanCacheValue)
-	for i, candidate := range candidates {
-		if candidate.varTypesUnchanged(plan.ParamTypes) {
-			// hit an existing cached plan
-			candidates[i] = plan
-			return
-		}
-	}
-	// add to current candidate list
-	// TODO: limit the candidate list length
-	candidates = append(candidates, plan)
-	cache.Put(key, candidates)
+	cache.Put(key, plan, paramTypes)
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
@@ -411,23 +388,4 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, ErrStmtNotFound
-}
-
-// Parameterizer used to parameterize a general statement.
-// e.g. 'select * from t where a>23' --> 'select * from t where a>?' + 23
-type Parameterizer interface {
-	// Parameterize this specific sql, ok indicates whether this sql is supported.
-	Parameterize(originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error)
-}
-
-// ParameterizerKey is used to get a parameterizer from a ctx, only for test.
-const ParameterizerKey = stringutil.StringerStr("parameterizerKey")
-
-// Parameterize parameterizes this sql, used by general plan cache.
-func Parameterize(sctx sessionctx.Context, originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error) {
-	if v := sctx.Value(ParameterizerKey); v != nil { // for test
-		return v.(Parameterizer).Parameterize(originSQL)
-	}
-	// TODO: implement it
-	return "", nil, false, nil
 }
