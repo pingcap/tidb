@@ -148,7 +148,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			return errors.New("index not found")
 		}
 
-		// If this is temp index data, need remove last byte of index data.
+		// If this is the temporary index data, need to remove the last byte of index data(version about when it is written).
 		var (
 			value       []byte
 			orgKey      []byte
