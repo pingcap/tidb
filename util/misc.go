@@ -445,25 +445,36 @@ type SequenceTable interface {
 	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
 }
 
-// LoadTLSCertificates loads CA/KEY/CERT for special paths.
-func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tlsConfig *tls.Config, autoReload bool, err error) {
-	autoReload = false
-	if len(cert) == 0 || len(key) == 0 {
+// CheckCertificates checks and update the paths of key file and cert.
+func CheckCertificates(rawKey, rawCert string, autoTLS bool, rsaKeySize int) (err error, key, cert string, autoReload bool) {
+	key, cert = rawKey, rawCert
+	if len(key) == 0 || len(cert) == 0 {
 		if !autoTLS {
 			logutil.BgLogger().Warn("Automatic TLS Certificate creation is disabled", zap.Error(err))
 			return
 		}
+		if len(key) != 0 || len(cert) != 0 {
+			logutil.BgLogger().Warn("Mis-match key and cert in config file. Use generated key and cert instead.")
+		}
+		// Automatically generate the TLS certificates on startup.
 		autoReload = true
 		tempStoragePath := config.GetGlobalConfig().Instance.TmpDir
-		cert = filepath.Join(tempStoragePath, "cert.pem")
-		key = filepath.Join(tempStoragePath, "key.pem")
-		err = createTLSCertificates(cert, key, rsaKeySize)
+		cert = filepath.Join(tempStoragePath, "/cert.pem")
+		key = filepath.Join(tempStoragePath, "/key.pem")
+		err = CreateCertificates(cert, key, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
 		if err != nil {
 			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
 			return
 		}
 	}
+	return
+}
 
+// LoadTLSCertificates loads CA/KEY/CERT for special paths.
+func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error) {
+	if len(key) == 0 || len(cert) == 0 {
+		return
+	}
 	var tlsCert tls.Certificate
 	tlsCert, err = tls.LoadX509KeyPair(cert, key)
 	if err != nil {
@@ -695,9 +706,4 @@ func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyA
 	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
 		zap.Duration("validity", certValidity), zap.Int("rsaKeySize", rsaKeySize))
 	return nil
-}
-
-func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
-	// use RSA and unspecified signature algorithm
-	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
 }

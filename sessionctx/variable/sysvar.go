@@ -470,10 +470,6 @@ var defaultSysVars = []*SysVar{
 		}
 		config.CheckTempStorageQuota()
 		UpdateMemoryUsageAlarmRecord()
-		if err := UpdateTLSConfig(oldVal); err != nil {
-			config.GetGlobalConfig().Instance.TmpDir = oldVal
-			return err
-		}
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.TmpDir, nil

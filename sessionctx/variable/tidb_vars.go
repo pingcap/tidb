@@ -1102,6 +1102,4 @@ var (
 	DisableDDL func() error = nil
 	// UpdateMemoryUsageAlarmRecord is the func registered by ExpensiveQueryHandle to update memoryUsageAlarm.tmpDir
 	UpdateMemoryUsageAlarmRecord func() = nil
-	// UpdateTLSConfig is the func registered by server to update ssl-key and ssl-cert when updating temp directory.
-	UpdateTLSConfig func(oldDirPath string) error = nil
 )

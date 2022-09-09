@@ -255,9 +255,13 @@ func TestTLSVerify(t *testing.T) {
 	require.False(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
 	require.True(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}))
 
-	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true, 528)
+	err, _, _, _ = util.CheckCertificates("wrong key", "wrong cert", true, 528)
+	require.NoError(t, err)
+	_, err = util.LoadTLSCertificates("", "wrong key", "wrong cert")
 	require.Error(t, err)
-	_, _, err = util.LoadTLSCertificates("wrong ca", fileName("server-key.pem"), fileName("server-cert.pem"), true, 528)
+	err, _, _, _ = util.CheckCertificates(fileName("server-key.pem"), fileName("server-cert.pem"), true, 528)
+	require.NoError(t, err)
+	_, err = util.LoadTLSCertificates("wrong ca", fileName("server-key.pem"), fileName("server-cert.pem"))
 	require.Error(t, err)
 
 	// Test connecting with a client that does not have TLS configured.
