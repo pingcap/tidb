@@ -212,6 +212,8 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	tk.MustExec("set global tidb_gc_enable = off")
 	tk.MustExec("set global tidb_super_read_only = on")
 
+	ts, err = tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)))
 	rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
 	require.NoError(t, err)
