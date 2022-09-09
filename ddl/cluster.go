@@ -560,7 +560,7 @@ func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, 
 			break
 		} else {
 			// tsRange.StartTS < startTS < tsRange.EndTS.
-			// It's impossible here, we checked it before start flashback cluster.
+			// It's impossible reach here, we checked it before start flashback cluster.
 			return errors.Errorf("Invalid flashback ts range, startTS in old time range")
 		}
 	}
