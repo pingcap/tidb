@@ -556,8 +556,7 @@ func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, 
 			newTsRange = append(newTsRange, tsRange)
 		} else if startTS < tsRange.StartTS {
 			// startTS < tsRange.StartTS < tsRange.EndTS.
-			// Store the new tsRange is enough, because it covered old ts range.
-			newTsRange = append(newTsRange, meta.TSRange{StartTS: startTS, EndTS: endTS})
+			// The remained ts ranges are useless, [startTS, endTS] will cover them, so break.
 			break
 		} else {
 			// tsRange.StartTS < startTS < tsRange.EndTS.
@@ -565,8 +564,8 @@ func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, 
 			return errors.Errorf("Invalid flashback ts range, startTS in old time range")
 		}
 	}
-	if len(newTsRange) == 0 || newTsRange[len(newTsRange)-1].EndTS != endTS {
-		newTsRange = append(newTsRange, meta.TSRange{StartTS: startTS, EndTS: endTS})
-	}
+
+	// Store the new tsRange.
+	newTsRange = append(newTsRange, meta.TSRange{StartTS: startTS, EndTS: endTS})
 	return m.SetFlashbackHistoryTSRange(newTsRange)
 }
