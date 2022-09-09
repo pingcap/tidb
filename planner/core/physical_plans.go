@@ -780,6 +780,19 @@ func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedCol
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalProjection
+func (p *PhysicalProjection) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfBool*2
+	for _, expr := range p.Exprs {
+		sum += expr.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalTopN is the physical operator of topN.
 type PhysicalTopN struct {
 	basePhysicalPlan
@@ -1466,6 +1479,19 @@ func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColu
 		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
 	}
 	return corCols
+}
+
+// MemoryUsage return the memory usage of PhysicalSelection
+func (p *PhysicalSelection) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfBool
+	for _, expr := range p.Conditions {
+		sum += expr.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
