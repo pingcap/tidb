@@ -7254,14 +7254,14 @@ func TestTableRangeFallback(t *testing.T) {
 	tk.MustExec("create table t1 (a int primary key, b int)")
 	tk.MustExec("create table t2 (c int)")
 	tk.MustQuery("explain format='brief' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1").Check(testkit.Rows(
-		"Selection 0.12 root  gt(test.t1.b, 1)",
+		"Selection 1.67 root  gt(test.t1.b, 1)",
 		"└─Batch_Point_Get 5.00 root table:t1 handle:[10 20 30 40 50], keep order:false, desc:false"))
 	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50)").Check(testkit.Rows(
-		"HashJoin 0.16 root  inner join, equal:[eq(test.t1.b, test.t2.c)]",
-		"├─Selection(Build) 0.12 root  not(isnull(test.t1.b))",
+		"HashJoin 6.24 root  inner join, equal:[eq(test.t1.b, test.t2.c)]",
+		"├─Selection(Build) 5.00 root  not(isnull(test.t1.b))",
 		"│ └─Batch_Point_Get 5.00 root table:t1 handle:[10 20 30 40 50], keep order:false, desc:false",
-		"└─TableReader(Probe) 250.00 root  data:Selection",
-		"  └─Selection 250.00 cop[tikv]  not(isnull(test.t2.c))",
+		"└─TableReader(Probe) 9990.00 root  data:Selection",
+		"  └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.c))",
 		"    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 	tk.MustExec("set @@tidb_opt_range_max_size=10")
 	tk.MustQuery("explain format='brief' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1").Check(testkit.Rows(

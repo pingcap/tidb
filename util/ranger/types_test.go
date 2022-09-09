@@ -233,5 +233,5 @@ func TestRangeMemUsage(t *testing.T) {
 	mem2 := mem1 + int64(cap(r2.LowVal[0].GetBytes())) + int64(len(r2.LowVal[0].Collation())) + int64(cap(r2.HighVal[0].GetBytes())) + int64(len(r2.HighVal[0].Collation()))
 	require.Equal(t, mem2, r2.MemUsage())
 	ranges := ranger.Ranges{&r1, &r2}
-	require.Equal(t, mem1+mem2, ranges.MemUsage())
+	require.Equal(t, mem1*2, ranges.MemUsage())
 }
