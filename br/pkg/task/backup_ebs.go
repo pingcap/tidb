@@ -293,6 +293,7 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 			} else {
 				log.Warn("failed to wait schedule, will retry later", zap.Error(err2))
 			}
+			continue
 		}
 
 		// sort by start key
