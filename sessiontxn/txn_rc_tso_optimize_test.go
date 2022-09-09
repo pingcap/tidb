@@ -649,7 +649,7 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 	tk.MustExec("select * from t1 where id1 = 1 for update")
 	tk.MustExec("commit")
 	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
-	require.True(t, ok)
+	require.Equal(t, true, ok)
 	require.Equal(t, records["errWriteConflict"], 1)
 
 	se.SetValue(sessiontxn.AssertLockErr, nil)
@@ -711,6 +711,18 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 	tk.MustExec("select * from t1 where id1 = 1")
 	require.Equal(t, p.IsCheckTSInWriteStmtMode(), false)
 	tk.MustExec("rollback")
+
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
+	tk.MustExec("select * from t1 where id1 = 1 for update")
+	tk.MustExec("select * from t1 where id1 = 10")
+	tk2.MustExec("insert into t1 values(60, 60, 60)")
+	tk.MustQuery("select * from t1 where id1 = 60 for update").Check(testkit.Rows("60 60 60"))
+	tk.MustExec("commit")
+	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.Equal(t, true, ok)
+	require.Equal(t, records["errWriteConflict"], 1)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }

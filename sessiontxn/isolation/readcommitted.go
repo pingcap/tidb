@@ -77,8 +77,8 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 		provider.latestOracleTS = txn.StartTS()
 		provider.latestOracleTSValid = true
 	}
-	provider.getStmtReadTSFunc = provider.getStmtReadTS
-	provider.getStmtForUpdateTSFunc = provider.getStmtForUpdateTS
+	provider.getStmtReadTSFunc = provider.getStmtTS
+	provider.getStmtForUpdateTSFunc = provider.getStmtTS
 	return provider
 }
 
@@ -93,8 +93,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 	if node != nil && NeedSetRCCheckTSFlag(p.sctx, node) {
 		p.sctx.GetSessionVars().StmtCtx.RCCheckTS = true
 	}
-
-	p.resetCheckTSInWriteStmt()
+	p.checkTSInWriteStmt = false
 
 	return p.prepareStmt(!p.isTxnPrepared)
 }
@@ -126,6 +125,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
+	p.checkTSInWriteStmt = false
 	return p.prepareStmt(false)
 }
 
@@ -165,7 +165,7 @@ func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 	}
 }
 
-func (p *PessimisticRCTxnContextProvider) getStmtTS(getForUpdateTs bool) (ts uint64, err error) {
+func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	if p.stmtTS != 0 {
 		return p.stmtTS, nil
 	}
@@ -182,23 +182,7 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS(getForUpdateTs bool) (ts uin
 
 	txn.SetOption(kv.SnapshotTS, ts)
 	p.stmtTS = ts
-
-	// We reuse the current ts of transaction as for-update-ts for point-write statement,
-	// which may not find the latest committed version when read value by a key. So we set RCCheckTS
-	// isolation to detect write-confilict if exists and retry the statement by the latest ts from PD.
-	if getForUpdateTs && p.checkTSInWriteStmt {
-		txn.SetOption(kv.IsolationLevel, kv.RCCheckTS)
-	}
-
 	return
-}
-
-func (p *PessimisticRCTxnContextProvider) getStmtReadTS() (ts uint64, err error) {
-	return p.getStmtTS(false)
-}
-
-func (p *PessimisticRCTxnContextProvider) getStmtForUpdateTS() (ts uint64, err error) {
-	return p.getStmtTS(true)
 }
 
 // handleAfterQueryError will be called when the handle point is `StmtErrAfterQuery`.
@@ -210,7 +194,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 	}
 
 	p.latestOracleTSValid = false
-	p.resetCheckTSInWriteStmt()
 
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
@@ -219,7 +202,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
 	p.latestOracleTSValid = false
-	p.resetCheckTSInWriteStmt()
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
@@ -277,20 +259,9 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLock
 	case *plannercore.Delete:
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
 	case *plannercore.Insert:
-		if v.SelectPlan == nil &&
-			len(v.OnDuplicate) == 0 &&
-			!v.IsReplace {
-			return true
-		}
+		return v.SelectPlan == nil && len(v.OnDuplicate) == 0 && !v.IsReplace
 	}
 	return false
-}
-
-func (p *PessimisticRCTxnContextProvider) resetCheckTSInWriteStmt() {
-	if p.checkTSInWriteStmt {
-		p.txn.SetOption(kv.IsolationLevel, kv.SI)
-		p.checkTSInWriteStmt = false
-	}
 }
 
 // AdviseOptimizeWithPlan in read-committed covers as many cases as repeatable-read.
@@ -330,6 +301,18 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 	}
 
 	return nil
+}
+
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
+func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
+	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+	if p.checkTSInWriteStmt {
+		snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
+	return snapshot, err
 }
 
 // GetSnapshotWithStmtReadTS gets snapshot with read ts
