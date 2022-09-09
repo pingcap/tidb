@@ -425,7 +425,7 @@ const (
 		lock_name VARCHAR(64) NOT NULL PRIMARY KEY
 	);`
 	// CreateMDLView is a view about metadata locks.
-	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_ddl_lock as (
+	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
 	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
 	);`
 )

@@ -182,8 +182,8 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
 			if db == "MySQL" {
-				if one == "tidb_ddl_lock" {
-					require.EqualError(t, err, "[ddl:1347]'MySQL.tidb_ddl_lock' is not BASE TABLE")
+				if one == "tidb_mdl_view" {
+					require.EqualError(t, err, "[ddl:1347]'MySQL.tidb_mdl_view' is not BASE TABLE")
 				} else {
 					require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table", err.Error())
 				}
