@@ -362,6 +362,17 @@ func (p *PushedDownLimit) Clone() *PushedDownLimit {
 	return cloned
 }
 
+const pushedDownLimitSize = size.SizeOfUint64 * 2
+
+// MemoryUsage return the memory usage of PushedDownLimit
+func (p *PushedDownLimit) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return pushedDownLimitSize
+}
+
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
 	physicalSchemaProducer
@@ -457,6 +468,27 @@ func (p *PhysicalIndexLookUpReader) appendChildCandidate(op *physicalOptimizeOp)
 	if p.tablePlan != nil {
 		appendChildCandidate(p, p.tablePlan, op)
 	}
+}
+
+// MemoryUsage return the memory usage of PhysicalIndexLookUpReader
+func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfBool*2 + p.PartitionInfo.MemoryUsage() + size.SizeOfUint64
+	if p.ExtraHandleCol != nil {
+		sum += p.ExtraHandleCol.MemoryUsage()
+	}
+	if p.PushedLimit != nil {
+		sum += p.PushedLimit.MemoryUsage()
+	}
+
+	for _, col := range p.CommonHandleCols {
+		sum += col.MemoryUsage()
+	}
+	//todo: memtrace: p.IndexPlans p.TablePlans p.indexPlan p.tablePlan
+	return
 }
 
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
