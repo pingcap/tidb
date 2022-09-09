@@ -817,5 +817,5 @@ func (p *basePhysicalPlan) appendChildCandidate(op *physicalOptimizeOp) {
 		child.appendChildCandidate(op)
 		childrenID = append(childrenID, child.ID())
 	}
-	op.tracer.Candidates[p.ID()].PlanTrace.ChildrenID = childrenID
+	op.tracer.Candidates[p.ID()].PlanTrace.AppendChildrenID(childrenID...)
 }

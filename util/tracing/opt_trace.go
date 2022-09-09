@@ -27,6 +27,22 @@ type PlanTrace struct {
 	ID          int          `json:"id"`
 	Cost        float64      `json:"cost"`
 	Selected    bool         `json:"selected"`
+
+	mapChildren map[int]struct{}
+}
+
+func (p *PlanTrace) AppendChildrenID(ids ...int) {
+	if p.mapChildren == nil {
+		p.mapChildren = make(map[int]struct{})
+	}
+	for _, id := range ids {
+		_, existed := p.mapChildren[id]
+		if existed {
+			continue
+		}
+		p.mapChildren[id] = struct{}{}
+		p.ChildrenID = append(p.ChildrenID, id)
+	}
 }
 
 // LogicalOptimizeTracer indicates the trace for the whole logicalOptimize processing
@@ -125,7 +141,7 @@ func flattenLogicalPlanTrace(node *PlanTrace, wrapper *flattenWrapper) {
 		return
 	}
 	for _, child := range node.Children {
-		newNode.ChildrenID = append(newNode.ChildrenID, child.ID)
+		newNode.AppendChildrenID(child.ID)
 	}
 	for _, child := range node.Children {
 		flattenLogicalPlanTrace(child, wrapper)
