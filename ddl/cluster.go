@@ -539,6 +539,7 @@ func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, 
 		return err
 	}
 	if len(tsRanges) != 0 && tsRanges[len(tsRanges)-1].EndTS >= endTS {
+		// It's impossible, endTS should always greater than all TS in history TS ranges.
 		return errors.Errorf("Invalid flashback ts range, last flashback end time: %s, now: %s",
 			oracle.GetTimeFromTS(tsRanges[len(tsRanges)-1].EndTS), oracle.GetTimeFromTS(endTS))
 	}
@@ -550,12 +551,17 @@ func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, 
 			continue
 		}
 		if startTS > tsRange.EndTS {
+			// tsRange.StartTS < tsRange.EndTS < startTS.
+			// We should keep tsRange in slices.
 			newTsRange = append(newTsRange, tsRange)
 		} else if startTS < tsRange.StartTS {
+			// startTS < tsRange.StartTS < tsRange.EndTS.
+			// Store the new tsRange is enough, because it covered old ts range.
 			newTsRange = append(newTsRange, meta.TSRange{StartTS: startTS, EndTS: endTS})
 			break
 		} else {
-			// If startTS in range [tsRange.StartTs, tsRange.EndTs], it's an impossible startTS.
+			// tsRange.StartTS < startTS < tsRange.EndTS.
+			// It's impossible here, we checked it before start flashback cluster.
 			return errors.Errorf("Invalid flashback ts range, startTS in old time range")
 		}
 	}
