@@ -1623,7 +1623,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExchangePartition, Value: BoolToOnOff(DefTiDBEnableExchangePartition), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.StmtCtx.AppendWarning(errors.New("tidb_enable_exchange_partition is always turned on, this variable will be deleted later"))
+		s.StmtCtx.AppendWarning(errors.New("tidb_enable_exchange_partition is always turned on, this variable has been deprecated and will be removed in the future releases"))
 		s.TiDBEnableExchangePartition = true
 		return nil
 	}},
