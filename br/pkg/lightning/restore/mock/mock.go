@@ -113,6 +113,8 @@ func NewMockImportSource(dbSrcDataMap map[string]*MockDBSourceData) (*MockImport
 					fileInfo.FileMeta.Type = mydump.SourceTypeCSV
 				case strings.HasSuffix(tblDataFile.FileName, ".sql"):
 					fileInfo.FileMeta.Type = mydump.SourceTypeSQL
+				case strings.HasSuffix(tblDataFile.FileName, ".parquet"):
+					fileInfo.FileMeta.Type = mydump.SourceTypeParquet
 				default:
 					return nil, errors.Errorf("unsupported file type: %s", tblDataFile.FileName)
 				}
