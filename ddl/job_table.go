@@ -230,10 +230,12 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 		// check if this ddl job is synced to all servers.
 		if !d.isSynced(job) || d.once.Load() {
 			if variable.EnableMDL.Load() {
-				if exist, err := wk.checkMDLInfo(job.ID); err != nil {
+				if exist, err := checkMDLInfo(job.ID, d.sessPool); err != nil {
 					logutil.BgLogger().Warn("[ddl] handle ddl job failed", zap.Error(err), zap.String("job", job.String()))
 				} else if exist {
-					err = wk.waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
+					// Release the worker resource.
+					pool.put(wk)
+					err = waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
 					if err == nil {
 						d.once.Store(false)
 					} else {
@@ -242,9 +244,11 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 						return
 					}
 					cleanMDLInfo(d.sessPool, job.ID)
+					// Don't have a worker now.
+					return
 				}
 			} else {
-				err := wk.waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
+				err := waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
 				if err == nil {
 					d.once.Store(false)
 				} else {

@@ -520,10 +520,10 @@ func cleanMDLInfo(pool *sessionPool, jobID int64) {
 }
 
 // checkMDLInfo checks if metadata lock info exists. It means the schema is locked by some TiDBs if exists.
-func (w *worker) checkMDLInfo(jobID int64) (bool, error) {
+func checkMDLInfo(jobID int64, pool *sessionPool) (bool, error) {
 	sql := fmt.Sprintf("select * from mysql.tidb_mdl_info where job_id = %d", jobID)
-	sctx, _ := w.sessPool.get()
-	defer w.sessPool.put(sctx)
+	sctx, _ := pool.get()
+	defer pool.put(sctx)
 	sess := newSession(sctx)
 	rows, err := sess.execute(context.Background(), sql, "check-mdl-info")
 	if err != nil {
@@ -926,7 +926,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			if once {
-				err = w.waitSchemaSynced(d, job, waitTime)
+				err = waitSchemaSynced(d, job, waitTime)
 				if err == nil {
 					once = false
 				}
@@ -1358,17 +1358,17 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 // but in this case we don't wait enough 2 * lease time to let other servers update the schema.
 // So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
 // in a cluster, or to wait for 2 * lease time.
-func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
+func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
 
-	ver, _ := w.store.CurrentVersion(kv.GlobalTxnScope)
-	snapshot := w.store.GetSnapshot(ver)
+	ver, _ := d.store.CurrentVersion(kv.GlobalTxnScope)
+	snapshot := d.store.GetSnapshot(ver)
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
-		logutil.Logger(w.logCtx).Warn("[ddl] get global version failed", zap.Error(err))
+		logutil.Logger(d.ctx).Warn("[ddl] get global version failed", zap.Error(err))
 		return err
 	}
 
