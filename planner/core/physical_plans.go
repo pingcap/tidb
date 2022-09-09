@@ -1812,5 +1812,5 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 	}
 	op.tracer.AppendCandidate(candidate)
 	pp.appendChildCandidate(op)
-	op.tracer.Candidates[origin.ID()].ChildrenID = append(op.tracer.Candidates[origin.ID()].ChildrenID, pp.ID())
+	op.tracer.Candidates[origin.ID()].AppendChildrenID(pp.ID())
 }
