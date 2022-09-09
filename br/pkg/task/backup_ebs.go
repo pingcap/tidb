@@ -330,7 +330,7 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 			defer func() {
 				_ = connection.Close()
 			}()
-			checkAdminClient, err := backupClient.CheckAdmin(ectx, &brpb.CheckAdminRequest{})
+			checkAdminClient, err := backupClient.CheckPendingAdminOp(ectx, &brpb.CheckAdminRequest{})
 			if err != nil {
 				return err
 			}

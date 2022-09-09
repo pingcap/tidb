@@ -136,6 +136,11 @@ func (e *EC2Session) extractSnapProgress(str *string) int64 {
 	}
 	var val float64
 	// example output from: https://docs.aws.amazon.com/cli/latest/reference/ec2/describe-snapshots.html
+	// {
+	//   ...
+	//   "Progress": "100%",
+	//   ...
+	// }
 	// not sure whether it's always an integer or can be float point, so we scan it as float
 	*str = strings.Trim(*str, " ")
 	n, err := fmt.Sscanf(*str, "%f%%", &val)
