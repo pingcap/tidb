@@ -994,17 +994,17 @@ func TestJSONStorageSize(t *testing.T) {
 		success  bool
 	}{
 		// Tests scalar arguments
-		{[]interface{}{`null`}, 4, true},
-		{[]interface{}{`true`}, 4, true},
-		{[]interface{}{`1`}, 1, true},
+		{[]interface{}{`null`}, 2, true},
+		{[]interface{}{`true`}, 2, true},
+		{[]interface{}{`1`}, 9, true},
 		{[]interface{}{`"1"`}, 3, true},
 		// Tests nil arguments
 		{[]interface{}{nil}, nil, true},
 		// Tests valid json documents
-		{[]interface{}{`{}`}, 2, true},
-		{[]interface{}{`{"a":1}`}, 8, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 25, true},
-		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 45, true},
+		{[]interface{}{`{}`}, 9, true},
+		{[]interface{}{`{"a":1}`}, 29, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 82, true},
+		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 71, true},
 		// Tests invalid json documents
 		{[]interface{}{`[{"a":1]`}, 0, false},
 		{[]interface{}{`[{a":1]`}, 0, false},
