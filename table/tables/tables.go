@@ -321,6 +321,11 @@ func (t *TableCommon) RecordPrefix() kv.Key {
 	return t.recordPrefix
 }
 
+// IndexPrefix implements table.Table interface.
+func (t *TableCommon) IndexPrefix() kv.Key {
+	return t.indexPrefix
+}
+
 // RecordKey implements table.Table interface.
 func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
@@ -847,7 +852,11 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	if setPresume {
-		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
+		flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
+		if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic && sessVars.InTxn() {
+			flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
+		}
+		err = memBuffer.SetWithFlags(key, value, flags...)
 	} else {
 		err = memBuffer.Set(key, value)
 	}
@@ -1934,12 +1943,13 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 }
 
 // BuildPartitionTableScanFromInfos build tipb.PartitonTableScan with *model.TableInfo and *model.ColumnInfo.
-func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo) *tipb.PartitionTableScan {
+func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo, fastScan bool) *tipb.PartitionTableScan {
 	pkColIds := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
 		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle),
 		PrimaryColumnIds: pkColIds,
+		IsFastScan:       &fastScan,
 	}
 	if tableInfo.IsCommonHandle {
 		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)

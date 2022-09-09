@@ -542,7 +542,7 @@ func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
-	tk.MustExec("alter table t set tiflash mode fast")
+	tk.MustExec("set @@session.tiflash_fastscan=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -1452,6 +1452,8 @@ func TestPartitionTableStats(t *testing.T) {
 }
 
 func TestPartitionPruningForInExpr(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -1477,6 +1479,8 @@ func TestPartitionPruningForInExpr(t *testing.T) {
 }
 
 func TestPartitionPruningWithDateType(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -3375,6 +3379,8 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 }
 
 func TestPartitionExplain(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3549,6 +3555,8 @@ func TestPartitionUnionWithPPruningColumn(t *testing.T) {
 }
 
 func TestIssue20139(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -6346,8 +6354,9 @@ func TestIssue31202(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	tk.MustQuery("explain format = 'brief' select * from t31202;").Check(testkit.Rows(
-		"TableReader 10000.00 root  data:TableFullScan",
-		"└─TableFullScan 10000.00 cop[tiflash] table:t31202 keep order:false, stats:pseudo"))
+		"TableReader 10000.00 root  data:ExchangeSender",
+		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"  └─TableFullScan 10000.00 mpp[tiflash] table:t31202 keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain format = 'brief' select * from t31202 use index (primary);").Check(testkit.Rows(
 		"TableReader 10000.00 root  data:TableFullScan",
@@ -6518,6 +6527,9 @@ func TestIssue32632(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableScan(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -7128,4 +7140,107 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestPartitionTableFallBackStatic(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(7),(8),(9),(10)")
+	tk.MustExec("analyze table t")
+
+	// use static plan in static mode
+	rows := [][]interface{}{
+		{"PartitionUnion", "", ""},
+		{"├─TableReader", "", "data:TableFullScan"},
+		{"│ └─TableFullScan", "table:t, partition:p0", "keep order:false"},
+		{"└─TableReader", "", "data:TableFullScan"},
+		{"  └─TableFullScan", "table:t, partition:p1", "keep order:false"},
+	}
+	tk.MustQuery("explain format='brief' select * from t").CheckAt([]int{0, 3, 4}, rows)
+
+	tk.MustExec("CREATE TABLE t2 (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));")
+	tk.MustExec("insert into t2 values (1),(2),(3),(4),(7),(8),(9),(10)")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+
+	// use static plan in dynamic mode due to having not global stats
+	tk.MustQuery("explain format='brief' select * from t").CheckAt([]int{0, 3, 4}, rows)
+	tk.MustExec("analyze table t")
+
+	// use dynamic plan in dynamic mode with global stats
+	rows = [][]interface{}{
+		{"TableReader", "partition:all", "data:TableFullScan"},
+		{"└─TableFullScan", "table:t", "keep order:false"},
+	}
+	tk.MustQuery("explain format='brief' select * from t").CheckAt([]int{0, 3, 4}, rows)
+
+	rows = [][]interface{}{
+		{"Union", "", ""},
+		{"├─PartitionUnion", "", ""},
+		{"│ ├─TableReader", "", "data:TableFullScan"},
+		{"│ │ └─TableFullScan", "table:t, partition:p0", "keep order:false"},
+		{"│ └─TableReader", "", "data:TableFullScan"},
+		{"│   └─TableFullScan", "table:t, partition:p1", "keep order:false"},
+		{"└─PartitionUnion", "", ""},
+		{"  ├─TableReader", "", "data:TableFullScan"},
+		{"  │ └─TableFullScan", "table:t2, partition:p0", "keep order:false"},
+		{"  └─TableReader", "", "data:TableFullScan"},
+		{"    └─TableFullScan", "table:t2, partition:p1", "keep order:false"},
+	}
+	// use static plan in dynamic mode due to t2 has no global stats
+	tk.MustQuery("explain format='brief' select  * from t union all select * from t2;").CheckAt([]int{0, 3, 4}, rows)
+}
+
+func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 2)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = ON")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tbl2, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t2", L: "t2"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	checkMpp := func(r [][]interface{}) {
+		check := false
+		for i := range r {
+			if r[i][2] == "mpp[tiflash]" {
+				check = true
+				break
+			}
+		}
+		require.Equal(t, check, true)
+	}
+
+	// Insert into ... select
+	rs := tk.MustQuery("explain insert into t2 select a+b from t").Rows()
+	checkMpp(rs)
+
+	rs = tk.MustQuery("explain insert into t2 select t.a from t2 join t on t2.a = t.a").Rows()
+	checkMpp(rs)
+
+	// Replace into ... select
+	rs = tk.MustQuery("explain replace into t2 select a+b from t").Rows()
+	checkMpp(rs)
+
+	// CTE
+	rs = tk.MustQuery("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)").Rows()
+	checkMpp(rs)
 }

@@ -294,7 +294,7 @@ func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
 	}
 	// Here the plan is the TiFlash plan.
 	rows := tk.MustQuery("explain select * from t").Rows()
-	require.Equal(t, "cop[tiflash]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
+	require.Equal(t, "mpp[tiflash]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
 
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustExec("admin capture bindings")

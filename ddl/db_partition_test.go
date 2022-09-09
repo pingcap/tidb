@@ -656,6 +656,8 @@ create table log_message_1 (
 }
 
 func TestPartitionRangeColumnsCollate(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create schema PartitionRangeColumnsCollate")
@@ -1861,6 +1863,12 @@ func TestAlterTableExchangePartition(t *testing.T) {
 		id INT NOT NULL
 	);`)
 	tk.MustExec(`INSERT INTO e VALUES (1669),(337),(16),(2005)`)
+	
+	// test disable exchange partition
+	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it"))
+	tk.MustQuery("select * from e").Sort().Check(testkit.Rows("16", "1669", "2005", "337"))
+	tk.MustQuery("select * from e2").Check(testkit.Rows())
 
 	// enable exchange partition
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
@@ -3593,6 +3601,9 @@ func TestPartitionListWithTimeType(t *testing.T) {
 }
 
 func TestPartitionListWithNewCollation(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
