@@ -133,6 +133,9 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
 		return err
 	}
+	if err = CheckFlashbackHistoryTSRange(t, flashbackTS); err != nil {
+		return err
+	}
 
 	if err = gcutil.DisableGC(sess); err != nil {
 		return err
@@ -491,6 +494,15 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 					return err
 				}
 			}
+			if job.IsDone() || job.IsSynced() {
+				gcSafePoint, err := gcutil.GetGCSafePoint(sess)
+				if err != nil {
+					return err
+				}
+				if err = UpdateFlashbackHistoryTSRanges(t, flashbackTS, t.StartTS, gcSafePoint); err != nil {
+					return err
+				}
+			}
 			if err = t.SetFlashbackClusterJobID(0); err != nil {
 				return err
 			}
@@ -498,8 +510,55 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 		return nil
 	})
 	if err != nil {
+		logutil.BgLogger().Warn("Finish flashback cluster meets error", zap.Error(err))
 		return err
 	}
 
 	return nil
+}
+
+func CheckFlashbackHistoryTSRange(m *meta.Meta, flashbackTS uint64) error {
+	tsRanges, err := m.GetFlashbackHistoryTSRange()
+	if err != nil {
+		return err
+	}
+	for _, tsRange := range tsRanges {
+		if tsRange.StartTS <= flashbackTS && flashbackTS <= tsRange.EndTS {
+			return errors.Errorf("FlashbackTs overlapped, old range: [%s, %s], flashbackTS: %s",
+				oracle.GetTimeFromTS(tsRange.StartTS), oracle.GetTimeFromTS(tsRange.EndTS), oracle.GetTimeFromTS(flashbackTS))
+		}
+	}
+	return nil
+}
+
+func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, gcSafePoint uint64) error {
+	tsRanges, err := m.GetFlashbackHistoryTSRange()
+	if err != nil {
+		return err
+	}
+	if len(tsRanges) != 0 && tsRanges[len(tsRanges)-1].EndTS > endTS {
+		return errors.Errorf("Invalid flashback ts range, last flashback end time: %s, now: %s",
+			oracle.GetTimeFromTS(tsRanges[len(tsRanges)-1].EndTS), oracle.GetTimeFromTS(endTS))
+	}
+
+	newTsRange := make([]meta.TsRange, 0, len(tsRanges))
+
+	for _, tsRange := range tsRanges {
+		if tsRange.EndTS < gcSafePoint {
+			continue
+		}
+		if startTS > tsRange.EndTS {
+			newTsRange = append(newTsRange, tsRange)
+		} else if startTS < tsRange.StartTS {
+			newTsRange = append(newTsRange, meta.TsRange{StartTS: startTS, EndTS: endTS})
+			break
+		} else {
+			// If startTS in range [tsRange.StartTs, tsRange.EndTs], it's an impossible startTS.
+			return errors.Errorf("Invalid flashback ts range, startTS in old time range")
+		}
+	}
+	if len(newTsRange) == 0 || newTsRange[len(newTsRange)-1].EndTS != endTS {
+		newTsRange = append(newTsRange, meta.TsRange{StartTS: startTS, EndTS: endTS})
+	}
+	return m.SetFlashbackHistoryTSRange(newTsRange)
 }

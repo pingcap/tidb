@@ -59,26 +59,27 @@ var (
 //
 
 var (
-	mMetaPrefix         = []byte("m")
-	mNextGlobalIDKey    = []byte("NextGlobalID")
-	mSchemaVersionKey   = []byte("SchemaVersionKey")
-	mDBs                = []byte("DBs")
-	mDBPrefix           = "DB"
-	mTablePrefix        = "Table"
-	mSequencePrefix     = "SID"
-	mSeqCyclePrefix     = "SequenceCycle"
-	mTableIDPrefix      = "TID"
-	mIncIDPrefix        = "IID"
-	mRandomIDPrefix     = "TARID"
-	mBootstrapKey       = []byte("BootstrapKey")
-	mSchemaDiffPrefix   = "Diff"
-	mPolicies           = []byte("Policies")
-	mPolicyPrefix       = "Policy"
-	mPolicyGlobalID     = []byte("PolicyGlobalID")
-	mPolicyMagicByte    = CurrentMagicByteVer
-	mDDLTableVersion    = []byte("DDLTableVersion")
-	mConcurrentDDL      = []byte("concurrentDDL")
-	mInFlashbackCluster = []byte("InFlashbackCluster")
+	mMetaPrefix              = []byte("m")
+	mNextGlobalIDKey         = []byte("NextGlobalID")
+	mSchemaVersionKey        = []byte("SchemaVersionKey")
+	mDBs                     = []byte("DBs")
+	mDBPrefix                = "DB"
+	mTablePrefix             = "Table"
+	mSequencePrefix          = "SID"
+	mSeqCyclePrefix          = "SequenceCycle"
+	mTableIDPrefix           = "TID"
+	mIncIDPrefix             = "IID"
+	mRandomIDPrefix          = "TARID"
+	mBootstrapKey            = []byte("BootstrapKey")
+	mSchemaDiffPrefix        = "Diff"
+	mPolicies                = []byte("Policies")
+	mPolicyPrefix            = "Policy"
+	mPolicyGlobalID          = []byte("PolicyGlobalID")
+	mPolicyMagicByte         = CurrentMagicByteVer
+	mDDLTableVersion         = []byte("DDLTableVersion")
+	mConcurrentDDL           = []byte("concurrentDDL")
+	mInFlashbackCluster      = []byte("InFlashbackCluster")
+	mFlashbackHistoryTSRange = []byte("FlashbackHistoryTSRange")
 )
 
 const (
@@ -606,6 +607,36 @@ func (m *Meta) GetFlashbackClusterJobID() (int64, error) {
 	}
 
 	return int64(binary.BigEndian.Uint64(val)), nil
+}
+
+type TsRange struct {
+	StartTS uint64
+	EndTS   uint64
+}
+
+// SetFlashbackHistoryTSRange store flashback time range to TiKV
+func (m *Meta) SetFlashbackHistoryTSRange(timeRange []TsRange) error {
+	timeRangeByte, err := json.Marshal(timeRange)
+	if err != nil {
+		return err
+	}
+	return errors.Trace(m.txn.Set(mFlashbackHistoryTSRange, timeRangeByte))
+}
+
+// GetFlashbackHistoryTSRange get flashback time range from TiKV
+func (m *Meta) GetFlashbackHistoryTSRange() (timeRange []TsRange, err error) {
+	timeRangeByte, err := m.txn.Get(mFlashbackHistoryTSRange)
+	if err != nil {
+		return nil, err
+	}
+	if len(timeRangeByte) == 0 {
+		return []TsRange{}, nil
+	}
+	err = json.Unmarshal(timeRangeByte, &timeRange)
+	if err != nil {
+		return nil, err
+	}
+	return timeRange, nil
 }
 
 // SetConcurrentDDL set the concurrent DDL flag.
