@@ -20,7 +20,9 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/assert"
@@ -36,7 +38,7 @@ func TestAddIndexMergeProcess(t *testing.T) {
 	tk2.MustExec("use test")
 	tk.MustExec("create table t (c1 int primary key, c2 int, c3 int)")
 	tk.MustExec("insert into t values (1, 2, 3), (4, 5, 6);")
-	// Force onCreateIndex use the backfill-merge process.
+	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
@@ -117,6 +119,52 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t use index (primary);").Check(testkit.Rows("1 2 3"))
 	tk.MustQuery("select * from t ignore index (primary);").Check(testkit.Rows("1 2 3"))
+}
+
+func TestAddIndexMergeVersionIndexValue(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (c1 int);")
+	// Force onCreateIndex use the txn-merge process.
+	ingest.LitInitialized = false
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+
+	var checkErr error
+	var runDML bool
+	var tblID, idxID int64
+	originHook := dom.DDL().GetHook()
+	dom.DDL().SetHook(&ddl.TestDDLCallback{
+		Do: dom,
+		OnJobUpdatedExported: func(job *model.Job) {
+			if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
+				idx := findIdxInfo(dom, "test", "t", "idx")
+				if idx == nil || idx.BackfillState != model.BackfillStateReadyToMerge {
+					return
+				}
+				runDML = true
+				tblID = job.TableID
+				idxID = idx.ID
+				_, checkErr = tk2.Exec("insert into t values (1);")
+			}
+		},
+	})
+	tk.MustExec("alter table t add unique index idx(c1);")
+	dom.DDL().SetHook(originHook)
+	require.True(t, runDML)
+	require.NoError(t, checkErr)
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t use index (idx);").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t ignore index (idx);").Check(testkit.Rows("1"))
+
+	snap := store.GetSnapshot(kv.MaxVersion)
+	iter, err := snap.Iter(tablecodec.GetTableIndexKeyRange(tblID, idxID))
+	require.NoError(t, err)
+	require.True(t, iter.Valid())
+	// The origin index value should not have 'm' version appended.
+	require.Equal(t, []byte{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}, iter.Value())
 }
 
 func findIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
