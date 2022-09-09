@@ -292,7 +292,10 @@ func TestFlashbackTimeRange(t *testing.T) {
 	require.NoError(t, txn.Commit(context.Background()))
 
 	se, err = session.CreateSession4Test(store)
+	require.NoError(t, err)
 	txn, err = se.GetStore().Begin()
+	require.NoError(t, err)
+
 	m = meta.NewMeta(txn)
 	require.NoError(t, err)
 	// Flashback history time range is [m.StartTS - 10min, m.StartTS]
