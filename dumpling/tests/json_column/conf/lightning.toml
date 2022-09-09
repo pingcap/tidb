@@ -10,7 +10,7 @@ backend="tidb"
 on-duplicate = "error"
 
 [mydumper]
-data-source-dir = "/tmp/dumpling_test_result/sql_res.rows"
+data-source-dir = "/tmp/dumpling_test_result/sql_res.json_database"
 
 [tidb]
 host = "127.0.0.1"

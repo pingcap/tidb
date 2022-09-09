@@ -13,7 +13,7 @@ check-struct-only = false
 
     target-instance = "tidb0"
 
-    target-check-tables = ["rows.t"]
+    target-check-tables = ["json_database.t"]
 
 [data-sources]
 [data-sources.mysql1]
