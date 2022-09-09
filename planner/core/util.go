@@ -40,7 +40,7 @@ type AggregateFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (*AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
@@ -68,7 +68,7 @@ type WindowFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (*WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true

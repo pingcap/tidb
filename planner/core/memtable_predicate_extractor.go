@@ -1006,7 +1006,7 @@ func (e *MetricSummaryTableExtractor) Extract(
 	return remained
 }
 
-func (e *MetricSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) string {
+func (*MetricSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	return ""
 }
 
@@ -1233,7 +1233,7 @@ func (e *SlowQueryExtractor) decodeBytesToTime(bs []byte) (int64, error) {
 	return 0, nil
 }
 
-func (e *SlowQueryExtractor) decodeToTime(handle kv.Handle) (int64, error) {
+func (*SlowQueryExtractor) decodeToTime(handle kv.Handle) (int64, error) {
 	tp := types.NewFieldType(mysql.TypeDatetime)
 	col := rowcodec.ColInfo{ID: 0, Ft: tp}
 	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
