@@ -514,10 +514,9 @@ func jobNeedGC(job *model.Job) bool {
 			return false
 		}
 		switch job.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			return true
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn,
+			model.ActionAddIndex, model.ActionAddPrimaryKey:
 			return true
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {

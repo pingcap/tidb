@@ -393,8 +393,8 @@ type reorgInfo struct {
 func (r *reorgInfo) String() string {
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
-		"StartHandle:" + tryDecodeToHandleString(r.StartKey) + "," +
-		"EndHandle:" + tryDecodeToHandleString(r.EndKey) + "," +
+		"StartKey:" + hex.EncodeToString(r.StartKey) + "," +
+		"EndKey:" + hex.EncodeToString(r.EndKey) + "," +
 		"First:" + strconv.FormatBool(r.first) + "," +
 		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10)
 }
@@ -581,18 +581,8 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfoForAddIdx(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
-	tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
-	return getReorgInfo(ctx, d, rh, job, tbl, elements, false)
-}
-
-func getReorgInfoForMergeIdx(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
-	tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
-	return getReorgInfo(ctx, d, rh, job, tbl, elements, true)
-}
-
 func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
-	tbl table.Table, elements []*meta.Element, getIdxRange bool) (*reorgInfo, error) {
+	tbl table.Table, elements []*meta.Element, mergingTmpIdx bool) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -629,7 +619,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
 		} else {
 			tb = tbl.(table.PhysicalTable)
 		}
-		if getIdxRange {
+		if mergingTmpIdx {
 			start, end = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|elements[0].ID)
 		} else {
 			start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
@@ -688,7 +678,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
 	info.PhysicalTableID = pid
 	info.currElement = element
 	info.elements = elements
-	info.mergingTmpIdx = getIdxRange
+	info.mergingTmpIdx = mergingTmpIdx
 
 	return &info, nil
 }

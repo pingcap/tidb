@@ -655,7 +655,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:
-				idxWorker, err := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc, job)
+				idxWorker, err := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
 				if err != nil {
 					return errors.Trace(err)
 				}
