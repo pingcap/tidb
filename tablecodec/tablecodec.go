@@ -1137,7 +1137,7 @@ func IndexKey2TempIndexKey(indexID int64, key []byte) {
 	binary.BigEndian.PutUint64(key[11:], eid)
 }
 
-// TempIndexKey2IndexKey gen an index key from temp index key
+// TempIndexKey2IndexKey generates an index key from temporary index key.
 func TempIndexKey2IndexKey(indexID int64, key []byte) {
 	eid := codec.EncodeIntToCmpUint(indexID)
 	binary.BigEndian.PutUint64(key[11:], eid)
