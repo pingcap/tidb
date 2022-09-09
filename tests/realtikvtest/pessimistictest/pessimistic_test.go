@@ -3219,15 +3219,28 @@ func TestDeferConstraintCheck(t *testing.T) {
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
 
-	// case: conflict check failure
+	// case: conflict check failure, fallback to optimistic
 	tk.MustExec("create table t3 (id int primary key, sk int, key i1(sk))")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t3 values (1, 1)")
 	tk2.MustExec("insert into t3 values (1, 2)")
 	err = tk.ExecToErr("commit")
 	require.Error(t, err)
+	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
+	require.Contains(t, err.Error(), "reason=Optimistic")
+
+	// case: conflict check failure, in pessimistic
+	tk.MustExec("truncate table t3")
+	tk.MustExec("insert into t3 values (0, 0)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from t3 where id = 0 for update") // force a lock, and set for_update_ts
+	tk.MustExec("insert into t3 values (1, 1)")
+	tk2.MustExec("insert into t3 values (1, 2)")
+	err = tk.ExecToErr("commit")
+	require.Error(t, err)
 	println("err:", err.Error())
 	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
+	require.Contains(t, err.Error(), "reason=LazyUniquenessCheck")
 
 	// case: DML returns error => abort txn
 	tk.MustExec("create table t4 (id int primary key, v int, key i1(v))")

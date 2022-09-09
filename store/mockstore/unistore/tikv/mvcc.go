@@ -580,7 +580,7 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 					ConflictTS:       userMeta.StartTS(),
 					ConflictCommitTS: userMeta.CommitTS(),
 					Key:              item.KeyCopy(nil),
-					Reason:           kvrpcpb.WriteConflict_LockWakeUp,
+					Reason:           kvrpcpb.WriteConflict_PessimisticRetry,
 				}
 			}
 		}
