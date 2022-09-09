@@ -1696,6 +1696,12 @@ func (d *Datum) convertToMysqlJSON(_ *stmtctx.StatementContext, _ *FieldType) (r
 		}
 	case KindMysqlJSON:
 		ret = *d
+	case KindMysqlTime:
+		tm := d.GetMysqlTime()
+		ret.SetMysqlJSON(CreateBinaryJSON(tm))
+	case KindMysqlDuration:
+		dur := d.GetMysqlDuration()
+		ret.SetMysqlJSON(CreateBinaryJSON(dur))
 	case KindBinaryLiteral:
 		err = ErrInvalidJSONCharset.GenWithStackByArgs(charset.CharsetBin)
 	default:

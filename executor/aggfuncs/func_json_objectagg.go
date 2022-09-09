@@ -93,7 +93,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		}
 
 		switch x := realVal.(type) {
-		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque:
+		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque, types.Time, types.Duration:
 			if _, ok := p.entries[key]; !ok {
 				memDelta += int64(len(key)) + getValMemDelta(realVal)
 				if len(p.entries)+1 > (1<<p.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
@@ -145,7 +145,7 @@ func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, erro
 			return nil, errors.Trace(err)
 		}
 		realVal = float64Val
-	case []uint8, types.Time, types.Duration:
+	case []uint8:
 		strVal, err := types.ToString(x)
 		if err != nil {
 			return nil, errors.Trace(err)
