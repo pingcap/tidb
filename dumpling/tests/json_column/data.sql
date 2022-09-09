@@ -1,7 +1,5 @@
 use json_database;
 
-create table t(id int primary key auto_increment,j json,j1 json as (json_extract(j, '$.a')),j2 json as (json_extract(j1, '$.b')),a int as (j ->> '$.a'),b char(255) as (j ->> '$.b'),c char(255) as (j2 ->> '$[0].a'));
-
 insert into t(j)values ('{"a":1, "b": {"a":1}}');
 insert into t(j)values ('{"a":1, "b": [1,2,3]}');
 insert into t(j)values ('[1,2]');
