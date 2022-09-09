@@ -33,6 +33,7 @@ func DefineRestoreDataFlags(command *cobra.Command) {
 	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
+	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
 }
 
 type RestoreDataConfig struct {
@@ -42,6 +43,7 @@ type RestoreDataConfig struct {
 	VolumeType       config.EBSVolumeType `json:"volume-type"`
 	VolumeIOPS       int64                `json:"volume-iops"`
 	VolumeThroughput int64                `json:"volume-throughput"`
+	ProgressFile     string               `json:"progress-file"`
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
@@ -59,6 +61,11 @@ func (cfg *RestoreDataConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -172,7 +179,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 
 	// progress = read meta + send recovery + resolve kv data.
 	progress := g.StartProgress(ctx, cmdName, int64(numOnlineStore*3), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(numOnlineStore*3))
+	go progressFileWriterRoutine(ctx, progress, int64(numOnlineStore*3), cfg.ProgressFile)
 
 	// restore tikv data from a snapshot volume
 	var totalRegions int

@@ -22,10 +22,12 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-// in future, num of tikv may extend to a large number, this is limitation of connection pool to tikv
-// per our knowledge, in present, 128 may a good enough.
 const (
-	maxStoreConcurrency = 128
+	// in future, num of tikv may extend to a large number, this is limitation of connection pool to tikv
+	// per our knowledge, in present, 128 may a good enough.
+	maxStoreConcurrency  = 128
+	gRPCKeepAliveTime    = 3 // Seconds
+	gRPCKeepAliveTimeout = 5 // Minutes
 )
 
 // RecoverData recover the tikv cluster
@@ -118,8 +120,8 @@ func (recovery *Recovery) newRecoveryClient(ctx context.Context, storeAddr strin
 		grpc.FailOnNonTempDialError(true),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(3) * time.Second,
-			Timeout: time.Duration(10) * time.Second,
+			Time:    time.Duration(gRPCKeepAliveTime) * time.Second,
+			Timeout: time.Duration(gRPCKeepAliveTimeout) * time.Minute,
 		}),
 	)
 	if err != nil {
