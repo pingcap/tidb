@@ -14,6 +14,8 @@
 
 package size
 
+import "unsafe"
+
 const (
 	// KB is the kilobytes.
 	KB = uint64(1024)
@@ -25,4 +27,34 @@ const (
 	TB = GB * 1024
 	// PB is the petabytes.
 	PB = TB * 1024
+)
+
+// below constants are the size of commonly used types, for memory trace
+const (
+	// SizeOfSlice is the memory itself used, excludes the elements' memory
+	SizeOfSlice = int64(unsafe.Sizeof(*new([]int)))
+
+	// SizeOfByte is the memory each byte occupied
+	SizeOfByte = int64(unsafe.Sizeof(*new(byte)))
+
+	// SizeOfString is the memory string itself occupied
+	SizeOfString = int64(unsafe.Sizeof(*new(string)))
+
+	// SizeOfBool is the memory each bool occupied
+	SizeOfBool = int64(unsafe.Sizeof(*new(bool)))
+
+	// SizeOfPointer is the memory each pointer occupied
+	SizeOfPointer = int64(unsafe.Sizeof(new(int)))
+
+	// SizeOfInterface is the memory each interface occupied, exclude the real type memory usage
+	SizeOfInterface = int64(unsafe.Sizeof(*new(interface{})))
+
+	// SizeOfFloat64 is the memory each float64 occupied
+	SizeOfFloat64 = int64(unsafe.Sizeof(*new(float64)))
+
+	// SizeOfUint64 is the memory each uint64 occupied
+	SizeOfUint64 = int64(unsafe.Sizeof(*new(uint64)))
+
+	// SizeOfInt32 is the memory each int32 occupied
+	SizeOfInt32 = int64(unsafe.Sizeof(*new(int32)))
 )
