@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -246,4 +247,22 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 		return fmt.Sprintf("\"%v\"", d.GetValue())
 	}
 	return fmt.Sprintf("%v", d.GetValue())
+}
+
+const emptyRangeSize = int64(unsafe.Sizeof(Range{}))
+
+// MemoryUsage return the memory usage of Range
+func (ran *Range) MemoryUsage() (sum int64) {
+	if ran == nil {
+		return
+	}
+
+	sum = emptyRangeSize
+	for _, low := range ran.LowVal {
+		sum += low.MemUsage()
+	}
+	for _, high := range ran.HighVal {
+		sum += high.MemUsage()
+	}
+	return
 }
