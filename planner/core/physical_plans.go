@@ -518,6 +518,17 @@ func (p *PhysicalIndexMergeReader) appendChildCandidate(op *physicalOptimizeOp) 
 	}
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexMergeReader
+func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.PartitionInfo.MemoryUsage()
+	// todo: memtrace: p.PartialPlans  p.TablePlans  p.partialPlans  p.tablePlan
+	return
+}
+
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
 	physicalSchemaProducer
