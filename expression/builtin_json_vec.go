@@ -126,12 +126,7 @@ func (b *builtinJSONStorageSizeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		}
 		j := buf.GetJSON(i)
 
-		jb, err := j.MarshalJSON()
-		if err != nil {
-			continue
-		}
-
-		int64s[i] = int64(len(jb))
+		int64s[i] = int64(len(j.Value)) + 1
 	}
 	return nil
 }
