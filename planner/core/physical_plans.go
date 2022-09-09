@@ -162,7 +162,7 @@ func (p *PhysicalTableReader) GetAvgRowSize() float64 {
 	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 }
 
-//
+// MemoryUsage return the memory usage of PhysicalTableReader
 func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
@@ -170,8 +170,8 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 
 	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint8*2 + size.SizeOfBool + p.PartitionInfo.MemoryUsage()
 	// todo: memtrace: 	p.TablePlans p.PhysicalPlan
-	for _, pInfo := range p.PartitionInfos {
-		sum += pInfo.tableScan.MemoryUsage() + pInfo.partitionInfo.MemoryUsage()
+	for _, pInfos := range p.PartitionInfos {
+		sum += pInfos.tableScan.MemoryUsage() + pInfos.partitionInfo.MemoryUsage()
 	}
 	return
 }
