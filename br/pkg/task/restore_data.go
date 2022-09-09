@@ -33,6 +33,7 @@ func DefineRestoreDataFlags(command *cobra.Command) {
 	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
+	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
 }
 
 type RestoreDataConfig struct {
@@ -42,12 +43,12 @@ type RestoreDataConfig struct {
 	VolumeType       config.EBSVolumeType `json:"volume-type"`
 	VolumeIOPS       int64                `json:"volume-iops"`
 	VolumeThroughput int64                `json:"volume-throughput"`
+	ProgressFile     string               `json:"progress-file"`
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
 func (cfg *RestoreDataConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
-
 	volumeType, err := flags.GetString(flagVolumeType)
 	if err != nil {
 		return errors.Trace(err)
@@ -60,6 +61,11 @@ func (cfg *RestoreDataConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -146,28 +152,43 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}()
 
 	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
+
+	var numOnlineStore int
+	err = utils.WithRetry(
+		ctx,
+		func() error {
+			allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			numOnlineStore := len(allStores)
+			// in this version, it suppose to have the same number of tikvs between backup cluster and restore cluster
+			if numOnlineStore != numBackupStore {
+				log.Warn("the restore meta contains the number of tikvs inconsist with the resore cluster, retry ...", zap.Int("current stores", len(allStores)), zap.Int("backup stores", numBackupStore))
+				return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
+					"number of tikvs mismatch")
+			}
+			return nil
+		},
+		utils.NewPDReqBackofferExt(),
+	)
+
 	if err != nil {
 		return errors.Trace(err)
 	}
-	numOnlineStore := len(allStores)
+
 	// progress = read meta + send recovery + resolve kv data.
 	progress := g.StartProgress(ctx, cmdName, int64(numOnlineStore*3), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(numOnlineStore*3))
-
-	// in this version, it suppose to have the same number of tikvs between backup cluster and restore cluster
-	if numOnlineStore != numBackupStore {
-		log.Error("the restore meta contains the number of tikvs inconsist with the resore cluster", zap.Int("current stores", len(allStores)), zap.Int("backup stores", numBackupStore))
-		return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
-			"number of tikvs mismatch")
-	}
+	go progressFileWriterRoutine(ctx, progress, int64(numOnlineStore*3), cfg.ProgressFile)
 
 	// restore tikv data from a snapshot volume
 	var totalRegions int
+
 	totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr, progress)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	summary.CollectInt("total regions", totalRegions)
 	log.Info("unmark recovering to pd")
 	if err := mgr.UnmarkRecovering(ctx); err != nil {

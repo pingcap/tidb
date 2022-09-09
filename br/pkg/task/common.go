@@ -757,10 +757,10 @@ func gcsObjectNotFound(err error) bool {
 // write progress in tmp file for tidb-operator, so tidb-operator can retrieve the
 // progress of ebs backup. and user can get the progress through `kubectl get job`
 // todo: maybe change to http api later
-func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, total int64) {
+func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, total int64, progressFile string) {
 	// remove tmp file
 	defer func() {
-		_ = os.Remove(ebsProgressFilename)
+		_ = os.Remove(progressFile)
 	}()
 
 	for progress.GetCurrent() < total {
@@ -773,7 +773,7 @@ func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, tota
 		cur := progress.GetCurrent()
 		p := float64(cur) / float64(total)
 		p *= 100
-		err := os.WriteFile(ebsProgressFilename, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
 		if err != nil {
 			log.Warn("failed to update tmp progress file", zap.Error(err))
 		}
