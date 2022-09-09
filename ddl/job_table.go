@@ -127,9 +127,11 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
 		if job.Type == model.ActionDropSchema {
+			// Check if there is any reorg job on this schema.
 			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
 			return d.checkJobIsRunnable(sess, sql)
 		}
+		// Check if there is any running job works on the same table.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',', REPLACE(t1.table_ids, ',', '|'), ',') != 0", job.ID)
 		return d.checkJobIsRunnable(sess, sql)
 	})
@@ -142,6 +144,7 @@ func (d *ddl) checkJobIsRunnable(sess *session, sql string) (bool, error) {
 
 func (d *ddl) getReorgJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
+		// Check if there is any drop schema ddl running.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where (CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) or (CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing) limit 1",
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, strconv.Quote(strconv.FormatInt(job.TableID, 10)))
 		return d.checkJobIsRunnable(sess, sql)
