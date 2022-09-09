@@ -18,8 +18,9 @@ import "fmt"
 
 // PlanTrace indicates for the Plan trace information
 type PlanTrace struct {
-	TP         string `json:"type"`
-	ProperType string `json:"property"`
+	mapChildren map[int]struct{}
+	TP          string `json:"type"`
+	ProperType  string `json:"property"`
 	// ExplainInfo should be implemented by each implemented Plan
 	ExplainInfo string       `json:"info"`
 	Children    []*PlanTrace `json:"-"`
@@ -27,8 +28,6 @@ type PlanTrace struct {
 	ID          int          `json:"id"`
 	Cost        float64      `json:"cost"`
 	Selected    bool         `json:"selected"`
-
-	mapChildren map[int]struct{}
 }
 
 // AppendChildrenID appends children ids
