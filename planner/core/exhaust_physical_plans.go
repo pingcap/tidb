@@ -1247,6 +1247,8 @@ func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row c
 		}
 		exprs = append(exprs, newExpr) // nozero
 	}
+	// TODO: We already limit range mem usage when buildTemplateRange for inner table of IndexJoin in optimizer phase,
+	// so we don't need and shouldn't limit range mem usage when we refill inner ranges during the execution phase.
 	ranges, _, _, err := ranger.BuildColumnRange(exprs, ctx, cwc.TargetCol.RetType, cwc.colLength, 0)
 	if err != nil {
 		return nil, err
