@@ -51,6 +51,7 @@ func (Ranges) Rebuild() error {
 	return nil
 }
 
+// MemUsage gets the memory usage of ranges.
 func (rs Ranges) MemUsage() (sum int64) {
 	if len(rs) == 0 {
 		return
@@ -224,8 +225,10 @@ func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 	return len(ran.LowVal), nil
 }
 
+// EmptyRangeSize is the size of empty range.
 const EmptyRangeSize = int64(unsafe.Sizeof(Range{}))
 
+// MemUsage gets the memory usage of range.
 func (ran *Range) MemUsage() (sum int64) {
 	sum = EmptyRangeSize + int64(cap(ran.LowVal))*types.EmptyDatumSize + int64(cap(ran.HighVal))*types.EmptyDatumSize + int64(cap(ran.Collators))*16
 	for _, val := range ran.LowVal {

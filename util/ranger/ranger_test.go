@@ -17,12 +17,12 @@ package ranger_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/parser/model"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
