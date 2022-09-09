@@ -4,7 +4,6 @@ package restore
 import (
 	"context"
 	"io"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -19,15 +18,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/keepalive"
 )
 
 const (
 	// in future, num of tikv may extend to a large number, this is limitation of connection pool to tikv
 	// per our knowledge, in present, 128 may a good enough.
-	maxStoreConcurrency  = 128
-	gRPCKeepAliveTime    = 3 // Seconds
-	gRPCKeepAliveTimeout = 5 // Minutes
+	maxStoreConcurrency = 128
 )
 
 // RecoverData recover the tikv cluster
@@ -119,10 +115,7 @@ func (recovery *Recovery) newRecoveryClient(ctx context.Context, storeAddr strin
 		grpc.WithBlock(),
 		grpc.FailOnNonTempDialError(true),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(gRPCKeepAliveTime) * time.Second,
-			Timeout: time.Duration(gRPCKeepAliveTimeout) * time.Minute,
-		}),
+		grpc.WithKeepaliveParams(recovery.mgr.GetKeepalive()),
 	)
 	if err != nil {
 		return nil, conn, errors.Trace(err)
