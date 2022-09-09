@@ -217,6 +217,7 @@ func (d *ddl) loadDDLJobAndRun(sess *session, pool *workerPool, getJob func(*ses
 	d.delivery2worker(wk, pool, job)
 }
 
+// delivery2worker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.insertRunningDDLJobMap(job.ID)
@@ -230,34 +231,33 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 		// check if this ddl job is synced to all servers.
 		if !d.isSynced(job) || d.once.Load() {
 			if variable.EnableMDL.Load() {
-				if exist, err := checkMDLInfo(job.ID, d.sessPool); err != nil {
-					logutil.BgLogger().Warn("[ddl] handle ddl job failed", zap.Error(err), zap.String("job", job.String()))
+				exist, err := checkMDLInfo(job.ID, d.sessPool)
+				// Release the worker resource.
+				pool.put(wk)
+				if err != nil {
+					logutil.BgLogger().Warn("[ddl] check MDL info failed", zap.Error(err), zap.String("job", job.String()))
+					return
 				} else if exist {
-					// Release the worker resource.
-					pool.put(wk)
 					err = waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
-					if err == nil {
-						d.once.Store(false)
-					} else {
+					if err != nil {
 						logutil.BgLogger().Warn("[ddl] wait ddl job sync failed", zap.Error(err), zap.String("job", job.String()))
 						time.Sleep(time.Second)
 						return
 					}
+					d.once.Store(false)
 					cleanMDLInfo(d.sessPool, job.ID)
 					// Don't have a worker now.
 					return
 				}
 			} else {
 				err := waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
-				if err == nil {
-					d.once.Store(false)
-				} else {
+				if err != nil {
 					logutil.BgLogger().Warn("[ddl] wait ddl job sync failed", zap.Error(err), zap.String("job", job.String()))
 					time.Sleep(time.Second)
 					return
 				}
+				d.once.Store(false)
 			}
-			d.once.Store(false)
 		}
 
 		schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, job)
