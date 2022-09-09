@@ -510,7 +510,6 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 		return nil
 	})
 	if err != nil {
-		logutil.BgLogger().Warn("Finish flashback cluster meets error", zap.Error(err))
 		return err
 	}
 
