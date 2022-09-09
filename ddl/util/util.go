@@ -53,6 +53,8 @@ const (
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
+	// SessionTTL is the etcd session's TTL in seconds.
+	SessionTTL = 90
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.

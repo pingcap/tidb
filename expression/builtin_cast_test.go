@@ -286,10 +286,10 @@ var (
 	jsonInt = types.NewDatum(types.CreateBinaryJSON(int64(3)))
 
 	// jsonTime indicates "CURRENT_DAY 12:59:59"
-	jsonTime = types.NewDatum(types.CreateBinaryJSON(tm.String()))
+	jsonTime = types.NewDatum(types.CreateBinaryJSON(tm))
 
 	// jsonDuration indicates
-	jsonDuration = types.NewDatum(types.CreateBinaryJSON(duration.String()))
+	jsonDuration = types.NewDatum(types.CreateBinaryJSON(duration))
 )
 
 func TestCastFuncSig(t *testing.T) {
