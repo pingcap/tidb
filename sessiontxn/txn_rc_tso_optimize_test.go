@@ -61,8 +61,10 @@ func TestRcTSOCmdCountForPrepareExecuteNormal(t *testing.T) {
 	sqlUpdateID, _, _, _ := tk.Session().PrepareStmt("update t1 set id3 = id3 + 10 where id1 = ?")
 	sqlUpdateID2, _, _, _ := tk.Session().PrepareStmt("update t2 set id3 = id3 + 10 where id1 = ?")
 	sqlSelectID2, _, _, _ := tk.Session().PrepareStmt("select id1+id2 as x from t1 where id1 = ? for update")
+	sqlSelectID3, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id1 = ?")
 	sqlInsertID, _, _, _ := tk.Session().PrepareStmt("insert into t1 values(?, ?, ?)")
 	sqlDeleteID, _, _, _ := tk.Session().PrepareStmt("delete from t1 where id1 = ?")
+	sqlSelectID4, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id1 > ?")
 
 	res := tk.MustQuery("show variables like 'transaction_isolation'")
 	require.Equal(t, "READ-COMMITTED", res.Rows()[0][1])
@@ -83,6 +85,9 @@ func TestRcTSOCmdCountForPrepareExecuteNormal(t *testing.T) {
 		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlSelectID2, expression.Args2Expressions4Test(9))
 		require.NoError(t, err)
 		require.NoError(t, stmt.Close())
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlSelectID3, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
 
 		val := i * 10
 		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, expression.Args2Expressions4Test(val, val, val))
@@ -92,12 +97,16 @@ func TestRcTSOCmdCountForPrepareExecuteNormal(t *testing.T) {
 		require.NoError(t, err)
 		require.Nil(t, stmt)
 
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlSelectID4, expression.Args2Expressions4Test(9))
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
+
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle := getAllTsoCounter(sctx)
-	require.Equal(t, uint64(200), countTsoRequest.(uint64))
+	require.Equal(t, uint64(398), countTsoRequest.(uint64))
 	require.Equal(t, uint64(594), countTsoUseConstant.(uint64))
-	require.Equal(t, 0, countWaitTsoOracle.(int))
+	require.Equal(t, uint64(198), countWaitTsoOracle.(uint64))
 }
 
 func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
