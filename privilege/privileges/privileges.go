@@ -186,7 +186,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.PWDHashLen+1 {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a mysql_native_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	}
 
@@ -194,7 +194,15 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.SHAPWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a caching_sha2_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		return false
+	}
+
+	if record.AuthPlugin == mysql.AuthTiDBSM3Password {
+		if len(pwd) == mysql.SM3PWDHashLen {
+			return true
+		}
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	}
 
@@ -202,7 +210,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		return true
 	}
 
-	logutil.BgLogger().Error("user password from system DB not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+	logutil.BgLogger().Error("user password from the mysql.user table not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 	return false
 }
 
@@ -315,7 +323,8 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	}
 
 	if len(pwd) > 0 && len(authentication) > 0 {
-		if record.AuthPlugin == mysql.AuthNativePassword {
+		switch record.AuthPlugin {
+		case mysql.AuthNativePassword:
 			hpwd, err := auth.DecodePassword(pwd)
 			if err != nil {
 				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
@@ -325,8 +334,8 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
 				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-		} else if record.AuthPlugin == mysql.AuthCachingSha2Password {
-			authok, err := auth.CheckShaPassword([]byte(pwd), string(authentication))
+		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
 			if err != nil {
 				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
 			}
@@ -334,14 +343,14 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			if !authok {
 				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-		} else if record.AuthPlugin == mysql.AuthSocket {
+		case mysql.AuthSocket:
 			if string(authentication) != authUser && string(authentication) != pwd {
 				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
 					zap.String("socket_user", string(authentication)),
 					zap.String("authentication_string", pwd))
 				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-		} else {
+		default:
 			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
