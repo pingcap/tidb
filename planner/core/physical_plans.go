@@ -162,6 +162,20 @@ func (p *PhysicalTableReader) GetAvgRowSize() float64 {
 	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 }
 
+//
+func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint8*2 + size.SizeOfBool + p.PartitionInfo.MemoryUsage()
+	// todo: memtrace: 	p.TablePlans p.PhysicalPlan
+	for _, pInfo := range p.PartitionInfos {
+		sum += pInfo.tableScan.MemoryUsage() + pInfo.partitionInfo.MemoryUsage()
+	}
+	return
+}
+
 // setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
 func setMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 	if ts, ok := curPlan.(*PhysicalTableScan); ok {
