@@ -404,7 +404,6 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		options: &qs,
 	}
 	objectLock := s3Storage.checkObjectLockEnabled()
-	qs.ObjectLockEnabled = objectLock
 	backend.ObjectLockEnabled = objectLock
 	return s3Storage, nil
 }
