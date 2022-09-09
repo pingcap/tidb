@@ -31,6 +31,7 @@ type PlanTrace struct {
 	mapChildren map[int]struct{}
 }
 
+// AppendChildrenID appends children ids
 func (p *PlanTrace) AppendChildrenID(ids ...int) {
 	if p.mapChildren == nil {
 		p.mapChildren = make(map[int]struct{})
