@@ -225,12 +225,17 @@ func TestConvertToFloat(t *testing.T) {
 	}
 }
 
-// mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
-func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
+func mustParseTime(s string, tp byte, fsp int) Time {
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp)
 	if err != nil {
 		panic("ParseTime fail")
 	}
+	return t
+}
+
+// mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
+func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
+	t := mustParseTime(s, tp, fsp)
 	d.SetMysqlTime(t)
 	return
 }
@@ -240,16 +245,16 @@ func TestToJSON(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	tests := []struct {
 		datum    Datum
-		expected string
+		expected interface{}
 		success  bool
 	}{
-		{NewIntDatum(1), `1.0`, true},
-		{NewFloat64Datum(2), `2`, true},
-		{NewStringDatum("\"hello, 世界\""), `"hello, 世界"`, true},
-		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
-		{NewStringDatum("{}"), `{}`, true},
-		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
-		{NewStringDatum(`{"a": "9223372036854775809"}`), `{"a": "9223372036854775809"}`, true},
+		{NewIntDatum(1), int64(1), true},
+		{NewFloat64Datum(2), float64(2.0), true},
+		{NewStringDatum("\"hello, 世界\""), "hello, 世界", true},
+		{NewStringDatum("[1, 2, 3]"), []interface{}{int64(1), int64(2), int64(3)}, true},
+		{NewStringDatum("{}"), map[string]interface{}{}, true},
+		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), mustParseTime("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), true},
+		{NewStringDatum(`{"a": "9223372036854775809"}`), map[string]interface{}{"a": "9223372036854775809"}, true},
 		{NewBinaryLiteralDatum([]byte{0x81}), ``, false},
 
 		// can not parse JSON from this string, so error occurs.
@@ -260,10 +265,7 @@ func TestToJSON(t *testing.T) {
 		if tt.success {
 			require.NoError(t, err)
 
-			sd := NewStringDatum(tt.expected)
-			var expected Datum
-			expected, err = sd.ConvertTo(sc, ft)
-			require.NoError(t, err)
+			expected := NewJSONDatum(CreateBinaryJSON(tt.expected))
 
 			var cmp int
 			cmp, err = obtain.Compare(sc, &expected, collate.GetBinaryCollator())
