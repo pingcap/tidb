@@ -1131,7 +1131,7 @@ const TempIndexPrefix = 0x7fff000000000000
 // IndexIDMask used to get index id from index id/temp index id.
 const IndexIDMask = 0xffffffffffff
 
-// IndexKey2TempIndexKey gen a temp index Key
+// IndexKey2TempIndexKey generates a temporary index key.
 func IndexKey2TempIndexKey(indexID int64, key []byte) {
 	eid := codec.EncodeIntToCmpUint(TempIndexPrefix | indexID)
 	binary.BigEndian.PutUint64(key[11:], eid)
