@@ -2646,7 +2646,12 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 	job := &model.Job{
 		Type:       model.ActionFlashbackCluster,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{flashbackTS, map[string]interface{}{}},
+		// The value for global variables is meaningless, it will cover during flashback cluster.
+		Args: []interface{}{
+			flashbackTS,
+			map[string]interface{}{},
+			variable.On, /* tidb_super_read_only */
+			true /* tidb_gc_enable */},
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
