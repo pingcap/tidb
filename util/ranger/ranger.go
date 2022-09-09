@@ -378,6 +378,9 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 // BuildTableRange builds range of PK column for PhysicalTableScan.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
+// If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
+// conditions by the second and third return values respectively.
+// If you ask that all conds must be used for building ranges, set rangeMemQuota to 0 to avoid range fallback.
 func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType,
 	rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength, rangeMaxSize)
@@ -386,6 +389,9 @@ func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.C
 // BuildColumnRange builds range from access conditions for general columns.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
+// If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
+// conditions by the second and third return values respectively.
+// If you ask that all conds must be used for building ranges, set rangeMemQuota to 0 to avoid range fallback.
 func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int,
 	rangeMemQuota int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	if len(conds) == 0 {

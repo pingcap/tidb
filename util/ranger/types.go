@@ -230,6 +230,7 @@ const EmptyRangeSize = int64(unsafe.Sizeof(Range{}))
 
 // MemUsage gets the memory usage of range.
 func (ran *Range) MemUsage() (sum int64) {
+	// 16 is the size of Collator interface.
 	sum = EmptyRangeSize + int64(cap(ran.LowVal))*types.EmptyDatumSize + int64(cap(ran.HighVal))*types.EmptyDatumSize + int64(cap(ran.Collators))*16
 	for _, val := range ran.LowVal {
 		sum += val.MemUsage() - types.EmptyDatumSize
